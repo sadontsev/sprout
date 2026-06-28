@@ -50,7 +50,8 @@
             "deploymentTarget": "16.4"
           }
         }
-      ]
+      ],
+      "./plugins/withIosPodMinDeploymentTarget"
     ],
     "experiments": {
       "typedRoutes": true,
