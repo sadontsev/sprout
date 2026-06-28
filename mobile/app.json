@@ -4,11 +4,10 @@
     "slug": "bambu",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/icon-bambu.png",
     "scheme": "bambu",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.mvks5.bambu",
       "supportsTablet": false,
       "infoPlist": {
