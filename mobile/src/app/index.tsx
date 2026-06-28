@@ -94,13 +94,6 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
 
   useLiveActivity(vm, status, { modelUri, queueCount: queue.count, nextName: queue.next });
 
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 2000);
-    return () => clearInterval(id);
-  }, []);
-  const snapshotUri = camToken ? `${client.snapshotUrl(PRINTER_ID, camToken)}&_t=${tick}` : null;
-
   const [tab, setTab] = useState<TabKey>('printer');
   const [overlay, setOverlay] = useState<'camera' | 'upload' | null>(null);
   const [wizardFile, setWizardFile] = useState<LibraryFile | null>(null);
@@ -110,6 +103,16 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   // Live MJPEG camera stream — mints a token only while the fullscreen camera is open.
   const cameraOpen = overlay === 'camera';
   const { streamUrl, remint } = useCameraStream(client, PRINTER_ID, cameraOpen, 10);
+
+  // Dashboard snapshot tile (1 frame / 2s). Paused while the fullscreen stream is open so the two
+  // don't contend for the single on-demand A1 camera (which would slow the live stream's warm-up).
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (cameraOpen) return;
+    const id = setInterval(() => setTick((t) => t + 1), 2000);
+    return () => clearInterval(id);
+  }, [cameraOpen]);
+  const snapshotUri = camToken && !cameraOpen ? `${client.snapshotUrl(PRINTER_ID, camToken)}&_t=${tick}` : null;
 
   // Maintenance due/warning rollup for the dashboard chip (invisible when all-clear).
   const [maintAlert, setMaintAlert] = useState<{ due: number; warn: number }>({ due: 0, warn: 0 });
@@ -188,7 +191,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       <TabBar active={tab} onTab={setTab} />
 
       {overlay === 'camera' && (
-        <CameraOverlay client={client} printerId={PRINTER_ID} streamUrl={streamUrl} status={status} onClose={() => setOverlay(null)} onRefresh={remint} />
+        <CameraOverlay streamUrl={streamUrl} status={status} onClose={() => setOverlay(null)} onRefresh={remint} />
       )}
       {overlay === 'upload' && (
         <UploadSheet client={client} onClose={() => setOverlay(null)} onUploaded={() => setLibKey((k) => k + 1)} />

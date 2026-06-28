@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -98,6 +98,9 @@ export function DashboardView({
 }) {
   const insets = useSafeAreaInsets();
   const showCamera = vm.kind === 'live' || vm.kind === 'idle' || vm.kind === 'complete' || vm.kind === 'error';
+  // The cold A1 snapshot takes ~7s to decode — don't claim "LIVE" over a blank tile until a frame lands.
+  const [camLoaded, setCamLoaded] = useState(false);
+  useEffect(() => { if (!snapshotUri) setCamLoaded(false); }, [snapshotUri]);
 
   return (
     <ScrollView
@@ -147,15 +150,15 @@ export function DashboardView({
             <Tap onPress={h.onCamera} style={{ width: '100%' }}>
               <View style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 18, overflow: 'hidden', backgroundColor: '#0d0f11', borderWidth: 1, borderColor: c.line, ...shadow1 }}>
                 {snapshotUri ? (
-                  <Image source={{ uri: snapshotUri }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} />
+                  <Image source={{ uri: snapshotUri }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} onLoad={() => setCamLoaded(true)} />
                 ) : (
                   <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                     <Text style={{ fontWeight: '500', fontSize: 10, letterSpacing: 1.6, color: c.t3, fontFamily: mono }}>CHAMBER · SNAPSHOT</Text>
                   </View>
                 )}
                 <View style={{ position: 'absolute', top: 11, left: 11, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.55)' }}>
-                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.running }} />
-                  <Text style={{ fontWeight: '600', fontSize: 9.5, letterSpacing: 0.6, color: '#fff' }}>LIVE · 1 fps</Text>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: camLoaded ? c.running : c.t3 }} />
+                  <Text style={{ fontWeight: '600', fontSize: 9.5, letterSpacing: 0.6, color: '#fff' }}>{camLoaded ? 'LIVE · 1 fps' : 'WAKING…'}</Text>
                 </View>
                 <View style={{ position: 'absolute', bottom: 9, left: 11, width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="maximize-2" size={13} color="#fff" />
