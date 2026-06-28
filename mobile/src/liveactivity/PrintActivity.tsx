@@ -21,11 +21,13 @@ export type PrintActivityProps = {
   tint: string; // hex accent
 };
 
-const T1 = '#F3F5F7';
-const T2 = '#A4ABB2';
-
 const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => {
   'widget';
+  // NOTE: this function is stringified by babel-preset-expo's widgets plugin and re-evaluated in an
+  // isolated native runtime. It must NOT reference any module-scope identifiers except the @expo/ui
+  // primitives the runtime injects — so all constants/helpers live INSIDE the function body.
+  const T1 = '#F3F5F7';
+  const T2 = '#A4ABB2';
   const pct = `${Math.max(0, Math.min(100, Math.round(p.progress)))}%`;
   const layers = p.totalLayers > 0 ? `${p.layer}/${p.totalLayers}` : `${p.layer}`;
   const eta = p.etaEpochMs > 0 && !p.finished;
