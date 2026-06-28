@@ -1,98 +1,84 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, View } from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
+import { getConfig, type AppConfig } from '@/config/secureConfig';
+import { BambuddyClient } from '@/api/bambuddyClient';
+import { usePrinterStatus } from '@/realtime/usePrinterStatus';
+import { presentDashboard } from '@/dashboard/present';
+import { DashboardView, type DashHandlers } from '@/components/DashboardView';
+import { c } from '@/theme';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+const PRINTER_ID = 1;
+const SPEED_LABELS = ['', 'Silent', 'Standard', 'Sport', 'Ludicrous'];
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
+export default function DashboardScreen() {
+  const [config, setConfig] = useState<AppConfig | null | undefined>(undefined);
+  const [reload, setReload] = useState(0);
+
+  // Re-read config whenever the screen regains focus (e.g. returning from Settings).
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      getConfig().then((cfg) => active && setConfig(cfg));
+      return () => {
+        active = false;
+      };
+    }, [reload]),
   );
+
+  useEffect(() => {
+    if (config === null) router.replace('/settings');
+  }, [config]);
+
+  if (!config) {
+    // loading or redirecting to onboarding
+    return <View style={{ flex: 1, backgroundColor: c.bg }} />;
+  }
+  return <DashboardLive key={reload} config={config} onRetry={() => setReload((r) => r + 1)} />;
 }
 
-export default function HomeScreen() {
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+function DashboardLive({ config, onRetry }: { config: AppConfig; onRetry: () => void }) {
+  const client = useMemo(() => new BambuddyClient({ baseUrl: config.baseUrl, apiKey: config.apiKey }), [config]);
+  const { status } = usePrinterStatus(client, PRINTER_ID);
+  const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+  // camera snapshot: mint a token, refresh the URL on an interval
+  const [camToken, setCamToken] = useState<string | null>(config.cameraToken ?? null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!camToken) client.mintCameraToken().then(setCamToken).catch(() => {});
+  }, [client, camToken]);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 2000);
+    return () => clearInterval(id);
+  }, []);
+  const snapshotUri = camToken ? `${client.snapshotUrl(PRINTER_ID, camToken)}&_t=${tick}` : null;
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+  const [speedIdx, setSpeedIdx] = useState(2);
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
-  );
+  const soon = (what: string) => Alert.alert(what, 'Coming in a later update.');
+
+  const handlers: DashHandlers = {
+    onSettings: () => router.push('/settings'),
+    onCamera: () => soon('Full-screen camera'),
+    onRetry,
+    onTab: (tab) => soon(tab[0].toUpperCase() + tab.slice(1)),
+    onLight: () => client.setLight(PRINTER_ID, !vm.lightOn).catch((e) => Alert.alert('Light failed', String(e))),
+    onPauseResume: () =>
+      (vm.isPaused ? client.resume(PRINTER_ID) : client.pause(PRINTER_ID)).catch((e) =>
+        Alert.alert('Action failed', String(e)),
+      ),
+    onStop: () =>
+      Alert.alert('Stop print?', 'This cancels the current job. It can’t be undone.', [
+        { text: 'Keep printing', style: 'cancel' },
+        { text: 'Stop', style: 'destructive', onPress: () => client.stop(PRINTER_ID).catch((e) => Alert.alert('Stop failed', String(e))) },
+      ]),
+    onSpeed: () => {
+      const next = ((speedIdx % 4) + 1) as 1 | 2 | 3 | 4;
+      setSpeedIdx(next);
+      client.setSpeed(PRINTER_ID, next).catch((e) => Alert.alert('Speed failed', String(e)));
+    },
+  };
+
+  return <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
-});
