@@ -1,0 +1,25 @@
+# Bambuddy — sole LAN owner of the A1. Host networking for SSDP + camera.
+services:
+  bambuddy:
+    image: ghcr.io/maziggy/bambuddy:${BAMBUDDY_TAG:?set BAMBUDDY_TAG in .env}
+    container_name: bambuddy
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - bambuddy_data:/app/data
+    environment:
+      - TZ=${TZ:-Europe/London}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - PORT=${PORT:-8000}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+      - SLICER_API_URL=${SLICER_API_URL:-http://localhost:3001}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+volumes:
+  bambuddy_data:
