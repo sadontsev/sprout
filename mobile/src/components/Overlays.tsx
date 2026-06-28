@@ -1,0 +1,354 @@
+import React, { useEffect, useState } from 'react';
+import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { Image } from 'expo-image';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import { c, mono, shadow1 } from '@/theme';
+import type { BambuddyClient } from '@/api/bambuddyClient';
+import type { LibraryFile, PrinterStatus } from '@/api/types';
+import { presentDashboard, normColor } from '@/dashboard/present';
+
+// ---------------- CAMERA FULLSCREEN ----------------
+export function CameraOverlay({ snapshotUri, status, onClose, onRefresh }: { snapshotUri: string | null; status: PrinterStatus | null; onClose: () => void; onRefresh: () => void }) {
+  const insets = useSafeAreaInsets();
+  const vm = presentDashboard(status, Date.now());
+  return (
+    <View style={{ position: 'absolute', inset: 0, backgroundColor: '#060708', zIndex: 70 } as any}>
+      {snapshotUri ? (
+        <Image source={{ uri: snapshotUri }} style={{ flex: 1 }} contentFit="contain" transition={150} />
+      ) : (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontFamily: mono, color: '#3a4046', letterSpacing: 2, fontSize: 11 }}>CHAMBER · SNAPSHOT</Text>
+        </View>
+      )}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+        <Pressable onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name="chevron-down" size={22} color="#fff" />
+        </Pressable>
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 13, backgroundColor: 'rgba(22,24,27,0.55)' }}>
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: vm.stateColor }} />
+          <Text style={{ fontWeight: '600', fontSize: 13, color: '#fff' }}>{vm.stateLabel}</Text>
+          <Text style={{ marginLeft: 'auto', fontWeight: '600', fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: mono }}>{vm.progressInt}% · L{vm.layer}</Text>
+        </View>
+        <Pressable onPress={onRefresh} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name="refresh-cw" size={18} color="#fff" />
+        </Pressable>
+      </View>
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: insets.bottom + 24, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: 'rgba(22,24,27,0.55)' }}>
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.running }} />
+          <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: '#fff' }}>LIVE · 1 fps</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ---------------- UPLOAD SHEET ----------------
+export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyClient; onClose: () => void; onUploaded: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [busy, setBusy] = useState(false);
+  const pick = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+      if (res.canceled || !res.assets?.[0]) return;
+      const a = res.assets[0];
+      setBusy(true);
+      await client.uploadFile(a.uri, a.name);
+      setBusy(false);
+      onUploaded();
+      onClose();
+    } catch (e) {
+      setBusy(false);
+      Alert.alert('Upload failed', String(e));
+    }
+  };
+  return (
+    <Pressable onPress={onClose} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', zIndex: 72 } as any}>
+      <Pressable onPress={() => {}} style={{ backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 14, paddingTop: 10, paddingBottom: insets.bottom + 20, ...shadow1 }}>
+        <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginBottom: 16 }} />
+        <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1, textAlign: 'center', marginBottom: 14 }}>Add a file</Text>
+        <Pressable onPress={pick} disabled={busy} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2 }, pressed && { opacity: 0.7 }]}>
+          <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="folder" size={19} color={c.accent} />
+          </View>
+          <Text style={{ flex: 1, fontWeight: '600', fontSize: 15, color: c.t1 }}>{busy ? 'Uploading…' : 'From Files'}</Text>
+          {busy ? <ActivityIndicator color={c.t3} /> : <Feather name="chevron-right" size={16} color={c.t3} />}
+        </Pressable>
+        <Pressable onPress={onClose} style={({ pressed }) => [{ marginTop: 14, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.7 }]}>
+          <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>Cancel</Text>
+        </Pressable>
+      </Pressable>
+    </Pressable>
+  );
+}
+
+// ---------------- PRINT WIZARD ----------------
+type Preset = { id: string; name: string; source?: string };
+
+export function WizardOverlay({ client, file, status, printerId, onClose, onStarted }: { client: BambuddyClient; file: LibraryFile; status: PrinterStatus | null; printerId: number; onClose: () => void; onStarted: () => void }) {
+  const insets = useSafeAreaInsets();
+  const alreadySliced = (file.file_type || '').includes('gcode');
+  const [step, setStep] = useState(1);
+  const [presets, setPresets] = useState<{ printer?: Preset; filaments: Preset[]; qualities: Preset[] } | null>(null);
+  const [filament, setFilament] = useState<Preset | null>(null);
+  const [quality, setQuality] = useState<Preset | null>(null);
+  const [slicePct, setSlicePct] = useState(0);
+  const [result, setResult] = useState<{ print_time_seconds?: number; filament_used_g?: number; library_file_id?: number } | null>(null);
+  const [slot, setSlot] = useState<number>(status?.tray_now ?? 0);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    client.getPresets().then((p) => {
+      const std = p.standard ?? {};
+      const a1 = (arr: Preset[] = []) => arr.filter((x) => x.name.includes('A1') && !x.name.includes('A1M') && !x.name.toLowerCase().includes('mini'));
+      const printer = a1(std.printer).find((x) => x.name.includes('0.4 nozzle'));
+      const filaments = a1(std.filament).filter((x) => /Bambu (PLA Basic|PETG Basic|PLA Matte|ABS) @BBL A1$/.test(x.name));
+      const qualities = a1(std.process).filter((x) => /0\.(12|16|20|28)mm .*@BBL A1$/.test(x.name));
+      setPresets({ printer, filaments, qualities });
+      setFilament(filaments[0] ?? null);
+      setQuality(qualities.find((q) => q.name.includes('0.20')) ?? qualities[0] ?? null);
+    }).catch(() => setPresets({ filaments: [], qualities: [] }));
+  }, [client]);
+
+  // Slicing step
+  useEffect(() => {
+    if (step !== 4) return;
+    if (alreadySliced) {
+      setResult({ print_time_seconds: file.print_time_seconds ?? undefined, filament_used_g: file.filament_used_grams ?? undefined, library_file_id: file.id });
+      setSlicePct(100);
+      const t = setTimeout(() => setStep(5), 600);
+      return () => clearTimeout(t);
+    }
+    let cancelled = false;
+    setSlicePct(5);
+    (async () => {
+      try {
+        const { job_id } = await client.slice(file.id, {
+          printer_preset: presets?.printer,
+          process_preset: quality,
+          filament_preset: filament,
+          plate: 1,
+          export_3mf: true,
+        });
+        for (let i = 0; i < 90 && !cancelled; i++) {
+          const j = await client.getSliceJob(job_id);
+          setSlicePct((p) => Math.min(95, p + 6));
+          if (j.status === 'completed') {
+            setResult(j.result ?? {});
+            setSlicePct(100);
+            if (!cancelled) setStep(5);
+            return;
+          }
+          if (j.status === 'failed' || j.status === 'error') throw new Error(j.error || 'Slice failed');
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+        throw new Error('Slice timed out');
+      } catch (e) {
+        if (!cancelled) {
+          Alert.alert('Slicing failed', String(e));
+          setStep(3);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step]);
+
+  const start = async () => {
+    setStarting(true);
+    try {
+      const mapping = Array(4).fill(-1);
+      mapping[slot] = 0;
+      await client.enqueue({
+        printer_id: printerId,
+        library_file_id: result?.library_file_id ?? file.id,
+        use_ams: true,
+        ams_mapping: mapping,
+        plate_id: 1,
+      });
+      onStarted();
+    } catch (e) {
+      setStarting(false);
+      Alert.alert('Couldn’t start', String(e));
+    }
+  };
+
+  const steps = alreadySliced ? [1, 2, 6, 7] : [1, 2, 3, 4, 5, 6, 7];
+  const idx = steps.indexOf(step);
+  const next = () => setStep(steps[Math.min(idx + 1, steps.length - 1)]);
+  const back = () => setStep(steps[Math.max(idx - 1, 0)]);
+  const titles: Record<number, string> = { 1: 'File', 2: 'Printer', 3: 'Material', 4: 'Slicing', 5: 'Review', 6: 'Map filament', 7: 'Start print' };
+
+  const trays = status?.ams?.[0]?.tray ?? [];
+  const footer = (() => {
+    if (step === 4) return null;
+    if (step === 7) return { label: starting ? 'Starting…' : 'Start print', bg: c.accent, fg: c.accentInk, onPress: start };
+    if (step === 5) return { label: 'Looks good', bg: c.accent, fg: c.accentInk, onPress: next };
+    return { label: 'Continue', bg: c.s3, fg: c.t1, onPress: next };
+  })();
+
+  const L = ({ children }: { children: React.ReactNode }) => <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono, marginBottom: 12 }}>{children}</Text>;
+  const Row = ({ k, v }: { k: string; v: string }) => (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', padding: 14, borderBottomWidth: 1, borderBottomColor: c.line }}>
+      <Text style={{ fontWeight: '500', fontSize: 13, color: c.t2 }}>{k}</Text>
+      <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 13, color: c.t1, maxWidth: 200 }}>{v}</Text>
+    </View>
+  );
+
+  return (
+    <View style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end', zIndex: 72 } as any}>
+      <View style={{ height: '92%', backgroundColor: c.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' }}>
+        <View style={{ paddingHorizontal: 18, paddingTop: insets.top + 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Pressable onPress={onClose} hitSlop={10}><Text style={{ fontWeight: '500', fontSize: 15, color: c.t2 }}>Cancel</Text></Pressable>
+          <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>{titles[step]}</Text>
+          <Text style={{ fontWeight: '600', fontSize: 12, color: c.t3, fontFamily: mono }}>{idx + 1}/{steps.length}</Text>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 4, paddingHorizontal: 18, paddingTop: 15 }}>
+          {steps.map((s, i) => (
+            <View key={s} style={{ flex: 1, height: 3, borderRadius: 2, backgroundColor: i <= idx ? c.accent : c.s3 }} />
+          ))}
+        </View>
+
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 18 }}>
+          {step === 1 && (
+            <>
+              <L>SELECTED FILE</L>
+              <View style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line }}>
+                <Image source={{ uri: client.fileThumbUrl(file.id), headers: client.imageHeaders() }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+              </View>
+              <Text style={{ marginTop: 15, fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
+              <Text style={{ marginTop: 6, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type}{alreadySliced ? ' · pre-sliced' : ''}</Text>
+            </>
+          )}
+
+          {step === 2 && (
+            <>
+              <L>PRINT ON</L>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 16, backgroundColor: c.s2 }}>
+                <View style={{ width: 52, height: 52, borderRadius: 13, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="cpu" size={26} color={c.t2} />
+                </View>
+                <View>
+                  <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1 }}>Bambu Lab A1</Text>
+                  <View style={{ marginTop: 5, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: status?.connected ? c.running : c.idle }} />
+                    <Text style={{ fontWeight: '500', fontSize: 12, color: c.t2 }}>{status?.connected ? 'Connected' : 'Offline'}</Text>
+                  </View>
+                </View>
+              </View>
+            </>
+          )}
+
+          {step === 3 && (
+            <>
+              <L>MATERIAL</L>
+              <View style={{ gap: 9 }}>
+                {(presets?.filaments ?? []).map((m) => (
+                  <Pressable key={m.id} onPress={() => setFilament(m)} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: filament?.id === m.id ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                    <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: c.t1 }}>{m.name.replace(' @BBL A1', '')}</Text>
+                    {filament?.id === m.id && <Feather name="check" size={16} color={c.accent} />}
+                  </Pressable>
+                ))}
+              </View>
+              <View style={{ height: 22 }} />
+              <L>QUALITY</L>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9 }}>
+                {(presets?.qualities ?? []).map((q) => {
+                  const h = q.name.match(/0\.\d+mm/)?.[0] ?? '';
+                  const label = q.name.replace(/0\.\d+mm /, '').replace(' @BBL A1', '');
+                  return (
+                    <Pressable key={q.id} onPress={() => setQuality(q)} style={({ pressed }) => [{ width: '47%', flexGrow: 1, padding: 15, borderRadius: 13, backgroundColor: c.s2, borderWidth: quality?.id === q.id ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                      <Text style={{ fontWeight: '700', fontSize: 19, color: quality?.id === q.id ? c.accent : c.t1, fontVariant: ['tabular-nums'] }}>{h.replace('mm', '')}</Text>
+                      <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, color: c.t2 }}>{label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          )}
+
+          {step === 4 && (
+            <View style={{ paddingTop: 40, alignItems: 'center' }}>
+              <Text style={{ fontWeight: '700', fontSize: 46, color: c.t1, fontVariant: ['tabular-nums'], letterSpacing: -1 }}>{slicePct}<Text style={{ fontSize: 22, color: c.t3 }}>%</Text></Text>
+              <View style={{ marginTop: 18, width: '78%', height: 5, borderRadius: 3, backgroundColor: c.s3, overflow: 'hidden' }}>
+                <View style={{ height: '100%', width: `${slicePct}%`, backgroundColor: c.accent }} />
+              </View>
+              <Text style={{ marginTop: 14, fontWeight: '500', fontSize: 13, color: c.t2 }}>Slicing on your server…</Text>
+            </View>
+          )}
+
+          {step === 5 && (
+            <>
+              <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line }}>
+                <Image source={{ uri: client.fileThumbUrl(result?.library_file_id ?? file.id), headers: client.imageHeaders() }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+              </View>
+              <View style={{ marginTop: 16, borderRadius: 16, backgroundColor: c.s2, overflow: 'hidden' }}>
+                <Row k="Print time" v={result?.print_time_seconds ? `${Math.round(result.print_time_seconds / 60)} min` : '—'} />
+                <Row k="Filament" v={result?.filament_used_g ? `${result.filament_used_g.toFixed(2)} g` : '—'} />
+                <Row k="Quality" v={quality?.name.replace(' @BBL A1', '') ?? '—'} />
+              </View>
+              <View style={{ marginTop: 14, flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.accentDim }}>
+                <Feather name="info" size={17} color={c.accent} />
+                <Text style={{ flex: 1, fontWeight: '500', fontSize: 12.5, lineHeight: 18, color: c.t2 }}>Nothing prints yet. Review the estimate, then map filament to a tray.</Text>
+              </View>
+            </>
+          )}
+
+          {step === 6 && (
+            <>
+              <L>AMS SLOT</L>
+              <View style={{ gap: 9 }}>
+                {[0, 1, 2, 3].map((i) => {
+                  const tray = trays[i];
+                  const empty = !tray?.tray_type;
+                  return (
+                    <Pressable key={i} onPress={() => !empty && setSlot(i)} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 13, borderRadius: 13, backgroundColor: c.s2, opacity: empty ? 0.4 : 1, borderWidth: slot === i ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                      <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: empty ? 'transparent' : normColor(tray?.tray_color) ?? c.s4, borderWidth: empty ? 1 : 0, borderColor: c.line2, borderStyle: 'dashed' }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Slot {i + 1} · {empty ? 'Empty' : tray?.tray_type}</Text>
+                      </View>
+                      {slot === i && <Feather name="check" size={16} color={c.accent} />}
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text style={{ marginTop: 13, fontWeight: '500', fontSize: 12, color: c.t3 }}>Tap a slot to map this print's filament.</Text>
+            </>
+          )}
+
+          {step === 7 && (
+            <>
+              <L>READY TO PRINT</L>
+              <View style={{ borderRadius: 16, backgroundColor: c.s2, overflow: 'hidden' }}>
+                <Row k="File" v={file.print_name || file.filename} />
+                <Row k="Material" v={(filament?.name ?? 'As sliced').replace(' @BBL A1', '')} />
+                <Row k="Mapped to" v={`Slot ${slot + 1}`} />
+                <Row k="Est. time" v={result?.print_time_seconds ? `${Math.round(result.print_time_seconds / 60)} min` : '—'} />
+              </View>
+              <View style={{ marginTop: 14, flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.heatingDim }}>
+                <Feather name="thermometer" size={17} color={c.heating} />
+                <Text style={{ flex: 1, fontWeight: '500', fontSize: 12.5, lineHeight: 18, color: c.t2 }}>Nozzle and bed heat first (~3 min). You can pause or stop anytime.</Text>
+              </View>
+            </>
+          )}
+        </ScrollView>
+
+        {footer && (
+          <View style={{ flexDirection: 'row', gap: 12, padding: 18, paddingBottom: insets.bottom + 16, borderTopWidth: 1, borderTopColor: c.line }}>
+            {idx > 0 && step !== 7 && (
+              <Pressable onPress={back} style={({ pressed }) => [{ paddingHorizontal: 22, height: 52, borderRadius: 15, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.7 }]}>
+                <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>Back</Text>
+              </Pressable>
+            )}
+            <Pressable onPress={footer.onPress} disabled={starting} style={({ pressed }) => [{ flex: 1, height: 52, borderRadius: 15, backgroundColor: footer.bg, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.8 }]}>
+              <Text style={{ fontWeight: '600', fontSize: 16, color: footer.fg }}>{footer.label}</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}

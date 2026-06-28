@@ -98,10 +98,10 @@ export function DashboardView({
   const showCamera = vm.kind === 'live' || vm.kind === 'idle' || vm.kind === 'complete' || vm.kind === 'error';
 
   return (
-    <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingTop: insets.top + 6, paddingBottom: 120 }}>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: c.bg }}
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingTop: insets.top + 6, paddingBottom: 120 }}>
         {/* header */}
         <View style={{ paddingHorizontal: 20, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <View>
@@ -305,26 +305,6 @@ export function DashboardView({
             <Text style={{ fontWeight: '500', fontSize: 13, color: c.t3 }}>Connecting…</Text>
           </View>
         )}
-      </ScrollView>
-
-      {/* tab bar */}
-      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingTop: 9, paddingBottom: insets.bottom || 12, backgroundColor: c.s1, borderTopWidth: 1, borderTopColor: c.line, flexDirection: 'row' }}>
-        {([
-          ['printer', 'Printer', 'cpu'],
-          ['library', 'Files', 'folder'],
-          ['queue', 'Queue', 'list'],
-          ['ams', 'AMS', 'grid'],
-          ['power', 'Power', 'power'],
-        ] as const).map(([key, label, icon]) => {
-          const active = key === 'printer';
-          return (
-            <Tap key={key} onPress={() => (active ? undefined : h.onTab(key))} style={{ flex: 1, alignItems: 'center', gap: 4, paddingVertical: 5 }}>
-              <Feather name={icon as any} size={23} color={active ? c.accent : c.t3} />
-              <Text style={{ fontWeight: '600', fontSize: 10, color: active ? c.accent : c.t3 }}>{label}</Text>
-            </Tap>
-          );
-        })}
-      </View>
-    </View>
+    </ScrollView>
   );
 }

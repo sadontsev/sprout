@@ -25,3 +25,54 @@ export interface PrinterStatus {
 }
 
 export type SpeedMode = 1 | 2 | 3 | 4; // silent | standard | sport | ludicrous
+
+export interface LibraryFile {
+  id: number;
+  filename: string;
+  file_type: string; // stl | 3mf | gcode.3mf
+  file_size?: number;
+  thumbnail_path?: string | null;
+  sliced_for_model?: string | null;
+  print_time_seconds?: number | null;
+  filament_used_grams?: number | null;
+  print_name?: string | null;
+}
+
+export interface QueueItem {
+  id: number;
+  status: string; // pending | printing | completed | failed | ...
+  position?: number;
+  library_file_name?: string | null;
+  archive_name?: string | null;
+  library_file_thumbnail?: string | null;
+  archive_thumbnail?: string | null;
+  print_time_seconds?: number | null;
+}
+
+export interface SmartPlug {
+  id: number;
+  name?: string;
+  printer_id?: number;
+}
+
+export interface PlugStatus {
+  is_on?: boolean;
+  power_w?: number | null;
+  energy_today_kwh?: number | null;
+  [k: string]: unknown;
+}
+
+/** A bundled slicer preset reference (from /slicer/presets). */
+export interface PresetRef {
+  id: string;
+  name: string;
+  source?: string;
+}
+
+export interface SliceResult {
+  status: string;
+  print_time_seconds?: number | null;
+  filament_used_g?: number | null;
+  filament_used_mm?: number | null;
+  library_file_id?: number | null;
+}
