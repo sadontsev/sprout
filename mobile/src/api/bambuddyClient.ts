@@ -1,5 +1,5 @@
 import { File, UploadType } from 'expo-file-system';
-import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings } from './types';
+import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse } from './types';
 
 export interface BambuddyClientConfig {
   /** e.g. https://bambuddy.example.com */
@@ -162,6 +162,21 @@ export class BambuddyClient {
     await this.req(`/api/v1/printers/${printerId}/ams/unload`, { method: 'POST' });
   }
 
+  // --- Inventory (filament spools + AMS slot assignments) ---
+  listSpools(): Promise<Spool[]> {
+    return this.req('/api/v1/inventory/spools').then((r) => r.json());
+  }
+  /** AMS slot -> spool assignments; each item embeds the full `spool`. Returns [] on failure so the
+   *  AMS view falls back to status-only tray data. */
+  async listAssignments(printerId?: number): Promise<SlotAssignment[]> {
+    const q = printerId != null ? `?printer_id=${printerId}` : '';
+    try {
+      return await (await this.req(`/api/v1/inventory/assignments${q}`)).json();
+    } catch {
+      return [];
+    }
+  }
+
   // --- Print history ---
   getPrintLog(limit = 50): Promise<PrintLogPage> {
     return this.req(`/api/v1/print-log/?limit=${limit}`).then((r) => r.json());
@@ -193,5 +208,49 @@ export class BambuddyClient {
       body: JSON.stringify({ action: on ? 'on' : 'off' }),
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  // --- Maintenance ---
+  getMaintenance(printerId: number): Promise<MaintenancePrinter> {
+    return this.req(`/api/v1/maintenance/printers/${printerId}`).then((r) => r.json());
+  }
+  getMaintenanceSummary(): Promise<MaintenanceSummary> {
+    return this.req('/api/v1/maintenance/summary').then((r) => r.json());
+  }
+  /** MUTATES — resets an item's counter ("mark done"). Body is REQUIRED (bodyless POST 422s). */
+  async performMaintenance(itemId: number, notes?: string): Promise<void> {
+    await this.req(`/api/v1/maintenance/items/${itemId}/perform`, {
+      method: 'POST',
+      body: JSON.stringify(notes ? { notes } : {}),
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // --- MakerWorld import ---
+  /** Is import configured server-side? can_download gates importMakerWorld(). */
+  makerWorldStatus(): Promise<MakerWorldStatus> {
+    return this.req('/api/v1/makerworld/status').then((r) => r.json());
+  }
+  /** Resolve a MakerWorld model URL → design + printable profiles. No cloud token needed.
+   *  Throws on 400 (not a MW url) / 404 (model not found). */
+  resolveMakerWorld(url: string): Promise<MakerWorldResolved> {
+    return this.req('/api/v1/makerworld/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+      headers: { 'Content-Type': 'application/json' },
+    }).then((r) => r.json());
+  }
+  /** MUTATING — downloads the 3MF into the library. Requires status.can_download === true. */
+  importMakerWorld(body: MakerWorldImportRequest): Promise<MakerWorldImportResponse> {
+    return this.req('/api/v1/makerworld/import', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }).then((r) => r.json());
+  }
+  /** MakerWorld CDN thumbnail via the server proxy (unauthenticated — URL is sufficient). */
+  makerworldThumbUrl(cdnUrl: string | null | undefined): string {
+    if (!cdnUrl) return '';
+    return `${this.baseUrl}/api/v1/makerworld/thumbnail?url=${encodeURIComponent(cdnUrl)}`;
   }
 }

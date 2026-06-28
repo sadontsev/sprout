@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, ScrollView, RefreshControl, ActivityIndicator, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
-import type { LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings } from '@/api/types';
+import type { LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter } from '@/api/types';
+import { spoolGramsRemaining } from '@/api/types';
 import { presentDashboard, fmtDuration, normColor } from '@/dashboard/present';
 
 function fmtBytes(n?: number): string {
@@ -157,7 +158,19 @@ export function QueueView({ client, status, onBrowse }: { client: BambuddyClient
                   <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>{j.library_file_name || j.archive_name || `Job ${j.id}`}</Text>
                   <Text style={{ marginTop: 4, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{j.print_time_seconds ? fmtDuration(j.print_time_seconds / 60) : j.status}</Text>
                 </View>
-                <Pressable onPress={() => client.queueAction(j.id, 'cancel').then(load)} style={({ pressed }) => [{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.5 }]}>
+                <Pressable
+                  onPress={() =>
+                    Alert.alert(
+                      'Remove from queue?',
+                      `“${j.library_file_name || j.archive_name || `Job ${j.id}`}” won't print.`,
+                      [
+                        { text: 'Keep', style: 'cancel' },
+                        { text: 'Remove', style: 'destructive', onPress: () => client.queueAction(j.id, 'cancel').then(load).catch((e) => Alert.alert('Couldn’t remove', String(e))) },
+                      ],
+                    )
+                  }
+                  hitSlop={8}
+                  style={({ pressed }) => [{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.5 }]}>
                   <Feather name="x" size={16} color={c.t3} />
                 </Pressable>
               </View>
@@ -173,43 +186,80 @@ export function QueueView({ client, status, onBrowse }: { client: BambuddyClient
 export function AmsView({ client, status, printerId }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number }) {
   const vm = presentDashboard(status, Date.now());
   const trays = status?.ams?.[0]?.tray ?? [];
+  const amsId = status?.ams?.[0]?.id ?? 0;
+
+  const [assigns, setAssigns] = useState<SlotAssignment[] | null>(null);
+  const loadInv = useCallback(() => {
+    client.listAssignments(printerId).then(setAssigns).catch(() => setAssigns([]));
+  }, [client, printerId]);
+  useEffect(loadInv, [loadInv]);
+
+  // Resolve the spool assigned to AMS slot `i`. Prefer tray_uuid (RFID), fall back to (ams_id,tray_id).
+  const spoolForSlot = (i: number): SlotAssignment['spool'] | null => {
+    if (!assigns?.length) return null;
+    const uuid = trays[i]?.tray_uuid ?? null;
+    const byUuid = uuid ? assigns.find((a) => a.spool?.tray_uuid === uuid) : undefined;
+    const hit = byUuid ?? assigns.find((a) => a.ams_id === amsId && a.tray_id === i);
+    return hit?.spool ?? null;
+  };
+
   return (
     <Page title="AMS Lite">
       <Text style={{ paddingHorizontal: 20, marginTop: 7, fontWeight: '500', fontSize: 13, color: c.t3 }}>
         {trays.filter((t) => t.tray_type).length} of {Math.max(trays.length, 4)} slots loaded
       </Text>
       <View style={{ paddingHorizontal: 20, paddingTop: 18, gap: 12 }}>
-        {vm.ams.map((t, i) => (
-          <View key={i} style={{ padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: t.active ? 1.5 : 1, borderColor: t.active ? c.accent : c.line, ...shadow1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-              <View style={{ width: 46, height: 46, borderRadius: 12, backgroundColor: t.empty ? 'transparent' : t.color, borderWidth: t.empty ? 1 : 0, borderColor: c.line2, borderStyle: t.empty ? 'dashed' : 'solid' }} />
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Text style={{ fontWeight: '700', fontSize: 16, color: c.t1 }}>{t.empty ? 'Empty slot' : t.label}</Text>
-                  {t.active && (
-                    <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: c.accentDim }}>
-                      <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: c.accent, fontFamily: mono }}>ACTIVE</Text>
-                    </View>
-                  )}
+        {vm.ams.map((t, i) => {
+          const spool = spoolForSlot(i);
+          const swatch = spool ? (normColor(spool.rgba ?? undefined) ?? t.color) : t.color;
+          const title = spool
+            ? (spool.color_name ? `${spool.color_name} ${spool.material}` : spool.material)
+            : (t.empty ? 'Empty slot' : t.label);
+          const grams = spool ? spoolGramsRemaining(spool) : null;
+          const sub = spool ? [spool.brand, spool.slicer_filament_name].filter(Boolean).join(' · ') || `Slot ${i + 1}` : `Slot ${i + 1}`;
+
+          return (
+            <View key={i} style={{ padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: t.active ? 1.5 : 1, borderColor: t.active ? c.accent : c.line, ...shadow1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                <View style={{ width: 46, height: 46, borderRadius: 12, backgroundColor: t.empty ? 'transparent' : swatch, borderWidth: t.empty ? 1 : 0, borderColor: c.line2, borderStyle: t.empty ? 'dashed' : 'solid' }} />
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text numberOfLines={1} style={{ fontWeight: '700', fontSize: 16, color: c.t1, flexShrink: 1 }}>{title}</Text>
+                    {t.active && (
+                      <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: c.accentDim }}>
+                        <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: c.accent, fontFamily: mono }}>ACTIVE</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text numberOfLines={1} style={{ marginTop: 5, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{sub}</Text>
                 </View>
-                <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>Slot {i + 1}</Text>
+                {!t.empty && (
+                  grams != null ? (
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1, fontFamily: mono }}>{Math.round(grams)}g</Text>
+                      <Text style={{ marginTop: 2, fontWeight: '600', fontSize: 10, color: c.t3, fontFamily: mono }}>{t.pct}</Text>
+                    </View>
+                  ) : (
+                    <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1, fontFamily: mono }}>{t.pct}</Text>
+                  )
+                )}
               </View>
-              {!t.empty && <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1, fontFamily: mono }}>{t.pct}</Text>}
-            </View>
-            {!t.empty ? (
-              <View style={{ marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end' }}>
-                <Pressable onPress={() => client.amsUnload(printerId).catch(() => {})} style={({ pressed }) => [{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3 }, pressed && { opacity: 0.6 }]}>
-                  <Text style={{ fontWeight: '600', fontSize: 12, color: c.t1 }}>Unload</Text>
+              {!t.empty ? (
+                <View style={{ marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end' }}>
+                  <Pressable onPress={() => client.amsUnload(printerId).catch(() => {})} style={({ pressed }) => [{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3 }, pressed && { opacity: 0.6 }]}>
+                    <Text style={{ fontWeight: '600', fontSize: 12, color: c.t1 }}>Unload</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable onPress={() => client.amsLoad(printerId, i).catch(() => {})} style={({ pressed }) => [{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.6 }]}>
+                  <Text style={{ fontWeight: '600', fontSize: 13, color: c.accent }}>Load filament</Text>
                 </Pressable>
-              </View>
-            ) : (
-              <Pressable onPress={() => client.amsLoad(printerId, i).catch(() => {})} style={({ pressed }) => [{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.6 }]}>
-                <Text style={{ fontWeight: '600', fontSize: 13, color: c.accent }}>Load filament</Text>
-              </Pressable>
-            )}
-          </View>
-        ))}
+              )}
+            </View>
+          );
+        })}
       </View>
+      <MaintenanceSection client={client} printerId={printerId} />
     </Page>
   );
 }
@@ -537,5 +587,125 @@ export function HistoryView({ client, camToken }: { client: BambuddyClient; camT
         </>
       )}
     </Page>
+  );
+}
+
+// ---------------- MAINTENANCE ----------------
+// Lucide icon name (from API) -> closest Feather glyph.
+const MAINT_ICON: Record<string, keyof typeof Feather.glyphMap> = {
+  Droplet: 'droplet', Sparkles: 'star', Flame: 'thermometer', Ruler: 'sliders',
+  Square: 'square', Cable: 'git-commit', Wrench: 'tool', Tool: 'tool',
+};
+function maintIcon(name: string | null): keyof typeof Feather.glyphMap {
+  return (name && MAINT_ICON[name]) || 'tool';
+}
+function maintStatus(it: MaintenanceItem): { text: string; color: string; urgent: boolean } {
+  if (it.is_due) return { text: 'Due now', color: c.error, urgent: true };
+  if (it.is_warning) return { text: 'Soon', color: c.heating, urgent: true };
+  const h = it.hours_until_due;
+  const txt = h >= 1 ? `in ${Math.round(h)} h` : `in ${Math.max(0, Math.round(h * 60))} min`;
+  return { text: txt, color: c.t3, urgent: false };
+}
+function fmtLastPerformed(iso: string | null): string {
+  if (!iso) return 'Never performed';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return 'Performed';
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  if (days <= 0) return 'Done today';
+  if (days === 1) return 'Done yesterday';
+  if (days < 30) return `Done ${days} days ago`;
+  return `Done ${d.toLocaleDateString()}`;
+}
+
+export function MaintenanceSection({ client, printerId }: { client: BambuddyClient; printerId: number }) {
+  const [data, setData] = useState<MaintenancePrinter | null | undefined>(undefined);
+  const [busy, setBusy] = useState<number | null>(null);
+
+  const load = useCallback(
+    () => client.getMaintenance(printerId).then((d) => setData(d)).catch(() => setData(null)),
+    [client, printerId],
+  );
+  useEffect(() => { load(); }, [load]);
+
+  const markDone = (it: MaintenanceItem) => {
+    Alert.alert(
+      `Mark "${it.maintenance_type_name}" as done?`,
+      `This resets its counter. Next reminder in ${Math.round(it.interval_hours)} h of printing.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark done',
+          onPress: () => {
+            setBusy(it.id);
+            client.performMaintenance(it.id).then(load).catch((e) => Alert.alert('Couldn’t update', String(e))).finally(() => setBusy(null));
+          },
+        },
+      ],
+    );
+  };
+
+  const items = (data?.maintenance_items ?? []).filter((i) => i.enabled);
+  items.sort((a, b) => Number(b.is_due) - Number(a.is_due) || Number(b.is_warning) - Number(a.is_warning) || a.hours_until_due - b.hours_until_due);
+
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 26, paddingBottom: 12 }}>
+        <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1.2, color: c.t3, fontFamily: mono }}>MAINTENANCE</Text>
+        {!!data && <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, fontFamily: mono }}>{data.total_print_hours.toFixed(1)} h printed</Text>}
+      </View>
+
+      {data === undefined && <ActivityIndicator color={c.accent} style={{ marginTop: 16 }} />}
+      {data === null && (
+        <View style={{ marginHorizontal: 20, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
+          <Text style={{ fontWeight: '500', fontSize: 13, color: c.t3 }}>Couldn’t load maintenance.</Text>
+        </View>
+      )}
+      {data && items.length === 0 && (
+        <View style={{ marginHorizontal: 20, padding: 18, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, alignItems: 'center', gap: 8 }}>
+          <Feather name="tool" size={22} color={c.t3} />
+          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>No reminders set up</Text>
+          <Text style={{ fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t3, textAlign: 'center', maxWidth: 250 }}>Add service intervals in Bambuddy (Settings → Maintenance) and they’ll track here as you print.</Text>
+        </View>
+      )}
+
+      <View style={{ paddingHorizontal: 20, gap: 11 }}>
+        {items.map((it) => {
+          const st = maintStatus(it);
+          const pct = Math.max(0, Math.min(100, (it.hours_since_maintenance / it.interval_hours) * 100));
+          return (
+            <View key={it.id} style={{ padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: st.urgent ? 1.5 : 1, borderColor: st.urgent ? st.color : c.line, ...shadow1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
+                <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: st.urgent ? c.s3 : c.s2, alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name={maintIcon(it.maintenance_type_icon)} size={20} color={st.urgent ? st.color : c.t2} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '700', fontSize: 15, color: c.t1 }}>{it.maintenance_type_name}</Text>
+                  <Text style={{ marginTop: 4, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{fmtLastPerformed(it.last_performed_at)}</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end', gap: 3 }}>
+                  {st.urgent ? (
+                    <View style={{ paddingHorizontal: 9, paddingVertical: 4, borderRadius: 7, backgroundColor: st.color === c.error ? c.errorDim : c.heatingDim }}>
+                      <Text style={{ fontWeight: '700', fontSize: 10.5, letterSpacing: 0.4, color: st.color, fontFamily: mono }}>{st.text.toUpperCase()}</Text>
+                    </View>
+                  ) : (
+                    <Text style={{ fontWeight: '600', fontSize: 12, color: c.t2, fontFamily: mono }}>{st.text}</Text>
+                  )}
+                  <Text style={{ fontWeight: '500', fontSize: 10, color: c.t3, fontFamily: mono }}>every {Math.round(it.interval_hours)} h</Text>
+                </View>
+              </View>
+              <View style={{ marginTop: 13, height: 4, borderRadius: 2, backgroundColor: c.s3, overflow: 'hidden' }}>
+                <View style={{ height: '100%', width: `${pct}%`, borderRadius: 2, backgroundColor: st.urgent ? st.color : c.accent }} />
+              </View>
+              <View style={{ marginTop: 13, flexDirection: 'row', justifyContent: 'flex-end' }}>
+                <Pressable onPress={() => markDone(it)} disabled={busy === it.id} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 15, paddingVertical: 9, borderRadius: 11, backgroundColor: st.urgent ? c.accent : c.s3 }, pressed && { opacity: 0.6 }, busy === it.id && { opacity: 0.5 }]}>
+                  {busy === it.id ? <ActivityIndicator size="small" color={st.urgent ? c.accentInk : c.t1} /> : <Feather name="check" size={14} color={st.urgent ? c.accentInk : c.t1} />}
+                  <Text style={{ fontWeight: '600', fontSize: 13, color: st.urgent ? c.accentInk : c.t1 }}>Mark done</Text>
+                </Pressable>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </View>
   );
 }
