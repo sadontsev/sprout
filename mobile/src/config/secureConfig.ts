@@ -1,0 +1,34 @@
+import * as SecureStore from 'expo-secure-store';
+
+/** App connection config, persisted in the iOS Keychain (this-device-only). */
+export type AppConfig = {
+  /** e.g. https://bambuddy.example.com */
+  baseUrl: string;
+  /** Bambuddy scoped API key (bb_...) sent as X-API-Key */
+  apiKey: string;
+  /** Long-lived camera stream token, minted lazily */
+  cameraToken?: string;
+};
+
+const KEY = 'bambu.config';
+const OPTS: SecureStore.SecureStoreOptions = {
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
+
+export async function getConfig(): Promise<AppConfig | null> {
+  const raw = await SecureStore.getItemAsync(KEY, OPTS);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as AppConfig;
+  } catch {
+    return null;
+  }
+}
+
+export async function setConfig(c: AppConfig): Promise<void> {
+  await SecureStore.setItemAsync(KEY, JSON.stringify(c), OPTS);
+}
+
+export async function clearConfig(): Promise<void> {
+  await SecureStore.deleteItemAsync(KEY, OPTS);
+}
