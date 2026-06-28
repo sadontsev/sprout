@@ -11,69 +11,82 @@ import type { LibraryFile, PrinterStatus, MakerWorldResolved, MWInstance, Plates
 import { presentDashboard, normColor } from '@/dashboard/present';
 import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
 import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
-import { parseGcodeLayers, type GcodeLayers } from '@/library/gcodeLayers';
+import { parseGcodeLayers, gcodeViewerHtml, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
+import { mjpegHtml } from './mjpegHtml';
 
 // ---------------- CAMERA FULLSCREEN ----------------
-// HTML host for the MJPEG <img>. WebKit decodes multipart/x-mixed-replace natively (expo-image /
-// RN <Image> cannot). onerror/onload post back so RN can show a diagnostic fallback.
-function mjpegHtml(streamUrl: string): string {
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<style>html,body{margin:0;height:100%;background:#060708;overflow:hidden}
-img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#060708}</style></head>
-<body><img id="cam" src="${streamUrl}"
- onerror="window.ReactNativeWebView&&window.ReactNativeWebView.postMessage('error')"
- onload="window.ReactNativeWebView&&window.ReactNativeWebView.postMessage('frame')"></body></html>`;
-}
-
-export function CameraOverlay({ client, printerId, streamUrl, status, onClose, onRefresh }: { client: BambuddyClient; printerId: number; streamUrl: string | null; status: PrinterStatus | null; onClose: () => void; onRefresh: () => void }) {
+export function CameraOverlay({ streamUrl, status, onClose, onRefresh }: { streamUrl: string | null; status: PrinterStatus | null; onClose: () => void; onRefresh: () => void }) {
   const insets = useSafeAreaInsets();
   const vm = presentDashboard(status, Date.now());
-  const [streamErr, setStreamErr] = useState(false);
-  const [diag, setDiag] = useState<string | null>(null);
+  // connecting = minting token / camera warming up; live = ≥1 frame decoded; failed = gave up (warm-up
+  // deadline hit, or no stream URL ever materialized because the token mint kept failing).
+  const [phase, setPhase] = useState<'connecting' | 'live' | 'failed'>('connecting');
   const [reloadKey, setReloadKey] = useState(0);
 
-  // When the stream <img> errors, fetch the structured diagnostic so the user sees WHY.
-  useEffect(() => {
-    if (!streamErr) return;
-    let alive = true;
-    client.diagnoseCamera(printerId)
-      .then((d) => {
-        if (!alive) return;
-        setDiag(
-          d.summary_code === 'printer_unreachable'
-            ? `Server can't reach the camera (port ${d.port}). On the printer, enable LAN Mode Live View — and confirm it's on the same network.`
-            : `Camera unavailable (${d.stages?.find((s) => s.status === 'failed')?.code ?? d.summary_code}).`,
-        );
-      })
-      .catch(() => alive && setDiag('Camera unavailable.'));
-    return () => { alive = false; };
-  }, [streamErr, client, printerId]);
+  // Re-arm to "connecting" whenever a fresh stream URL arrives (token (re)mint) or we manually retry.
+  useEffect(() => { setPhase('connecting'); }, [streamUrl, reloadKey]);
 
-  const retry = () => { setStreamErr(false); setDiag(null); onRefresh(); setReloadKey((k) => k + 1); };
-  const live = !!streamUrl && !streamErr;
+  // Safety net: if no stream URL ever arrives (mintCameraToken rejecting/hanging), no WebView mounts to
+  // report 'failed', so surface the recoverable failed card instead of an endless spinner.
+  useEffect(() => {
+    if (streamUrl) return; // a mounted WebView reports its own outcome via onMessage
+    const id = setTimeout(() => setPhase((p) => (p === 'connecting' ? 'failed' : p)), 8000);
+    return () => clearTimeout(id);
+  }, [streamUrl, reloadKey]);
+
+  // reloadKey re-arms the effects above (so a retry that yields the same/no token still shows feedback)
+  // but is intentionally NOT in the WebView key — keying the WebView on streamUrl alone means a fresh
+  // token triggers exactly one remount/warm-up instead of two (sync reloadKey bump + async new URL).
+  const retry = () => { onRefresh(); setReloadKey((k) => k + 1); };
+  const onMessage = (data: string) => {
+    if (data === 'frame') setPhase('live');
+    else if (data === 'failed') setPhase('failed');
+    else setPhase((p) => (p === 'live' ? p : 'connecting')); // 'connecting' | 'retry'
+  };
+  const live = phase === 'live';
+  // A known-offline printer won't ever produce a frame — show the actionable card now, not after a
+  // full warm-up deadline of spinning.
+  const failedView = phase === 'failed' || (!live && vm.kind === 'offline');
 
   return (
     <View style={{ position: 'absolute', inset: 0, backgroundColor: '#060708', zIndex: 70 } as any}>
-      {live ? (
+      {streamUrl && (
         <WebView
-          key={`${streamUrl}-${reloadKey}`}
-          source={{ html: mjpegHtml(streamUrl!) }}
+          key={streamUrl}
+          source={{ html: mjpegHtml(streamUrl) }}
           originWhitelist={['*']}
           style={{ flex: 1, backgroundColor: '#060708' }}
           scrollEnabled={false}
           javaScriptEnabled
           mediaPlaybackRequiresUserAction={false}
           allowsInlineMediaPlayback
-          onMessage={(e) => { if (e.nativeEvent.data === 'error') setStreamErr(true); }}
+          onMessage={(e) => onMessage(e.nativeEvent.data)}
         />
-      ) : (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 }}>
-          <Feather name="video-off" size={30} color="#3a4046" />
-          <Text style={{ marginTop: 14, fontFamily: mono, color: '#3a4046', letterSpacing: 2, fontSize: 11 }}>CHAMBER · NO SIGNAL</Text>
-          {diag && <Text style={{ marginTop: 12, color: '#6b7177', fontSize: 13, lineHeight: 19, textAlign: 'center' }}>{diag}</Text>}
-          <Pressable onPress={retry} style={{ marginTop: 18, paddingHorizontal: 18, height: 42, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Retry</Text>
-          </Pressable>
+      )}
+      {!live && (
+        <View pointerEvents={failedView ? 'auto' : 'none'} style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 } as any}>
+          {failedView ? (
+            <>
+              <Feather name="video-off" size={30} color="#3a4046" />
+              <Text style={{ marginTop: 14, fontFamily: mono, color: '#3a4046', letterSpacing: 2, fontSize: 11 }}>CHAMBER · NO SIGNAL</Text>
+              <Text style={{ marginTop: 12, color: '#6b7177', fontSize: 13, lineHeight: 19, textAlign: 'center' }}>
+                {vm.kind === 'offline'
+                  ? 'Printer is offline. The chamber camera needs the printer powered on and connected to Wi-Fi, then tap Retry.'
+                  : 'Couldn’t wake the chamber camera. The A1’s camera is on-demand and can be slow — give it a moment and tap Retry. Make sure the printer is powered on.'}
+              </Text>
+              <Pressable onPress={retry} style={{ marginTop: 18, paddingHorizontal: 18, height: 42, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Retry</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator color="#6b7177" />
+              <Text style={{ marginTop: 14, fontFamily: mono, color: '#6b7177', letterSpacing: 2, fontSize: 11 }}>CONNECTING…</Text>
+              <Text style={{ marginTop: 10, color: '#4f555b', fontSize: 12.5, lineHeight: 18, textAlign: 'center' }}>
+                Waking the chamber camera — the first frame can take a few seconds on the A1.
+              </Text>
+            </>
+          )}
         </View>
       )}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
@@ -360,66 +373,7 @@ const BED_TYPES: { id: string; label: string }[] = [
 ];
 
 // ---------------- GCODE LAYER VIEWER (scrub the sliced model layer by layer) ----------------
-const MAX_GCODE_BYTES = 14_000_000; // guard: don't try to render giant files on-device
-
-function gcodeViewerHtml(data: GcodeLayers): string {
-  // The heavy parsing already ran in TS (parseGcodeLayers, unit-tested). The WebView only RENDERS:
-  // it receives layer segments as JSON and draws the picked layer on a 2D Canvas. No CDN import
-  // (that's what failed before with "importing layer script failed") — works fully offline.
-  const lit = JSON.stringify(data).replace(/</g, '\\u003c');
-  return `<!doctype html><html><head>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<style>
-  html,body{margin:0;height:100%;background:#0A0B0C;overflow:hidden;font-family:-apple-system,system-ui}
-  #c{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;display:block}
-  #bar{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 40px);padding:0 22px;z-index:10}
-  #card{background:rgba(22,24,27,0.78);border-radius:16px;padding:14px 16px 16px}
-  #lbl{color:#fff;font:600 12px ui-monospace,Menlo,monospace;text-align:center;margin-bottom:12px;letter-spacing:0.5px}
-  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:12px;border-radius:6px;background:#2A2E33;outline:none}
-  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:#2BD4C0;box-shadow:0 1px 6px rgba(0,0,0,0.5)}
-  #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:#6b7177;font-size:14px;padding:36px;text-align:center;line-height:1.5}
-</style></head>
-<body>
-<canvas id="c"></canvas>
-<div id="bar"><div id="card"><div id="lbl">Rendering…</div><input id="s" type="range" min="1" max="1" value="1"></div></div>
-<div id="err"></div>
-<script>
-  var post=function(o){window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(o));};
-  function fail(m){var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t render the preview. '+m;post({type:'error',message:String(m)});}
-  window.addEventListener('error',function(e){fail(e.message||'error');});
-  try{
-    var DATA=${lit}, layers=DATA.layers, b=DATA.bounds;
-    var total=layers.length||1, minX=b.minX,minY=b.minY;
-    var bw=(b.maxX-b.minX)||1, bh=(b.maxY-b.minY)||1;
-    var RESERVE=130; // px kept clear at the bottom for the control card
-    var cv=document.getElementById('c'), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||2, W=0,Hh=0;
-    var base=document.createElement('canvas'), bctx=base.getContext('2d'), s=1,ox=0,oy=0,cur=total;
-    function fit(){
-      var pad=34; s=Math.min((W-2*pad)/bw,(Hh-2*pad-RESERVE)/bh);
-      ox=(W-bw*s)/2; oy=(Hh-RESERVE-bh*s)/2;
-    }
-    function tx(v){return ox+(v-minX)*s;}
-    function ty(v){return Hh-RESERVE-(oy+(v-minY)*s);}
-    function stroke(c,L,w){ c.lineWidth=w; c.strokeStyle=(c===bctx)?'rgba(124,245,230,0.07)':'#2BD4C0'; c.lineCap='round'; c.beginPath();
-      for(var i=0;i<L.length;i+=4){ c.moveTo(tx(L[i]),ty(L[i+1])); c.lineTo(tx(L[i+2]),ty(L[i+3])); } c.stroke(); }
-    function buildBase(){ // faint full-model silhouette, drawn once per layout -> cheap scrubbing
-      base.width=cv.width; base.height=cv.height; bctx.setTransform(dpr,0,0,dpr,0,0); bctx.clearRect(0,0,W,Hh);
-      for(var k=0;k<layers.length;k++) stroke(bctx,layers[k],1);
-    }
-    function draw(idx){ ctx.clearRect(0,0,W,Hh); ctx.drawImage(base,0,0,W,Hh); stroke(ctx,layers[idx-1]||[],1.7); }
-    function resize(){ W=cv.clientWidth;Hh=cv.clientHeight; cv.width=W*dpr;cv.height=Hh*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); fit(); buildBase(); draw(cur); }
-    var s2=document.getElementById('s'), lbl=document.getElementById('lbl');
-    s2.max=String(total); s2.value=String(total); lbl.textContent='Layer '+total+' / '+total;
-    var pending=false;
-    s2.addEventListener('input',function(){ cur=+s2.value; lbl.textContent='Layer '+cur+' / '+total; if(pending)return; pending=true; requestAnimationFrame(function(){pending=false;draw(cur);}); });
-    window.addEventListener('resize',resize);
-    resize();
-    post({type:'ready',total:total});
-  }catch(e){fail((e&&e.message)||e);}
-</script>
-</body></html>`;
-}
-
+// Pure parser + HTML builder live in @/library/gcodeLayers (unit-tested, headless-renderable).
 export function GcodeViewerOverlay({ client, fileId, title, onClose }: { client: BambuddyClient; fileId: number; title: string; onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const [html, setHtml] = useState<string | null>(null);
@@ -616,9 +570,10 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
         const std = p.standard ?? {};
         const a1 = (arr: Preset[] = []) => arr.filter((x) => x.name.includes('A1') && !x.name.includes('A1M') && !x.name.toLowerCase().includes('mini'));
         const printer = a1(std.printer).find((x) => x.name.includes('0.4 nozzle'));
-        // Merge process presets across standard + any user/custom/local groups the server returns,
-        // so a support-enabled profile saved in Studio/Bambuddy shows up here too.
-        const procAll: Preset[] = [std.process, p.user?.process, p.custom?.process, p.local?.process].flatMap((g) => g ?? []);
+        // Merge process presets across all groups Bambuddy returns (standard + the user's own
+        // local/cloud/orca_cloud profiles), so a support-enabled profile saved in Studio/Bambuddy
+        // shows up here too. Group keys verified against the live API.
+        const procAll: Preset[] = [std.process, p.local?.process, p.cloud?.process, p.orca_cloud?.process].flatMap((g) => g ?? []);
         const a1proc = a1(procAll);
         // Dedupe by id (a custom profile can echo into multiple groups).
         const seen = new Set<string>();
