@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import { printActivity, type PrintActivityProps } from './PrintActivity';
+import { nozzleIconUri } from './nozzleIcon';
 import type { LiveActivity } from 'expo-widgets';
 import type { PrinterStatus } from '@/api/types';
 import type { DashVM } from '@/dashboard/present';
@@ -18,11 +19,12 @@ const SYMBOLS: Record<string, string> = {
 };
 
 /** Pure: DashVM (+raw status) -> the flat ContentState the activity renders. */
-export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number): PrintActivityProps {
+export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number, iconUri = ''): PrintActivityProps {
   const finished = vm.kind === 'complete';
   const remainingMin = status.remaining_time ?? 0;
   const t = status.temperatures;
   return {
+    iconUri,
     name: status.subtask_name ?? '',
     stateLabel: vm.stateLabel,
     progress: vm.progressInt,
@@ -81,7 +83,7 @@ export function useLiveActivity(vm: DashVM | null, status: PrinterStatus | null)
     }
 
     const now = Date.now();
-    const next = toContentState(vm, status, now);
+    const next = toContentState(vm, status, now, nozzleIconUri());
 
     // 1) Terminal -> end the activity.
     if (isTerminal(vm)) {

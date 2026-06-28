@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <!-- transparent bg; flat colors so it stays crisp when scaled to 14-26pt -->
+  <rect x="60" y="36" width="72" height="50" rx="12" fill="#D4D9DE"/>
+  <rect x="60" y="80" width="72" height="9" rx="4.5" fill="#9AA0A6"/>
+  <polygon points="74,92 118,92 106,128 96,150 86,128" fill="#C2C7CC"/>
+  <circle cx="96" cy="120" r="11" fill="#2BD4C0"/>
+  <rect x="58" y="150" width="76" height="15" rx="7.5" fill="#2BD4C0"/>
+</svg>
