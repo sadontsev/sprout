@@ -7,6 +7,7 @@ import { getConfig, type AppConfig } from '@/config/secureConfig';
 import { BambuddyClient } from '@/api/bambuddyClient';
 import { usePrinterStatus } from '@/realtime/usePrinterStatus';
 import { useCameraStream } from '@/realtime/useCameraStream';
+import { useLiveActivity } from '@/liveactivity/useLiveActivity';
 import { presentDashboard } from '@/dashboard/present';
 import { DashboardView, type DashHandlers } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
@@ -44,6 +45,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   const client = useMemo(() => new BambuddyClient({ baseUrl: config.baseUrl, apiKey: config.apiKey }), [config]);
   const { status } = usePrinterStatus(client, PRINTER_ID);
   const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
+  useLiveActivity(vm, status); // drives the iOS Live Activity (lock screen + Dynamic Island)
 
   const [camToken, setCamToken] = useState<string | null>(config.cameraToken ?? null);
   const [tick, setTick] = useState(0);

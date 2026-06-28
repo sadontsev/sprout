@@ -9,38 +9,84 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.mvks5.bambu",
+      "appleTeamId": "<YOUR_TEAM_ID>",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "CFBundleDocumentTypes": [
-          { "CFBundleTypeName": "3MF Model", "LSHandlerRank": "Owner", "LSItemContentTypes": ["com.bambulab.3mf"] },
-          { "CFBundleTypeName": "Bambu Sliced 3MF", "LSHandlerRank": "Owner", "LSItemContentTypes": ["com.bambulab.gcode-3mf"] },
-          { "CFBundleTypeName": "G-code", "LSHandlerRank": "Owner", "LSItemContentTypes": ["com.bambulab.gcode"] },
-          { "CFBundleTypeName": "STL Model", "LSHandlerRank": "Alternate", "LSItemContentTypes": ["public.standard-tesselated-geometry-format"] }
+          {
+            "CFBundleTypeName": "3MF Model",
+            "LSHandlerRank": "Owner",
+            "LSItemContentTypes": [
+              "com.bambulab.3mf"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Bambu Sliced 3MF",
+            "LSHandlerRank": "Owner",
+            "LSItemContentTypes": [
+              "com.bambulab.gcode-3mf"
+            ]
+          },
+          {
+            "CFBundleTypeName": "G-code",
+            "LSHandlerRank": "Owner",
+            "LSItemContentTypes": [
+              "com.bambulab.gcode"
+            ]
+          },
+          {
+            "CFBundleTypeName": "STL Model",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "public.standard-tesselated-geometry-format"
+            ]
+          }
         ],
         "UTImportedTypeDeclarations": [
           {
             "UTTypeIdentifier": "com.bambulab.3mf",
             "UTTypeDescription": "3MF Model",
-            "UTTypeConformsTo": ["public.data", "public.zip-archive"],
+            "UTTypeConformsTo": [
+              "public.data",
+              "public.zip-archive"
+            ],
             "UTTypeTagSpecification": {
-              "public.filename-extension": ["3mf"],
-              "public.mime-type": ["model/3mf", "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"]
+              "public.filename-extension": [
+                "3mf"
+              ],
+              "public.mime-type": [
+                "model/3mf",
+                "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"
+              ]
             }
           },
           {
             "UTTypeIdentifier": "com.bambulab.gcode-3mf",
             "UTTypeDescription": "Bambu Sliced 3MF",
-            "UTTypeConformsTo": ["com.bambulab.3mf"],
-            "UTTypeTagSpecification": { "public.filename-extension": ["gcode.3mf"] }
+            "UTTypeConformsTo": [
+              "com.bambulab.3mf"
+            ],
+            "UTTypeTagSpecification": {
+              "public.filename-extension": [
+                "gcode.3mf"
+              ]
+            }
           },
           {
             "UTTypeIdentifier": "com.bambulab.gcode",
             "UTTypeDescription": "G-code",
-            "UTTypeConformsTo": ["public.text", "public.data"],
+            "UTTypeConformsTo": [
+              "public.text",
+              "public.data"
+            ],
             "UTTypeTagSpecification": {
-              "public.filename-extension": ["gcode"],
-              "public.mime-type": ["text/x.gcode"]
+              "public.filename-extension": [
+                "gcode"
+              ],
+              "public.mime-type": [
+                "text/x.gcode"
+              ]
             }
           }
         ]
@@ -82,7 +128,17 @@
           }
         }
       ],
-      "./plugins/withIosPodMinDeploymentTarget"
+      "./plugins/withIosPodMinDeploymentTarget",
+      [
+        "expo-widgets",
+        {
+          "bundleIdentifier": "com.mvks5.bambu.LiveActivity",
+          "groupIdentifier": "group.com.mvks5.bambu",
+          "enablePushNotifications": false,
+          "frequentUpdates": true,
+          "widgets": []
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
