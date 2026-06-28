@@ -293,11 +293,22 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
     return () => clearInterval(id);
   }, [client, plug]);
 
-  const toggle = () => {
+  const applyPlug = (next: boolean) => {
     if (!plug) return;
-    const next = !on;
     setOn(next);
     client.plugControl(plug.id, next).catch(() => setOn(!next));
+  };
+  const toggle = () => {
+    if (!plug) return;
+    if (on) {
+      // Switching OFF cuts power to the printer — confirm so an accidental tap can't kill a print.
+      Alert.alert('Switch off the printer?', 'This cuts power at the smart plug. If a print is running, it will stop.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Switch off', style: 'destructive', onPress: () => applyPlug(false) },
+      ]);
+    } else {
+      applyPlug(true); // turning on is safe — no confirmation
+    }
   };
 
   const price = settings?.energy_cost_per_kwh ?? null;
