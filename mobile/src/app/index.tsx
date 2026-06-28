@@ -1,9 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import * as Linking from 'expo-linking';
+import { File, Paths } from 'expo-file-system';
 import { getConfig, type AppConfig } from '@/config/secureConfig';
 import { BambuddyClient } from '@/api/bambuddyClient';
 import { usePrinterStatus } from '@/realtime/usePrinterStatus';
+import { useCameraStream } from '@/realtime/useCameraStream';
 import { presentDashboard } from '@/dashboard/present';
 import { DashboardView, type DashHandlers } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
@@ -59,6 +62,46 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   const [speedIdx, setSpeedIdx] = useState(2);
   const [libKey, setLibKey] = useState(0);
 
+  // Live MJPEG camera stream — mints a token only while the fullscreen camera is open.
+  const cameraOpen = overlay === 'camera';
+  const { streamUrl, remint } = useCameraStream(client, PRINTER_ID, cameraOpen, 10);
+
+  // Inbound files: when a .3mf/.stl/.gcode is shared/opened into the app, copy it into cache and
+  // upload it to the library. The SceneDelegate forwards openURLContexts, so expo-linking sees it.
+  const [importing, setImporting] = useState(false);
+  useEffect(() => {
+    let handledInitial = false;
+    const handleUrl = async (url: string | null) => {
+      if (!url || importing) return;
+      if (!url.startsWith('file://') && !url.startsWith('content://')) return; // ignore our own bambu:// links
+      try {
+        setImporting(true);
+        const src = new File(url);
+        const name = src.name || `import-${Date.now()}.3mf`;
+        const dest = new File(Paths.cache, name);
+        if (dest.exists) dest.delete();
+        src.copy(dest);
+        await client.uploadFile(dest.uri, name);
+        setLibKey((k) => k + 1);
+        setTab('library');
+        Alert.alert('Added to library', name);
+      } catch (e) {
+        Alert.alert('Couldn’t import file', String(e));
+      } finally {
+        setImporting(false);
+      }
+    };
+    Linking.getInitialURL().then((url) => {
+      handledInitial = true;
+      void handleUrl(url);
+    });
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      if (handledInitial) void handleUrl(url);
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client]);
+
   const handlers: DashHandlers = {
     onSettings: () => router.push('/settings'),
     onCamera: () => setOverlay('camera'),
@@ -82,7 +125,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       {tab === 'printer' && <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} />}
-      {tab === 'library' && <LibraryView key={libKey} client={client} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
+      {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
       {tab === 'queue' && <QueueView client={client} status={status} onBrowse={() => setTab('library')} />}
       {tab === 'ams' && <AmsView client={client} status={status} printerId={PRINTER_ID} />}
       {tab === 'power' && <PowerView client={client} printerId={PRINTER_ID} />}
@@ -90,7 +133,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       <TabBar active={tab} onTab={setTab} />
 
       {overlay === 'camera' && (
-        <CameraOverlay snapshotUri={snapshotUri} status={status} onClose={() => setOverlay(null)} onRefresh={() => setTick((t) => t + 1)} />
+        <CameraOverlay client={client} printerId={PRINTER_ID} streamUrl={streamUrl} status={status} onClose={() => setOverlay(null)} onRefresh={remint} />
       )}
       {overlay === 'upload' && (
         <UploadSheet client={client} onClose={() => setOverlay(null)} onUploaded={() => setLibKey((k) => k + 1)} />
@@ -99,6 +142,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
         <WizardOverlay
           client={client}
           file={wizardFile}
+          camToken={camToken}
           status={status}
           printerId={PRINTER_ID}
           onClose={() => setWizardFile(null)}
