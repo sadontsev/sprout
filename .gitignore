@@ -1,0 +1,24 @@
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
+*.log
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.key
+*.p8
+*.mobileprovision
+
+# iOS / native build
+ios/Pods/
+ios/build/
+*.ipa
+
+# Misc
+.idea/
+.vscode/
