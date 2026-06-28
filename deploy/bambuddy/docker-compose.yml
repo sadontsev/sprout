@@ -1,7 +1,7 @@
 # Bambuddy — sole LAN owner of the A1. Host networking for SSDP + camera.
 services:
   bambuddy:
-    image: ghcr.io/maziggy/bambuddy:${BAMBUDDY_TAG:?set BAMBUDDY_TAG in .env}
+    image: docker.io/maziggy/bambuddy:${BAMBUDDY_TAG:-latest}
     container_name: bambuddy
     restart: unless-stopped
     network_mode: host
