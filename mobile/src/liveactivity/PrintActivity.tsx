@@ -7,7 +7,7 @@
 // may reference only its args (`p`, `_env`), `Math`/`Date`, and the @expo/ui components/modifiers.
 import { createLiveActivity, type LiveActivityEnvironment } from 'expo-widgets';
 import { HStack, VStack, Text, Image, Spacer, ProgressView } from '@expo/ui/swift-ui';
-import { font, foregroundStyle, padding, tint, frame } from '@expo/ui/swift-ui/modifiers';
+import { font, foregroundStyle, padding, tint, frame, resizable, aspectRatio } from '@expo/ui/swift-ui/modifiers';
 
 /** Flat, JSON-serializable ContentState the activity renders. */
 export type PrintActivityProps = {
@@ -40,7 +40,7 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
   // Brand nozzle glyph from the App Group (uiImage); falls back to the SF symbol if unavailable.
   const glyph = (s: number) =>
     p.iconUri
-      ? <Image uiImage={p.iconUri} modifiers={[frame({ width: s, height: s })]} />
+      ? <Image uiImage={p.iconUri} modifiers={[resizable(), aspectRatio({ contentMode: 'fit' }), frame({ width: s, height: s })]} />
       : <Image systemName={p.symbol as never} color={p.tint} size={s} />;
 
   return {
