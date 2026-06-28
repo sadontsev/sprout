@@ -50,7 +50,7 @@
 
 ## 6. Outstanding / follow-ups
 
-- **Cloudflare Access (recommended hardening, owner action):** the tunnel currently relies on Bambuddy's own auth (401 without key). For defense-in-depth, in the **Zero Trust dashboard** (account `88925d559b52ae4efe8f91861067c806`): Access → Applications → Add self-hosted `bambuddy.example.com`; Access → Service Auth → create a service token "Bambuddy iOS App"; policy action **Service Auth** for that token (+ an Allow for `owner@example.com` for browser). The app then sends `CF-Access-Client-Id`/`CF-Access-Client-Secret` headers in addition to `X-API-Key`. (No on-box Zero Trust API token exists, so this is manual.)
+- **Cloudflare exposure:** `bambuddy.example.com` is live via the existing tunnel and gated by Bambuddy's own auth (401 without the API key) — sufficient for v1. cloudflared/tunnel work is owned by the **`linux-sysadmin` agent** on <your-server> (it manages routes + webnet networking; no Cloudflare API token needed for that). Optional future hardening (a Cloudflare Access / Zero-Trust wall on top) can be set up via that agent on request; the app's `BambuddyClient.extraHeaders` is already designed to carry `CF-Access-Client-*` headers if added.
 - **DNS negative cache:** `bambuddy.example.com` CNAME was created after some resolvers had cached NXDOMAIN (SOA min TTL 1800 s) → up to 30 min for 8.8.8.8 / pihole to resolve. `@1.1.1.1` resolves immediately. Self-heals; no action.
 - **Physical print test:** deferred to printer-on + owner present.
 - **Bambuddy auth quirk:** password policy requires upper + special char (min length). Tokens are 24h with no refresh → the app uses the long-lived API key, not JWT.
