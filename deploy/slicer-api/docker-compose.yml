@@ -1,0 +1,41 @@
+# Slicer sidecars for Bambuddy. Bambu Studio CLI is the default engine.
+# Start both:  docker compose --profile bambu up -d
+# linux/amd64 only (<your-server> is x86_64 — OK).
+services:
+  orca-slicer-api:
+    image: ghcr.io/maziggy/orca-slicer-api:${SIDECAR_TAG:-latest}
+    container_name: orca-slicer-api
+    restart: unless-stopped
+    ports:
+      - "${ORCA_API_PORT:-3003}:3000"
+    volumes:
+      - ./data/orca:/app/data
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  bambu-studio-api:
+    image: ghcr.io/maziggy/bambu-studio-api:${SIDECAR_TAG:-latest}
+    container_name: bambu-studio-api
+    restart: unless-stopped
+    ports:
+      - "${BAMBU_API_PORT:-3001}:3000"
+    volumes:
+      - ./data/bambu:/app/data
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    profiles:
+      - bambu
