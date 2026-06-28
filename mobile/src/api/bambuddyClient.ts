@@ -1,5 +1,5 @@
 import { File, UploadType } from 'expo-file-system';
-import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse } from './types';
+import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse, PlatesResponse } from './types';
 
 export interface BambuddyClientConfig {
   /** e.g. https://bambuddy.example.com */
@@ -116,8 +116,22 @@ export class BambuddyClient {
     }
     return JSON.parse(res.body) as { id: number };
   }
-  getPlates(fileId: number): Promise<any> {
+  /** Full file detail incl. the slicer-baked `metadata` (total_layers, layer_height, temps...). */
+  getFileDetail(fileId: number): Promise<LibraryFile> {
+    return this.req(`/api/v1/library/files/${fileId}`).then((r) => r.json());
+  }
+  /** Per-plate breakdown of a sliced .gcode.3mf (time, grams, filaments, multi-plate). */
+  getPlates(fileId: number): Promise<PlatesResponse> {
     return this.req(`/api/v1/library/files/${fileId}/plates`).then((r) => r.json());
+  }
+  /** Rendered plate thumbnail (1-based index). Gated by the camera stream token, like fileThumbUrl. */
+  plateThumbUrl(fileId: number, plateIndex: number, token: string | null): string {
+    if (!token) return '';
+    return `${this.baseUrl}/api/v1/library/files/${fileId}/plate-thumbnail/${plateIndex}?token=${encodeURIComponent(token)}`;
+  }
+  /** Raw G-code text of a sliced file — used to render the layer-by-layer preview. Can be large. */
+  getGcode(fileId: number): Promise<string> {
+    return this.req(`/api/v1/library/files/${fileId}/gcode`).then((r) => r.text());
   }
 
   // --- Slicing ---

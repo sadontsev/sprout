@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { WebView } from 'react-native-webview';
@@ -7,8 +7,11 @@ import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
-import type { LibraryFile, PrinterStatus, MakerWorldResolved, MWInstance } from '@/api/types';
+import type { LibraryFile, PrinterStatus, MakerWorldResolved, MWInstance, PlatesResponse, FileMetadata, SlotAssignment } from '@/api/types';
 import { presentDashboard, normColor } from '@/dashboard/present';
+import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
+import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
+import { parseGcodeLayers, type GcodeLayers } from '@/library/gcodeLayers';
 
 // ---------------- CAMERA FULLSCREEN ----------------
 // HTML host for the MJPEG <img>. WebKit decodes multipart/x-mixed-replace natively (expo-image /
@@ -348,30 +351,293 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
 // ---------------- PRINT WIZARD ----------------
 type Preset = { id: string; name: string; source?: string };
 
+// Build plates the A1 supports — `id` is the canonical bed_type the slicer expects.
+const BED_TYPES: { id: string; label: string }[] = [
+  { id: 'Textured PEI Plate', label: 'Textured PEI' },
+  { id: 'Smooth PEI Plate', label: 'Smooth PEI' },
+  { id: 'Cool Plate', label: 'Cool Plate' },
+  { id: 'Engineering Plate', label: 'Engineering' },
+];
+
+// ---------------- GCODE LAYER VIEWER (scrub the sliced model layer by layer) ----------------
+const MAX_GCODE_BYTES = 14_000_000; // guard: don't try to render giant files on-device
+
+function gcodeViewerHtml(data: GcodeLayers): string {
+  // The heavy parsing already ran in TS (parseGcodeLayers, unit-tested). The WebView only RENDERS:
+  // it receives layer segments as JSON and draws the picked layer on a 2D Canvas. No CDN import
+  // (that's what failed before with "importing layer script failed") — works fully offline.
+  const lit = JSON.stringify(data).replace(/</g, '\\u003c');
+  return `<!doctype html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<style>
+  html,body{margin:0;height:100%;background:#0A0B0C;overflow:hidden;font-family:-apple-system,system-ui}
+  #c{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;display:block}
+  #bar{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 40px);padding:0 22px;z-index:10}
+  #card{background:rgba(22,24,27,0.78);border-radius:16px;padding:14px 16px 16px}
+  #lbl{color:#fff;font:600 12px ui-monospace,Menlo,monospace;text-align:center;margin-bottom:12px;letter-spacing:0.5px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:12px;border-radius:6px;background:#2A2E33;outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:#2BD4C0;box-shadow:0 1px 6px rgba(0,0,0,0.5)}
+  #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:#6b7177;font-size:14px;padding:36px;text-align:center;line-height:1.5}
+</style></head>
+<body>
+<canvas id="c"></canvas>
+<div id="bar"><div id="card"><div id="lbl">Rendering…</div><input id="s" type="range" min="1" max="1" value="1"></div></div>
+<div id="err"></div>
+<script>
+  var post=function(o){window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(o));};
+  function fail(m){var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t render the preview. '+m;post({type:'error',message:String(m)});}
+  window.addEventListener('error',function(e){fail(e.message||'error');});
+  try{
+    var DATA=${lit}, layers=DATA.layers, b=DATA.bounds;
+    var total=layers.length||1, minX=b.minX,minY=b.minY;
+    var bw=(b.maxX-b.minX)||1, bh=(b.maxY-b.minY)||1;
+    var RESERVE=130; // px kept clear at the bottom for the control card
+    var cv=document.getElementById('c'), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||2, W=0,Hh=0;
+    var base=document.createElement('canvas'), bctx=base.getContext('2d'), s=1,ox=0,oy=0,cur=total;
+    function fit(){
+      var pad=34; s=Math.min((W-2*pad)/bw,(Hh-2*pad-RESERVE)/bh);
+      ox=(W-bw*s)/2; oy=(Hh-RESERVE-bh*s)/2;
+    }
+    function tx(v){return ox+(v-minX)*s;}
+    function ty(v){return Hh-RESERVE-(oy+(v-minY)*s);}
+    function stroke(c,L,w){ c.lineWidth=w; c.strokeStyle=(c===bctx)?'rgba(124,245,230,0.07)':'#2BD4C0'; c.lineCap='round'; c.beginPath();
+      for(var i=0;i<L.length;i+=4){ c.moveTo(tx(L[i]),ty(L[i+1])); c.lineTo(tx(L[i+2]),ty(L[i+3])); } c.stroke(); }
+    function buildBase(){ // faint full-model silhouette, drawn once per layout -> cheap scrubbing
+      base.width=cv.width; base.height=cv.height; bctx.setTransform(dpr,0,0,dpr,0,0); bctx.clearRect(0,0,W,Hh);
+      for(var k=0;k<layers.length;k++) stroke(bctx,layers[k],1);
+    }
+    function draw(idx){ ctx.clearRect(0,0,W,Hh); ctx.drawImage(base,0,0,W,Hh); stroke(ctx,layers[idx-1]||[],1.7); }
+    function resize(){ W=cv.clientWidth;Hh=cv.clientHeight; cv.width=W*dpr;cv.height=Hh*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); fit(); buildBase(); draw(cur); }
+    var s2=document.getElementById('s'), lbl=document.getElementById('lbl');
+    s2.max=String(total); s2.value=String(total); lbl.textContent='Layer '+total+' / '+total;
+    var pending=false;
+    s2.addEventListener('input',function(){ cur=+s2.value; lbl.textContent='Layer '+cur+' / '+total; if(pending)return; pending=true; requestAnimationFrame(function(){pending=false;draw(cur);}); });
+    window.addEventListener('resize',resize);
+    resize();
+    post({type:'ready',total:total});
+  }catch(e){fail((e&&e.message)||e);}
+</script>
+</body></html>`;
+}
+
+export function GcodeViewerOverlay({ client, fileId, title, onClose }: { client: BambuddyClient; fileId: number; title: string; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [html, setHtml] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    client.getGcode(fileId)
+      .then((g) => {
+        if (!alive) return;
+        if (g.length > MAX_GCODE_BYTES) {
+          setErr('This sliced file is too large to preview on the phone.');
+          return;
+        }
+        const parsed = parseGcodeLayers(g);
+        if (parsed.layers.length === 0) {
+          setErr('No printable layers were found in this file.');
+          return;
+        }
+        setHtml(gcodeViewerHtml(parsed));
+      })
+      .catch((e) => alive && setErr(String(e)));
+    return () => {
+      alive = false;
+    };
+  }, [client, fileId]);
+
+  return (
+    <View style={{ position: 'absolute', inset: 0, backgroundColor: '#0A0B0C', zIndex: 80 } as any}>
+      {html && !err ? (
+        <WebView
+          source={{ html, baseUrl: 'https://localhost/' }}
+          originWhitelist={['*']}
+          style={{ flex: 1, backgroundColor: '#0A0B0C' }}
+          scrollEnabled={false}
+          javaScriptEnabled
+          domStorageEnabled
+          allowsInlineMediaPlayback
+          onMessage={(e) => {
+            try {
+              const m = JSON.parse(e.nativeEvent.data);
+              if (m.type === 'error') setErr(m.message || 'render error');
+            } catch {
+              /* ignore */
+            }
+          }}
+        />
+      ) : (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 }}>
+          {err ? (
+            <>
+              <Feather name="layers" size={30} color="#3a4046" />
+              <Text style={{ marginTop: 14, color: '#6b7177', fontSize: 14, textAlign: 'center', lineHeight: 20 }}>{err}</Text>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator color={c.accent} />
+              <Text style={{ marginTop: 14, fontFamily: mono, color: '#3a4046', letterSpacing: 2, fontSize: 11 }}>LOADING G-CODE…</Text>
+            </>
+          )}
+        </View>
+      )}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+        <Pressable onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name="chevron-down" size={22} color="#fff" />
+        </Pressable>
+        <View style={{ flex: 1, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 13, backgroundColor: 'rgba(22,24,27,0.55)' }}>
+          <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 13, color: '#fff' }}>{title}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ---------------- PLATE REVIEW (sliced model: plates · time · layers · filament) ----------------
+function PStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <View style={{ flex: 1, padding: 13, borderRadius: 14, backgroundColor: c.s2 }}>
+      <Text style={{ fontWeight: '600', fontSize: 9, letterSpacing: 0.8, color: c.t3, fontFamily: mono }}>{label}</Text>
+      <Text style={{ marginTop: 7, fontWeight: '700', fontSize: 19, color: c.t1, fontVariant: ['tabular-nums'], letterSpacing: -0.5 }}>{value}</Text>
+      {sub ? <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlate, onViewLayers }: { client: BambuddyClient; fileId: number; camToken: string | null; plateIndex: number; onSelectPlate?: (i: number) => void; onViewLayers?: () => void }) {
+  const [plates, setPlates] = useState<PlatesResponse | null>(null);
+  const [meta, setMeta] = useState<FileMetadata | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    Promise.allSettled([
+      client.getPlates(fileId).then((p) => alive && setPlates(p)),
+      client.getFileDetail(fileId).then((d) => alive && setMeta(d.metadata ?? null)),
+    ]).finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [client, fileId]);
+
+  const vm = buildPlateReview(plates, meta, plateIndex);
+  const plate = plates?.plates?.find((p) => p.index === vm.plateIndex);
+  const thumb = plate?.has_thumbnail ? client.plateThumbUrl(fileId, vm.plateIndex, camToken) : '';
+  const detail = [
+    vm.heightMm != null ? `${vm.heightMm} mm tall` : null,
+    vm.nozzleTemp != null ? `${vm.nozzleTemp}°C nozzle` : null,
+    vm.bedType,
+  ].filter(Boolean).join('  ·  ');
+  const settings = [vm.printer, vm.process].filter(Boolean).join('  ·  ');
+
+  return (
+    <View>
+      {vm.plateCount > 1 && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+          {plates!.plates.map((p) => {
+            const sel = p.index === vm.plateIndex;
+            return (
+              <Pressable key={p.index} onPress={() => onSelectPlate?.(p.index)} style={({ pressed }) => [{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 11, backgroundColor: sel ? c.accentDim : c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                <Text style={{ fontWeight: '600', fontSize: 13, color: sel ? c.accent : c.t2 }}>Plate {p.index}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+
+      <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+        {thumb ? (
+          <Image source={{ uri: thumb }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
+        ) : loading ? (
+          <ActivityIndicator color={c.t3} />
+        ) : (
+          <Feather name="box" size={30} color={c.t3} />
+        )}
+        {onViewLayers && !loading && (
+          <Pressable onPress={onViewLayers} style={({ pressed }) => [{ position: 'absolute', right: 10, bottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10, backgroundColor: 'rgba(10,11,12,0.72)' }, pressed && { opacity: 0.7 }]}>
+            <Feather name="layers" size={13} color={c.accent} />
+            <Text style={{ fontWeight: '600', fontSize: 11.5, color: '#fff' }}>View layers</Text>
+          </Pressable>
+        )}
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+        <PStat label="PRINT TIME" value={fmtSeconds(vm.timeSeconds)} />
+        <PStat label="LAYERS" value={vm.layers != null ? String(vm.layers) : '—'} sub={vm.layerHeight != null ? `${vm.layerHeight.toFixed(2)} mm/layer` : undefined} />
+        <PStat label="FILAMENT" value={vm.grams != null ? `${vm.grams.toFixed(1)} g` : '—'} />
+      </View>
+
+      {!!detail && <Text style={{ marginTop: 12, fontWeight: '500', fontSize: 11.5, color: c.t3, fontFamily: mono }}>{detail}</Text>}
+
+      {vm.filaments.length > 0 && (
+        <View style={{ marginTop: 14, borderRadius: 14, backgroundColor: c.s2, overflow: 'hidden' }}>
+          {vm.filaments.map((f, i) => (
+            <View key={f.slot} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: c.line }}>
+              <View style={{ width: 22, height: 22, borderRadius: 7, backgroundColor: normColor(f.color ?? undefined) ?? c.s4, borderWidth: 1, borderColor: c.line2 }} />
+              <Text style={{ flex: 1, fontWeight: '600', fontSize: 13, color: c.t1 }}>{f.type}</Text>
+              <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>
+                {f.grams != null ? `${f.grams.toFixed(1)} g` : ''}{f.meters != null ? `  ·  ${f.meters.toFixed(2)} m` : ''}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {!!settings && <Text style={{ marginTop: 12, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{settings}</Text>}
+    </View>
+  );
+}
+
 export function WizardOverlay({ client, file, camToken, status, printerId, onClose, onStarted }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; onClose: () => void; onStarted: () => void }) {
   const insets = useSafeAreaInsets();
   const alreadySliced = (file.file_type || '').includes('gcode');
   const [step, setStep] = useState(1);
-  const [presets, setPresets] = useState<{ printer?: Preset; filaments: Preset[]; qualities: Preset[] } | null>(null);
+  const [presets, setPresets] = useState<{ printer?: Preset; qualities: Preset[]; catalog: Preset[]; allFilaments: Preset[]; hasSupportProfile?: boolean } | null>(null);
+  const [assigns, setAssigns] = useState<SlotAssignment[]>([]);
+  const [showCatalog, setShowCatalog] = useState(false);
+  const defaultedRef = useRef(false);
   const [filament, setFilament] = useState<Preset | null>(null);
   const [quality, setQuality] = useState<Preset | null>(null);
   const [slicePct, setSlicePct] = useState(0);
   const [result, setResult] = useState<{ print_time_seconds?: number; filament_used_g?: number; library_file_id?: number } | null>(null);
   const [slot, setSlot] = useState<number>(status?.tray_now ?? 0);
+  const [selectedPlate, setSelectedPlate] = useState(1);
+  const [bedType, setBedType] = useState('Textured PEI Plate');
+  const [viewLayers, setViewLayers] = useState<{ fileId: number; title: string } | null>(null);
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    client.getPresets().then((p) => {
-      const std = p.standard ?? {};
-      const a1 = (arr: Preset[] = []) => arr.filter((x) => x.name.includes('A1') && !x.name.includes('A1M') && !x.name.toLowerCase().includes('mini'));
-      const printer = a1(std.printer).find((x) => x.name.includes('0.4 nozzle'));
-      const filaments = a1(std.filament).filter((x) => /Bambu (PLA Basic|PETG Basic|PLA Matte|ABS) @BBL A1$/.test(x.name));
-      const qualities = a1(std.process).filter((x) => /0\.(12|16|20|28)mm .*@BBL A1$/.test(x.name));
-      setPresets({ printer, filaments, qualities });
-      setFilament(filaments[0] ?? null);
-      setQuality(qualities.find((q) => q.name.includes('0.20')) ?? qualities[0] ?? null);
-    }).catch(() => setPresets({ filaments: [], qualities: [] }));
-  }, [client]);
+    let alive = true;
+    Promise.all([client.getPresets(), client.listAssignments(printerId).catch(() => [] as SlotAssignment[])])
+      .then(([p, a]) => {
+        if (!alive) return;
+        const std = p.standard ?? {};
+        const a1 = (arr: Preset[] = []) => arr.filter((x) => x.name.includes('A1') && !x.name.includes('A1M') && !x.name.toLowerCase().includes('mini'));
+        const printer = a1(std.printer).find((x) => x.name.includes('0.4 nozzle'));
+        // Merge process presets across standard + any user/custom/local groups the server returns,
+        // so a support-enabled profile saved in Studio/Bambuddy shows up here too.
+        const procAll: Preset[] = [std.process, p.user?.process, p.custom?.process, p.local?.process].flatMap((g) => g ?? []);
+        const a1proc = a1(procAll);
+        // Dedupe by id (a custom profile can echo into multiple groups).
+        const seen = new Set<string>();
+        const qualities = a1proc
+          .filter((x) => /0\.\d+mm .*@BBL A1/.test(x.name))
+          .filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
+        const hasSupportProfile = a1proc.some((x) => /support|tree/i.test(x.name));
+        const allFilaments: Preset[] = std.filament ?? [];
+        // Curated "Other filament" catalog (common A1 materials) shown when the AMS choice isn't enough.
+        const catalog = a1(allFilaments).filter((x) => /Bambu (PLA Basic|PLA Matte|PETG HF|PETG-CF|ABS|ASA|TPU 95A HF|Support For PLA) @BBL A1($| 0\.4 nozzle$)/.test(x.name));
+        setPresets({ printer, qualities, catalog, allFilaments, hasSupportProfile });
+        setAssigns(a as SlotAssignment[]);
+        setQuality(qualities.find((q) => /0\.20mm Standard/.test(q.name)) ?? qualities.find((q) => q.name.includes('0.20')) ?? qualities[0] ?? null);
+      })
+      .catch(() => alive && setPresets({ qualities: [], catalog: [], allFilaments: [] }));
+    return () => {
+      alive = false;
+    };
+  }, [client, printerId]);
 
   // Slicing step
   useEffect(() => {
@@ -390,7 +656,8 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
           printer_preset: presets?.printer,
           process_preset: quality,
           filament_preset: filament,
-          plate: 1,
+          plate: selectedPlate,
+          bed_type: bedType,
           export_3mf: true,
         });
         for (let i = 0; i < 90 && !cancelled; i++) {
@@ -428,7 +695,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
         library_file_id: result?.library_file_id ?? file.id,
         use_ams: true,
         ams_mapping: mapping,
-        plate_id: 1,
+        plate_id: selectedPlate,
       });
       onStarted();
     } catch (e) {
@@ -453,6 +720,25 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
   };
 
   const trays = status?.ams?.[0]?.tray ?? [];
+  // Filaments actually loaded in the AMS, mapped to slicer presets (drops support material).
+  const loaded: LoadedFilament[] = presets ? loadedFilaments(trays, assigns, presets.allFilaments).filter((f) => !f.isSupport) : [];
+
+  // Default-select the loaded filament (matching the active tray) once the AMS + presets are known.
+  const loadedKey = loaded.map((f) => `${f.slot}:${f.preset?.id ?? ''}`).join(',');
+  useEffect(() => {
+    if (defaultedRef.current || !presets) return;
+    const active = loaded.find((f) => f.slot === (status?.tray_now ?? -1) && f.preset) ?? loaded.find((f) => f.preset);
+    if (active?.preset) {
+      setFilament(active.preset);
+      setSlot(active.slot);
+      defaultedRef.current = true;
+    } else if (trays.length > 0 && presets.catalog[0]) {
+      setFilament(presets.catalog[0]);
+      defaultedRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presets, loadedKey]);
+
   const footer = (() => {
     if (step === 4) return null;
     if (step === 7) return { label: starting ? 'Starting…' : 'Start print', bg: c.accent, fg: c.accentInk, onPress: start };
@@ -492,15 +778,25 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
           {step === 1 && (
             <>
               <L>SELECTED FILE</L>
-              <View style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
-                {file.thumbnail_path ? (
-                  <Image source={{ uri: client.fileThumbUrl(file.id, camToken, file.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
-                ) : (
-                  <Feather name="box" size={32} color={c.t3} />
-                )}
-              </View>
-              <Text style={{ marginTop: 15, fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
-              <Text style={{ marginTop: 6, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type}{alreadySliced ? ' · pre-sliced' : ''}</Text>
+              {alreadySliced ? (
+                <>
+                  <Text style={{ fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
+                  <Text style={{ marginTop: 5, marginBottom: 16, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · pre-sliced</Text>
+                  <PlateReview client={client} fileId={file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} onViewLayers={() => setViewLayers({ fileId: file.id, title: file.print_name || file.filename })} />
+                </>
+              ) : (
+                <>
+                  <View style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+                    {file.thumbnail_path ? (
+                      <Image source={{ uri: client.fileThumbUrl(file.id, camToken, file.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
+                    ) : (
+                      <Feather name="box" size={32} color={c.t3} />
+                    )}
+                  </View>
+                  <Text style={{ marginTop: 15, fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
+                  <Text style={{ marginTop: 6, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · will be sliced</Text>
+                </>
+              )}
             </>
           )}
 
@@ -524,15 +820,42 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
 
           {step === 3 && (
             <>
-              <L>MATERIAL</L>
-              <View style={{ gap: 9 }}>
-                {(presets?.filaments ?? []).map((m) => (
-                  <Pressable key={m.id} onPress={() => setFilament(m)} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: filament?.id === m.id ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
-                    <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: c.t1 }}>{m.name.replace(' @BBL A1', '')}</Text>
-                    {filament?.id === m.id && <Feather name="check" size={16} color={c.accent} />}
-                  </Pressable>
-                ))}
-              </View>
+              <L>{loaded.length > 0 ? 'LOADED IN THE PRINTER' : 'MATERIAL'}</L>
+              {loaded.length > 0 && (
+                <View style={{ gap: 9 }}>
+                  {loaded.map((f) => {
+                    const sel = !!f.preset && filament?.id === f.preset.id;
+                    return (
+                      <Pressable
+                        key={f.slot}
+                        onPress={() => { if (f.preset) { setFilament(f.preset); setSlot(f.slot); } }}
+                        disabled={!f.preset}
+                        style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent, opacity: f.preset ? 1 : 0.5 }, pressed && { opacity: 0.7 }]}>
+                        <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: f.colorHex ?? c.s4, borderWidth: 1, borderColor: c.line2 }} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{f.colorName ? `${f.colorName} · ${f.material}` : f.material}</Text>
+                          <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>Slot {f.slot + 1}{f.preset ? '' : ' · no A1 profile'}</Text>
+                        </View>
+                        {sel && <Feather name="check" size={16} color={c.accent} />}
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+              <Pressable onPress={() => setShowCatalog((v) => !v)} style={({ pressed }) => [{ marginTop: loaded.length > 0 ? 14 : 0, flexDirection: 'row', alignItems: 'center', gap: 6 }, pressed && { opacity: 0.6 }]}>
+                <Feather name={showCatalog || loaded.length === 0 ? 'chevron-down' : 'chevron-right'} size={15} color={c.t3} />
+                <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono }}>{loaded.length > 0 ? 'OR PICK ANOTHER FILAMENT' : 'CHOOSE A FILAMENT'}</Text>
+              </Pressable>
+              {(showCatalog || loaded.length === 0) && (
+                <View style={{ gap: 9, marginTop: 11 }}>
+                  {(presets?.catalog ?? []).map((m) => (
+                    <Pressable key={m.id} onPress={() => setFilament(m)} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: filament?.id === m.id ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                      <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: c.t1 }}>{m.name.replace(' @BBL A1', '')}</Text>
+                      {filament?.id === m.id && <Feather name="check" size={16} color={c.accent} />}
+                    </Pressable>
+                  ))}
+                </View>
+              )}
               <View style={{ height: 22 }} />
               <L>QUALITY</L>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9 }}>
@@ -547,6 +870,25 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                   );
                 })}
               </View>
+
+              <View style={{ height: 22 }} />
+              <L>BUILD PLATE</L>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9 }}>
+                {BED_TYPES.map((b) => (
+                  <Pressable key={b.id} onPress={() => setBedType(b.id)} style={({ pressed }) => [{ flexGrow: 1, paddingVertical: 13, paddingHorizontal: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: bedType === b.id ? 1.5 : 0, borderColor: c.accent, alignItems: 'center' }, pressed && { opacity: 0.7 }]}>
+                    <Text style={{ fontWeight: '600', fontSize: 13.5, color: bedType === b.id ? c.accent : c.t1 }}>{b.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              {(presets?.hasSupportProfile === false) && (
+                <View style={{ marginTop: 18, flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.s2 }}>
+                  <Feather name="info" size={16} color={c.t3} style={{ marginTop: 1 }} />
+                  <Text style={{ flex: 1, fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t3 }}>
+                    Need supports, custom infill, or a dedicated support filament? Save a quality profile with those settings in Bambu Studio (or Bambuddy) — it’ll show up here under Quality, and you can pick the support tray when you map filament.
+                  </Text>
+                </View>
+              )}
             </>
           )}
 
@@ -562,17 +904,10 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
 
           {step === 5 && (
             <>
-              <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line }}>
-                <Image source={{ uri: client.fileThumbUrl(result?.library_file_id ?? file.id, camToken) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
-              </View>
-              <View style={{ marginTop: 16, borderRadius: 16, backgroundColor: c.s2, overflow: 'hidden' }}>
-                <Row k="Print time" v={result?.print_time_seconds ? `${Math.round(result.print_time_seconds / 60)} min` : '—'} />
-                <Row k="Filament" v={result?.filament_used_g ? `${result.filament_used_g.toFixed(2)} g` : '—'} />
-                <Row k="Quality" v={quality?.name.replace(' @BBL A1', '') ?? '—'} />
-              </View>
+              <PlateReview client={client} fileId={result?.library_file_id ?? file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} onViewLayers={() => setViewLayers({ fileId: result?.library_file_id ?? file.id, title: file.print_name || file.filename })} />
               <View style={{ marginTop: 14, flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.accentDim }}>
                 <Feather name="info" size={17} color={c.accent} />
-                <Text style={{ flex: 1, fontWeight: '500', fontSize: 12.5, lineHeight: 18, color: c.t2 }}>Nothing prints yet. Review the estimate, then map filament to a tray.</Text>
+                <Text style={{ flex: 1, fontWeight: '500', fontSize: 12.5, lineHeight: 18, color: c.t2 }}>Nothing prints yet. Review the plate, then map filament to a tray.</Text>
               </View>
             </>
           )}
@@ -629,6 +964,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
           </View>
         )}
       </View>
+      {viewLayers && <GcodeViewerOverlay client={client} fileId={viewLayers.fileId} title={viewLayers.title} onClose={() => setViewLayers(null)} />}
     </View>
   );
 }
