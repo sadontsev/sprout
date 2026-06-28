@@ -36,6 +36,56 @@ export interface LibraryFile {
   print_time_seconds?: number | null;
   filament_used_grams?: number | null;
   print_name?: string | null;
+  /** Present on GET /library/files/{id} (detail), not on the list. Slicer-baked stats. */
+  metadata?: FileMetadata | null;
+}
+
+/** A filament a plate/slot consumes (from /plates or file metadata). */
+export interface PlateFilament {
+  slot_id: number;
+  type?: string | null; // "PLA" | "PETG-CF" | ...
+  color?: string | null; // "#RRGGBB"
+  used_grams?: number | null;
+  used_meters?: number | null;
+}
+
+/** One build plate inside a sliced .gcode.3mf (from GET /library/files/{id}/plates). */
+export interface PlateInfo {
+  index: number; // 1-based
+  name?: string | null;
+  objects?: string[];
+  object_count?: number;
+  has_thumbnail?: boolean;
+  thumbnail_url?: string | null;
+  print_time_seconds?: number | null;
+  filament_used_grams?: number | null;
+  filaments?: PlateFilament[];
+}
+
+export interface PlatesResponse {
+  file_id: number;
+  filename: string;
+  plates: PlateInfo[];
+  is_multi_plate: boolean;
+  embedded_printer?: string | null;
+  embedded_process?: string | null;
+}
+
+/** The slicer-baked metadata block on a sliced file's detail (GET /library/files/{id}).metadata. */
+export interface FileMetadata {
+  total_layers?: number | null;
+  layer_height?: number | null;
+  nozzle_diameter?: number | null;
+  nozzle_temperature?: number | null;
+  bed_type?: string | null;
+  sliced_for_model?: string | null;
+  filament_type?: string | null;
+  filament_color?: string | null;
+  filament_used_mm?: number | null;
+  filament_used_g?: number | null;
+  print_time_seconds?: number | null;
+  filament_slots?: Array<{ slot_id: number; used_g?: number | null; type?: string | null; color?: string | null }>;
+  [k: string]: unknown;
 }
 
 export interface QueueItem {

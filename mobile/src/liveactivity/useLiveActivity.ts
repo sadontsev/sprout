@@ -18,13 +18,18 @@ const SYMBOLS: Record<string, string> = {
   Error: 'exclamationmark.triangle.fill',
 };
 
+export type LiveActivityExtras = { modelUri?: string | null; queueCount?: number; nextName?: string | null };
+
 /** Pure: DashVM (+raw status) -> the flat ContentState the activity renders. */
-export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number, iconUri = ''): PrintActivityProps {
+export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number, iconUri = '', extras: LiveActivityExtras = {}): PrintActivityProps {
   const finished = vm.kind === 'complete';
   const remainingMin = status.remaining_time ?? 0;
   const t = status.temperatures;
   return {
     iconUri,
+    modelUri: extras.modelUri ?? '',
+    queueCount: extras.queueCount ?? 0,
+    nextName: extras.nextName ?? '',
     name: status.subtask_name ?? '',
     stateLabel: vm.stateLabel,
     progress: vm.progressInt,
@@ -50,7 +55,10 @@ function meaningfulChange(a: PrintActivityProps | null, b: PrintActivityProps): 
     Math.abs(a.progress - b.progress) >= PROGRESS_EPS ||
     a.layer !== b.layer ||
     a.stateLabel !== b.stateLabel ||
-    a.name !== b.name
+    a.name !== b.name ||
+    a.modelUri !== b.modelUri ||
+    a.queueCount !== b.queueCount ||
+    a.nextName !== b.nextName
   );
 }
 
@@ -61,7 +69,7 @@ function meaningfulChange(a: PrintActivityProps | null, b: PrintActivityProps): 
  * Bambuddy POST to APNs. `offline`/`connecting` are deliberately no-ops so a WS blip doesn't kill the
  * activity mid-print; only complete/error/idle end it.
  */
-export function useLiveActivity(vm: DashVM | null, status: PrinterStatus | null) {
+export function useLiveActivity(vm: DashVM | null, status: PrinterStatus | null, extras: LiveActivityExtras = {}) {
   const instanceRef = useRef<LiveActivity<PrintActivityProps> | null>(null);
   const lastPushRef = useRef(0);
   const lastStateRef = useRef<PrintActivityProps | null>(null);
@@ -83,7 +91,7 @@ export function useLiveActivity(vm: DashVM | null, status: PrinterStatus | null)
     }
 
     const now = Date.now();
-    const next = toContentState(vm, status, now, nozzleIconUri());
+    const next = toContentState(vm, status, now, nozzleIconUri(), extras);
 
     // 1) Terminal -> end the activity.
     if (isTerminal(vm)) {
@@ -117,5 +125,5 @@ export function useLiveActivity(vm: DashVM | null, status: PrinterStatus | null)
         lastPushRef.current = now;
       }
     }
-  }, [vm, status]);
+  }, [vm, status, extras.modelUri, extras.queueCount, extras.nextName]);
 }

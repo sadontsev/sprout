@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import * as Linking from 'expo-linking';
@@ -8,6 +8,7 @@ import { BambuddyClient } from '@/api/bambuddyClient';
 import { usePrinterStatus } from '@/realtime/usePrinterStatus';
 import { useCameraStream } from '@/realtime/useCameraStream';
 import { useLiveActivity } from '@/liveactivity/useLiveActivity';
+import { writeModelThumb } from '@/liveactivity/modelThumb';
 import { presentDashboard } from '@/dashboard/present';
 import { DashboardView, type DashHandlers } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
@@ -45,13 +46,55 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   const client = useMemo(() => new BambuddyClient({ baseUrl: config.baseUrl, apiKey: config.apiKey }), [config]);
   const { status } = usePrinterStatus(client, PRINTER_ID);
   const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
-  useLiveActivity(vm, status); // drives the iOS Live Activity (lock screen + Dynamic Island)
 
   const [camToken, setCamToken] = useState<string | null>(config.cameraToken ?? null);
-  const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!camToken) client.mintCameraToken().then(setCamToken).catch(() => {});
   }, [client, camToken]);
+
+  // Live Activity model picture: match the active print to a library file by name, then cache its
+  // plate thumbnail to the App Group so the widget (separate process) can show it.
+  const [modelUri, setModelUri] = useState<string | null>(null);
+  const modelForRef = useRef<string | null>(null);
+  useEffect(() => {
+    const name = vm.kind === 'live' ? status?.subtask_name ?? null : null;
+    if (!name) {
+      if (modelForRef.current) { modelForRef.current = null; setModelUri(null); }
+      return;
+    }
+    if (modelForRef.current === name) return; // already resolved for this print
+    modelForRef.current = name;
+    setModelUri(null);
+    (async () => {
+      try {
+        const files = await client.listFiles();
+        const m = files.find((f) => (f.filename && f.filename.includes(name)) || (f.print_name && f.print_name.includes(name)));
+        if (m?.thumbnail_path) {
+          const uri = await writeModelThumb(client, m.id, camToken);
+          if (modelForRef.current === name) setModelUri(uri);
+        }
+      } catch {
+        /* no library match -> the activity falls back to the nozzle glyph */
+      }
+    })();
+  }, [vm.kind, status?.subtask_name, client, camToken]);
+
+  // Live Activity queue summary.
+  const [queue, setQueue] = useState<{ count: number; next: string | null }>({ count: 0, next: null });
+  useEffect(() => {
+    const poll = () =>
+      client.listQueue().then((items) => {
+        const up = items.filter((i) => i.status === 'pending' || i.status === 'queued');
+        setQueue({ count: up.length, next: up[0]?.library_file_name ?? up[0]?.archive_name ?? null });
+      }).catch(() => {});
+    poll();
+    const id = setInterval(poll, 15000);
+    return () => clearInterval(id);
+  }, [client]);
+
+  useLiveActivity(vm, status, { modelUri, queueCount: queue.count, nextName: queue.next });
+
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 2000);
     return () => clearInterval(id);

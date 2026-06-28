@@ -7,7 +7,7 @@
 // may reference only its args (`p`, `_env`), `Math`/`Date`, and the @expo/ui components/modifiers.
 import { createLiveActivity, type LiveActivityEnvironment } from 'expo-widgets';
 import { HStack, VStack, Text, Image, Spacer, ProgressView } from '@expo/ui/swift-ui';
-import { font, foregroundStyle, padding, tint, frame, resizable, aspectRatio } from '@expo/ui/swift-ui/modifiers';
+import { font, foregroundStyle, padding, tint, frame, resizable, aspectRatio, cornerRadius } from '@expo/ui/swift-ui/modifiers';
 
 /** Flat, JSON-serializable ContentState the activity renders. */
 export type PrintActivityProps = {
@@ -25,6 +25,9 @@ export type PrintActivityProps = {
   nozzleTarget: number;
   bed: number;
   bedTarget: number;
+  modelUri: string; // file:// URI of the plate thumbnail in the App Group ('' -> nozzle glyph) — leading visual
+  queueCount: number; // prints waiting in the queue (drives the "Up next" banner row)
+  nextName: string; // name of the next queued print ('' if none)
 };
 
 const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => {
@@ -42,13 +45,21 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
     p.iconUri
       ? <Image uiImage={p.iconUri} modifiers={[resizable(), aspectRatio({ contentMode: 'fit' }), frame({ width: s, height: s })]} />
       : <Image systemName={p.symbol as never} color={p.tint} size={s} />;
+  // Leading visual: the model's plate thumbnail (rounded) when we have it, else the brand nozzle.
+  const lead = (s: number) =>
+    p.modelUri
+      ? <Image uiImage={p.modelUri} modifiers={[resizable(), aspectRatio({ contentMode: 'fill' }), frame({ width: s, height: s }), cornerRadius(s * 0.22)]} />
+      : glyph(s);
+  const queueLine = p.queueCount > 0
+    ? (p.nextName ? `Up next: ${p.nextName}${p.queueCount > 1 ? `  ·  +${p.queueCount - 1} more` : ''}` : `${p.queueCount} queued`)
+    : '';
 
   return {
     // Lock-screen / Notification Center banner
     banner: (
       <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 14 })]}>
         <HStack spacing={12}>
-          {glyph(26)}
+          {lead(40)}
           <VStack alignment="leading" spacing={2}>
             <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundStyle(T1)]}>{p.name || 'Bambu A1'}</Text>
             <Text modifiers={[font({ size: 12 }), foregroundStyle(T2)]}>{p.stateLabel} · Layer {layers}</Text>
@@ -74,6 +85,12 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
             <Text modifiers={[font({ size: 11, weight: 'semibold', design: 'rounded' }), foregroundStyle(T2)]} date={endDate} dateStyle="timer" />
           ) : null}
         </HStack>
+        {queueLine ? (
+          <HStack spacing={6}>
+            <Image systemName="square.stack.3d.up" color={T2} size={11} />
+            <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{queueLine}</Text>
+          </HStack>
+        ) : null}
       </VStack>
     ),
     // Dynamic Island — compact: glyph + end clock time (not %, per request)
