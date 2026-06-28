@@ -1,14 +1,15 @@
 // iOS Live Activity for an active print — Lock Screen banner + Dynamic Island.
 //
 // This module is authored with expo-widgets (@expo/ui/swift-ui). The component function carries the
-// 'widget' directive: it runs in an ISOLATED runtime (no hooks, no app imports, no closures over app
-// state) — only the `props`/`environment` args and @expo/ui primitives. Keep it pure; colors are
-// hardcoded or passed in via props (the app theme can't be imported here).
+// 'widget' directive: babel-preset-expo's widgets plugin STRINGIFIES only this function's params +
+// body and re-evaluates it in an isolated native runtime where only the @expo/ui primitives are
+// injected. So the function must be FULLY SELF-CONTAINED — every constant/helper lives inside it; it
+// may reference only its args (`p`, `_env`), `Math`/`Date`, and the @expo/ui components/modifiers.
 import { createLiveActivity, type LiveActivityEnvironment } from 'expo-widgets';
 import { HStack, VStack, Text, Image, Spacer, ProgressView } from '@expo/ui/swift-ui';
 import { font, foregroundStyle, padding, tint } from '@expo/ui/swift-ui/modifiers';
 
-/** Flat, JSON-serializable ContentState the activity renders (also the APNs content-state shape for v2). */
+/** Flat, JSON-serializable ContentState the activity renders. */
 export type PrintActivityProps = {
   name: string; // subtask/file name
   stateLabel: string; // "Printing" | "Heating" | "Paused" | "Complete" | "Error"
@@ -19,23 +20,27 @@ export type PrintActivityProps = {
   finished: boolean;
   symbol: string; // SF Symbol name
   tint: string; // hex accent
+  nozzle: number;
+  nozzleTarget: number;
+  bed: number;
+  bedTarget: number;
 };
 
 const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => {
   'widget';
-  // NOTE: this function is stringified by babel-preset-expo's widgets plugin and re-evaluated in an
-  // isolated native runtime. It must NOT reference any module-scope identifiers except the @expo/ui
-  // primitives the runtime injects — so all constants/helpers live INSIDE the function body.
   const T1 = '#F3F5F7';
   const T2 = '#A4ABB2';
   const pct = `${Math.max(0, Math.min(100, Math.round(p.progress)))}%`;
   const layers = p.totalLayers > 0 ? `${p.layer}/${p.totalLayers}` : `${p.layer}`;
   const eta = p.etaEpochMs > 0 && !p.finished;
+  const endDate = new Date(p.etaEpochMs || Date.now());
+  const temp = (cur: number, target: number) => (target > 0 && target !== cur ? `${cur}/${target}°` : `${cur}°`);
+  const tempsLine = `Nozzle ${temp(p.nozzle, p.nozzleTarget)}  ·  Bed ${temp(p.bed, p.bedTarget)}`;
 
   return {
     // Lock-screen / Notification Center banner
     banner: (
-      <VStack alignment="leading" spacing={10} modifiers={[padding({ all: 14 })]}>
+      <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 14 })]}>
         <HStack spacing={12}>
           <Image systemName={p.symbol as never} color={p.tint} size={26} />
           <VStack alignment="leading" spacing={2}>
@@ -43,22 +48,36 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
             <Text modifiers={[font({ size: 12 }), foregroundStyle(T2)]}>{p.stateLabel} · Layer {layers}</Text>
           </VStack>
           <Spacer />
-          <VStack alignment="trailing" spacing={2}>
-            <Text modifiers={[font({ size: 20, weight: 'bold', design: 'rounded' }), foregroundStyle(p.tint)]}>{pct}</Text>
+          <VStack alignment="trailing" spacing={1}>
+            <Text modifiers={[font({ size: 22, weight: 'bold', design: 'rounded' }), foregroundStyle(p.tint)]}>{pct}</Text>
             {eta ? (
-              <Text modifiers={[font({ size: 12 }), foregroundStyle(T2)]} date={new Date(p.etaEpochMs)} dateStyle="timer" />
+              <HStack spacing={3}>
+                <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>ends</Text>
+                <Text modifiers={[font({ size: 11, weight: 'medium' }), foregroundStyle(T1)]} date={endDate} dateStyle="time" />
+              </HStack>
             ) : (
-              <Text modifiers={[font({ size: 12 }), foregroundStyle(T2)]}>{p.finished ? 'Done' : '—'}</Text>
+              <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{p.finished ? 'Done' : '—'}</Text>
             )}
           </VStack>
         </HStack>
         <ProgressView value={Math.max(0, Math.min(1, p.progress / 100))} modifiers={[tint(p.tint)]} />
+        <HStack spacing={8}>
+          <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{tempsLine}</Text>
+          <Spacer />
+          {eta ? (
+            <Text modifiers={[font({ size: 11, weight: 'semibold', design: 'rounded' }), foregroundStyle(T2)]} date={endDate} dateStyle="timer" />
+          ) : null}
+        </HStack>
       </VStack>
     ),
-    // Dynamic Island — compact
+    // Dynamic Island — compact: glyph + end clock time (not %, per request)
     compactLeading: <Image systemName={p.symbol as never} color={p.tint} size={16} />,
-    compactTrailing: <Text modifiers={[font({ size: 13, weight: 'semibold', design: 'rounded' }), foregroundStyle(p.tint)]}>{pct}</Text>,
-    // Dynamic Island — minimal (when multiple activities)
+    compactTrailing: eta ? (
+      <Text modifiers={[font({ size: 13, weight: 'semibold', design: 'rounded' }), foregroundStyle(p.tint)]} date={endDate} dateStyle="time" />
+    ) : (
+      <Text modifiers={[font({ size: 13, weight: 'semibold', design: 'rounded' }), foregroundStyle(p.tint)]}>{p.finished ? 'Done' : pct}</Text>
+    ),
+    // Dynamic Island — minimal
     minimal: <Image systemName={p.symbol as never} color={p.tint} size={14} />,
     // Dynamic Island — expanded
     expandedLeading: (
@@ -69,9 +88,9 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
     ),
     expandedTrailing: (
       <VStack alignment="trailing" spacing={1} modifiers={[padding({ trailing: 6 })]}>
-        <Text modifiers={[font({ size: 16, weight: 'bold', design: 'rounded' }), foregroundStyle(p.tint)]}>{pct}</Text>
+        <Text modifiers={[font({ size: 17, weight: 'bold', design: 'rounded' }), foregroundStyle(p.tint)]}>{pct}</Text>
         {eta ? (
-          <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]} date={new Date(p.etaEpochMs)} dateStyle="timer" />
+          <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]} date={endDate} dateStyle="timer" />
         ) : (
           <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{p.finished ? 'Done' : ''}</Text>
         )}
@@ -80,7 +99,16 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
     expandedBottom: (
       <VStack spacing={6} modifiers={[padding({ horizontal: 6, top: 4 })]}>
         <ProgressView value={Math.max(0, Math.min(1, p.progress / 100))} modifiers={[tint(p.tint)]} />
-        <Text modifiers={[font({ size: 12 }), foregroundStyle(T2)]}>{p.name || 'Bambu A1'}</Text>
+        <HStack spacing={8}>
+          <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{tempsLine}</Text>
+          <Spacer />
+          {eta ? (
+            <HStack spacing={3}>
+              <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>ends</Text>
+              <Text modifiers={[font({ size: 11, weight: 'medium' }), foregroundStyle(T1)]} date={endDate} dateStyle="time" />
+            </HStack>
+          ) : null}
+        </HStack>
       </VStack>
     ),
   };

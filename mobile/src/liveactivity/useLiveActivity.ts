@@ -21,6 +21,7 @@ const SYMBOLS: Record<string, string> = {
 export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number): PrintActivityProps {
   const finished = vm.kind === 'complete';
   const remainingMin = status.remaining_time ?? 0;
+  const t = status.temperatures;
   return {
     name: status.subtask_name ?? '',
     stateLabel: vm.stateLabel,
@@ -31,6 +32,10 @@ export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number)
     finished,
     symbol: SYMBOLS[vm.stateLabel] ?? (vm.kind === 'error' ? SYMBOLS.Error : SYMBOLS.Printing),
     tint: vm.stateColor,
+    nozzle: Math.round(t?.nozzle ?? 0),
+    nozzleTarget: Math.round(t?.nozzle_target ?? 0),
+    bed: Math.round(t?.bed ?? 0),
+    bedTarget: Math.round(t?.bed_target ?? 0),
   };
 }
 
