@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulsedot { 0%,100% { opacity:1; } 50% { opacity:.25; } }
+  @keyframes heatshimmer { 0%,100% { opacity:.45; } 50% { opacity:1; } }
+  * { box-sizing: border-box; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  body { margin:0; }
+  .scr::-webkit-scrollbar { display:none; }
+  .scr { scrollbar-width:none; -ms-overflow-style:none; }
+  .tapfade { transition: opacity .12s ease, transform .12s ease; }
+  .tapfade:active { opacity:.6; transform: scale(.97); }
+</style>
+</helmet>
+
+<div style="min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; background: radial-gradient(120% 90% at 50% -10%, #2a2d31 0%, #17191c 60%, #101113 100%); padding:28px 16px; font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','SF Pro Display','Helvetica Neue',system-ui,sans-serif;">
+
+  <div ref="{{ rootRef }}" style="--bg:#0A0B0C; --s1:#131517; --s2:#191C1F; --s3:#23272B; --s4:#2D3237; --line:rgba(255,255,255,0.07); --line2:rgba(255,255,255,0.12); --t1:#F3F5F7; --t2:#A4ABB2; --t3:#6B7177; --accent:#2BD4C0; --accentInk:#04201D; --accentDim:rgba(43,212,192,0.15); --running:#30D158; --runningDim:rgba(48,209,88,0.15); --heating:#FF9F0A; --heatingDim:rgba(255,159,10,0.15); --paused:#0A84FF; --pausedDim:rgba(10,132,255,0.15); --error:#FF453A; --errorDim:rgba(255,69,58,0.15); --idle:#8E9398; --idleDim:rgba(142,147,152,0.14); --tabbar:rgba(13,14,16,0.72); --sheet:#16181B; --shadow1:0 1px 2px rgba(0,0,0,.5); --shadow2:0 18px 50px rgba(0,0,0,.55); position:relative; width:430px; height:932px; background:#000; border-radius:58px; padding:13px; box-shadow:0 50px 100px -20px rgba(0,0,0,.8), 0 0 0 2px #232629, 0 0 0 8px #0c0d0f;">
+
+    <div style="position:relative; width:100%; height:100%; background:var(--bg); border-radius:45px; overflow:hidden;">
+
+      <!-- DYNAMIC ISLAND -->
+      <div style="position:absolute; top:11px; left:50%; transform:translateX(-50%); width:122px; height:35px; border-radius:20px; background:#000; z-index:95;"></div>
+
+      <!-- STATUS BAR -->
+      <div style="position:absolute; top:0; left:0; right:0; height:54px; z-index:55; display:flex; align-items:center; justify-content:space-between; padding:14px 30px 0; pointer-events:none;">
+        <div style="font:600 15px/1 ui-rounded,-apple-system,sans-serif; color:var(--t1); letter-spacing:.3px;">{{ clockShort }}</div>
+        <div style="display:flex; align-items:center; gap:7px; color:var(--t1);">
+          <svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+          <svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 5a8 8 0 0 1 12 0"/><path d="M4.3 7.4a4.6 4.6 0 0 1 7.4 0"/><circle cx="8" cy="9.8" r="1" fill="currentColor" stroke="none"/></svg>
+          <svg width="26" height="13" viewBox="0 0 26 13" fill="none"><rect x="1" y="1" width="21" height="11" rx="3.2" stroke="currentColor" stroke-opacity=".45"/><rect x="3" y="3" width="16" height="7" rx="1.6" fill="currentColor"/><rect x="23.6" y="4.4" width="1.7" height="4.2" rx="1" fill="currentColor" fill-opacity=".5"/></svg>
+        </div>
+      </div>
+
+      <!-- SCROLL CONTENT -->
+      <div class="scr" style="position:absolute; inset:0; overflow-y:auto; padding-top:52px; padding-bottom:98px; -webkit-overflow-scrolling:touch;">
+
+        <!-- ===================== DASHBOARD ===================== -->
+        <sc-if value="{{ isDashboard }}" hint-placeholder-val="{{ true }}">
+        <div style="--state: {{ stateColor }}; --state-dim: {{ stateDim }};">
+
+          <!-- header row -->
+          <div style="padding:6px 20px 0; display:flex; align-items:flex-start; justify-content:space-between;">
+            <div>
+              <div style="font:600 11px/1 ui-monospace,'SF Mono',Menlo,monospace; letter-spacing:1.4px; color:var(--t3);">BAMBU LAB A1</div>
+              <div style="display:flex; align-items:center; gap:7px; margin-top:6px;">
+                <span style="width:8px; height:8px; border-radius:50%; background:var(--state); box-shadow:0 0 10px var(--state); animation:pulsedot 2.4s ease-in-out infinite;"></span>
+                <span style="font:600 17px/1 -apple-system,sans-serif; color:var(--t1); letter-spacing:-.2px;">Living Room</span>
+              </div>
+            </div>
+            <button onClick="{{ openSettings }}" class="tapfade" style="width:38px; height:38px; border:0; border-radius:50%; background:var(--s2); color:var(--t2); display:flex; align-items:center; justify-content:center; cursor:pointer;">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 6.6 19a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 6.6a1.6 1.6 0 0 0-.3-1.8l-.1-.1A2 2 0 1 1 5 1.9l.1.1A1.6 1.6 0 0 0 7 2.6 1.6 1.6 0 0 0 8 1.1V1a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 15 2.6a1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V7a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
+            </button>
+          </div>
+
+          <!-- hero status -->
+          <div style="padding:18px 20px 2px;">
+            <div style="font:700 36px/1 -apple-system,sans-serif; letter-spacing:-1px; color:var(--state);">{{ stateLabel }}</div>
+            <div style="margin-top:8px; font:500 13px/1.3 ui-monospace,'SF Mono',Menlo,monospace; color:var(--t2); word-break:break-all;">{{ heroSub }}</div>
+          </div>
+
+          <sc-if value="{{ showCamera }}" hint-placeholder-val="{{ true }}">
+          <!-- camera tile -->
+          <div style="padding:16px 20px 0;">
+            <button onClick="{{ openCamera }}" class="tapfade" style="display:block; width:100%; padding:0; border:0; background:none; cursor:pointer; text-align:left;">
+              <div style="position:relative; width:100%; aspect-ratio:16/10; border-radius:18px; overflow:hidden; background:#0d0f11; border:1px solid var(--line); box-shadow:var(--shadow1);">
+                <div style="position:absolute; inset:0; background:repeating-linear-gradient(125deg, var(--s2) 0 16px, var(--s1) 16px 32px); opacity:.85;"></div>
+                <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;">
+                  <div style="font:500 10px/1 ui-monospace,'SF Mono',Menlo,monospace; letter-spacing:1.6px; color:var(--t3);">CHAMBER&nbsp;·&nbsp;DROP&nbsp;SNAPSHOT</div>
+                </div>
+                <div style="position:absolute; top:11px; left:11px; display:flex; align-items:center; gap:5px; padding:4px 8px 4px 7px; border-radius:8px; background:rgba(0,0,0,.55); backdrop-filter:blur(8px);">
+                  <span style="width:6px; height:6px; border-radius:50%; background:#30D158; animation:pulsedot 2s infinite;"></span>
+                  <span style="font:600 9.5px/1 -apple-system,sans-serif; letter-spacing:.6px; color:#fff;">LIVE · 1 fps</span>
+                </div>
+                <div style="position:absolute; bottom:10px; right:12px; font:500 10px/1 ui-monospace,'SF Mono',Menlo,monospace; color:rgba(255,255,255,.65);">{{ clockText }}</div>
+                <div style="position:absolute; bottom:9px; left:11px; width:26px; height:26px; border-radius:7px; background:rgba(0,0,0,.5); backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; color:#fff;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5"/><path d="M21 8V3h-5"/><path d="M16 21h5v-5"/><path d="M3 16v5h5"/></svg>
+                </div>
+              </div>
+            </button>
+          </div>
+          </sc-if>
+
+          <sc-if value="{{ isLive }}" hint-placeholder-val="{{ true }}">
+          <!-- progress card -->
+          <div style="margin:16px 20px 0; padding:20px; border-radius:22px; background:var(--s1); border:1px solid var(--line); box-shadow:var(--shadow1); display:flex; align-items:center; gap:18px;">
+            <div style="position:relative; width:128px; height:128px; flex:none;">
+              <svg width="128" height="128" viewBox="0 0 128 128">
+                <circle cx="64" cy="64" r="56" fill="none" stroke="var(--s3)" stroke-width="9"/>
+                <circle cx="64" cy="64" r="56" fill="none" stroke="var(--state)" stroke-width="9" stroke-linecap="round" stroke-dasharray="{{ ringCirc }}" stroke-dashoffset="{{ ringOffset }}" transform="rotate(-90 64 64)" style="transition:stroke-dashoffset .7s cubic-bezier(.4,0,.2,1);"/>
+              </svg>
+              <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+                <div style="font:700 32px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums; letter-spacing:-1px;">{{ progressInt }}<span style="font-size:15px; color:var(--t3); letter-spacing:0;">%</span></div>
+              </div>
+            </div>
+            <div style="flex:1; display:flex; flex-direction:column; gap:15px;">
+              <div>
+                <div style="font:600 10px/1 ui-monospace,'SF Mono',monospace; letter-spacing:1px; color:var(--t3);">LAYER</div>
+                <div style="margin-top:5px; font:600 19px/1 ui-monospace,'SF Mono',monospace; color:var(--t1); font-variant-numeric:tabular-nums;">{{ layer }} <span style="color:var(--t3); font-weight:500;">/ {{ totalLayers }}</span></div>
+              </div>
+              <div style="height:1px; background:var(--line);"></div>
+              <div>
+                <div style="font:600 10px/1 ui-monospace,'SF Mono',monospace; letter-spacing:1px; color:var(--t3);">TIME LEFT</div>
+                <div style="margin-top:5px; font:600 19px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums;">{{ etaText }}</div>
+                <div style="margin-top:3px; font:500 12px/1 -apple-system,sans-serif; color:var(--t3);">done ~ {{ doneText }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- temps -->
+          <div style="margin:14px 20px 0; display:flex; gap:12px;">
+            <div style="flex:1; padding:14px 16px; border-radius:18px; background:var(--s1); border:1px solid var(--line);">
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <span style="font:600 12px/1 -apple-system,sans-serif; color:var(--t2);">Nozzle</span>
+                <span style="width:7px; height:7px; border-radius:50%; background:{{ nozzleBarColor }}; opacity:.9;"></span>
+              </div>
+              <div style="margin-top:9px; display:flex; align-items:baseline; gap:6px;">
+                <span style="font:700 26px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums; letter-spacing:-.5px;">{{ nozzleNow }}<span style="font-size:13px; color:var(--t3);">°</span></span>
+                <span style="font:500 12px/1 ui-monospace,monospace; color:var(--t3);">→ {{ nozzleTarget }}°</span>
+              </div>
+              <div style="margin-top:11px; height:3px; border-radius:2px; background:var(--s3); overflow:hidden;">
+                <div style="height:100%; width:{{ nozzleBarPct }}%; border-radius:2px; background:{{ nozzleBarColor }}; animation:{{ nozzleAnim }}; transition:width .6s ease;"></div>
+              </div>
+            </div>
+            <div style="flex:1; padding:14px 16px; border-radius:18px; background:var(--s1); border:1px solid var(--line);">
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <span style="font:600 12px/1 -apple-system,sans-serif; color:var(--t2);">Bed</span>
+                <span style="width:7px; height:7px; border-radius:50%; background:{{ bedBarColor }}; opacity:.9;"></span>
+              </div>
+              <div style="margin-top:9px; display:flex; align-items:baseline; gap:6px;">
+                <span style="font:700 26px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums; letter-spacing:-.5px;">{{ bedNow }}<span style="font-size:13px; color:var(--t3);">°</span></span>
+                <span style="font:500 12px/1 ui-monospace,monospace; color:var(--t3);">→ {{ bedTarget }}°</span>
+              </div>
+              <div style="margin-top:11px; height:3px; border-radius:2px; background:var(--s3); overflow:hidden;">
+                <div style="height:100%; width:{{ bedBarPct }}%; border-radius:2px; background:{{ bedBarColor }}; animation:{{ bedAnim }}; transition:width .6s ease;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- controls -->
+          <div style="margin:18px 20px 0; display:flex; gap:12px;">
+            <button onClick="{{ togglePause }}" class="tapfade" style="flex:2; height:58px; border:0; border-radius:17px; background:var(--s3); color:var(--t1); display:flex; align-items:center; justify-content:center; gap:9px; font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">
+              <sc-if value="{{ isPaused }}" hint-placeholder-val="{{ true }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.87l13-7.5a1 1 0 0 0 0-1.74l-13-7.5A1 1 0 0 0 7 4.5z"/></svg></sc-if>
+              <sc-if value="{{ notPaused }}" hint-placeholder-val="{{ true }}"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4.2" height="16" rx="1.6"/><rect x="13.8" y="4" width="4.2" height="16" rx="1.6"/></svg></sc-if>
+              {{ pauseLabel }}
+            </button>
+            <button onClick="{{ openStop }}" class="tapfade" style="flex:1; height:58px; border:0; border-radius:17px; background:var(--errorDim); color:var(--error); display:flex; align-items:center; justify-content:center; gap:8px; font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>
+              Stop
+            </button>
+          </div>
+
+          <div style="margin:12px 20px 0; display:flex; gap:12px;">
+            <button onClick="{{ toggleLight }}" class="tapfade" style="flex:1; height:54px; border:0; border-radius:16px; background:{{ lightBg }}; color:{{ lightCol }}; display:flex; align-items:center; justify-content:center; gap:9px; font:600 14px/1 -apple-system,sans-serif; cursor:pointer;">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>
+              <span>Light</span>
+              <span style="font:600 12px/1 ui-monospace,monospace; opacity:.7;">{{ lightState }}</span>
+            </button>
+            <button onClick="{{ cycleSpeed }}" class="tapfade" style="flex:1; height:54px; border:0; border-radius:16px; background:var(--s3); color:var(--t1); display:flex; align-items:center; justify-content:center; gap:9px; font:600 14px/1 -apple-system,sans-serif; cursor:pointer;">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19a9 9 0 1 1 14 0"/><path d="M12 14l3.5-3.5"/></svg>
+              <span>{{ speedLabel }}</span>
+            </button>
+          </div>
+
+          <!-- AMS strip -->
+          <div style="margin:20px 20px 8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:11px;">
+              <span style="font:600 11px/1 ui-monospace,'SF Mono',monospace; letter-spacing:1.2px; color:var(--t3);">AMS LITE</span>
+              <button onClick="{{ navAms }}" class="tapfade" style="border:0; background:none; color:var(--accent); font:600 13px/1 -apple-system,sans-serif; cursor:pointer; display:flex; align-items:center; gap:3px;">Details
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+              </button>
+            </div>
+            <div style="display:flex; gap:10px;">
+              <sc-for list="{{ amsView }}" as="t" hint-placeholder-count="4">
+                <div style="flex:1; padding:13px 8px 11px; border-radius:15px; background:var(--s1); box-shadow:{{ t.ring }}; display:flex; flex-direction:column; align-items:center; gap:8px;">
+                  <div style="width:32px; height:32px; border-radius:9px; background:{{ t.swatch }}; border:{{ t.swatchBorder }};"></div>
+                  <div style="font:600 9.5px/1.1 -apple-system,sans-serif; color:var(--t2); text-align:center; height:11px; overflow:hidden;">{{ t.label }}</div>
+                  <div style="font:600 11px/1 ui-monospace,monospace; color:var(--t1); font-variant-numeric:tabular-nums;">{{ t.pct }}</div>
+                  <div style="width:5px; height:5px; border-radius:50%; background:var(--accent); opacity:{{ t.activeOp }};"></div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          </sc-if>
+
+          <!-- COMPLETE -->
+          <sc-if value="{{ isComplete }}" hint-placeholder-val="{{ false }}">
+          <div style="margin:18px 20px 0; padding:22px 20px; border-radius:22px; background:var(--s1); border:1px solid var(--line); box-shadow:var(--shadow1);">
+            <div style="display:flex; align-items:center; gap:13px;">
+              <div style="width:48px; height:48px; border-radius:50%; background:var(--runningDim); display:flex; align-items:center; justify-content:center; color:var(--running); flex:none;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+              </div>
+              <div>
+                <div style="font:700 20px/1 -apple-system,sans-serif; color:var(--t1); letter-spacing:-.3px;">Print complete</div>
+                <div style="margin-top:5px; font:500 12px/1 ui-monospace,monospace; color:var(--t3);">finished 3:24 PM · 203 layers</div>
+              </div>
+            </div>
+            <div style="margin-top:18px; display:flex; gap:9px;">
+              <div style="flex:1; padding:13px 8px; border-radius:13px; background:var(--s2); text-align:center;">
+                <div style="font:600 9px/1 ui-monospace,monospace; letter-spacing:.8px; color:var(--t3);">DURATION</div>
+                <div style="margin-top:7px; font:700 16px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums;">2h 04m</div>
+              </div>
+              <div style="flex:1; padding:13px 8px; border-radius:13px; background:var(--s2); text-align:center;">
+                <div style="font:600 9px/1 ui-monospace,monospace; letter-spacing:.8px; color:var(--t3);">FILAMENT</div>
+                <div style="margin-top:7px; font:700 16px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums;">14.2 g</div>
+              </div>
+              <div style="flex:1; padding:13px 8px; border-radius:13px; background:var(--s2); text-align:center;">
+                <div style="font:600 9px/1 ui-monospace,monospace; letter-spacing:.8px; color:var(--t3);">ENERGY</div>
+                <div style="margin-top:7px; font:700 16px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums;">0.84</div>
+              </div>
+            </div>
+          </div>
+          <div style="margin:14px 20px 0; display:flex; gap:12px;">
+            <button onClick="{{ startPrint }}" class="tapfade" style="flex:2; height:54px; border:0; border-radius:16px; background:var(--accent); color:var(--accentInk); font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Print again</button>
+            <button onClick="{{ setIdle }}" class="tapfade" style="flex:1; height:54px; border:0; border-radius:16px; background:var(--s3); color:var(--t1); font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Done</button>
+          </div>
+          </sc-if>
+
+          <!-- ERROR -->
+          <sc-if value="{{ isError }}" hint-placeholder-val="{{ false }}">
+          <div style="margin:18px 20px 0; padding:20px; border-radius:22px; background:var(--s1); border:1px solid var(--line); box-shadow:var(--shadow1);">
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div style="width:42px; height:42px; border-radius:12px; background:var(--errorDim); color:var(--error); display:flex; align-items:center; justify-content:center; flex:none;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+              </div>
+              <div style="flex:1;">
+                <div style="font:700 17px/1.15 -apple-system,sans-serif; color:var(--t1); letter-spacing:-.2px;">Heatbed temperature abnormal</div>
+                <div style="margin-top:4px; font:500 11px/1 ui-monospace,monospace; color:var(--t3);">HMS_0300_0A00_0001_0007</div>
+              </div>
+            </div>
+            <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:13px;">
+              <div style="font:600 10px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3);">WHAT TO DO</div>
+              <div style="display:flex; align-items:flex-start; gap:11px;">
+                <span style="width:20px; height:20px; border-radius:50%; background:var(--s3); color:var(--t2); font:600 11px/20px -apple-system,sans-serif; text-align:center; flex:none;">1</span>
+                <span style="font:500 13px/1.4 -apple-system,sans-serif; color:var(--t2);">Check the heatbed connector is fully seated.</span>
+              </div>
+              <div style="display:flex; align-items:flex-start; gap:11px;">
+                <span style="width:20px; height:20px; border-radius:50%; background:var(--s3); color:var(--t2); font:600 11px/20px -apple-system,sans-serif; text-align:center; flex:none;">2</span>
+                <span style="font:500 13px/1.4 -apple-system,sans-serif; color:var(--t2);">Let the bed cool, then clear any debris under the plate.</span>
+              </div>
+              <div style="display:flex; align-items:flex-start; gap:11px;">
+                <span style="width:20px; height:20px; border-radius:50%; background:var(--s3); color:var(--t2); font:600 11px/20px -apple-system,sans-serif; text-align:center; flex:none;">3</span>
+                <span style="font:500 13px/1.4 -apple-system,sans-serif; color:var(--t2);">Resume once the bed reads a stable temperature.</span>
+              </div>
+            </div>
+          </div>
+          <div style="margin:14px 20px 0; display:flex; gap:12px;">
+            <button onClick="{{ errorResume }}" class="tapfade" style="flex:2; height:54px; border:0; border-radius:16px; background:var(--accent); color:var(--accentInk); font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Resume print</button>
+            <button onClick="{{ openStop }}" class="tapfade" style="flex:1; height:54px; border:0; border-radius:16px; background:var(--errorDim); color:var(--error); font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Stop</button>
+          </div>
+          </sc-if>
+
+          <!-- IDLE -->
+          <sc-if value="{{ isIdle }}" hint-placeholder-val="{{ false }}">
+          <div style="margin:18px 20px 0; padding:22px 20px; border-radius:22px; background:var(--s1); border:1px solid var(--line); box-shadow:var(--shadow1); text-align:center;">
+            <div style="font:600 14px/1.45 -apple-system,sans-serif; color:var(--t2); max-width:250px; margin:0 auto;">No active job. The bed is clear and filament is loaded.</div>
+            <button onClick="{{ startPrint }}" class="tapfade" style="margin-top:16px; width:100%; height:52px; border:0; border-radius:15px; background:var(--accent); color:var(--accentInk); font:600 16px/1 -apple-system,sans-serif; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              New print
+            </button>
+          </div>
+          <div style="margin:14px 20px 0; display:flex; gap:12px;">
+            <div style="flex:1; padding:14px 16px; border-radius:16px; background:var(--s1); border:1px solid var(--line); display:flex; align-items:center; justify-content:space-between;">
+              <span style="font:600 12px/1 -apple-system,sans-serif; color:var(--t2);">Nozzle</span>
+              <span style="font:700 18px/1 -apple-system,sans-serif; color:var(--t3); font-variant-numeric:tabular-nums;">24°</span>
+            </div>
+            <div style="flex:1; padding:14px 16px; border-radius:16px; background:var(--s1); border:1px solid var(--line); display:flex; align-items:center; justify-content:space-between;">
+              <span style="font:600 12px/1 -apple-system,sans-serif; color:var(--t2);">Bed</span>
+              <span style="font:700 18px/1 -apple-system,sans-serif; color:var(--t3); font-variant-numeric:tabular-nums;">23°</span>
+            </div>
+          </div>
+          </sc-if>
+
+          <!-- OFFLINE -->
+          <sc-if value="{{ isOffline }}" hint-placeholder-val="{{ false }}">
+          <div style="margin:48px 24px; display:flex; flex-direction:column; align-items:center; text-align:center; gap:16px;">
+            <div style="width:72px; height:72px; border-radius:22px; background:var(--s2); color:var(--t3); display:flex; align-items:center; justify-content:center;">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l20 20"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 12.5a10 10 0 0 1 3.5-2.1"/><path d="M2 8.8a15 15 0 0 1 4-2.5"/><path d="M16.7 6.6A15 15 0 0 1 22 8.8"/><path d="M12 20h.01"/></svg>
+            </div>
+            <div>
+              <div style="font:700 20px/1.2 -apple-system,sans-serif; color:var(--t1); letter-spacing:-.3px;">Can't reach your printer</div>
+              <div style="margin-top:8px; font:500 13px/1.5 -apple-system,sans-serif; color:var(--t3); max-width:250px;">No response from <span style="font-family:ui-monospace,monospace; color:var(--t2);">a1.local</span>. Make sure it's powered on and on your Wi-Fi.</div>
+            </div>
+            <button onClick="{{ retry }}" class="tapfade" style="margin-top:4px; padding:0 26px; height:48px; border:0; border-radius:14px; background:var(--accent); color:var(--accentInk); font:600 15px/1 -apple-system,sans-serif; cursor:pointer;">Retry connection</button>
+          </div>
+          </sc-if>
+
+          <!-- POWERED OFF -->
+          <sc-if value="{{ isOff }}" hint-placeholder-val="{{ false }}">
+          <div style="margin:48px 24px; display:flex; flex-direction:column; align-items:center; text-align:center; gap:16px;">
+            <div style="width:72px; height:72px; border-radius:22px; background:var(--s2); color:var(--idle); display:flex; align-items:center; justify-content:center;">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9"/><path d="M6.6 7.6a8 8 0 1 0 10.8 0"/></svg>
+            </div>
+            <div>
+              <div style="font:700 20px/1.2 -apple-system,sans-serif; color:var(--t1); letter-spacing:-.3px;">Printer is powered off</div>
+              <div style="margin-top:8px; font:500 13px/1.5 -apple-system,sans-serif; color:var(--t3); max-width:255px;">The smart plug is off, drawing <span style="font-family:ui-monospace,monospace; color:var(--t2);">5 W</span> standby. Boot takes about 30 seconds.</div>
+            </div>
+            <button onClick="{{ powerOn }}" class="tapfade" style="margin-top:4px; padding:0 30px; height:48px; border:0; border-radius:14px; background:var(--accent); color:var(--accentInk); font:600 15px/1 -apple-system,sans-serif; cursor:pointer; display:flex; align-items:center; gap:8px;">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9"/><path d="M6.6 7.6a8 8 0 1 0 10.8 0"/></svg>
+              Power on
+            </button>
+          </div>
+          </sc-if>
+
+          <!-- CONNECTING (skeleton) -->
+          <sc-if value="{{ isConnecting }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:16px 20px 0;">
+            <div style="width:100%; aspect-ratio:16/10; border-radius:18px; background:var(--s2); animation:pulsedot 1.5s ease-in-out infinite;"></div>
+            <div style="margin-top:16px; padding:20px; border-radius:22px; background:var(--s1); border:1px solid var(--line); display:flex; align-items:center; gap:18px;">
+              <div style="width:110px; height:110px; border-radius:50%; background:var(--s2); flex:none; animation:pulsedot 1.5s ease-in-out infinite;"></div>
+              <div style="flex:1; display:flex; flex-direction:column; gap:12px;">
+                <div style="height:13px; width:55%; border-radius:5px; background:var(--s2); animation:pulsedot 1.5s ease-in-out infinite;"></div>
+                <div style="height:22px; width:85%; border-radius:6px; background:var(--s2); animation:pulsedot 1.5s ease-in-out infinite;"></div>
+                <div style="height:13px; width:42%; border-radius:5px; background:var(--s2); animation:pulsedot 1.5s ease-in-out infinite;"></div>
+              </div>
+            </div>
+            <div style="margin-top:14px; display:flex; gap:12px;">
+              <div style="flex:1; height:92px; border-radius:18px; background:var(--s1); border:1px solid var(--line); animation:pulsedot 1.5s ease-in-out infinite;"></div>
+              <div style="flex:1; height:92px; border-radius:18px; background:var(--s1); border:1px solid var(--line); animation:pulsedot 1.5s ease-in-out infinite;"></div>
+            </div>
+          </div>
+          </sc-if>
+
+        </div>
+        </sc-if>
+
+        <!-- ===================== LIBRARY ===================== -->
+        <sc-if value="{{ isLibraryTab }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="padding:8px 20px 0; display:flex; align-items:center; justify-content:space-between;">
+            <div style="font:700 30px/1 -apple-system,sans-serif; letter-spacing:-.8px; color:var(--t1);">Files</div>
+            <button onClick="{{ openUpload }}" class="tapfade" style="width:38px; height:38px; border:0; border-radius:50%; background:var(--accentDim); color:var(--accent); display:flex; align-items:center; justify-content:center; cursor:pointer;">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+          <sc-if value="{{ libraryNotEmpty }}" hint-placeholder-val="{{ true }}">
+          <div style="padding:14px 20px 0;">
+            <div style="display:flex; align-items:center; gap:8px; height:38px; padding:0 12px; border-radius:11px; background:var(--s2);">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <span style="font:500 14px/1 -apple-system,sans-serif; color:var(--t3);">Search models</span>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; padding:14px 20px 0; overflow-x:auto;">
+            <sc-for list="{{ folders }}" as="fl" hint-placeholder-count="4">
+              <div style="flex:none; padding:7px 13px; border-radius:10px; background:{{ fl.bg }}; color:{{ fl.col }}; font:600 12px/1 -apple-system,sans-serif;">{{ fl.name }}</div>
+            </sc-for>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:13px; padding:16px 20px 10px;">
+            <sc-for list="{{ files }}" as="f" hint-placeholder-count="6">
+              <button onClick="{{ f.open }}" class="tapfade" style="text-align:left; padding:0; border:0; background:none; cursor:pointer;">
+                <div style="position:relative; width:100%; aspect-ratio:4/3; border-radius:14px; overflow:hidden; background:#0e1113; border:1px solid var(--line);">
+                  <div style="position:absolute; inset:0; background:repeating-linear-gradient(135deg, var(--s2) 0 13px, var(--s1) 13px 26px);"></div>
+                  <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;">
+                    <span style="font:500 9px/1 ui-monospace,'SF Mono',monospace; letter-spacing:1.5px; color:var(--t3);">{{ f.typeLabel }}</span>
+                  </div>
+                  <div style="position:absolute; top:8px; left:8px; padding:3px 6px; border-radius:6px; background:rgba(0,0,0,.5); backdrop-filter:blur(6px); font:600 8.5px/1 ui-monospace,monospace; letter-spacing:.5px; color:rgba(255,255,255,.8);">{{ f.badge }}</div>
+                  <sc-if value="{{ f.sliced }}" hint-placeholder-val="{{ false }}">
+                    <div style="position:absolute; top:7px; right:7px; width:18px; height:18px; border-radius:50%; background:var(--accent); color:var(--accentInk); display:flex; align-items:center; justify-content:center;">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                    </div>
+                  </sc-if>
+                </div>
+                <div style="padding:9px 2px 0;">
+                  <div style="font:600 13px/1.2 -apple-system,sans-serif; color:var(--t1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ f.name }}</div>
+                  <div style="margin-top:3px; font:500 11px/1 ui-monospace,monospace; color:var(--t3);">{{ f.size }}</div>
+                </div>
+              </button>
+            </sc-for>
+          </div>
+          </sc-if>
+          <sc-if value="{{ libraryEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="margin:44px 24px; display:flex; flex-direction:column; align-items:center; text-align:center; gap:15px;">
+              <div style="width:72px; height:72px; border-radius:22px; background:var(--s2); color:var(--t3); display:flex; align-items:center; justify-content:center;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.4.6L11.4 7H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5"/><path d="M9.5 13.5L12 11l2.5 2.5"/></svg></div>
+              <div><div style="font:700 20px/1.2 -apple-system,sans-serif; color:var(--t1); letter-spacing:-.3px;">No files yet</div><div style="margin-top:8px; font:500 13px/1.5 -apple-system,sans-serif; color:var(--t3); max-width:240px;">Upload an STL, 3MF, or sliced G-code and it'll show up here.</div></div>
+              <button onClick="{{ openUpload }}" class="tapfade" style="margin-top:4px; padding:0 24px; height:48px; border:0; border-radius:14px; background:var(--accent); color:var(--accentInk); font:600 15px/1 -apple-system,sans-serif; cursor:pointer;">Upload a model</button>
+            </div>
+          </sc-if>
+        </div>
+        </sc-if>
+
+        <!-- ===================== AMS ===================== -->
+        <sc-if value="{{ isAmsTab }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="padding:8px 20px 0;">
+            <div style="font:700 30px/1 -apple-system,sans-serif; letter-spacing:-.8px; color:var(--t1);">AMS Lite</div>
+            <div style="margin-top:7px; font:500 13px/1 -apple-system,sans-serif; color:var(--t3);">{{ amsSummary }}</div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:12px; padding:18px 20px 10px;">
+            <sc-for list="{{ amsDetail }}" as="t" hint-placeholder-count="4">
+              <div style="padding:16px; border-radius:18px; background:var(--s1); box-shadow:{{ t.ring }};">
+                <div style="display:flex; align-items:center; gap:14px;">
+                  <span style="width:46px; height:46px; border-radius:12px; background:{{ t.swatch }}; border:{{ t.swatchBorder }}; flex:none;"></span>
+                  <div style="flex:1; min-width:0;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                      <span style="font:700 16px/1 -apple-system,sans-serif; color:var(--t1);">{{ t.type }}</span>
+                      <span style="padding:2px 7px; border-radius:6px; background:var(--accentDim); color:var(--accent); font:600 8.5px/1.4 ui-monospace,monospace; letter-spacing:.5px; opacity:{{ t.activeOp }};">ACTIVE</span>
+                    </div>
+                    <div style="margin-top:5px; font:500 11px/1 ui-monospace,monospace; color:var(--t3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ t.sub }}</div>
+                  </div>
+                  <span style="font:700 17px/1 ui-monospace,monospace; color:var(--t1); font-variant-numeric:tabular-nums;">{{ t.remainLabel }}</span>
+                </div>
+                <sc-if value="{{ t.notEmpty }}" hint-placeholder-val="{{ true }}">
+                  <div style="margin-top:14px; height:4px; border-radius:2px; background:var(--s3); overflow:hidden;"><div style="height:100%; width:{{ t.barW }}; border-radius:2px; background:var(--running);"></div></div>
+                  <div style="margin-top:13px; display:flex; align-items:center; justify-content:space-between;">
+                    <div style="display:flex; align-items:center; gap:7px; color:var(--t2);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.5a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"/></svg><span style="font:500 12px/1 -apple-system,sans-serif;">Nozzle {{ t.temp }}</span></div>
+                    <button onClick="{{ t.unload }}" class="tapfade" style="padding:8px 16px; border:0; border-radius:10px; background:var(--s3); color:var(--t1); font:600 12px/1 -apple-system,sans-serif; cursor:pointer;">Unload</button>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ t.empty }}" hint-placeholder-val="{{ false }}">
+                  <button onClick="{{ t.load }}" class="tapfade" style="margin-top:14px; width:100%; height:44px; border:1px solid var(--line2); border-radius:12px; background:none; color:var(--accent); font:600 13px/1 -apple-system,sans-serif; cursor:pointer;">Load filament</button>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ===================== POWER ===================== -->
+        <sc-if value="{{ isPowerTab }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="padding:8px 20px 0;">
+            <div style="font:700 30px/1 -apple-system,sans-serif; letter-spacing:-.8px; color:var(--t1);">Power</div>
+            <div style="margin-top:7px; font:500 13px/1 -apple-system,sans-serif; color:var(--t3);">Living Room Plug</div>
+          </div>
+          <div style="margin:20px 20px 0; padding:30px 20px; border-radius:22px; background:var(--s1); border:1px solid var(--line); display:flex; flex-direction:column; align-items:center;">
+            <button onClick="{{ togglePlug }}" class="tapfade" style="width:130px; height:130px; border:0; border-radius:50%; background:{{ powerBtnBg }}; color:{{ powerBtnFg }}; box-shadow:{{ powerGlow }}; display:flex; align-items:center; justify-content:center; cursor:pointer;">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9"/><path d="M6.6 7.6a8 8 0 1 0 10.8 0"/></svg>
+            </button>
+            <div style="margin-top:20px; font:700 19px/1 -apple-system,sans-serif; color:var(--t1); letter-spacing:-.3px;">{{ powerStateLabel }}</div>
+            <div style="margin-top:6px; font:500 12px/1 -apple-system,sans-serif; color:var(--t3);">Tap to toggle the printer's smart plug</div>
+          </div>
+          <div style="margin:14px 20px 0; display:flex; gap:12px;">
+            <div style="flex:1; padding:16px; border-radius:18px; background:var(--s1); border:1px solid var(--line);">
+              <div style="font:600 10px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3);">DRAWING NOW</div>
+              <div style="margin-top:9px; display:flex; align-items:baseline; gap:4px;"><span style="font:700 28px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums; letter-spacing:-1px;">{{ powerWatts }}</span><span style="font:600 13px/1 -apple-system,sans-serif; color:var(--t3);">W</span></div>
+            </div>
+            <div style="flex:1; padding:16px; border-radius:18px; background:var(--s1); border:1px solid var(--line);">
+              <div style="font:600 10px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3);">TODAY</div>
+              <div style="margin-top:9px; display:flex; align-items:baseline; gap:4px;"><span style="font:700 28px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums; letter-spacing:-1px;">{{ powerKwh }}</span><span style="font:600 13px/1 -apple-system,sans-serif; color:var(--t3);">kWh</span></div>
+            </div>
+          </div>
+          <div style="margin:14px 20px 0; padding:16px 18px; border-radius:18px; background:var(--s1); border:1px solid var(--line); display:flex; align-items:center; gap:14px;">
+            <div style="flex:1;">
+              <div style="font:600 14px/1.2 -apple-system,sans-serif; color:var(--t1);">Auto power-off</div>
+              <div style="margin-top:5px; font:500 12px/1.4 -apple-system,sans-serif; color:var(--t3);">Turn off the plug after a print finishes and the hotend cools below 50°C.</div>
+            </div>
+            <button onClick="{{ toggleAutoOff }}" style="position:relative; width:48px; height:30px; border:0; border-radius:15px; background:{{ autoTrackBg }}; cursor:pointer; flex:none; transition:background .25s; padding:0;">
+              <span style="position:absolute; top:3px; left:3px; width:24px; height:24px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3); transform:{{ autoKnobX }}; transition:transform .22s cubic-bezier(.4,0,.2,1);"></span>
+            </button>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ===================== QUEUE ===================== -->
+        <sc-if value="{{ isQueueTab }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="padding:8px 20px 0; display:flex; align-items:baseline; justify-content:space-between;">
+            <div style="font:700 30px/1 -apple-system,sans-serif; letter-spacing:-.8px; color:var(--t1);">Queue</div>
+          </div>
+
+          <sc-if value="{{ queueEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="margin:48px 24px; display:flex; flex-direction:column; align-items:center; text-align:center; gap:15px;">
+              <div style="width:72px; height:72px; border-radius:22px; background:var(--s2); color:var(--t3); display:flex; align-items:center; justify-content:center;"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12"/><path d="M8 12h12"/><path d="M8 18h9"/><circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg></div>
+              <div><div style="font:700 20px/1.2 -apple-system,sans-serif; color:var(--t1); letter-spacing:-.3px;">Queue is empty</div><div style="margin-top:8px; font:500 13px/1.5 -apple-system,sans-serif; color:var(--t3); max-width:240px;">Files you send to print will line up here. Start one from your library.</div></div>
+              <button onClick="{{ navLibrary }}" class="tapfade" style="margin-top:4px; padding:0 24px; height:48px; border:0; border-radius:14px; background:var(--accent); color:var(--accentInk); font:600 15px/1 -apple-system,sans-serif; cursor:pointer;">Browse files</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ queueNotEmpty }}" hint-placeholder-val="{{ true }}">
+            <sc-if value="{{ queueHasCurrent }}" hint-placeholder-val="{{ true }}">
+              <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); padding:18px 20px 11px;">NOW PRINTING</div>
+              <div style="margin:0 20px; padding:16px; border-radius:18px; background:var(--s1); box-shadow:0 0 0 1.5px var(--running);">
+                <div style="display:flex; align-items:center; gap:13px;">
+                  <div style="width:46px; height:46px; border-radius:12px; overflow:hidden; flex:none; background:repeating-linear-gradient(135deg, var(--s2) 0 7px, var(--s3) 7px 14px);"></div>
+                  <div style="flex:1; min-width:0;">
+                    <div style="font:600 14px/1.2 -apple-system,sans-serif; color:var(--t1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ queueCurrentName }}</div>
+                    <div style="margin-top:5px; display:flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:var(--running);"></span><span style="font:600 11px/1 ui-monospace,monospace; color:var(--running); white-space:nowrap;">{{ progressInt }}% · {{ etaText }} left</span></div>
+                  </div>
+                </div>
+                <div style="margin-top:13px; height:4px; border-radius:2px; background:var(--s3); overflow:hidden;"><div style="height:100%; width:{{ progressInt }}%; border-radius:2px; background:var(--running); transition:width .6s ease;"></div></div>
+              </div>
+            </sc-if>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:22px 20px 11px;">
+              <span style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3);">UP NEXT</span>
+              <span style="font:600 11px/1 ui-monospace,monospace; color:var(--t3);">{{ queueUpcomingCount }} jobs</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px; padding:0 20px 10px;">
+              <sc-for list="{{ queueUpcoming }}" as="j" hint-placeholder-count="3">
+                <div style="display:flex; align-items:center; gap:12px; padding:11px 13px; border-radius:15px; background:var(--s1); border:1px solid var(--line);">
+                  <span style="font:600 13px/1 ui-monospace,monospace; color:var(--t3); width:16px; text-align:center; flex:none;">{{ j.num }}</span>
+                  <div style="width:40px; height:40px; border-radius:10px; flex:none; background:repeating-linear-gradient(135deg, var(--s2) 0 6px, var(--s3) 6px 12px);"></div>
+                  <div style="flex:1; min-width:0;">
+                    <div style="font:600 13px/1.2 -apple-system,sans-serif; color:var(--t1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ j.name }}</div>
+                    <div style="margin-top:4px; font:500 11px/1 ui-monospace,monospace; color:var(--t3);">{{ j.time }}</div>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:2px; flex:none;">
+                    <button onClick="{{ j.moveUp }}" class="tapfade" style="width:30px; height:30px; border:0; border-radius:8px; background:none; color:var(--t2); opacity:{{ j.upOp }}; display:flex; align-items:center; justify-content:center; cursor:pointer;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg></button>
+                    <button onClick="{{ j.moveDown }}" class="tapfade" style="width:30px; height:30px; border:0; border-radius:8px; background:none; color:var(--t2); display:flex; align-items:center; justify-content:center; cursor:pointer;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+                    <button onClick="{{ j.cancel }}" class="tapfade" style="width:30px; height:30px; border:0; border-radius:8px; background:none; color:var(--t3); display:flex; align-items:center; justify-content:center; cursor:pointer;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+        </sc-if>
+
+      </div>
+
+      <!-- TAB BAR -->
+      <div style="position:absolute; left:0; right:0; bottom:0; z-index:50; padding-top:9px; background:var(--tabbar); backdrop-filter:saturate(180%) blur(22px); -webkit-backdrop-filter:saturate(180%) blur(22px); border-top:1px solid var(--line);">
+        <div style="display:flex; padding:0 6px;">
+          <button onClick="{{ navDashboard }}" class="tapfade" style="flex:1; background:none; border:0; padding:5px 0; display:flex; flex-direction:column; align-items:center; gap:4px; color:{{ tcDashboard }}; cursor:pointer;">
+            <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4.5-5.5"/><circle cx="12" cy="18" r="1.5" fill="currentColor" stroke="none"/></svg>
+            <span style="font:600 10px/1 -apple-system,sans-serif;">Printer</span>
+          </button>
+          <button onClick="{{ navLibrary }}" class="tapfade" style="flex:1; background:none; border:0; padding:5px 0; display:flex; flex-direction:column; align-items:center; gap:4px; color:{{ tcLibrary }}; cursor:pointer;">
+            <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.4.6L11.4 7H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <span style="font:600 10px/1 -apple-system,sans-serif;">Files</span>
+          </button>
+          <button onClick="{{ navQueue }}" class="tapfade" style="flex:1; background:none; border:0; padding:5px 0; display:flex; flex-direction:column; align-items:center; gap:4px; color:{{ tcQueue }}; cursor:pointer;">
+            <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12"/><path d="M8 12h12"/><path d="M8 18h9"/><circle cx="4" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>
+            <span style="font:600 10px/1 -apple-system,sans-serif;">Queue</span>
+          </button>
+          <button onClick="{{ navAms }}" class="tapfade" style="flex:1; background:none; border:0; padding:5px 0; display:flex; flex-direction:column; align-items:center; gap:4px; color:{{ tcAms }}; cursor:pointer;">
+            <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>
+            <span style="font:600 10px/1 -apple-system,sans-serif;">AMS</span>
+          </button>
+          <button onClick="{{ navPower }}" class="tapfade" style="flex:1; background:none; border:0; padding:5px 0; display:flex; flex-direction:column; align-items:center; gap:4px; color:{{ tcPower }}; cursor:pointer;">
+            <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v8"/><path d="M7.4 6.4a7 7 0 1 0 9.2 0"/></svg>
+            <span style="font:600 10px/1 -apple-system,sans-serif;">Power</span>
+          </button>
+        </div>
+        <div style="height:30px; display:flex; align-items:center; justify-content:center;">
+          <div style="width:134px; height:5px; border-radius:3px; background:var(--t1); opacity:.22;"></div>
+        </div>
+      </div>
+
+      <!-- ===================== CAMERA FULLSCREEN ===================== -->
+      <sc-if value="{{ overlayCamera }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; z-index:70; background:#060708; overflow:hidden;">
+        <div style="position:absolute; inset:0; overflow:hidden;">
+          <div style="position:absolute; inset:-12%; transform:scale({{ camZoom }}); transition:transform .45s cubic-bezier(.4,0,.2,1); background:repeating-linear-gradient(125deg,#15181b 0 22px,#0e1114 22px 44px);"></div>
+          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none;">
+            <div style="font:500 11px/1 ui-monospace,'SF Mono',Menlo,monospace; letter-spacing:2px; color:#3a4046;">CHAMBER&nbsp;·&nbsp;DROP&nbsp;SNAPSHOT</div>
+          </div>
+          <div style="position:absolute; inset:0; background:#060708; opacity:{{ camFlashOp }}; transition:opacity .5s ease; pointer-events:none;"></div>
+          <button onClick="{{ toggleZoom }}" style="position:absolute; inset:0; background:none; border:0; cursor:pointer;" aria-label="Zoom"></button>
+        </div>
+
+        <div style="position:absolute; top:0; left:0; right:0; padding:54px 16px 20px; background:linear-gradient(180deg,rgba(0,0,0,.62),transparent); display:flex; align-items:center; gap:11px; z-index:3;">
+          <button onClick="{{ closeCamera }}" class="tapfade" style="width:40px; height:40px; border:0; border-radius:50%; background:rgba(22,24,27,.6); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div style="flex:1; display:flex; align-items:center; gap:8px; padding:10px 13px; border-radius:13px; background:rgba(22,24,27,.55); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);">
+            <span style="width:7px; height:7px; border-radius:50%; background:{{ stateColor }}; box-shadow:0 0 8px {{ stateColor }}; flex:none;"></span>
+            <span style="font:600 13px/1 -apple-system,sans-serif; color:#fff;">{{ stateLabel }}</span>
+            <span style="font:600 12px/1 ui-monospace,monospace; color:rgba(255,255,255,.5); margin-left:auto;">{{ progressInt }}% · L{{ layer }}</span>
+          </div>
+          <button onClick="{{ refreshCam }}" class="tapfade" style="width:40px; height:40px; border:0; border-radius:50%; background:rgba(22,24,27,.6); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none;">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v4h-4"/></svg>
+          </button>
+        </div>
+
+        <div style="position:absolute; bottom:0; left:0; right:0; padding:20px 18px 38px; background:linear-gradient(0deg,rgba(0,0,0,.62),transparent); display:flex; align-items:center; justify-content:space-between; z-index:3;">
+          <div style="display:flex; align-items:center; gap:6px; padding:7px 11px; border-radius:9px; background:rgba(22,24,27,.55); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);">
+            <span style="width:6px; height:6px; border-radius:50%; background:#30D158; animation:pulsedot 2s infinite;"></span>
+            <span style="font:600 10px/1 -apple-system,sans-serif; letter-spacing:.5px; color:#fff;">LIVE · 1 fps</span>
+          </div>
+          <div style="font:500 12px/1 ui-monospace,'SF Mono',monospace; color:rgba(255,255,255,.7);">{{ camTs }}</div>
+          <button onClick="{{ toggleZoom }}" class="tapfade" style="padding:8px 12px; border:0; border-radius:9px; background:rgba(22,24,27,.55); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); color:#fff; font:600 11px/1 ui-monospace,monospace; cursor:pointer; font-variant-numeric:tabular-nums;">{{ camZoomLabel }}</button>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ===================== UPLOAD SHEET ===================== -->
+      <sc-if value="{{ overlayUpload }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeUpload }}" style="position:absolute; inset:0; z-index:72; background:rgba(0,0,0,.5); display:flex; flex-direction:column; justify-content:flex-end;">
+        <div onClick="{{ stopProp }}" style="background:var(--sheet); border-radius:26px 26px 0 0; padding:10px 14px 34px; box-shadow:var(--shadow2); border-top:1px solid var(--line);">
+          <div style="width:38px; height:5px; border-radius:3px; background:var(--line2); margin:0 auto 16px;"></div>
+          <div style="font:700 17px/1 -apple-system,sans-serif; color:var(--t1); text-align:center; margin-bottom:14px;">Add a file</div>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <button onClick="{{ closeUpload }}" class="tapfade" style="display:flex; align-items:center; gap:13px; padding:14px; border:0; border-radius:14px; background:var(--s2); color:var(--t1); cursor:pointer; text-align:left;">
+              <span style="width:36px; height:36px; border-radius:10px; background:var(--accentDim); color:var(--accent); display:flex; align-items:center; justify-content:center; flex:none;"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.4.6L11.4 7H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+              <span style="flex:1; font:600 15px/1 -apple-system,sans-serif;">From Files</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+            <button onClick="{{ closeUpload }}" class="tapfade" style="display:flex; align-items:center; gap:13px; padding:14px; border:0; border-radius:14px; background:var(--s2); color:var(--t1); cursor:pointer; text-align:left;">
+              <span style="width:36px; height:36px; border-radius:10px; background:var(--accentDim); color:var(--accent); display:flex; align-items:center; justify-content:center; flex:none;"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg></span>
+              <span style="flex:1; font:600 15px/1 -apple-system,sans-serif;">From Photos</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+            <button onClick="{{ closeUpload }}" class="tapfade" style="display:flex; align-items:center; gap:13px; padding:14px; border:0; border-radius:14px; background:var(--s2); color:var(--t1); cursor:pointer; text-align:left;">
+              <span style="width:36px; height:36px; border-radius:10px; background:var(--accentDim); color:var(--accent); display:flex; align-items:center; justify-content:center; flex:none;"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><path d="M8 12h8"/></svg></span>
+              <span style="flex:1; font:600 15px/1 -apple-system,sans-serif;">Paste link</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
+          <button onClick="{{ closeUpload }}" class="tapfade" style="margin-top:14px; width:100%; height:50px; border:0; border-radius:14px; background:var(--s3); color:var(--t1); font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Cancel</button>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ===================== PRINT WIZARD ===================== -->
+      <sc-if value="{{ overlayWizard }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; z-index:72; background:rgba(0,0,0,.55); display:flex; flex-direction:column; justify-content:flex-end;">
+        <div style="position:relative; height:calc(100% - 56px); background:var(--sheet); border-radius:24px 24px 0 0; box-shadow:var(--shadow2); display:flex; flex-direction:column; overflow:hidden;">
+
+          <div style="padding:16px 18px 0; display:flex; align-items:center; justify-content:space-between;">
+            <button onClick="{{ wizClose }}" class="tapfade" style="border:0; background:none; color:var(--t2); font:500 15px/1 -apple-system,sans-serif; cursor:pointer; min-width:54px; text-align:left;">Cancel</button>
+            <div style="font:600 15px/1 -apple-system,sans-serif; color:var(--t1);">{{ wTitle }}</div>
+            <div style="font:600 12px/1 ui-monospace,monospace; color:var(--t3); min-width:54px; text-align:right;">{{ wStepLabel }}</div>
+          </div>
+          <div style="display:flex; gap:4px; padding:15px 18px 0;">
+            <sc-for list="{{ wDots }}" as="d" hint-placeholder-count="7">
+              <div style="flex:1; height:3px; border-radius:2px; background:{{ d.bg }}; transition:background .3s;"></div>
+            </sc-for>
+          </div>
+
+          <div class="scr" style="flex:1; overflow-y:auto; padding:22px 18px 18px;">
+
+            <!-- STEP 1 SOURCE -->
+            <sc-if value="{{ wStep1 }}" hint-placeholder-val="{{ true }}">
+              <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin-bottom:12px;">SELECTED FILE</div>
+              <div style="position:relative; width:100%; aspect-ratio:16/10; border-radius:16px; overflow:hidden; background:#0e1113; border:1px solid var(--line);">
+                <div style="position:absolute; inset:0; background:repeating-linear-gradient(135deg, var(--s2) 0 16px, var(--s1) 16px 32px);"></div>
+                <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;"><span style="font:500 10px/1 ui-monospace,monospace; letter-spacing:1.5px; color:var(--t3);">3MF&nbsp;·&nbsp;PLATE&nbsp;1</span></div>
+              </div>
+              <div style="margin-top:15px; font:700 19px/1.2 -apple-system,sans-serif; color:var(--t1); letter-spacing:-.3px; word-break:break-all;">{{ wFile }}</div>
+              <div style="margin-top:6px; font:500 12px/1 ui-monospace,monospace; color:var(--t3);">.3mf · 4.2 MB · pre-sliced</div>
+              <button onClick="{{ wizPickAgain }}" class="tapfade" style="margin-top:20px; width:100%; height:48px; border:1px solid var(--line2); border-radius:14px; background:none; color:var(--t1); font:600 14px/1 -apple-system,sans-serif; cursor:pointer;">Choose a different file</button>
+            </sc-if>
+
+            <!-- STEP 2 PRINTER -->
+            <sc-if value="{{ wStep2 }}" hint-placeholder-val="{{ false }}">
+              <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin-bottom:12px;">PRINT ON</div>
+              <div style="display:flex; align-items:center; gap:14px; padding:16px; border-radius:16px; background:var(--s2);">
+                <div style="width:52px; height:52px; border-radius:13px; background:var(--s3); display:flex; align-items:center; justify-content:center; color:var(--t2); flex:none;"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="13" rx="2"/><path d="M7 16v3a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3"/><path d="M9 8h6"/></svg></div>
+                <div style="flex:1;">
+                  <div style="font:700 17px/1 -apple-system,sans-serif; color:var(--t1);">Bambu Lab A1</div>
+                  <div style="margin-top:5px; display:flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:var(--running);"></span><span style="font:500 12px/1 -apple-system,sans-serif; color:var(--t2);">Living Room · Connected</span></div>
+                </div>
+              </div>
+              <div style="margin-top:12px; border-radius:16px; background:var(--s2); overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Nozzle</span><span style="font:600 13px/1 ui-monospace,monospace; color:var(--t1);">0.4 mm</span></div>
+                <div style="display:flex; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Build plate</span><span style="font:600 13px/1 ui-monospace,monospace; color:var(--t1);">Textured PEI</span></div>
+                <div style="display:flex; justify-content:space-between; padding:14px 16px;"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Build volume</span><span style="font:600 13px/1 ui-monospace,monospace; color:var(--t1);">256³ mm</span></div>
+              </div>
+            </sc-if>
+
+            <!-- STEP 3 FILAMENT + QUALITY -->
+            <sc-if value="{{ wStep3 }}" hint-placeholder-val="{{ false }}">
+              <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin-bottom:11px;">MATERIAL</div>
+              <div style="display:flex; flex-direction:column; gap:9px;">
+                <sc-for list="{{ wizFilaments }}" as="m" hint-placeholder-count="3">
+                  <button onClick="{{ m.tap }}" class="tapfade" style="display:flex; align-items:center; gap:12px; padding:14px; border:0; border-radius:13px; background:var(--s2); box-shadow:{{ m.ring }}; cursor:pointer; text-align:left;">
+                    <span style="flex:1; font:600 14px/1 -apple-system,sans-serif; color:var(--t1);">{{ m.name }}</span>
+                    <span style="width:20px; height:20px; border-radius:50%; background:var(--accent); opacity:{{ m.dot }}; display:flex; align-items:center; justify-content:center; color:var(--accentInk); flex:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>
+                  </button>
+                </sc-for>
+              </div>
+              <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin:22px 0 11px;">QUALITY</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:9px;">
+                <sc-for list="{{ wizQuality }}" as="q" hint-placeholder-count="4">
+                  <button onClick="{{ q.tap }}" class="tapfade" style="padding:15px 14px; border:0; border-radius:13px; background:var(--s2); box-shadow:{{ q.ring }}; cursor:pointer; text-align:left;">
+                    <div style="font:700 19px/1 -apple-system,sans-serif; color:{{ q.col }}; font-variant-numeric:tabular-nums;">{{ q.h }}</div>
+                    <div style="margin-top:5px; font:500 12px/1 -apple-system,sans-serif; color:var(--t2);">{{ q.label }}</div>
+                  </button>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <!-- STEP 4 SLICING -->
+            <sc-if value="{{ wStep4 }}" hint-placeholder-val="{{ false }}">
+              <div style="padding-top:40px; display:flex; flex-direction:column; align-items:center;">
+                <div style="font:700 46px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums; letter-spacing:-1px;">{{ wizSlicePct }}<span style="font-size:22px; color:var(--t3);">%</span></div>
+                <div style="margin-top:18px; width:78%; height:5px; border-radius:3px; background:var(--s3); overflow:hidden;"><div style="height:100%; width:{{ wizSlicePct }}%; background:var(--accent); border-radius:3px; transition:width .12s linear;"></div></div>
+                <div style="margin-top:14px; font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Slicing on device…</div>
+                <div style="margin-top:30px; width:100%; display:flex; flex-direction:column; gap:14px; padding:0 6px;">
+                  <div style="display:flex; align-items:center; gap:11px;"><span style="width:18px;height:18px;border-radius:50%;background:var(--accent);opacity:{{ wizSl1Op }};display:flex;align-items:center;justify-content:center;color:var(--accentInk);flex:none;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Generating supports</span></div>
+                  <div style="display:flex; align-items:center; gap:11px;"><span style="width:18px;height:18px;border-radius:50%;background:var(--accent);opacity:{{ wizSl2Op }};display:flex;align-items:center;justify-content:center;color:var(--accentInk);flex:none;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Planning toolpaths</span></div>
+                  <div style="display:flex; align-items:center; gap:11px;"><span style="width:18px;height:18px;border-radius:50%;background:var(--accent);opacity:{{ wizSl3Op }};display:flex;align-items:center;justify-content:center;color:var(--accentInk);flex:none;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Estimating time &amp; filament</span></div>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- STEP 5 REVIEW -->
+            <sc-if value="{{ wStep5 }}" hint-placeholder-val="{{ false }}">
+              <div style="position:relative; width:100%; aspect-ratio:4/3; border-radius:16px; overflow:hidden; background:#0e1113; border:1px solid var(--line);">
+                <div style="position:absolute; inset:0; background:repeating-linear-gradient(135deg, var(--s2) 0 18px, var(--s1) 18px 36px);"></div>
+                <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;"><span style="font:500 10px/1 ui-monospace,monospace; letter-spacing:1.5px; color:var(--t3);">SLICED PLATE PREVIEW</span></div>
+                <div style="position:absolute; top:10px; left:10px; padding:4px 8px; border-radius:7px; background:rgba(0,0,0,.5); backdrop-filter:blur(6px); font:600 9px/1 ui-monospace,monospace; letter-spacing:.5px; color:#fff;">PLATE 1 · 92×64 mm</div>
+              </div>
+              <div style="margin-top:16px; border-radius:16px; background:var(--s2); overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Print time</span><span style="font:700 16px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums;">12m 18s</span></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Filament</span><span style="font:700 15px/1 ui-monospace,monospace; color:var(--t1); font-variant-numeric:tabular-nums;">3.75 g · 1.24 m</span></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Layers</span><span style="font:600 14px/1 ui-monospace,monospace; color:var(--t1);">203</span></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 16px;"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Quality</span><span style="font:600 14px/1 ui-monospace,monospace; color:var(--t1);">{{ wizQualityLabel }}</span></div>
+              </div>
+              <div style="margin-top:14px; display:flex; align-items:flex-start; gap:10px; padding:13px 14px; border-radius:13px; background:var(--accentDim);">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none; margin-top:1px;"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v4h1"/></svg>
+                <span style="font:500 12.5px/1.45 -apple-system,sans-serif; color:var(--t2);">Nothing prints yet. Review the estimate, then map filament to a tray.</span>
+              </div>
+            </sc-if>
+
+            <!-- STEP 6 MAP FILAMENT -->
+            <sc-if value="{{ wStep6 }}" hint-placeholder-val="{{ false }}">
+              <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin-bottom:11px;">THE MODEL NEEDS</div>
+              <div style="display:flex; align-items:center; gap:13px; padding:14px 16px; border-radius:14px; background:var(--s2);">
+                <span style="width:30px; height:30px; border-radius:8px; background:#000; border:1px solid var(--line2); flex:none;"></span>
+                <div style="flex:1;"><div style="font:600 14px/1 -apple-system,sans-serif; color:var(--t1);">PLA · Black</div><div style="margin-top:4px; font:500 11px/1 ui-monospace,monospace; color:var(--t3);">≈ 3.75 g for this plate</div></div>
+              </div>
+              <div style="display:flex; align-items:center; justify-content:center; gap:7px; padding:12px 0;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--t3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M6 13l6 6 6-6"/></svg><span style="font:500 11px/1 ui-monospace,monospace; letter-spacing:.5px; color:var(--t3);">maps to</span></div>
+              <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin-bottom:11px;">AMS SLOT</div>
+              <div style="display:flex; flex-direction:column; gap:9px;">
+                <sc-for list="{{ wizSlots }}" as="sl" hint-placeholder-count="4">
+                  <button onClick="{{ sl.tap }}" class="tapfade" style="display:flex; align-items:center; gap:13px; padding:13px 14px; border:0; border-radius:13px; background:var(--s2); box-shadow:{{ sl.ring }}; opacity:{{ sl.op }}; cursor:pointer; text-align:left;">
+                    <span style="width:28px; height:28px; border-radius:8px; background:{{ sl.swatch }}; border:{{ sl.swatchBorder }}; flex:none;"></span>
+                    <div style="flex:1;"><div style="font:600 13px/1 -apple-system,sans-serif; color:var(--t1);">Slot {{ sl.id }} · {{ sl.type }}</div><div style="margin-top:3px; font:500 11px/1 ui-monospace,monospace; color:var(--t3);">{{ sl.pct }}</div></div>
+                    <span style="width:20px; height:20px; border-radius:50%; background:var(--accent); opacity:{{ sl.check }}; display:flex; align-items:center; justify-content:center; color:var(--accentInk); flex:none;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>
+                  </button>
+                </sc-for>
+              </div>
+              <div style="margin-top:13px; font:500 12px/1.4 -apple-system,sans-serif; color:var(--t3);">Matched by type and color. Tap a slot to change.</div>
+            </sc-if>
+
+            <!-- STEP 7 START -->
+            <sc-if value="{{ wStep7 }}" hint-placeholder-val="{{ false }}">
+              <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin-bottom:12px;">READY TO PRINT</div>
+              <div style="border-radius:16px; background:var(--s2); overflow:hidden;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2); flex:none;">File</span><span style="font:600 13px/1 ui-monospace,monospace; color:var(--t1); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ wFile }}</span></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Material</span><span style="font:600 13px/1 -apple-system,sans-serif; color:var(--t1);">{{ wizFilamentName }}</span></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Mapped to</span><span style="font:600 13px/1 -apple-system,sans-serif; color:var(--t1);">{{ wizSlotLabel }}</span></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Quality</span><span style="font:600 13px/1 ui-monospace,monospace; color:var(--t1);">{{ wizQualityLabel }}</span></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px;"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Est. time</span><span style="font:700 15px/1 -apple-system,sans-serif; color:var(--t1); font-variant-numeric:tabular-nums;">12m 18s</span></div>
+              </div>
+              <div style="margin-top:14px; display:flex; align-items:flex-start; gap:10px; padding:13px 14px; border-radius:13px; background:var(--heatingDim);">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--heating)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none; margin-top:1px;"><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/><path d="M9 18h6"/></svg>
+                <span style="font:500 12.5px/1.45 -apple-system,sans-serif; color:var(--t2);">Nozzle and bed heat first (~3 min). You can pause or stop anytime.</span>
+              </div>
+            </sc-if>
+
+          </div>
+
+          <div style="padding:12px 18px 30px; border-top:1px solid var(--line); display:flex; gap:12px; background:var(--sheet);">
+            <sc-if value="{{ backShow }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ wizBack }}" class="tapfade" style="flex:none; padding:0 22px; height:52px; border:0; border-radius:15px; background:var(--s3); color:var(--t1); font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Back</button>
+            </sc-if>
+            <button onClick="{{ footerAction }}" class="tapfade" style="flex:1; height:52px; border:0; border-radius:15px; background:{{ footerBg }}; color:{{ footerCol }}; font:600 16px/1 -apple-system,sans-serif; cursor:pointer; opacity:{{ footerOp }};">{{ footerLabel }}</button>
+          </div>
+
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ===================== CONFIRM: STOP ===================== -->
+      <sc-if value="{{ overlayConfirmStop }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeOverlay }}" style="position:absolute; inset:0; z-index:74; background:rgba(0,0,0,.55); display:flex; flex-direction:column; justify-content:flex-end;">
+        <div onClick="{{ stopProp }}" style="background:var(--sheet); border-radius:26px 26px 0 0; padding:12px 18px 34px; box-shadow:var(--shadow2); border-top:1px solid var(--line);">
+          <div style="width:38px; height:5px; border-radius:3px; background:var(--line2); margin:0 auto 18px;"></div>
+          <div style="display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px; padding:4px 6px 20px;">
+            <div style="width:52px; height:52px; border-radius:50%; background:var(--errorDim); color:var(--error); display:flex; align-items:center; justify-content:center;"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="3"/></svg></div>
+            <div style="font:700 19px/1.2 -apple-system,sans-serif; color:var(--t1);">Stop this print?</div>
+            <div style="font:500 13px/1.45 -apple-system,sans-serif; color:var(--t3); max-width:260px;">This cancels the job on the bed. It can't be resumed — you'll start over from the beginning.</div>
+          </div>
+          <button onClick="{{ doStop }}" class="tapfade" style="width:100%; height:52px; border:0; border-radius:15px; background:var(--error); color:#fff; font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Stop print</button>
+          <button onClick="{{ closeOverlay }}" class="tapfade" style="margin-top:10px; width:100%; height:52px; border:0; border-radius:15px; background:var(--s3); color:var(--t1); font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Keep printing</button>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ===================== CONFIRM: POWER OFF ===================== -->
+      <sc-if value="{{ overlayConfirmPower }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeOverlay }}" style="position:absolute; inset:0; z-index:74; background:rgba(0,0,0,.55); display:flex; flex-direction:column; justify-content:flex-end;">
+        <div onClick="{{ stopProp }}" style="background:var(--sheet); border-radius:26px 26px 0 0; padding:12px 18px 34px; box-shadow:var(--shadow2); border-top:1px solid var(--line);">
+          <div style="width:38px; height:5px; border-radius:3px; background:var(--line2); margin:0 auto 18px;"></div>
+          <div style="display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px; padding:4px 6px 20px;">
+            <div style="width:52px; height:52px; border-radius:50%; background:var(--errorDim); color:var(--error); display:flex; align-items:center; justify-content:center;"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9"/><path d="M6.6 7.6a8 8 0 1 0 10.8 0"/></svg></div>
+            <div style="font:700 19px/1.2 -apple-system,sans-serif; color:var(--t1);">Turn off the printer?</div>
+            <div style="font:500 13px/1.45 -apple-system,sans-serif; color:var(--t3); max-width:260px;">A print is running. Cutting power at the plug stops it immediately and can't be resumed.</div>
+          </div>
+          <button onClick="{{ doPowerOff }}" class="tapfade" style="width:100%; height:52px; border:0; border-radius:15px; background:var(--error); color:#fff; font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Turn off anyway</button>
+          <button onClick="{{ closeOverlay }}" class="tapfade" style="margin-top:10px; width:100%; height:52px; border:0; border-radius:15px; background:var(--s3); color:var(--t1); font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">Cancel</button>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ===================== SETTINGS ===================== -->
+      <sc-if value="{{ overlaySettings }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; z-index:73; background:var(--bg); display:flex; flex-direction:column;">
+        <div style="padding:52px 12px 10px; display:flex; align-items:center;">
+          <button onClick="{{ closeSettings }}" class="tapfade" style="display:flex; align-items:center; gap:2px; border:0; background:none; color:var(--accent); font:500 16px/1 -apple-system,sans-serif; cursor:pointer; padding:6px 8px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Printer</button>
+        </div>
+        <div class="scr" style="flex:1; overflow-y:auto; padding:4px 20px 40px;">
+          <div style="font:700 30px/1 -apple-system,sans-serif; letter-spacing:-.8px; color:var(--t1); margin-bottom:20px;">Settings</div>
+
+          <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin:0 4px 10px;">CONNECTION</div>
+          <div style="border-radius:16px; background:var(--s1); border:1px solid var(--line); overflow:hidden;">
+            <div style="display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--line);">
+              <span style="width:8px; height:8px; border-radius:50%; background:var(--running); box-shadow:0 0 8px var(--running);"></span>
+              <span style="flex:1; font:600 14px/1 -apple-system,sans-serif; color:var(--t1);">Connected</span>
+              <span style="font:600 12px/1 ui-monospace,monospace; color:var(--t3);">38 ms</span>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid var(--line);">
+              <span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2); flex:none;">Server</span>
+              <span style="font:600 13px/1 ui-monospace,monospace; color:var(--t1); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">a1.home.example</span>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px;">
+              <span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">API key</span>
+              <div style="display:flex; align-items:center; gap:12px;"><span style="font:600 13px/1 ui-monospace,monospace; color:var(--t3); letter-spacing:1px;">••••··3f7a</span><button onClick="{{ openOnboarding }}" class="tapfade" style="border:0; background:none; color:var(--accent); font:600 13px/1 -apple-system,sans-serif; cursor:pointer;">Replace</button></div>
+            </div>
+          </div>
+
+          <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin:24px 4px 10px;">NOTIFICATIONS</div>
+          <div style="border-radius:16px; background:var(--s1); border:1px solid var(--line); overflow:hidden;">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:13px 16px; border-bottom:1px solid var(--line);">
+              <span style="font:500 14px/1 -apple-system,sans-serif; color:var(--t1);">Print complete</span>
+              <button onClick="{{ nComplete.toggle }}" style="position:relative; width:48px; height:30px; border:0; border-radius:15px; background:{{ nComplete.track }}; cursor:pointer; flex:none; transition:background .25s; padding:0;"><span style="position:absolute; top:3px; left:3px; width:24px; height:24px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3); transform:{{ nComplete.knob }}; transition:transform .22s cubic-bezier(.4,0,.2,1);"></span></button>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:13px 16px; border-bottom:1px solid var(--line);">
+              <span style="font:500 14px/1 -apple-system,sans-serif; color:var(--t1);">Errors &amp; HMS alerts</span>
+              <button onClick="{{ nErrors.toggle }}" style="position:relative; width:48px; height:30px; border:0; border-radius:15px; background:{{ nErrors.track }}; cursor:pointer; flex:none; transition:background .25s; padding:0;"><span style="position:absolute; top:3px; left:3px; width:24px; height:24px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3); transform:{{ nErrors.knob }}; transition:transform .22s cubic-bezier(.4,0,.2,1);"></span></button>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:13px 16px;">
+              <span style="font:500 14px/1 -apple-system,sans-serif; color:var(--t1);">Filament runout</span>
+              <button onClick="{{ nRunout.toggle }}" style="position:relative; width:48px; height:30px; border:0; border-radius:15px; background:{{ nRunout.track }}; cursor:pointer; flex:none; transition:background .25s; padding:0;"><span style="position:absolute; top:3px; left:3px; width:24px; height:24px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3); transform:{{ nRunout.knob }}; transition:transform .22s cubic-bezier(.4,0,.2,1);"></span></button>
+            </div>
+          </div>
+
+          <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin:24px 4px 10px;">APPEARANCE</div>
+          <div style="display:flex; gap:4px; padding:4px; border-radius:13px; background:var(--s2);">
+            <button onClick="{{ setDark }}" class="tapfade" style="flex:1; height:40px; border:0; border-radius:10px; background:{{ themeDarkBg }}; color:{{ themeDarkCol }}; font:600 14px/1 -apple-system,sans-serif; cursor:pointer;">Dark</button>
+            <button onClick="{{ setLight }}" class="tapfade" style="flex:1; height:40px; border:0; border-radius:10px; background:{{ themeLightBg }}; color:{{ themeLightCol }}; font:600 14px/1 -apple-system,sans-serif; cursor:pointer;">Light</button>
+          </div>
+
+          <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin:24px 4px 10px;">ABOUT</div>
+          <div style="border-radius:16px; background:var(--s1); border:1px solid var(--line); overflow:hidden;">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:13px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">App version</span><span style="font:600 13px/1 ui-monospace,monospace; color:var(--t1);">1.0.0</span></div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:13px 16px; border-bottom:1px solid var(--line);"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Printer</span><span style="font:600 13px/1 ui-monospace,monospace; color:var(--t1);">Bambu Lab A1</span></div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:13px 16px;"><span style="font:500 13px/1 -apple-system,sans-serif; color:var(--t2);">Firmware</span><span style="font:600 13px/1 ui-monospace,monospace; color:var(--t1);">01.04.00.00</span></div>
+          </div>
+
+          <button onClick="{{ openOnboarding }}" class="tapfade" style="margin-top:24px; width:100%; height:50px; border:1px solid var(--line2); border-radius:14px; background:none; color:var(--error); font:600 15px/1 -apple-system,sans-serif; cursor:pointer;">Clear key &amp; sign out</button>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- ===================== ONBOARDING ===================== -->
+      <sc-if value="{{ overlayOnboarding }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; z-index:80; background:var(--bg); display:flex; flex-direction:column; padding:0 24px;">
+        <div style="position:absolute; top:50px; right:18px;"><button onClick="{{ closeSettings }}" class="tapfade" style="width:34px; height:34px; border:0; border-radius:50%; background:var(--s2); color:var(--t2); display:flex; align-items:center; justify-content:center; cursor:pointer;"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+        <div style="padding-top:84px; display:flex; flex-direction:column; align-items:center; text-align:center;">
+          <div style="width:60px; height:60px; border-radius:17px; background:var(--accent); display:flex; align-items:center; justify-content:center; box-shadow:0 0 40px -8px var(--accent);"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accentInk)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="13" rx="2"/><path d="M7 16v3a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-3"/><path d="M9 8h6"/></svg></div>
+          <div style="margin-top:20px; font:700 26px/1.1 -apple-system,sans-serif; letter-spacing:-.6px; color:var(--t1);">Connect your A1</div>
+          <div style="margin-top:10px; font:500 14px/1.5 -apple-system,sans-serif; color:var(--t3); max-width:280px;">Point Bambu at your self-hosted bridge. Your key is stored only on this device — no cloud account.</div>
+        </div>
+        <div style="margin-top:32px; display:flex; flex-direction:column; gap:16px;">
+          <div>
+            <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin:0 2px 8px;">SERVER URL</div>
+            <input value="https://a1.home.example" style="width:100%; height:52px; padding:0 16px; border:1px solid var(--line2); border-radius:14px; background:var(--s2); color:var(--t1); font:500 15px/1 ui-monospace,monospace; outline:none;" />
+          </div>
+          <div>
+            <div style="font:600 11px/1 ui-monospace,monospace; letter-spacing:1px; color:var(--t3); margin:0 2px 8px;">API KEY</div>
+            <input placeholder="Paste your key" style="width:100%; height:52px; padding:0 16px; border:1px solid var(--line2); border-radius:14px; background:var(--s2); color:var(--t1); font:500 15px/1 ui-monospace,monospace; outline:none;" />
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; padding:2px 2px;">
+            <sc-if value="{{ obConnecting }}" hint-placeholder-val="{{ false }}"><span style="width:13px; height:13px; border-radius:50%; border:2px solid var(--line2); border-top-color:var(--heating); animation:spin .7s linear infinite; flex:none;"></span></sc-if>
+            <sc-if value="{{ obIdle }}" hint-placeholder-val="{{ true }}"><span style="width:8px; height:8px; border-radius:50%; background:{{ obStatusColor }};"></span></sc-if>
+            <sc-if value="{{ obConnected }}" hint-placeholder-val="{{ false }}"><span style="width:8px; height:8px; border-radius:50%; background:{{ obStatusColor }}; box-shadow:0 0 8px {{ obStatusColor }};"></span></sc-if>
+            <span style="font:500 13px/1 -apple-system,sans-serif; color:{{ obStatusColor }};">{{ obStatusLabel }}</span>
+          </div>
+        </div>
+        <div style="margin-top:auto; padding-bottom:42px;">
+          <button onClick="{{ obConnect }}" class="tapfade" style="width:100%; height:54px; border:0; border-radius:15px; background:var(--accent); color:var(--accentInk); font:600 16px/1 -apple-system,sans-serif; cursor:pointer;">{{ obBtnLabel }}</button>
+        </div>
+      </div>
+      </sc-if>
+
+    </div>
+  </div>
+
+  <!-- STAGE CONTROLS (prototype scaffolding, not part of the app) -->
+  <div style="display:flex; flex-direction:column; align-items:center; gap:10px; max-width:460px;">
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center;">
+      <span style="font:600 10px/1 ui-monospace,monospace; letter-spacing:1px; color:#6b7177; padding-right:2px;">STATE</span>
+      <sc-for list="{{ stages }}" as="g" hint-placeholder-count="8">
+        <button onClick="{{ g.tap }}" style="border:0; border-radius:9px; padding:7px 11px; font:600 11px/1 -apple-system,sans-serif; cursor:pointer; background:{{ g.bg }}; color:{{ g.col }};">{{ g.label }}</button>
+      </sc-for>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <button onClick="{{ toggleTheme }}" style="border:1px solid rgba(255,255,255,.12); border-radius:9px; padding:7px 14px; font:600 11px/1 -apple-system,sans-serif; cursor:pointer; background:rgba(255,255,255,.05); color:#c8ccd0;">Theme · {{ themeLabel }}</button>
+      <button onClick="{{ toggleEmpty }}" style="border:1px solid rgba(255,255,255,.12); border-radius:9px; padding:7px 14px; font:600 11px/1 -apple-system,sans-serif; cursor:pointer; background:rgba(255,255,255,.05); color:#c8ccd0;">Empty states · {{ emptyLabel }}</button>
+      <button onClick="{{ openOnboarding }}" style="border:1px solid rgba(255,255,255,.12); border-radius:9px; padding:7px 14px; font:600 11px/1 -apple-system,sans-serif; cursor:pointer; background:rgba(255,255,255,.05); color:#c8ccd0;">Onboarding</button>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 490, &quot;height&quot;: 1180}}">
+class Component extends DCLogic {
+  rootRef = React.createRef();
+  state = {
+    theme: 'dark', tab: 'dashboard', overlay: null,
+    printState: 'printing', progress: 42, layer: 87, totalLayers: 203,
+    nozzleNow: 220, nozzleTarget: 220, bedNow: 60, bedTarget: 60,
+    lightOn: true, speed: 'standard', job: 'caldera-E-clean_plate_2',
+    camZoom: 1, camFlash: 0, tick: 0,
+    wizardStep: 1, wizardFile: 'caldera-E-clean_plate_2',
+    wizardQuality: '0.20', wizardFilament: 'Bambu PLA Basic', wizardSlot: 3, wizardSlice: 0,
+    power: { on: true, autoOff: false },
+    emptyDemo: false,
+    notify: { complete: true, errors: true, runout: false },
+    obStatus: 'idle',
+    queue: [
+      { id:1, name:'caldera-E-clean_plate_2', status:'printing' },
+      { id:2, name:'gridfinity-bin-2x1', status:'queued', time:'24m' },
+      { id:3, name:'phone-stand-45deg', status:'queued', time:'1h 48m' },
+      { id:4, name:'cable-clip-6mm', status:'queued', time:'9m' },
+    ],
+    ams: [
+      { id:1, type:'PLA-S support', color:'transparent', remain:100, active:false, empty:false },
+      { id:2, type:'PETG-CF', color:'#565656', remain:100, active:true, empty:false },
+      { id:3, type:'PLA', color:'#000000', remain:100, active:false, empty:false },
+      { id:4, type:null, color:null, remain:0, active:false, empty:true },
+    ],
+    files: [
+      { name:'caldera-E-clean_plate_2', type:'3mf', size:'4.2 MB', sliced:true },
+      { name:'voronoi-lamp-shade', type:'stl', size:'8.1 MB', sliced:false },
+      { name:'gridfinity-bin-2x1', type:'3mf', size:'1.4 MB', sliced:true },
+      { name:'phone-stand-45deg', type:'stl', size:'3.3 MB', sliced:false },
+      { name:'benchy-v2', type:'gcode.3mf', size:'2.0 MB', sliced:true },
+      { name:'cable-clip-6mm', type:'stl', size:'0.6 MB', sliced:false },
+    ],
+  };
+
+  themes = {
+    dark: { bg:'#0A0B0C', s1:'#131517', s2:'#191C1F', s3:'#23272B', s4:'#2D3237', line:'rgba(255,255,255,0.07)', line2:'rgba(255,255,255,0.12)', t1:'#F3F5F7', t2:'#A4ABB2', t3:'#6B7177', accent:'#2BD4C0', accentInk:'#04201D', accentDim:'rgba(43,212,192,0.15)', running:'#30D158', runningDim:'rgba(48,209,88,0.15)', heating:'#FF9F0A', heatingDim:'rgba(255,159,10,0.15)', paused:'#0A84FF', pausedDim:'rgba(10,132,255,0.15)', error:'#FF453A', errorDim:'rgba(255,69,58,0.15)', idle:'#8E9398', idleDim:'rgba(142,147,152,0.14)', tabbar:'rgba(13,14,16,0.72)', sheet:'#16181B', shadow1:'0 1px 2px rgba(0,0,0,.5)', shadow2:'0 18px 50px rgba(0,0,0,.55)' },
+    light: { bg:'#EFF1F3', s1:'#FFFFFF', s2:'#F5F6F8', s3:'#EAECEF', s4:'#DEE1E5', line:'rgba(0,0,0,0.08)', line2:'rgba(0,0,0,0.13)', t1:'#0D1012', t2:'#585E64', t3:'#878D94', accent:'#0EAE9C', accentInk:'#FFFFFF', accentDim:'rgba(14,174,156,0.14)', running:'#23B24A', runningDim:'rgba(35,178,74,0.14)', heating:'#E0860A', heatingDim:'rgba(224,134,10,0.14)', paused:'#0A84FF', pausedDim:'rgba(10,132,255,0.12)', error:'#E5392E', errorDim:'rgba(229,57,46,0.12)', idle:'#9AA0A6', idleDim:'rgba(154,160,166,0.14)', tabbar:'rgba(248,249,250,0.78)', sheet:'#FFFFFF', shadow1:'0 1px 2px rgba(0,0,0,.08)', shadow2:'0 14px 44px rgba(0,0,0,.16)' },
+  };
+
+  componentDidMount() { this.applyTheme(); this.timer = setInterval(() => this.animate(), 1000); }
+  componentWillUnmount() { clearInterval(this.timer); clearInterval(this.sliceTimer); }
+
+  applyTheme() { const el = this.rootRef.current; if (!el) return; const t = this.themes[this.state.theme]; for (const k in t) el.style.setProperty('--' + k, t[k]); }
+  toggleTheme() { this.setState(s => ({ theme: s.theme === 'dark' ? 'light' : 'dark' }), () => this.applyTheme()); }
+  go(tab) { this.setState({ tab, overlay: null }); }
+
+  openWizard(name) { this.setState({ overlay: 'wizard', wizardFile: name || 'caldera-E-clean_plate_2', wizardStep: 1, wizardSlice: 0 }); }
+  wizClose() { clearInterval(this.sliceTimer); this.setState({ overlay: null }); }
+  wizBack() { this.setState(s => ({ wizardStep: Math.max(1, s.wizardStep - 1) })); }
+  wizNext() { this.setState(s => ({ wizardStep: Math.min(7, s.wizardStep + 1) })); }
+  wizSlice() {
+    this.setState({ wizardStep: 4, wizardSlice: 0 });
+    clearInterval(this.sliceTimer);
+    this.sliceTimer = setInterval(() => this.setState(s => {
+      const v = Math.min(100, s.wizardSlice + 6);
+      if (v >= 100) { clearInterval(this.sliceTimer); setTimeout(() => this.setState({ wizardStep: 5 }), 420); }
+      return { wizardSlice: v };
+    }), 105);
+  }
+  wizStart() {
+    clearInterval(this.sliceTimer);
+    this.setState({ overlay: null, tab: 'dashboard', printState: 'heating', job: this.state.wizardFile, progress: 0, layer: 0, nozzleNow: 40, nozzleTarget: 220, bedNow: 28, bedTarget: 60 });
+  }
+  amsLoad(id) { this.setState(s => ({ ams: s.ams.map(t => t.id === id ? { ...t, empty: false, type: 'PLA', color: '#FFFFFF', remain: 100 } : t) })); }
+  amsUnload(id) { this.setState(s => ({ ams: s.ams.map(t => t.id === id ? { ...t, empty: true, type: null, color: null, remain: 0, active: false } : t) })); }
+  togglePlug() {
+    const s = this.state;
+    if (s.power.on) {
+      if (['printing','heating','paused','finishing'].includes(s.printState)) { this.setState({ overlay: 'confirmPower' }); }
+      else { this.setState({ power: { ...s.power, on: false }, printState: 'poweredOff' }); }
+    } else { this.setState({ power: { ...s.power, on: true } }); this.setPS('connecting'); setTimeout(() => this.setPS('idle'), 1600); }
+  }
+  toggleAutoOff() { this.setState(s => ({ power: { ...s.power, autoOff: !s.power.autoOff } })); }
+  doStop() { this.setState({ overlay: null, printState: 'idle', progress: 0, layer: 0, nozzleTarget: 0, bedTarget: 0 }); }
+  doPowerOff() { this.setState(s => ({ overlay: null, power: { ...s.power, on: false }, printState: 'poweredOff' })); }
+  closeOverlay() { this.setState({ overlay: null }); }
+  toggleEmpty() { this.setState(s => ({ emptyDemo: !s.emptyDemo })); }
+  toggleNotify(k) { this.setState(s => ({ notify: { ...s.notify, [k]: !s.notify[k] } })); }
+  setTheme(t) { this.setState({ theme: t }, () => this.applyTheme()); }
+  obConnect() { this.setState({ obStatus: 'connecting' }); setTimeout(() => { this.setState({ obStatus: 'connected' }); setTimeout(() => this.setState({ overlay: null, printState: this.state.printState === 'offline' ? 'idle' : this.state.printState }), 750); }, 1300); }
+  queueMoveUp(id) { this.setState(s => { const q = [...s.queue]; const i = q.findIndex(j => j.id === id); if (i > 1) { const t = q[i-1]; q[i-1] = q[i]; q[i] = t; } return { queue: q }; }); }
+  queueMoveDown(id) { this.setState(s => { const q = [...s.queue]; const i = q.findIndex(j => j.id === id); if (i > 0 && i < q.length - 1) { const t = q[i+1]; q[i+1] = q[i]; q[i] = t; } return { queue: q }; }); }
+  queueCancel(id) { this.setState(s => ({ queue: s.queue.filter(j => j.id !== id) })); }
+  setPS(ps) {
+    const p = { printState: ps };
+    if (ps === 'heating') { p.nozzleNow = 42; p.nozzleTarget = 220; p.bedNow = 29; p.bedTarget = 60; p.progress = 0; p.layer = 0; }
+    else if (ps === 'printing') { p.nozzleNow = 220; p.nozzleTarget = 220; p.bedNow = 60; p.bedTarget = 60; if (this.state.progress >= 100) p.progress = 42; }
+    else if (ps === 'complete') { p.progress = 100; p.layer = this.state.totalLayers; p.nozzleNow = 176; p.nozzleTarget = 0; p.bedNow = 44; p.bedTarget = 0; }
+    else if (ps === 'idle' || ps === 'offline' || ps === 'poweredOff' || ps === 'connecting') { p.nozzleTarget = 0; p.bedTarget = 0; }
+    this.setState(p);
+  }
+
+  animate() {
+    this.setState(s => {
+      const tick = (s.tick || 0) + 1;
+      if (s.printState !== 'printing' && s.printState !== 'heating') return { tick };
+      const ap = (c, t, step) => c < t ? Math.min(t, c + step) : c > t ? Math.max(t, c - step) : c;
+      let nozzleNow = ap(s.nozzleNow, s.nozzleTarget, 6), bedNow = ap(s.bedNow, s.bedTarget, 2.5);
+      let st = s.printState, progress = s.progress, layer = s.layer;
+      if (st === 'heating' && nozzleNow >= s.nozzleTarget - 1 && bedNow >= s.bedTarget - 1) st = 'printing';
+      if (st === 'printing') { progress = Math.min(100, progress + 0.15); layer = Math.min(s.totalLayers, Math.round(s.totalLayers * progress / 100)); }
+      return { tick, nozzleNow, bedNow, progress, layer, printState: st };
+    });
+  }
+
+  fmtClock(d) { let h = d.getHours(), m = d.getMinutes(); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return h + ':' + String(m).padStart(2, '0') + ' ' + ap; }
+  fmtShort(d) { let h = d.getHours(), m = d.getMinutes(); h = h % 12 || 12; return h + ':' + String(m).padStart(2, '0'); }
+  fmtTime(d) { const p = n => String(n).padStart(2, '0'); return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
+  cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  heroSub(s) {
+    if (['printing','paused','heating','finishing','complete','error'].includes(s.printState)) return s.job;
+    return ({ offline:'Last seen 2 min ago', poweredOff:'Smart plug is off · 5 W standby', idle:'Ready to print', connecting:'Reaching your printer…' })[s.printState] || '';
+  }
+
+  renderVals() {
+    const s = this.state;
+    const R = 56, circ = 2 * Math.PI * R;
+    const META = {
+      printing:   { label:'Printing',   col:'var(--running)', dim:'var(--runningDim)' },
+      paused:     { label:'Paused',     col:'var(--paused)',  dim:'var(--pausedDim)' },
+      heating:    { label:'Heating',    col:'var(--heating)', dim:'var(--heatingDim)' },
+      finishing:  { label:'Finishing',  col:'var(--running)', dim:'var(--runningDim)' },
+      complete:   { label:'Complete',   col:'var(--running)', dim:'var(--runningDim)' },
+      error:      { label:'Error',      col:'var(--error)',   dim:'var(--errorDim)' },
+      offline:    { label:'Offline',    col:'var(--idle)',    dim:'var(--idleDim)' },
+      poweredOff: { label:'Powered off',col:'var(--idle)',    dim:'var(--idleDim)' },
+      idle:       { label:'Idle',       col:'var(--idle)',    dim:'var(--idleDim)' },
+      connecting: { label:'Connecting', col:'var(--idle)',    dim:'var(--idleDim)' },
+    };
+    const m = META[s.printState] || META.idle;
+    const eta = Math.max(0, Math.round((100 - s.progress) / 100 * 124));
+    const etaText = eta >= 60 ? (Math.floor(eta / 60) + 'h ' + (eta % 60) + 'm') : (eta + 'm');
+    const now = new Date();
+    const done = new Date(now.getTime() + eta * 60000);
+
+    const nHeat = s.nozzleNow < s.nozzleTarget - 1;
+    const bHeat = s.bedNow < s.bedTarget - 1;
+    const nPct = s.nozzleTarget > 0 ? Math.min(100, Math.round(s.nozzleNow / s.nozzleTarget * 100)) : 0;
+    const bPct = s.bedTarget > 0 ? Math.min(100, Math.round(s.bedNow / s.bedTarget * 100)) : 0;
+
+    const tcol = k => s.tab === k ? 'var(--accent)' : 'var(--t3)';
+    const titles = { library:'Files', queue:'Queue', ams:'AMS Lite', power:'Power' };
+
+    const amsView = s.ams.map(t => ({
+      id: t.id,
+      label: t.empty ? 'Empty' : t.type,
+      pct: t.empty ? '—' : (t.remain + '%'),
+      active: t.active,
+      activeOp: t.active ? 1 : 0,
+      swatch: t.empty ? 'transparent' : (t.color === 'transparent' ? 'repeating-linear-gradient(45deg,#41464c 0 4px,#23272b 4px 8px)' : t.color),
+      swatchBorder: t.empty ? '1.5px dashed var(--line2)' : '1px solid var(--line2)',
+      ring: t.active ? '0 0 0 1.5px var(--accent)' : '0 0 0 1px var(--line)',
+    }));
+
+    const stageDefs = [['printing','Printing'],['heating','Heating'],['paused','Paused'],['complete','Done'],['error','Error'],['offline','Offline'],['poweredOff','Power-off'],['idle','Idle']];
+    const stages = stageDefs.map(([k, l]) => ({
+      key: k, label: l, tap: () => this.setPS(k),
+      bg: s.printState === k ? '#2BD4C0' : 'rgba(255,255,255,0.06)',
+      col: s.printState === k ? '#04201d' : '#c8ccd0',
+    }));
+
+    return {
+      rootRef: this.rootRef,
+      isDashboard: s.tab === 'dashboard',
+      showPlaceholder: false,
+      isQueueTab: s.tab === 'queue',
+      isLibraryTab: s.tab === 'library',
+      isAmsTab: s.tab === 'ams',
+      isPowerTab: s.tab === 'power',
+      files: s.files.map(f => ({
+        name: f.name, size: f.size, sliced: f.sliced,
+        badge: '.' + f.type, typeLabel: f.type.split('.')[0].toUpperCase(),
+        open: () => this.openWizard(f.name),
+      })),
+      folders: [['All',true],['Calibration',false],['Functional',false],['Minis',false]].map(([n,a]) => ({ name:n, bg: a?'var(--accent)':'var(--s2)', col: a?'var(--accentInk)':'var(--t2)' })),
+      openUpload: () => this.setState({ overlay: 'upload' }),
+      closeUpload: () => this.setState({ overlay: null }),
+      overlayUpload: s.overlay === 'upload',
+      stopProp: (e) => e.stopPropagation(),
+
+      overlayWizard: s.overlay === 'wizard',
+      wStep1: s.wizardStep === 1, wStep2: s.wizardStep === 2, wStep3: s.wizardStep === 3,
+      wStep4: s.wizardStep === 4, wStep5: s.wizardStep === 5, wStep6: s.wizardStep === 6, wStep7: s.wizardStep === 7,
+      wTitle: ({1:'Source',2:'Printer',3:'Filament & quality',4:'Slicing',5:'Review',6:'Map filament',7:'Start print'})[s.wizardStep],
+      wStepLabel: s.wizardStep + ' / 7',
+      wFile: s.wizardFile,
+      wDots: [1,2,3,4,5,6,7].map(i => ({ bg: i <= s.wizardStep ? 'var(--accent)' : 'var(--s3)' })),
+      footerLabel: ({1:'Continue',2:'Continue',3:'Slice file',4:'Slicing…',5:'Looks good',6:'Continue',7:'Start print'})[s.wizardStep],
+      footerAction: ({1:()=>this.wizNext(),2:()=>this.wizNext(),3:()=>this.wizSlice(),4:()=>{},5:()=>this.wizNext(),6:()=>this.wizNext(),7:()=>this.wizStart()})[s.wizardStep],
+      footerBg: s.wizardStep === 4 ? 'var(--s3)' : 'var(--accent)',
+      footerCol: s.wizardStep === 4 ? 'var(--t3)' : 'var(--accentInk)',
+      footerOp: s.wizardStep === 4 ? 0.6 : 1,
+      backShow: [2,3,5,6,7].includes(s.wizardStep),
+      wizBack: () => this.wizBack(), wizClose: () => this.wizClose(),
+      wizPickAgain: () => this.setState({ overlay: null, tab: 'library' }),
+      wizFilamentName: s.wizardFilament, wizQualityLabel: s.wizardQuality + ' mm',
+      wizSlicePct: Math.round(s.wizardSlice),
+      wizSl1Op: s.wizardSlice > 15 ? 1 : 0.28, wizSl2Op: s.wizardSlice > 52 ? 1 : 0.28, wizSl3Op: s.wizardSlice > 88 ? 1 : 0.28,
+      wizFilaments: ['Bambu PLA Basic','Bambu PLA Matte','Generic PLA'].map(n => ({ name: n, dot: s.wizardFilament === n ? 1 : 0, ring: s.wizardFilament === n ? '0 0 0 1.5px var(--accent)' : '0 0 0 1px var(--line)', tap: () => this.setState({ wizardFilament: n }) })),
+      wizQuality: [['0.08','Extra fine'],['0.12','Fine'],['0.20','Standard'],['0.28','Draft']].map(([v,l]) => ({ v, label: l, h: v + ' mm', ring: s.wizardQuality === v ? '0 0 0 2px var(--accent)' : '0 0 0 1px var(--line)', col: s.wizardQuality === v ? 'var(--accent)' : 'var(--t3)', tap: () => this.setState({ wizardQuality: v }) })),
+      wizSlots: s.ams.map(t => ({ id: t.id, empty: t.empty, type: t.empty ? 'Empty slot' : t.type, pct: t.empty ? '' : (t.remain + '% left'), swatch: t.empty ? 'transparent' : (t.color === 'transparent' ? 'repeating-linear-gradient(45deg,#41464c 0 4px,#23272b 4px 8px)' : t.color), swatchBorder: t.empty ? '1.5px dashed var(--line2)' : '1px solid var(--line2)', ring: s.wizardSlot === t.id ? '0 0 0 2px var(--accent)' : '0 0 0 1px var(--line)', check: (s.wizardSlot === t.id && !t.empty) ? 1 : 0, op: t.empty ? 0.5 : 1, tap: t.empty ? (() => {}) : (() => this.setState({ wizardSlot: t.id })) })),
+      wizSlotLabel: (() => { const sel = s.ams.find(t => t.id === s.wizardSlot); return sel ? ('Slot ' + sel.id + ' · ' + (sel.empty ? 'Empty' : sel.type)) : '—'; })(),
+
+      amsDetail: s.ams.map(t => {
+        const cname = t.color === '#565656' ? 'Grey' : t.color === '#000000' ? 'Black' : t.color === '#FFFFFF' ? 'White' : (t.color === 'transparent' ? 'Clear' : t.color);
+        const temp = ({ 'PLA':'190–230°C', 'PLA-S support':'190–230°C', 'PETG-CF':'240–270°C', 'PETG':'230–270°C' })[t.type] || '190–230°C';
+        return {
+          id: t.id, empty: t.empty, active: t.active, notEmpty: !t.empty,
+          type: t.empty ? 'Empty' : t.type,
+          sub: t.empty ? 'No filament loaded' : (cname + ' · ' + (t.color === 'transparent' ? 'transparent' : t.color)),
+          remainLabel: t.empty ? '' : (t.remain + '%'), barW: t.remain + '%', temp,
+          swatch: t.empty ? 'transparent' : (t.color === 'transparent' ? 'repeating-linear-gradient(45deg,#41464c 0 5px,#23272b 5px 10px)' : t.color),
+          swatchBorder: t.empty ? '2px dashed var(--line2)' : '1px solid var(--line2)',
+          ring: t.active ? '0 0 0 1.5px var(--accent)' : '0 0 0 1px var(--line)',
+          activeOp: t.active ? 1 : 0,
+          load: () => this.amsLoad(t.id), unload: () => this.amsUnload(t.id),
+        };
+      }),
+      amsSummary: s.ams.filter(t => !t.empty).length + ' of 4 trays loaded',
+
+      plugOn: s.power.on,
+      powerStateLabel: !s.power.on ? 'Off' : (['printing','heating','finishing'].includes(s.printState) ? 'On · printing' : s.printState === 'paused' ? 'On · paused' : 'On · idle'),
+      powerWatts: !s.power.on ? 0 : (['printing','heating','finishing'].includes(s.printState) ? 92 + (s.tick % 6) : s.printState === 'paused' ? 38 : 5),
+      powerKwh: '0.84',
+      powerBtnBg: s.power.on ? 'var(--accentDim)' : 'var(--s2)',
+      powerBtnFg: s.power.on ? 'var(--accent)' : 'var(--idle)',
+      powerGlow: s.power.on ? '0 0 50px -6px var(--accent), inset 0 0 0 1px var(--accent)' : 'inset 0 0 0 1px var(--line2)',
+      autoOff: s.power.autoOff,
+      autoTrackBg: s.power.autoOff ? 'var(--accent)' : 'var(--s4)',
+      autoKnobX: s.power.autoOff ? 'translateX(18px)' : 'translateX(0px)',
+      togglePlug: () => this.togglePlug(),
+      toggleAutoOff: () => this.toggleAutoOff(),
+
+      overlayConfirmStop: s.overlay === 'confirmStop',
+      overlayConfirmPower: s.overlay === 'confirmPower',
+      doStop: () => this.doStop(),
+      doPowerOff: () => this.doPowerOff(),
+      closeOverlay: () => this.closeOverlay(),
+
+      overlaySettings: s.overlay === 'settings',
+      overlayOnboarding: s.overlay === 'onboarding',
+      closeSettings: () => this.closeOverlay(),
+      openOnboarding: () => this.setState({ overlay: 'onboarding', obStatus: 'idle' }),
+      nComplete: { track: s.notify.complete ? 'var(--accent)' : 'var(--s4)', knob: s.notify.complete ? 'translateX(18px)' : 'translateX(0px)', toggle: () => this.toggleNotify('complete') },
+      nErrors: { track: s.notify.errors ? 'var(--accent)' : 'var(--s4)', knob: s.notify.errors ? 'translateX(18px)' : 'translateX(0px)', toggle: () => this.toggleNotify('errors') },
+      nRunout: { track: s.notify.runout ? 'var(--accent)' : 'var(--s4)', knob: s.notify.runout ? 'translateX(18px)' : 'translateX(0px)', toggle: () => this.toggleNotify('runout') },
+      themeDarkBg: s.theme === 'dark' ? 'var(--s4)' : 'transparent', themeDarkCol: s.theme === 'dark' ? 'var(--t1)' : 'var(--t3)',
+      themeLightBg: s.theme === 'light' ? 'var(--s4)' : 'transparent', themeLightCol: s.theme === 'light' ? 'var(--t1)' : 'var(--t3)',
+      setDark: () => this.setTheme('dark'), setLight: () => this.setTheme('light'),
+      obIdle: s.obStatus === 'idle', obConnecting: s.obStatus === 'connecting', obConnected: s.obStatus === 'connected',
+      obStatusLabel: ({ idle: 'Not connected', connecting: 'Reaching bridge…', connected: 'Connected' })[s.obStatus],
+      obStatusColor: ({ idle: 'var(--t3)', connecting: 'var(--heating)', connected: 'var(--running)' })[s.obStatus],
+      obBtnLabel: ({ idle: 'Connect', connecting: 'Connecting…', connected: 'Connected ✓' })[s.obStatus],
+      obConnect: () => this.obConnect(),
+
+      libraryEmpty: s.emptyDemo,
+      libraryNotEmpty: !s.emptyDemo,
+      toggleEmpty: () => this.toggleEmpty(),
+      emptyLabel: s.emptyDemo ? 'On' : 'Off',
+      queueEmpty: s.emptyDemo || s.queue.length === 0,
+      queueNotEmpty: !(s.emptyDemo || s.queue.length === 0),
+      queueHasCurrent: !s.emptyDemo && s.queue.length > 0,
+      queueCurrentName: s.queue.length ? s.queue[0].name : '',
+      queueUpcomingCount: Math.max(0, s.queue.length - 1),
+      queueUpcoming: (s.emptyDemo ? [] : s.queue.slice(1)).map((j, i) => ({
+        id: j.id, name: j.name, time: j.time || '—', num: i + 2,
+        upOp: i === 0 ? 0.25 : 1,
+        moveUp: () => this.queueMoveUp(j.id), moveDown: () => this.queueMoveDown(j.id), cancel: () => this.queueCancel(j.id),
+      })),
+      isLive: ['printing','paused','heating','finishing'].includes(s.printState),
+      isComplete: s.printState === 'complete',
+      isError: s.printState === 'error',
+      isIdle: s.printState === 'idle',
+      isOffline: s.printState === 'offline',
+      isOff: s.printState === 'poweredOff',
+      isConnecting: s.printState === 'connecting',
+      showCamera: ['printing','paused','heating','finishing','complete','error','idle'].includes(s.printState),
+      heroSub: this.heroSub(s),
+      setIdle: () => this.setPS('idle'),
+      startPrint: () => this.go('library'),
+      retry: () => { this.setPS('connecting'); setTimeout(() => this.setPS('idle'), 1500); },
+      powerOn: () => { this.setPS('connecting'); setTimeout(() => this.setPS('idle'), 1800); },
+      errorResume: () => this.setState({ printState: 'printing' }),
+      tabTitle: titles[s.tab] || '',
+      clockShort: this.fmtShort(now),
+      clockText: this.fmtTime(now),
+
+      stateLabel: m.label, stateColor: m.col, stateDim: m.dim,
+      job: s.job,
+      progressInt: Math.round(s.progress),
+      ringCirc: circ, ringOffset: circ * (1 - s.progress / 100),
+      layer: s.layer, totalLayers: s.totalLayers,
+      etaText, doneText: this.fmtClock(done),
+
+      nozzleNow: Math.round(s.nozzleNow), nozzleTarget: s.nozzleTarget,
+      bedNow: Math.round(s.bedNow), bedTarget: s.bedTarget,
+      nozzleBarPct: nPct, bedBarPct: bPct,
+      nozzleBarColor: nHeat ? 'var(--heating)' : 'var(--running)',
+      bedBarColor: bHeat ? 'var(--heating)' : 'var(--running)',
+      nozzleAnim: nHeat ? 'heatshimmer 1.2s ease-in-out infinite' : 'none',
+      bedAnim: bHeat ? 'heatshimmer 1.2s ease-in-out infinite' : 'none',
+
+      isPaused: s.printState === 'paused',
+      notPaused: s.printState !== 'paused',
+      pauseLabel: s.printState === 'paused' ? 'Resume' : 'Pause',
+      togglePause: () => this.setState(x => ({ printState: x.printState === 'paused' ? 'printing' : 'paused' })),
+      openStop: () => this.setState({ overlay: 'confirmStop' }),
+      openCamera: () => this.setState({ overlay: 'camera' }),
+      overlayCamera: s.overlay === 'camera',
+      camZoom: s.camZoom, camFlashOp: s.camFlash,
+      camZoomLabel: s.camZoom > 1 ? '1.8×' : '1.0×',
+      camTs: this.fmtTime(now),
+      closeCamera: () => this.setState({ overlay: null }),
+      refreshCam: () => { this.setState({ camFlash: 0.85 }); setTimeout(() => this.setState({ camFlash: 0 }), 90); },
+      toggleZoom: () => this.setState(x => ({ camZoom: x.camZoom > 1 ? 1 : 1.8 })),
+      openSettings: () => this.setState({ overlay: 'settings' }),
+
+      lightOn: s.lightOn, lightState: s.lightOn ? 'On' : 'Off',
+      lightBg: s.lightOn ? 'var(--accentDim)' : 'var(--s3)',
+      lightCol: s.lightOn ? 'var(--accent)' : 'var(--t2)',
+      toggleLight: () => this.setState(x => ({ lightOn: !x.lightOn })),
+      speedLabel: this.cap(s.speed),
+      cycleSpeed: () => this.setState(x => { const o = ['silent','standard','sport','ludicrous']; return { speed: o[(o.indexOf(x.speed) + 1) % o.length] }; }),
+
+      amsView,
+      navDashboard: () => this.go('dashboard'), navLibrary: () => this.go('library'),
+      navQueue: () => this.go('queue'), navAms: () => this.go('ams'), navPower: () => this.go('power'),
+      tcDashboard: tcol('dashboard'), tcLibrary: tcol('library'), tcQueue: tcol('queue'), tcAms: tcol('ams'), tcPower: tcol('power'),
+
+      stages, toggleTheme: () => this.toggleTheme(), themeLabel: this.cap(s.theme),
+    };
+  }
+}
+</script>
+</body>
+</html>
