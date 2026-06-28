@@ -53,12 +53,25 @@ export interface SmartPlug {
   id: number;
   name?: string;
   printer_id?: number;
+  plug_type?: string; // "homeassistant" | "mqtt" | "rest" | ...
+  enabled?: boolean;
+  last_state?: string; // "ON" | "OFF"
+}
+
+export interface PlugEnergy {
+  power?: number | null; // live draw, watts
+  voltage?: number | null;
+  current?: number | null;
+  today?: number | null; // kWh consumed today
+  yesterday?: number | null;
+  total?: number | null;
 }
 
 export interface PlugStatus {
-  is_on?: boolean;
-  power_w?: number | null;
-  energy_today_kwh?: number | null;
+  state?: string; // "ON" | "OFF"
+  reachable?: boolean;
+  device_name?: string;
+  energy?: PlugEnergy | null;
   [k: string]: unknown;
 }
 

@@ -8,6 +8,21 @@ import { c, mono } from '@/theme';
 
 const DEFAULT_URL = 'https://bambuddy.example.com';
 
+/** Trim whitespace and any stray trailing slash; keep scheme + host. */
+export function sanitizeBaseUrl(raw: string): string {
+  return raw.trim().replace(/\s+/g, '').replace(/\/+$/, '');
+}
+
+/**
+ * API keys are `bb_` + base62 ([A-Za-z0-9]). Pasting often appends a stray trailing char —
+ * whitespace, a newline, or a `%` (zsh's no-newline EOL marker / a URL-encode artifact). Trim both
+ * ends, then strip any leading/trailing chars that aren't valid key characters (keep `_` for the
+ * `bb_` prefix). Interior characters are never touched, so a legitimate key can't be corrupted.
+ */
+export function sanitizeApiKey(raw: string): string {
+  return raw.trim().replace(/^[^A-Za-z0-9_]+/, '').replace(/[^A-Za-z0-9_]+$/, '');
+}
+
 export default function Settings() {
   const [baseUrl, setBaseUrl] = useState(DEFAULT_URL);
   const [apiKey, setApiKey] = useState('');
@@ -24,11 +39,11 @@ export default function Settings() {
     });
   }, []);
 
-  const canSave = baseUrl.trim().length > 0 && apiKey.trim().length > 6;
+  const canSave = sanitizeBaseUrl(baseUrl).length > 0 && /^bb_[A-Za-z0-9]{6,}$/.test(sanitizeApiKey(apiKey));
 
   const save = async () => {
     setSaving(true);
-    await setConfig({ baseUrl: baseUrl.trim().replace(/\/+$/, ''), apiKey: apiKey.trim() });
+    await setConfig({ baseUrl: sanitizeBaseUrl(baseUrl), apiKey: sanitizeApiKey(apiKey) });
     setSaving(false);
     router.replace('/');
   };

@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
-import type { LibraryFile, QueueItem, PrinterStatus } from '@/api/types';
+import type { LibraryFile, QueueItem, PrinterStatus, SmartPlug } from '@/api/types';
 import { presentDashboard, fmtDuration, normColor } from '@/dashboard/present';
 
 function fmtBytes(n?: number): string {
@@ -51,7 +51,7 @@ function Empty({ icon, title, body, cta, onCta }: { icon: keyof typeof Feather.g
 }
 
 // ---------------- LIBRARY ----------------
-export function LibraryView({ client, onUpload, onPick }: { client: BambuddyClient; onUpload: () => void; onPick: (f: LibraryFile) => void }) {
+export function LibraryView({ client, camToken, onUpload, onPick }: { client: BambuddyClient; camToken: string | null; onUpload: () => void; onPick: (f: LibraryFile) => void }) {
   const [files, setFiles] = useState<LibraryFile[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const load = useCallback(() => {
@@ -75,8 +75,12 @@ export function LibraryView({ client, onUpload, onPick }: { client: BambuddyClie
             const sliced = (f.file_type || '').includes('gcode') || !!f.sliced_for_model;
             return (
               <Pressable key={f.id} onPress={() => onPick(f)} style={({ pressed }) => [{ width: '47%', flexGrow: 1 }, pressed && { opacity: 0.7 }]}>
-                <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line }}>
-                  <Image source={{ uri: client.fileThumbUrl(f.id), headers: client.imageHeaders() }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} />
+                <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+                  {f.thumbnail_path ? (
+                    <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                  ) : (
+                    <Feather name={(f.file_type || '').includes('gcode') ? 'box' : 'file'} size={26} color={c.t3} />
+                  )}
                   <View style={{ position: 'absolute', top: 8, left: 8, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.5)' }}>
                     <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: 'rgba(255,255,255,0.8)', fontFamily: mono }}>{(f.file_type || '').toUpperCase()}</Text>
                   </View>
@@ -199,36 +203,39 @@ export function AmsView({ client, status, printerId }: { client: BambuddyClient;
 
 // ---------------- POWER ----------------
 export function PowerView({ client, printerId }: { client: BambuddyClient; printerId: number }) {
-  const [plugId, setPlugId] = useState<number | null | undefined>(undefined);
+  const [plug, setPlug] = useState<SmartPlug | null | undefined>(undefined);
   const [on, setOn] = useState(false);
+  const [reachable, setReachable] = useState(true);
   const [watts, setWatts] = useState<number | null>(null);
   const [kwh, setKwh] = useState<number | null>(null);
   const [autoOff, setAutoOff] = useState(false);
 
   useEffect(() => {
-    client.getPlug(printerId).then((p) => setPlugId(p?.id ?? null)).catch(() => setPlugId(null));
+    client.getPlug(printerId).then((p) => setPlug(p ?? null)).catch(() => setPlug(null));
   }, [client, printerId]);
   useEffect(() => {
-    if (!plugId) return;
+    if (!plug) return;
     const poll = () =>
-      client.plugStatus(plugId).then((s) => {
-        setOn(!!s.is_on);
-        setWatts(typeof s.power_w === 'number' ? s.power_w : null);
-        setKwh(typeof s.energy_today_kwh === 'number' ? s.energy_today_kwh : null);
-      }).catch(() => {});
+      client.plugStatus(plug.id).then((s) => {
+        setOn(s.state?.toUpperCase() === 'ON');
+        setReachable(!!s.reachable);
+        const e = s.energy ?? null;
+        setWatts(typeof e?.power === 'number' ? e.power : null);
+        setKwh(typeof e?.today === 'number' ? e.today : null);
+      }).catch(() => setReachable(false));
     poll();
     const id = setInterval(poll, 5000);
     return () => clearInterval(id);
-  }, [client, plugId]);
+  }, [client, plug]);
 
   const toggle = () => {
-    if (!plugId) return;
+    if (!plug) return;
     const next = !on;
     setOn(next);
-    client.plugControl(plugId, next).catch(() => setOn(!next));
+    client.plugControl(plug.id, next).catch(() => setOn(!next));
   };
 
-  if (plugId === null) {
+  if (plug === null) {
     return (
       <Page title="Power">
         <Empty icon="power" title="No smart plug linked" body="Link the printer's plug in Bambuddy (Settings → Smart Plugs) to control power here." />
@@ -237,18 +244,23 @@ export function PowerView({ client, printerId }: { client: BambuddyClient; print
   }
   return (
     <Page title="Power">
-      <Text style={{ paddingHorizontal: 20, marginTop: 7, fontWeight: '500', fontSize: 13, color: c.t3 }}>Printer smart plug</Text>
+      <Text style={{ paddingHorizontal: 20, marginTop: 7, fontWeight: '500', fontSize: 13, color: c.t3 }}>{plug?.name ?? 'Printer smart plug'}</Text>
       <View style={{ marginHorizontal: 20, marginTop: 20, paddingVertical: 30, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, alignItems: 'center' }}>
         <Pressable
           onPress={toggle}
+          disabled={!reachable || plug === undefined}
           style={({ pressed }) => [
-            { width: 130, height: 130, borderRadius: 65, backgroundColor: on ? c.accent : c.s3, alignItems: 'center', justifyContent: 'center' },
-            on && { shadowColor: c.accent, shadowOpacity: 0.5, shadowRadius: 24, shadowOffset: { width: 0, height: 0 } },
+            { width: 130, height: 130, borderRadius: 65, backgroundColor: on ? c.accent : c.s3, alignItems: 'center', justifyContent: 'center', opacity: reachable ? 1 : 0.4 },
+            on && reachable && { shadowColor: c.accent, shadowOpacity: 0.5, shadowRadius: 24, shadowOffset: { width: 0, height: 0 } },
             pressed && { opacity: 0.8 },
           ]}>
           <Feather name="power" size={48} color={on ? c.accentInk : c.t2} />
         </Pressable>
         <Text style={{ marginTop: 20, fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{on ? 'Powered on' : 'Powered off'}</Text>
+        <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: reachable ? c.running : c.idle }} />
+          <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3 }}>{reachable ? 'Plug reachable' : 'Plug unreachable'}</Text>
+        </View>
         <Text style={{ marginTop: 6, fontWeight: '500', fontSize: 12, color: c.t3 }}>Tap to toggle the printer's smart plug</Text>
       </View>
       <View style={{ marginHorizontal: 20, marginTop: 14, flexDirection: 'row', gap: 12 }}>

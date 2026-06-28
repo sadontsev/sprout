@@ -47,6 +47,17 @@ test('snapshotUrl includes the camera token', () => {
   expect(client.snapshotUrl(1, 'cam tok')).toBe('https://x/api/v1/printers/1/camera/snapshot?token=cam%20tok');
 });
 
+test('streamUrl includes the camera token and fps', () => {
+  expect(client.streamUrl(1, 'tok', 10)).toBe('https://x/api/v1/printers/1/camera/stream?token=tok&fps=10');
+});
+
+test('fileThumbUrl embeds the camera token, and returns "" without a token or a server thumbnail', () => {
+  expect(client.fileThumbUrl(7, 'cam tok')).toBe('https://x/api/v1/library/files/7/thumbnail?token=cam%20tok');
+  expect(client.fileThumbUrl(7, null)).toBe('');
+  expect(client.fileThumbUrl(7, 'tok', null)).toBe(''); // no server-side thumbnail -> don't request
+  expect(client.fileThumbUrl(7, 'tok', '/some/path.png')).toBe('https://x/api/v1/library/files/7/thumbnail?token=tok');
+});
+
 test('throws with status on non-ok', async () => {
   fetchMock.mockResolvedValueOnce({ ok: false, status: 401, text: async () => 'no' });
   await expect(client.getStatus(1)).rejects.toThrow(/401/);

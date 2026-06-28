@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Image } from 'expo-image';
+import { WebView } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
@@ -10,16 +11,66 @@ import type { LibraryFile, PrinterStatus } from '@/api/types';
 import { presentDashboard, normColor } from '@/dashboard/present';
 
 // ---------------- CAMERA FULLSCREEN ----------------
-export function CameraOverlay({ snapshotUri, status, onClose, onRefresh }: { snapshotUri: string | null; status: PrinterStatus | null; onClose: () => void; onRefresh: () => void }) {
+// HTML host for the MJPEG <img>. WebKit decodes multipart/x-mixed-replace natively (expo-image /
+// RN <Image> cannot). onerror/onload post back so RN can show a diagnostic fallback.
+function mjpegHtml(streamUrl: string): string {
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>html,body{margin:0;height:100%;background:#060708;overflow:hidden}
+img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#060708}</style></head>
+<body><img id="cam" src="${streamUrl}"
+ onerror="window.ReactNativeWebView&&window.ReactNativeWebView.postMessage('error')"
+ onload="window.ReactNativeWebView&&window.ReactNativeWebView.postMessage('frame')"></body></html>`;
+}
+
+export function CameraOverlay({ client, printerId, streamUrl, status, onClose, onRefresh }: { client: BambuddyClient; printerId: number; streamUrl: string | null; status: PrinterStatus | null; onClose: () => void; onRefresh: () => void }) {
   const insets = useSafeAreaInsets();
   const vm = presentDashboard(status, Date.now());
+  const [streamErr, setStreamErr] = useState(false);
+  const [diag, setDiag] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // When the stream <img> errors, fetch the structured diagnostic so the user sees WHY.
+  useEffect(() => {
+    if (!streamErr) return;
+    let alive = true;
+    client.diagnoseCamera(printerId)
+      .then((d) => {
+        if (!alive) return;
+        setDiag(
+          d.summary_code === 'printer_unreachable'
+            ? `Server can't reach the camera (port ${d.port}). On the printer, enable LAN Mode Live View — and confirm it's on the same network.`
+            : `Camera unavailable (${d.stages?.find((s) => s.status === 'failed')?.code ?? d.summary_code}).`,
+        );
+      })
+      .catch(() => alive && setDiag('Camera unavailable.'));
+    return () => { alive = false; };
+  }, [streamErr, client, printerId]);
+
+  const retry = () => { setStreamErr(false); setDiag(null); onRefresh(); setReloadKey((k) => k + 1); };
+  const live = !!streamUrl && !streamErr;
+
   return (
     <View style={{ position: 'absolute', inset: 0, backgroundColor: '#060708', zIndex: 70 } as any}>
-      {snapshotUri ? (
-        <Image source={{ uri: snapshotUri }} style={{ flex: 1 }} contentFit="contain" transition={150} />
+      {live ? (
+        <WebView
+          key={`${streamUrl}-${reloadKey}`}
+          source={{ html: mjpegHtml(streamUrl!) }}
+          originWhitelist={['*']}
+          style={{ flex: 1, backgroundColor: '#060708' }}
+          scrollEnabled={false}
+          javaScriptEnabled
+          mediaPlaybackRequiresUserAction={false}
+          allowsInlineMediaPlayback
+          onMessage={(e) => { if (e.nativeEvent.data === 'error') setStreamErr(true); }}
+        />
       ) : (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ fontFamily: mono, color: '#3a4046', letterSpacing: 2, fontSize: 11 }}>CHAMBER · SNAPSHOT</Text>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 }}>
+          <Feather name="video-off" size={30} color="#3a4046" />
+          <Text style={{ marginTop: 14, fontFamily: mono, color: '#3a4046', letterSpacing: 2, fontSize: 11 }}>CHAMBER · NO SIGNAL</Text>
+          {diag && <Text style={{ marginTop: 12, color: '#6b7177', fontSize: 13, lineHeight: 19, textAlign: 'center' }}>{diag}</Text>}
+          <Pressable onPress={retry} style={{ marginTop: 18, paddingHorizontal: 18, height: 42, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Retry</Text>
+          </Pressable>
         </View>
       )}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
@@ -31,16 +82,18 @@ export function CameraOverlay({ snapshotUri, status, onClose, onRefresh }: { sna
           <Text style={{ fontWeight: '600', fontSize: 13, color: '#fff' }}>{vm.stateLabel}</Text>
           <Text style={{ marginLeft: 'auto', fontWeight: '600', fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: mono }}>{vm.progressInt}% · L{vm.layer}</Text>
         </View>
-        <Pressable onPress={onRefresh} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+        <Pressable onPress={retry} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="refresh-cw" size={18} color="#fff" />
         </Pressable>
       </View>
-      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: insets.bottom + 24, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: 'rgba(22,24,27,0.55)' }}>
-          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.running }} />
-          <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: '#fff' }}>LIVE · 1 fps</Text>
+      {live && (
+        <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: insets.bottom + 24, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: 'rgba(22,24,27,0.55)' }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.running }} />
+            <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: '#fff' }}>LIVE</Text>
+          </View>
         </View>
-      </View>
+      )}
     </View>
   );
 }
@@ -49,13 +102,15 @@ export function CameraOverlay({ snapshotUri, status, onClose, onRefresh }: { sna
 export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyClient; onClose: () => void; onUploaded: () => void }) {
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
+  const [pct, setPct] = useState(0);
   const pick = async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
       if (res.canceled || !res.assets?.[0]) return;
       const a = res.assets[0];
       setBusy(true);
-      await client.uploadFile(a.uri, a.name);
+      setPct(0);
+      await client.uploadFile(a.uri, a.name, (f) => setPct(Math.round(f * 100)));
       setBusy(false);
       onUploaded();
       onClose();
@@ -73,7 +128,7 @@ export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyC
           <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="folder" size={19} color={c.accent} />
           </View>
-          <Text style={{ flex: 1, fontWeight: '600', fontSize: 15, color: c.t1 }}>{busy ? 'Uploading…' : 'From Files'}</Text>
+          <Text style={{ flex: 1, fontWeight: '600', fontSize: 15, color: c.t1 }}>{busy ? `Uploading… ${pct}%` : 'From Files'}</Text>
           {busy ? <ActivityIndicator color={c.t3} /> : <Feather name="chevron-right" size={16} color={c.t3} />}
         </Pressable>
         <Pressable onPress={onClose} style={({ pressed }) => [{ marginTop: 14, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.7 }]}>
@@ -87,7 +142,7 @@ export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyC
 // ---------------- PRINT WIZARD ----------------
 type Preset = { id: string; name: string; source?: string };
 
-export function WizardOverlay({ client, file, status, printerId, onClose, onStarted }: { client: BambuddyClient; file: LibraryFile; status: PrinterStatus | null; printerId: number; onClose: () => void; onStarted: () => void }) {
+export function WizardOverlay({ client, file, camToken, status, printerId, onClose, onStarted }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; onClose: () => void; onStarted: () => void }) {
   const insets = useSafeAreaInsets();
   const alreadySliced = (file.file_type || '').includes('gcode');
   const [step, setStep] = useState(1);
@@ -181,6 +236,15 @@ export function WizardOverlay({ client, file, status, printerId, onClose, onStar
   const next = () => setStep(steps[Math.min(idx + 1, steps.length - 1)]);
   const back = () => setStep(steps[Math.max(idx - 1, 0)]);
   const titles: Record<number, string> = { 1: 'File', 2: 'Printer', 3: 'Material', 4: 'Slicing', 5: 'Review', 6: 'Map filament', 7: 'Start print' };
+  const captions: Record<number, string> = {
+    1: 'The model you picked',
+    2: 'Confirm the target printer',
+    3: 'Pick filament and quality',
+    4: 'Preparing G-code on your server',
+    5: 'Check time and material',
+    6: 'Choose which AMS tray to print from',
+    7: 'Review, then send it to the queue',
+  };
 
   const trays = status?.ams?.[0]?.tray ?? [];
   const footer = (() => {
@@ -203,12 +267,18 @@ export function WizardOverlay({ client, file, status, printerId, onClose, onStar
       <View style={{ height: '92%', backgroundColor: c.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' }}>
         <View style={{ paddingHorizontal: 18, paddingTop: insets.top + 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Pressable onPress={onClose} hitSlop={10}><Text style={{ fontWeight: '500', fontSize: 15, color: c.t2 }}>Cancel</Text></Pressable>
-          <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>{titles[step]}</Text>
+          <View style={{ alignItems: 'center', flex: 1 }}>
+            <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>{titles[step]}</Text>
+            <Text numberOfLines={1} style={{ marginTop: 2, fontWeight: '500', fontSize: 11, color: c.t3 }}>{captions[step]}</Text>
+          </View>
           <Text style={{ fontWeight: '600', fontSize: 12, color: c.t3, fontFamily: mono }}>{idx + 1}/{steps.length}</Text>
         </View>
         <View style={{ flexDirection: 'row', gap: 4, paddingHorizontal: 18, paddingTop: 15 }}>
           {steps.map((s, i) => (
-            <View key={s} style={{ flex: 1, height: 3, borderRadius: 2, backgroundColor: i <= idx ? c.accent : c.s3 }} />
+            <View key={s} style={{ flex: 1, alignItems: 'center', gap: 5 }}>
+              <View style={{ width: '100%', height: 3, borderRadius: 2, backgroundColor: i <= idx ? c.accent : c.s3 }} />
+              <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.3, color: i <= idx ? c.accent : c.t3, fontFamily: mono }}>{titles[s].toUpperCase()}</Text>
+            </View>
           ))}
         </View>
 
@@ -216,8 +286,12 @@ export function WizardOverlay({ client, file, status, printerId, onClose, onStar
           {step === 1 && (
             <>
               <L>SELECTED FILE</L>
-              <View style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line }}>
-                <Image source={{ uri: client.fileThumbUrl(file.id), headers: client.imageHeaders() }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+              <View style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+                {file.thumbnail_path ? (
+                  <Image source={{ uri: client.fileThumbUrl(file.id, camToken, file.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
+                ) : (
+                  <Feather name="box" size={32} color={c.t3} />
+                )}
               </View>
               <Text style={{ marginTop: 15, fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
               <Text style={{ marginTop: 6, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type}{alreadySliced ? ' · pre-sliced' : ''}</Text>
@@ -283,7 +357,7 @@ export function WizardOverlay({ client, file, status, printerId, onClose, onStar
           {step === 5 && (
             <>
               <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line }}>
-                <Image source={{ uri: client.fileThumbUrl(result?.library_file_id ?? file.id), headers: client.imageHeaders() }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                <Image source={{ uri: client.fileThumbUrl(result?.library_file_id ?? file.id, camToken) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
               </View>
               <View style={{ marginTop: 16, borderRadius: 16, backgroundColor: c.s2, overflow: 'hidden' }}>
                 <Row k="Print time" v={result?.print_time_seconds ? `${Math.round(result.print_time_seconds / 60)} min` : '—'} />

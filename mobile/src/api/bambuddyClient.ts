@@ -1,3 +1,4 @@
+import { File, UploadType } from 'expo-file-system';
 import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus } from './types';
 
 export interface BambuddyClientConfig {
@@ -69,23 +70,46 @@ export class BambuddyClient {
   snapshotUrl(printerId: number, token: string): string {
     return `${this.baseUrl}/api/v1/printers/${printerId}/camera/snapshot?token=${encodeURIComponent(token)}`;
   }
-
-  /** Headers so <expo-image> can load authenticated thumbnails. */
-  imageHeaders(): Record<string, string> {
-    return { 'X-API-Key': this.apiKey, ...this.extraHeaders };
+  /** MJPEG multipart live stream (multipart/x-mixed-replace) — render in a WebView <img>.
+   *  Token MUST be in the query; the X-API-Key header is rejected (401) on stream/snapshot. */
+  streamUrl(printerId: number, token: string, fps = 10): string {
+    return `${this.baseUrl}/api/v1/printers/${printerId}/camera/stream?token=${encodeURIComponent(token)}&fps=${fps}`;
   }
-  fileThumbUrl(fileId: number): string {
-    return `${this.baseUrl}/api/v1/library/files/${fileId}/thumbnail`;
+  /** Read-only staged camera diagnostics — explains *why* the stream is unavailable (e.g. port 6000 timeout). */
+  diagnoseCamera(printerId: number): Promise<{ protocol: string; port: number; overall_status: string; summary_code: string; stages: { name: string; status: string; code: string | null }[] }> {
+    return this.req(`/api/v1/printers/${printerId}/camera/diagnose`, { method: 'POST' }).then((r) => r.json());
+  }
+
+  /** Library thumbnails are gated by a camera *stream* token (?token=), NOT X-API-Key — the same
+   *  token type as snapshotUrl(). Returns '' when there's no token or no server-side thumbnail. */
+  fileThumbUrl(fileId: number, token: string | null, thumbnailPath?: string | null): string {
+    if (!token || thumbnailPath === null) return '';
+    return `${this.baseUrl}/api/v1/library/files/${fileId}/thumbnail?token=${encodeURIComponent(token)}`;
   }
 
   // --- Library ---
   listFiles(): Promise<LibraryFile[]> {
     return this.req('/api/v1/library/files').then((r) => r.json());
   }
-  async uploadFile(uri: string, name: string): Promise<{ id: number }> {
-    const fd = new FormData();
-    fd.append('file', { uri, name, type: 'application/octet-stream' } as any);
-    return (await this.req('/api/v1/library/files', { method: 'POST', body: fd as any })).json();
+  /**
+   * Upload a local file (RN `file://` URI) to the library via expo-file-system's native multipart
+   * upload — NOT global fetch. Expo's WinterCG fetch rejects RN's {uri,name,type} FormData parts
+   * ("Unsupported FormDataPart implementation"); the native File.upload reads the URI natively.
+   * Backend field name is `file`; response is { id, ... }.
+   */
+  async uploadFile(uri: string, name: string, onProgress?: (fraction: number) => void): Promise<{ id: number }> {
+    const res = await new File(uri).upload(this.baseUrl + '/api/v1/library/files', {
+      httpMethod: 'POST',
+      uploadType: UploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: 'application/octet-stream',
+      headers: this.headers(),
+      onProgress: onProgress ? ({ bytesSent, totalBytes }) => onProgress(totalBytes > 0 ? bytesSent / totalBytes : 0) : undefined,
+    });
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`Bambuddy POST /api/v1/library/files -> HTTP ${res.status} ${res.body}`.trim());
+    }
+    return JSON.parse(res.body) as { id: number };
   }
   getPlates(fileId: number): Promise<any> {
     return this.req(`/api/v1/library/files/${fileId}/plates`).then((r) => r.json());
