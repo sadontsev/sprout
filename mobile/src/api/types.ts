@@ -18,6 +18,10 @@ export interface PrinterStatus {
     id: number;
     tray: Array<{ id: number; tray_type?: string; tray_color?: string; remain?: number }>;
   }>;
+  /** Active tray index across the AMS (Bambu `tray_now`). */
+  tray_now?: number;
+  hms_errors?: Array<{ code?: string; attr?: string; module?: string; severity?: string }>;
+  print_error?: number;
 }
 
 export type SpeedMode = 1 | 2 | 3 | 4; // silent | standard | sport | ludicrous
