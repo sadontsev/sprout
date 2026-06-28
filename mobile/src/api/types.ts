@@ -16,7 +16,7 @@ export interface PrinterStatus {
   } | null;
   ams?: Array<{
     id: number;
-    tray: Array<{ id: number; tray_type?: string; tray_color?: string; remain?: number }>;
+    tray: Array<{ id: number; tray_type?: string; tray_color?: string; remain?: number; tray_uuid?: string | null }>;
   }>;
   /** Active tray index across the AMS (Bambu `tray_now`). */
   tray_now?: number;
@@ -75,6 +75,79 @@ export interface PlugStatus {
   [k: string]: unknown;
 }
 
+// ---- Maintenance (GET /maintenance/printers/{id}, /maintenance/summary) ----
+export interface MaintenanceItem {
+  id: number;
+  printer_id: number;
+  maintenance_type_name: string;
+  maintenance_type_icon: string | null; // Lucide name e.g. "Droplet","Flame"
+  enabled: boolean;
+  interval_hours: number;
+  interval_type?: string;
+  current_hours?: number;
+  hours_since_maintenance: number;
+  hours_until_due: number; // negative when overdue
+  days_until_due?: number | null;
+  is_due: boolean;
+  is_warning: boolean;
+  last_performed_at: string | null;
+}
+
+export interface MaintenancePrinter {
+  printer_id: number;
+  printer_name: string;
+  printer_model?: string | null;
+  total_print_hours: number;
+  maintenance_items: MaintenanceItem[];
+  due_count: number;
+  warning_count: number;
+}
+
+export interface MaintenanceSummary {
+  total_due: number;
+  total_warning: number;
+  printers_with_issues: Array<{ printer_id: number; printer_name: string; due_count?: number; warning_count?: number }>;
+}
+
+export interface Spool {
+  id: number;
+  material: string; // "PETG-CF", "Support for PLA", "PLA"
+  subtype?: string | null;
+  color_name: string | null; // "Titan Gray", "Clear"
+  rgba: string | null; // "565656FF" — 8-digit hex, alpha last
+  brand: string | null; // "Bambu Lab"
+  label_weight: number; // grams on the label
+  weight_used: number; // grams consumed
+  slicer_filament: string | null; // preset code, e.g. "GFG50"
+  slicer_filament_name: string | null; // display name, e.g. "Bambu PETG-CF"
+  tray_uuid: string | null; // RFID UUID; null for unrecognized spools
+  cost_per_kg: number | null;
+  nozzle_temp_min?: number | null;
+  nozzle_temp_max?: number | null;
+  storage_location?: string | null;
+  last_used?: string | null;
+}
+
+export interface SlotAssignment {
+  id: number;
+  spool_id: number;
+  printer_id: number;
+  printer_name: string;
+  ams_id: number; // AMS unit id -> status.ams[k].id
+  tray_id: number; // tray index -> status.ams[k].tray[i].id
+  fingerprint_color?: string | null;
+  fingerprint_type?: string | null;
+  configured?: boolean;
+  pending_config?: boolean;
+  ams_label?: string | null;
+  spool: Spool; // full embedded spool
+}
+
+/** Grams of filament remaining on a spool (never negative). */
+export function spoolGramsRemaining(s: Spool): number {
+  return Math.max(0, (s.label_weight ?? 0) - (s.weight_used ?? 0));
+}
+
 /** Subset of GET /api/v1/settings/ the app reads. Writes are admin-JWT only. */
 export interface AppSettings {
   energy_cost_per_kwh: number; // e.g. 0.24
@@ -123,6 +196,59 @@ export interface ArchiveStats {
   total_energy_kwh: number;
   total_energy_cost: number;
   energy_data_warming_up: boolean;
+}
+
+// ---------------- MakerWorld ----------------
+export interface MakerWorldStatus {
+  has_cloud_token: boolean;
+  can_download: boolean;
+}
+export interface MWFilament {
+  type?: string | null;
+  color?: string | null;
+  usedG?: string | null;
+}
+/** One printable profile/instance. id → instance_id, profileId → profile_id on import. */
+export interface MWInstance {
+  id: number;
+  profileId?: number | null;
+  title?: string | null;
+  cover?: string | null;
+  needAms?: boolean | null;
+  prediction?: number | null; // print time, seconds (best-effort)
+  weight?: number | null; // grams (best-effort)
+  instanceFilaments?: MWFilament[] | null;
+  extention?: {
+    modelInfo?: { plates?: Array<{ prediction?: number | null; weight?: number | null; filaments?: MWFilament[] | null }> } | null;
+  } | null;
+}
+export interface MWDesign {
+  id: number;
+  title?: string | null;
+  coverUrl?: string | null;
+  summary?: string | null;
+  downloadCount?: number | null;
+  likeCount?: number | null;
+  tags?: string[] | null;
+  designCreator?: { name?: string | null; handle?: string | null; avatar?: string | null } | null;
+}
+export interface MakerWorldResolved {
+  model_id: number;
+  profile_id?: number | null;
+  design: MWDesign;
+  instances: MWInstance[];
+  already_imported_library_ids?: number[];
+}
+export interface MakerWorldImportRequest {
+  model_id: number;
+  profile_id?: number | null;
+  instance_id?: number | null;
+  folder_id?: number | null;
+}
+export interface MakerWorldImportResponse {
+  library_file_id: number;
+  filename: string;
+  was_existing: boolean;
 }
 
 /** A bundled slicer preset reference (from /slicer/presets). */

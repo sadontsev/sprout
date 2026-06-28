@@ -89,10 +89,12 @@ export function DashboardView({
   vm,
   snapshotUri,
   h,
+  maintAlert,
 }: {
   vm: DashVM;
   snapshotUri: string | null;
   h: DashHandlers;
+  maintAlert?: { due: number; warn: number };
 }) {
   const insets = useSafeAreaInsets();
   const showCamera = vm.kind === 'live' || vm.kind === 'idle' || vm.kind === 'complete' || vm.kind === 'error';
@@ -115,6 +117,21 @@ export function DashboardView({
             <Feather name="settings" size={19} color={c.t2} />
           </Tap>
         </View>
+
+        {/* maintenance alert chip — only when something needs attention */}
+        {!!maintAlert && (maintAlert.due > 0 || maintAlert.warn > 0) && (
+          <Tap
+            onPress={() => h.onTab('ams')}
+            style={{ marginHorizontal: 20, marginTop: 14, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: maintAlert.due > 0 ? c.errorDim : c.heatingDim, borderWidth: 1, borderColor: maintAlert.due > 0 ? c.error : c.heating }}>
+            <Feather name="tool" size={16} color={maintAlert.due > 0 ? c.error : c.heating} />
+            <Text style={{ flex: 1, fontWeight: '600', fontSize: 13, color: c.t1 }}>
+              {maintAlert.due > 0
+                ? `${maintAlert.due} maintenance ${maintAlert.due === 1 ? 'task is' : 'tasks are'} due`
+                : `${maintAlert.warn} maintenance ${maintAlert.warn === 1 ? 'task is' : 'tasks are'} coming up`}
+            </Text>
+            <Feather name="chevron-right" size={16} color={c.t3} />
+          </Tap>
+        )}
 
         {/* hero */}
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 2 }}>

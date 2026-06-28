@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { WebView } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,7 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
-import type { LibraryFile, PrinterStatus } from '@/api/types';
+import type { LibraryFile, PrinterStatus, MakerWorldResolved, MWInstance } from '@/api/types';
 import { presentDashboard, normColor } from '@/dashboard/present';
 
 // ---------------- CAMERA FULLSCREEN ----------------
@@ -103,6 +103,7 @@ export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyC
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(0);
+  const [showMW, setShowMW] = useState(false);
   const pick = async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
@@ -119,6 +120,11 @@ export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyC
       Alert.alert('Upload failed', String(e));
     }
   };
+
+  if (showMW) {
+    return <MakerWorldSheet client={client} onClose={onClose} onBack={() => setShowMW(false)} onImported={onUploaded} />;
+  }
+
   return (
     <Pressable onPress={onClose} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', zIndex: 72 } as any}>
       <Pressable onPress={() => {}} style={{ backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 14, paddingTop: 10, paddingBottom: insets.bottom + 20, ...shadow1 }}>
@@ -131,9 +137,209 @@ export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyC
           <Text style={{ flex: 1, fontWeight: '600', fontSize: 15, color: c.t1 }}>{busy ? `Uploading… ${pct}%` : 'From Files'}</Text>
           {busy ? <ActivityIndicator color={c.t3} /> : <Feather name="chevron-right" size={16} color={c.t3} />}
         </Pressable>
+        <Pressable onPress={() => setShowMW(true)} disabled={busy} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2, marginTop: 10 }, pressed && { opacity: 0.7 }]}>
+          <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="globe" size={19} color={c.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>From MakerWorld</Text>
+            <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>Paste a model link</Text>
+          </View>
+          <Feather name="chevron-right" size={16} color={c.t3} />
+        </Pressable>
         <Pressable onPress={onClose} style={({ pressed }) => [{ marginTop: 14, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.7 }]}>
           <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>Cancel</Text>
         </Pressable>
+      </Pressable>
+    </Pressable>
+  );
+}
+
+// ---------------- MAKERWORLD IMPORT SHEET ----------------
+function instTime(i: MWInstance): number | null {
+  return i.prediction ?? i.extention?.modelInfo?.plates?.[0]?.prediction ?? null;
+}
+function instWeight(i: MWInstance): number | null {
+  return i.weight ?? i.extention?.modelInfo?.plates?.[0]?.weight ?? null;
+}
+
+export function MakerWorldSheet({ client, onClose, onBack, onImported }: { client: BambuddyClient; onClose: () => void; onBack: () => void; onImported: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [url, setUrl] = useState('');
+  const [canDownload, setCanDownload] = useState<boolean | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const [resolved, setResolved] = useState<MakerWorldResolved | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [picked, setPicked] = useState<MWInstance | null>(null);
+  const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    client.makerWorldStatus().then((s) => alive && setCanDownload(s.can_download)).catch(() => alive && setCanDownload(false));
+    return () => { alive = false; };
+  }, [client]);
+
+  const resolve = async () => {
+    const u = url.trim();
+    if (!u) return;
+    setResolving(true); setErr(null); setResolved(null); setPicked(null);
+    try {
+      const r = await client.resolveMakerWorld(u);
+      setResolved(r);
+      setPicked(r.instances?.[0] ?? null);
+    } catch (e) {
+      const m = String((e as Error)?.message ?? e);
+      const detail = m.match(/\{"detail":"([^"]+)"\}/)?.[1];
+      setErr(detail ?? 'Couldn’t resolve that link. Paste a makerworld.com model URL.');
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  const doImport = async () => {
+    if (!resolved) return;
+    setImporting(true);
+    try {
+      const res = await client.importMakerWorld({
+        model_id: resolved.model_id,
+        profile_id: picked?.profileId ?? resolved.profile_id ?? undefined,
+        instance_id: picked?.id ?? undefined,
+      });
+      onImported();
+      onClose();
+      Alert.alert(res.was_existing ? 'Already in library' : 'Added to library', res.filename);
+    } catch (e) {
+      setImporting(false);
+      Alert.alert('Import failed', String((e as Error)?.message ?? e));
+    }
+  };
+
+  const design = resolved?.design;
+  const alreadyImported = !!resolved?.already_imported_library_ids?.length;
+  const L = ({ children }: { children: React.ReactNode }) => (
+    <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono, marginBottom: 10 }}>{children}</Text>
+  );
+
+  return (
+    <Pressable onPress={onClose} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', zIndex: 72 } as any}>
+      <Pressable onPress={() => {}} style={{ maxHeight: '88%', backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 14, paddingTop: 10, paddingBottom: insets.bottom + 18, ...shadow1 }}>
+        <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginBottom: 12 }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+          <Pressable onPress={onBack} hitSlop={10} style={{ width: 40 }}><Feather name="chevron-left" size={22} color={c.t2} /></Pressable>
+          <Text style={{ flex: 1, textAlign: 'center', fontWeight: '700', fontSize: 17, color: c.t1 }}>From MakerWorld</Text>
+          <View style={{ width: 40 }} />
+        </View>
+
+        {canDownload === false && (
+          <View style={{ flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.heatingDim, marginBottom: 14 }}>
+            <Feather name="alert-triangle" size={17} color={c.heating} />
+            <Text style={{ flex: 1, fontWeight: '500', fontSize: 12.5, lineHeight: 18, color: c.t2 }}>
+              MakerWorld isn’t connected on your Bambuddy server. You can preview a model, but to import it, sign in to Bambu Cloud in Bambuddy → Settings → MakerWorld.
+            </Text>
+          </View>
+        )}
+
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 6 }}>
+          <L>MODEL LINK</L>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TextInput
+              value={url}
+              onChangeText={setUrl}
+              placeholder="https://makerworld.com/en/models/…"
+              placeholderTextColor={c.t3}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              returnKeyType="go"
+              onSubmitEditing={resolve}
+              style={{ flex: 1, height: 48, borderRadius: 13, backgroundColor: c.s2, paddingHorizontal: 14, color: c.t1, fontSize: 14 }}
+            />
+            <Pressable onPress={resolve} disabled={resolving || !url.trim()} style={({ pressed }) => [{ paddingHorizontal: 18, height: 48, borderRadius: 13, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: !url.trim() ? 0.4 : 1 }, pressed && { opacity: 0.8 }]}>
+              {resolving ? <ActivityIndicator color={c.accentInk} /> : <Text style={{ fontWeight: '700', fontSize: 14, color: c.accentInk }}>Resolve</Text>}
+            </Pressable>
+          </View>
+
+          {err && (
+            <View style={{ flexDirection: 'row', gap: 9, padding: 12, borderRadius: 12, backgroundColor: c.errorDim, marginTop: 12 }}>
+              <Feather name="x-circle" size={16} color={c.error} />
+              <Text style={{ flex: 1, fontWeight: '500', fontSize: 12.5, lineHeight: 18, color: c.t2 }}>{err}</Text>
+            </View>
+          )}
+
+          {design && (
+            <>
+              <View style={{ marginTop: 18, width: '100%', aspectRatio: 16 / 10, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line }}>
+                {design.coverUrl ? (
+                  <Image source={{ uri: client.makerworldThumbUrl(design.coverUrl) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
+                ) : (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><Feather name="box" size={30} color={c.t3} /></View>
+                )}
+              </View>
+              <Text style={{ marginTop: 14, fontWeight: '700', fontSize: 18, color: c.t1, letterSpacing: -0.3 }}>{design.title ?? `Model ${resolved!.model_id}`}</Text>
+              <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>
+                {design.designCreator?.name ? `@${design.designCreator.name}` : ''}{typeof design.downloadCount === 'number' ? `  ·  ${design.downloadCount} downloads` : ''}
+              </Text>
+              {alreadyImported && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 10, alignSelf: 'flex-start', paddingHorizontal: 11, paddingVertical: 6, borderRadius: 9, backgroundColor: c.accentDim }}>
+                  <Feather name="check" size={13} color={c.accent} />
+                  <Text style={{ fontWeight: '600', fontSize: 11.5, color: c.accent }}>Already in your library</Text>
+                </View>
+              )}
+
+              {(resolved!.instances?.length ?? 0) > 0 && (
+                <View style={{ marginTop: 20 }}>
+                  <L>{`PROFILE${resolved!.instances.length > 1 ? `  ·  ${resolved!.instances.length}` : ''}`}</L>
+                  <View style={{ gap: 9 }}>
+                    {resolved!.instances.map((inst) => {
+                      const sel = picked?.id === inst.id;
+                      const t = instTime(inst);
+                      const w = instWeight(inst);
+                      const fils = inst.instanceFilaments ?? inst.extention?.modelInfo?.plates?.[0]?.filaments ?? [];
+                      return (
+                        <Pressable key={inst.id} onPress={() => setPicked(inst)} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 11, borderRadius: 13, backgroundColor: c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                          <View style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden', backgroundColor: '#0e1113', alignItems: 'center', justifyContent: 'center' }}>
+                            {inst.cover ? (
+                              <Image source={{ uri: client.makerworldThumbUrl(inst.cover) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
+                            ) : (
+                              <Feather name="layers" size={18} color={c.t3} />
+                            )}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 13.5, color: c.t1 }}>{inst.title || 'Default profile'}</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                              <Text style={{ fontWeight: '500', fontSize: 11.5, color: c.t3, fontFamily: mono }}>
+                                {t ? `${Math.round(t / 60)} min` : '—'}{w ? `  ·  ${w} g` : ''}{inst.needAms ? '  ·  AMS' : ''}
+                              </Text>
+                              <View style={{ flexDirection: 'row', gap: 3 }}>
+                                {fils.slice(0, 4).map((f, k) => (
+                                  <View key={k} style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: f.color || c.s4, borderWidth: 1, borderColor: c.line2 }} />
+                                ))}
+                              </View>
+                            </View>
+                          </View>
+                          {sel && <Feather name="check" size={16} color={c.accent} />}
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+            </>
+          )}
+        </ScrollView>
+
+        {design && (
+          <Pressable
+            onPress={doImport}
+            disabled={importing || canDownload !== true}
+            style={({ pressed }) => [{ marginTop: 14, height: 52, borderRadius: 15, backgroundColor: canDownload === true ? c.accent : c.s3, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 9 }, pressed && { opacity: 0.85 }]}
+          >
+            {importing && <ActivityIndicator color={c.accentInk} />}
+            <Text style={{ fontWeight: '700', fontSize: 16, color: canDownload === true ? c.accentInk : c.t3 }}>
+              {importing ? 'Importing…' : canDownload === true ? (alreadyImported ? 'Import again' : 'Import to library') : 'Import unavailable'}
+            </Text>
+          </Pressable>
+        )}
       </Pressable>
     </Pressable>
   );

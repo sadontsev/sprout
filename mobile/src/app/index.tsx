@@ -66,6 +66,15 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   const cameraOpen = overlay === 'camera';
   const { streamUrl, remint } = useCameraStream(client, PRINTER_ID, cameraOpen, 10);
 
+  // Maintenance due/warning rollup for the dashboard chip (invisible when all-clear).
+  const [maintAlert, setMaintAlert] = useState<{ due: number; warn: number }>({ due: 0, warn: 0 });
+  useEffect(() => {
+    const poll = () => client.getMaintenanceSummary().then((s) => setMaintAlert({ due: s.total_due, warn: s.total_warning })).catch(() => {});
+    poll();
+    const id = setInterval(poll, 60000);
+    return () => clearInterval(id);
+  }, [client]);
+
   // Inbound files: when a .3mf/.stl/.gcode is shared/opened into the app, copy it into cache and
   // upload it to the library. The SceneDelegate forwards openURLContexts, so expo-linking sees it.
   const [importing, setImporting] = useState(false);
@@ -124,7 +133,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      {tab === 'printer' && <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} />}
+      {tab === 'printer' && <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} />}
       {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
       {tab === 'queue' && <QueueView client={client} status={status} onBrowse={() => setTab('library')} />}
       {tab === 'ams' && <AmsView client={client} status={status} printerId={PRINTER_ID} />}
