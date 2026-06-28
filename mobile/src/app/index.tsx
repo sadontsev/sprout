@@ -10,7 +10,7 @@ import { useCameraStream } from '@/realtime/useCameraStream';
 import { presentDashboard } from '@/dashboard/present';
 import { DashboardView, type DashHandlers } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
-import { LibraryView, QueueView, AmsView, PowerView } from '@/components/TabScreens';
+import { LibraryView, QueueView, AmsView, PowerView, HistoryView } from '@/components/TabScreens';
 import { CameraOverlay, UploadSheet, WizardOverlay } from '@/components/Overlays';
 import type { LibraryFile } from '@/api/types';
 import { c } from '@/theme';
@@ -128,7 +128,8 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
       {tab === 'queue' && <QueueView client={client} status={status} onBrowse={() => setTab('library')} />}
       {tab === 'ams' && <AmsView client={client} status={status} printerId={PRINTER_ID} />}
-      {tab === 'power' && <PowerView client={client} printerId={PRINTER_ID} />}
+      {tab === 'power' && <PowerView client={client} printerId={PRINTER_ID} status={status} />}
+      {tab === 'history' && <HistoryView client={client} camToken={camToken} />}
 
       <TabBar active={tab} onTab={setTab} />
 

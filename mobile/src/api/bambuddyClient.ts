@@ -1,5 +1,5 @@
 import { File, UploadType } from 'expo-file-system';
-import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus } from './types';
+import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings } from './types';
 
 export interface BambuddyClientConfig {
   /** e.g. https://bambuddy.example.com */
@@ -45,6 +45,11 @@ export class BambuddyClient {
 
   getStatus(printerId: number): Promise<PrinterStatus> {
     return this.req(`/api/v1/printers/${printerId}/status`).then((r) => r.json());
+  }
+  /** Server config incl. electricity price (energy_cost_per_kwh) + currency. Read works with the
+   *  API key; writes are admin-JWT only. */
+  getSettings(): Promise<AppSettings> {
+    return this.req('/api/v1/settings/').then((r) => r.json());
   }
   async setLight(printerId: number, on: boolean): Promise<void> {
     await this.req(`/api/v1/printers/${printerId}/chamber-light?on=${on}`, { method: 'POST' });
@@ -155,6 +160,20 @@ export class BambuddyClient {
   }
   async amsUnload(printerId: number): Promise<void> {
     await this.req(`/api/v1/printers/${printerId}/ams/unload`, { method: 'POST' });
+  }
+
+  // --- Print history ---
+  getPrintLog(limit = 50): Promise<PrintLogPage> {
+    return this.req(`/api/v1/print-log/?limit=${limit}`).then((r) => r.json());
+  }
+  getArchiveStats(): Promise<ArchiveStats> {
+    return this.req('/api/v1/archives/stats').then((r) => r.json());
+  }
+  /** Print-log thumbnails are gated by the camera *stream* token (?token=), NOT X-API-Key —
+   *  identical to fileThumbUrl(). Returns '' with no token or no server-side thumbnail. */
+  printLogThumbUrl(entryId: number, token: string | null, thumbnailPath?: string | null): string {
+    if (!token || thumbnailPath === null) return '';
+    return `${this.baseUrl}/api/v1/print-log/${entryId}/thumbnail?token=${encodeURIComponent(token)}`;
   }
 
   // --- Smart plug ---

@@ -75,6 +75,56 @@ export interface PlugStatus {
   [k: string]: unknown;
 }
 
+/** Subset of GET /api/v1/settings/ the app reads. Writes are admin-JWT only. */
+export interface AppSettings {
+  energy_cost_per_kwh: number; // e.g. 0.24
+  currency: string; // ISO code, e.g. "GBP" | "USD" | "EUR"
+  energy_tracking_mode?: string;
+  default_filament_cost?: number;
+  [k: string]: unknown;
+}
+
+export interface PrintLogEntry {
+  id: number;
+  archive_id: number | null;
+  print_name: string;
+  printer_name: string;
+  printer_id: number;
+  status: 'completed' | 'failed' | 'cancelled' | string;
+  started_at: string; // naive local ISO, e.g. "2026-06-28T15:07:35.681213"
+  completed_at: string | null;
+  duration_seconds: number | null;
+  filament_type: string | null; // may be comma-joined: "PETG-CF, PLA"
+  filament_color: string | null; // may be comma-joined: "#565656,#000000"
+  filament_used_grams: number | null;
+  cost: number | null;
+  energy_kwh: number | null;
+  energy_cost: number | null;
+  failure_reason: string | null;
+  thumbnail_path: string | null;
+  created_at?: string;
+}
+
+export interface PrintLogPage {
+  items: PrintLogEntry[];
+  total: number;
+}
+
+export interface ArchiveStats {
+  total_prints: number;
+  successful_prints: number;
+  failed_prints: number;
+  cancelled_prints: number;
+  total_print_time_hours: number;
+  total_filament_grams: number;
+  total_cost: number;
+  prints_by_filament_type: Record<string, number>;
+  prints_by_printer: Record<string, number>;
+  total_energy_kwh: number;
+  total_energy_cost: number;
+  energy_data_warming_up: boolean;
+}
+
 /** A bundled slicer preset reference (from /slicer/presets). */
 export interface PresetRef {
   id: string;

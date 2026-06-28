@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c } from '@/theme';
 
-export type TabKey = 'printer' | 'library' | 'queue' | 'ams' | 'power';
+export type TabKey = 'printer' | 'library' | 'queue' | 'ams' | 'power' | 'history';
 
 const TABS: [TabKey, string, keyof typeof Feather.glyphMap][] = [
   ['printer', 'Printer', 'cpu'],
@@ -12,6 +12,7 @@ const TABS: [TabKey, string, keyof typeof Feather.glyphMap][] = [
   ['queue', 'Queue', 'list'],
   ['ams', 'AMS', 'grid'],
   ['power', 'Power', 'power'],
+  ['history', 'History', 'clock'],
 ];
 
 export function TabBar({ active, onTab }: { active: TabKey; onTab: (t: TabKey) => void }) {
@@ -36,9 +37,9 @@ export function TabBar({ active, onTab }: { active: TabKey; onTab: (t: TabKey) =
           <Pressable
             key={key}
             onPress={() => onTab(key)}
-            style={({ pressed }) => [{ flex: 1, alignItems: 'center', gap: 4, paddingVertical: 5 }, pressed && { opacity: 0.6 }]}>
-            <Feather name={icon} size={23} color={on ? c.accent : c.t3} />
-            <Text style={{ fontWeight: '600', fontSize: 10, color: on ? c.accent : c.t3 }}>{label}</Text>
+            style={({ pressed }) => [{ flex: 1, alignItems: 'center', gap: 4, paddingVertical: 5, paddingHorizontal: 2 }, pressed && { opacity: 0.6 }]}>
+            <Feather name={icon} size={21} color={on ? c.accent : c.t3} />
+            <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 10, color: on ? c.accent : c.t3 }}>{label}</Text>
           </Pressable>
         );
       })}
