@@ -331,22 +331,27 @@ export function ExtrudeBar({ pct, color = c.accent, height = 8, track = c.s3 }: 
 }
 
 // ---------------------------------------------------------------- Breathe
-/** Wraps children in a glow that breathes while `active` (design: powerBreathe / bulbPulse). */
-export function Breathe({ active, color, children, radius = 30, style }: { active: boolean; color: string; children?: React.ReactNode; radius?: number; style?: StyleProp<ViewStyle> }) {
+/**
+ * Wraps children in a pulsing colored HALO while `active` (design: powerBreathe / bulbPulse). Uses a
+ * real sibling view (opacity + scale) rather than an iOS shadow — a shadow on a transparent wrapper
+ * doesn't render, so the old version was invisible. `grow` controls how far the halo extends.
+ */
+export function Breathe({ active, color, children, grow = 0.22, maxOpacity = 0.45, style }: { active: boolean; color: string; children?: React.ReactNode; grow?: number; maxOpacity?: number; style?: StyleProp<ViewStyle> }) {
   const g = useSharedValue(0);
   useEffect(() => {
     if (active) {
-      g.value = withRepeat(withSequence(withTiming(1, { duration: 1300 }), withTiming(0.45, { duration: 1300 })), -1, false);
+      g.value = withRepeat(withSequence(withTiming(1, { duration: 1200, easing: Easing.inOut(Easing.quad) }), withTiming(0, { duration: 1200, easing: Easing.inOut(Easing.quad) })), -1, false);
     } else {
       cancelAnimation(g);
       g.value = withTiming(0, { duration: 300 });
     }
     return () => cancelAnimation(g);
   }, [active, g]);
-  const a = useAnimatedStyle(() => ({ shadowOpacity: g.value, shadowRadius: radius }));
+  const halo = useAnimatedStyle(() => ({ opacity: maxOpacity * g.value, transform: [{ scale: 1 + grow * g.value }] }));
   return (
-    <Animated.View style={[{ shadowColor: color, shadowOffset: { width: 0, height: 0 } }, a, style]}>
+    <View style={[{ alignItems: 'center', justifyContent: 'center' }, style]}>
+      <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, borderRadius: 999, backgroundColor: color }, halo]} />
       {children}
-    </Animated.View>
+    </View>
   );
 }

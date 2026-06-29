@@ -440,7 +440,7 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
     <Page title="Power">
       <Text style={{ paddingHorizontal: 20, marginTop: 7, fontWeight: '500', fontSize: 13, color: c.t3 }}>{plug?.name ?? 'Printer smart plug'}</Text>
       <View style={{ marginHorizontal: 20, marginTop: 20, paddingVertical: 30, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, alignItems: 'center' }}>
-        <Breathe active={on && reachable} color={c.accent} radius={26} style={{ borderRadius: 65 }}>
+        <Breathe active={on && reachable} color={c.accent} grow={0.18} maxOpacity={0.5} style={{ borderRadius: 65 }}>
           <Tap
             onPress={toggle}
             disabled={!reachable || plug === undefined}
