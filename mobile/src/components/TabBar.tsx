@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c } from '@/theme';
 import { NozzleIcon } from './NozzleIcon';
+import { Tap } from './anim';
 
 export type TabKey = 'printer' | 'library' | 'queue' | 'ams' | 'power' | 'history';
 
@@ -35,17 +36,18 @@ export function TabBar({ active, onTab }: { active: TabKey; onTab: (t: TabKey) =
       {TABS.map(([key, label, icon]) => {
         const on = key === active;
         return (
-          <Pressable
+          <Tap
             key={key}
             onPress={() => onTab(key)}
-            style={({ pressed }) => [{ flex: 1, alignItems: 'center', gap: 4, paddingVertical: 5, paddingHorizontal: 2 }, pressed && { opacity: 0.6 }]}>
+            scale={0.9}
+            style={{ flex: 1, alignItems: 'center', gap: 4, paddingVertical: 5, paddingHorizontal: 2 }}>
             {key === 'printer' ? (
               <NozzleIcon color={on ? c.accent : c.t3} size={22} />
             ) : (
               <Feather name={icon} size={21} color={on ? c.accent : c.t3} />
             )}
             <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 10, color: on ? c.accent : c.t3 }}>{label}</Text>
-          </Pressable>
+          </Tap>
         );
       })}
     </View>

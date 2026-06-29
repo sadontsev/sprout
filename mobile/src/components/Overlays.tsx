@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { WebView } from 'react-native-webview';
+import Animated, { SlideInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
@@ -12,7 +13,9 @@ import { presentDashboard, normColor } from '@/dashboard/present';
 import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
 import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
 import { parseGcodeLayers, gcodeViewerHtml, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
+import { selectA1Process, pickDefaultQuality, type Preset } from '@/library/presetSelect';
 import { mjpegHtml } from './mjpegHtml';
+import { Tap } from './anim';
 
 // ---------------- CAMERA FULLSCREEN ----------------
 export function CameraOverlay({ streamUrl, status, onClose, onRefresh }: { streamUrl: string | null; status: PrinterStatus | null; onClose: () => void; onRefresh: () => void }) {
@@ -74,9 +77,9 @@ export function CameraOverlay({ streamUrl, status, onClose, onRefresh }: { strea
                   ? 'Printer is offline. The chamber camera needs the printer powered on and connected to Wi-Fi, then tap Retry.'
                   : 'Couldn’t wake the chamber camera. The A1’s camera is on-demand and can be slow — give it a moment and tap Retry. Make sure the printer is powered on.'}
               </Text>
-              <Pressable onPress={retry} style={{ marginTop: 18, paddingHorizontal: 18, height: 42, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' }}>
+              <Tap onPress={retry} style={{ marginTop: 18, paddingHorizontal: 18, height: 42, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Retry</Text>
-              </Pressable>
+              </Tap>
             </>
           ) : (
             <>
@@ -143,17 +146,18 @@ export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyC
 
   return (
     <Pressable onPress={onClose} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', zIndex: 72 } as any}>
+      <Animated.View entering={SlideInDown.duration(320)}>
       <Pressable onPress={() => {}} style={{ backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 14, paddingTop: 10, paddingBottom: insets.bottom + 20, ...shadow1 }}>
         <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginBottom: 16 }} />
         <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1, textAlign: 'center', marginBottom: 14 }}>Add a file</Text>
-        <Pressable onPress={pick} disabled={busy} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2 }, pressed && { opacity: 0.7 }]}>
+        <Tap onPress={pick} disabled={busy} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2 }}>
           <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="folder" size={19} color={c.accent} />
           </View>
           <Text style={{ flex: 1, fontWeight: '600', fontSize: 15, color: c.t1 }}>{busy ? `Uploading… ${pct}%` : 'From Files'}</Text>
           {busy ? <ActivityIndicator color={c.t3} /> : <Feather name="chevron-right" size={16} color={c.t3} />}
-        </Pressable>
-        <Pressable onPress={() => setShowMW(true)} disabled={busy} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2, marginTop: 10 }, pressed && { opacity: 0.7 }]}>
+        </Tap>
+        <Tap onPress={() => setShowMW(true)} disabled={busy} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2, marginTop: 10 }}>
           <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="globe" size={19} color={c.accent} />
           </View>
@@ -162,11 +166,12 @@ export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyC
             <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>Paste a model link</Text>
           </View>
           <Feather name="chevron-right" size={16} color={c.t3} />
-        </Pressable>
-        <Pressable onPress={onClose} style={({ pressed }) => [{ marginTop: 14, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.7 }]}>
+        </Tap>
+        <Tap onPress={onClose} style={{ marginTop: 14, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }}>
           <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>Cancel</Text>
-        </Pressable>
+        </Tap>
       </Pressable>
+      </Animated.View>
     </Pressable>
   );
 }
@@ -362,7 +367,6 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
 }
 
 // ---------------- PRINT WIZARD ----------------
-type Preset = { id: string; name: string; source?: string };
 
 // Build plates the A1 supports — `id` is the canonical bed_type the slicer expects.
 const BED_TYPES: { id: string; label: string }[] = [
@@ -459,7 +463,7 @@ function PStat({ label, value, sub }: { label: string; value: string; sub?: stri
   );
 }
 
-export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlate, onViewLayers }: { client: BambuddyClient; fileId: number; camToken: string | null; plateIndex: number; onSelectPlate?: (i: number) => void; onViewLayers?: () => void }) {
+export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlate, onViewLayers, sliced = true }: { client: BambuddyClient; fileId: number; camToken: string | null; plateIndex: number; onSelectPlate?: (i: number) => void; onViewLayers?: () => void; sliced?: boolean }) {
   const [plates, setPlates] = useState<PlatesResponse | null>(null);
   const [meta, setMeta] = useState<FileMetadata | null>(null);
   const [loading, setLoading] = useState(true);
@@ -517,11 +521,19 @@ export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlat
         )}
       </View>
 
-      <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-        <PStat label="PRINT TIME" value={fmtSeconds(vm.timeSeconds)} />
-        <PStat label="LAYERS" value={vm.layers != null ? String(vm.layers) : '—'} sub={vm.layerHeight != null ? `${vm.layerHeight.toFixed(2)} mm/layer` : undefined} />
-        <PStat label="FILAMENT" value={vm.grams != null ? `${vm.grams.toFixed(1)} g` : '—'} />
-      </View>
+      {sliced ? (
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+          <PStat label="PRINT TIME" value={fmtSeconds(vm.timeSeconds)} />
+          <PStat label="LAYERS" value={vm.layers != null ? String(vm.layers) : '—'} sub={vm.layerHeight != null ? `${vm.layerHeight.toFixed(2)} mm/layer` : undefined} />
+          <PStat label="FILAMENT" value={vm.grams != null ? `${vm.grams.toFixed(1)} g` : '—'} />
+        </View>
+      ) : (
+        vm.plateCount > 1 && (
+          <Text style={{ marginTop: 13, fontWeight: '500', fontSize: 12, color: c.t3, lineHeight: 17 }}>
+            This file has {vm.plateCount} plates. Pick the one to print — only it gets sliced. Time and material are estimated after slicing.
+          </Text>
+        )
+      )}
 
       {!!detail && <Text style={{ marginTop: 12, fontWeight: '500', fontSize: 11.5, color: c.t3, fontFamily: mono }}>{detail}</Text>}
 
@@ -570,23 +582,15 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
         const std = p.standard ?? {};
         const a1 = (arr: Preset[] = []) => arr.filter((x) => x.name.includes('A1') && !x.name.includes('A1M') && !x.name.toLowerCase().includes('mini'));
         const printer = a1(std.printer).find((x) => x.name.includes('0.4 nozzle'));
-        // Merge process presets across all groups Bambuddy returns (standard + the user's own
-        // local/cloud/orca_cloud profiles), so a support-enabled profile saved in Studio/Bambuddy
-        // shows up here too. Group keys verified against the live API.
-        const procAll: Preset[] = [std.process, p.local?.process, p.cloud?.process, p.orca_cloud?.process].flatMap((g) => g ?? []);
-        const a1proc = a1(procAll);
-        // Dedupe by id (a custom profile can echo into multiple groups).
-        const seen = new Set<string>();
-        const qualities = a1proc
-          .filter((x) => /0\.\d+mm .*@BBL A1/.test(x.name))
-          .filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
-        const hasSupportProfile = a1proc.some((x) => /support|tree/i.test(x.name));
+        // Quality profiles for this A1's 0.4 nozzle, merged across all preset groups (incl. the user's
+        // custom profiles), with non-0.4-nozzle variants excluded. Pure + unit-tested in presetSelect.
+        const { qualities, hasSupportProfile } = selectA1Process(p);
         const allFilaments: Preset[] = std.filament ?? [];
         // Curated "Other filament" catalog (common A1 materials) shown when the AMS choice isn't enough.
         const catalog = a1(allFilaments).filter((x) => /Bambu (PLA Basic|PLA Matte|PETG HF|PETG-CF|ABS|ASA|TPU 95A HF|Support For PLA) @BBL A1($| 0\.4 nozzle$)/.test(x.name));
         setPresets({ printer, qualities, catalog, allFilaments, hasSupportProfile });
         setAssigns(a as SlotAssignment[]);
-        setQuality(qualities.find((q) => /0\.20mm Standard/.test(q.name)) ?? qualities.find((q) => q.name.includes('0.20')) ?? qualities[0] ?? null);
+        setQuality(pickDefaultQuality(qualities));
       })
       .catch(() => alive && setPresets({ qualities: [], catalog: [], allFilaments: [] }));
     return () => {
@@ -741,15 +745,10 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                 </>
               ) : (
                 <>
-                  <View style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
-                    {file.thumbnail_path ? (
-                      <Image source={{ uri: client.fileThumbUrl(file.id, camToken, file.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
-                    ) : (
-                      <Feather name="box" size={32} color={c.t3} />
-                    )}
-                  </View>
-                  <Text style={{ marginTop: 15, fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
-                  <Text style={{ marginTop: 6, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · will be sliced</Text>
+                  <Text style={{ fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
+                  <Text style={{ marginTop: 5, marginBottom: 16, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · will be sliced</Text>
+                  {/* Multi-plate files (e.g. a 6-plate project) expose all plates here — pick which one to slice. */}
+                  <PlateReview client={client} fileId={file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} sliced={false} />
                 </>
               )}
             </>

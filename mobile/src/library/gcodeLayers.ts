@@ -7,8 +7,10 @@
 export interface GcodeLayers {
   /** One entry per layer: flat [x0,y0,x1,y1,...] of extruding XY moves. */
   layers: number[][];
-  /** XY extent of all extrusion, for fit-to-view. Always finite. */
-  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  /** Z height (mm) of each layer — index-aligned with `layers`. Drives the 3D stacking. */
+  layerZ: number[];
+  /** XYZ extent of all extrusion, for fit-to-view. Always finite. */
+  bounds: { minX: number; minY: number; maxX: number; maxY: number; minZ: number; maxZ: number };
 }
 
 const EPS = 1e-6;
@@ -22,6 +24,7 @@ const EPS = 1e-6;
 export function parseGcodeLayers(gcode: string): GcodeLayers {
   const lines = gcode.split('\n');
   const layers: number[][] = [];
+  const zs: number[] = [];
   let seg: number[] = [];
   let x = 0,
     y = 0,
@@ -35,9 +38,11 @@ export function parseGcodeLayers(gcode: string): GcodeLayers {
     maxX = -Infinity,
     maxY = -Infinity;
 
+  // Close the current layer, recording the Z it was extruded at (index-aligned with `layers`).
   const pushLayer = () => {
     if (seg.length) {
       layers.push(seg);
+      zs.push(layerZ ?? 0);
       seg = [];
     }
   };
@@ -136,7 +141,9 @@ export function parseGcodeLayers(gcode: string): GcodeLayers {
     maxX = 256;
     maxY = 256;
   }
-  return { layers, bounds: { minX, minY, maxX, maxY } };
+  const minZ = zs.length ? zs[0] : 0;
+  const maxZ = zs.length ? zs[zs.length - 1] : 1;
+  return { layers, layerZ: zs, bounds: { minX, minY, maxX, maxY, minZ, maxZ } };
 }
 
 /** Guard: don't try to render gigantic sliced files on-device. */
@@ -144,58 +151,89 @@ export const MAX_GCODE_BYTES = 14_000_000;
 
 /**
  * Build the self-contained HTML for the WebView layer viewer. Parsing already happened in
- * parseGcodeLayers; this only embeds the geometry as JSON and renders the picked layer on a 2D
- * Canvas — NO external/CDN module import (that's what failed before with "importing layer script
- * failed"), so it works fully offline in WKWebView. Pure (no RN deps) so it's unit-testable and can
- * be exercised headlessly.
+ * parseGcodeLayers; this only embeds the geometry as JSON and renders it as a ROTATABLE 3D model on a
+ * 2D Canvas (orthographic orbit projection — drag to rotate, pinch/wheel to zoom). The layer slider
+ * peels the model down by showing only layers 0..N (cumulative), like Bambu Studio. NO external/CDN
+ * module import (that's what failed before with "importing layer script failed"), so it works fully
+ * offline in WKWebView. Pure (no RN deps) → unit-testable and exercisable headlessly.
  */
 export function gcodeViewerHtml(data: GcodeLayers): string {
   const lit = JSON.stringify(data).replace(/</g, '\\u003c');
   return `<!doctype html><html><head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <style>
   html,body{margin:0;height:100%;background:#0A0B0C;overflow:hidden;font-family:-apple-system,system-ui}
-  #c{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;display:block}
+  #c{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;display:block;touch-action:none}
   #bar{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 40px);padding:0 22px;z-index:10}
-  #card{background:rgba(22,24,27,0.78);border-radius:16px;padding:14px 16px 16px}
-  #lbl{color:#fff;font:600 12px ui-monospace,Menlo,monospace;text-align:center;margin-bottom:12px;letter-spacing:0.5px}
+  #card{background:rgba(22,24,27,0.80);border-radius:16px;padding:13px 16px 16px}
+  #top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px}
+  #lbl{color:#fff;font:600 12px ui-monospace,Menlo,monospace;letter-spacing:0.5px}
+  #hint{color:#7b8187;font:500 10px ui-monospace,Menlo,monospace;letter-spacing:0.3px}
   input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:12px;border-radius:6px;background:#2A2E33;outline:none}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:#2BD4C0;box-shadow:0 1px 6px rgba(0,0,0,0.5)}
   #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:#6b7177;font-size:14px;padding:36px;text-align:center;line-height:1.5}
 </style></head>
 <body>
 <canvas id="c"></canvas>
-<div id="bar"><div id="card"><div id="lbl">Rendering…</div><input id="s" type="range" min="1" max="1" value="1"></div></div>
+<div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint">drag to rotate · pinch to zoom</span></div><input id="s" type="range" min="1" max="1" value="1"></div></div>
 <div id="err"></div>
 <script>
   var post=function(o){window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(o));};
   function fail(m){var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t render the preview. '+m;post({type:'error',message:String(m)});}
   window.addEventListener('error',function(e){fail(e.message||'error');});
   try{
-    var DATA=${lit}, layers=DATA.layers, b=DATA.bounds;
-    var total=layers.length||1, minX=b.minX,minY=b.minY;
-    var bw=(b.maxX-b.minX)||1, bh=(b.maxY-b.minY)||1;
-    var RESERVE=130; // px kept clear at the bottom for the control card
+    var DATA=${lit}, layers=DATA.layers, zs=DATA.layerZ, b=DATA.bounds;
+    var total=layers.length||1;
+    var cx=(b.minX+b.maxX)/2, cy=(b.minY+b.maxY)/2, cz=(b.minZ+b.maxZ)/2;
+    var bw=(b.maxX-b.minX)||1, bh=(b.maxY-b.minY)||1, bd=(b.maxZ-b.minZ)||1;
+    var radius=0.5*Math.sqrt(bw*bw+bh*bh+bd*bd)||1, zspan=(b.maxZ-b.minZ)||1;
+    var segTotal=0; for(var k0=0;k0<layers.length;k0++) segTotal+=layers[k0].length>>2;
+    var RESERVE=150; // px kept clear at the bottom for the control card
+
     var cv=document.getElementById('c'), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||2, W=0,Hh=0;
-    var base=document.createElement('canvas'), bctx=base.getContext('2d'), s=1,ox=0,oy=0,cur=total;
-    function fit(){
-      var pad=34; s=Math.min((W-2*pad)/bw,(Hh-2*pad-RESERVE)/bh);
-      ox=(W-bw*s)/2; oy=(Hh-RESERVE-bh*s)/2;
+    var yaw=-0.62, pitch=1.02, zoom=1, cur=total, baseScale=1, ox=0, oy=0, interacting=false;
+    function fit(){ baseScale=(Math.min(W,Hh-RESERVE)*0.40)/radius; ox=W/2; oy=(Hh-RESERVE)/2; }
+    // teal that brightens with height -> a depth cue that reads as 3D under rotation
+    function heightColor(t,top){ if(top) return '#A7FBEF';
+      return 'rgb('+Math.round(24+98*t)+','+Math.round(120+125*t)+','+Math.round(108+122*t)+')'; }
+    function draw(){
+      var s=baseScale*zoom, cyaw=Math.cos(yaw), syaw=Math.sin(yaw), cpit=Math.cos(pitch), spit=Math.sin(pitch);
+      var step=(interacting && segTotal>30000)?2:1; // while dragging a dense model, draw every other segment for a smooth framerate; full detail on release
+      ctx.clearRect(0,0,W,Hh); ctx.lineWidth=1.0; ctx.lineCap='round';
+      for(var k=0;k<cur;k++){
+        var L=layers[k]; if(!L||!L.length) continue;
+        var z=zs[k]-cz, t=(zs[k]-b.minZ)/zspan;
+        ctx.strokeStyle=heightColor(t,k===cur-1); ctx.beginPath();
+        for(var i=0;i<L.length;i+=4*step){
+          var ax=L[i]-cx, ay=L[i+1]-cy, bx2=L[i+2]-cx, by2=L[i+3]-cy;
+          var x1=ax*cyaw-ay*syaw, y1=(ax*syaw+ay*cyaw)*cpit - z*spit;
+          var x2=bx2*cyaw-by2*syaw, y2=(bx2*syaw+by2*cyaw)*cpit - z*spit;
+          ctx.moveTo(ox+x1*s, oy-y1*s); ctx.lineTo(ox+x2*s, oy-y2*s);
+        }
+        ctx.stroke();
+      }
     }
-    function tx(v){return ox+(v-minX)*s;}
-    function ty(v){return Hh-RESERVE-(oy+(v-minY)*s);}
-    function stroke(c,L,w){ c.lineWidth=w; c.strokeStyle=(c===bctx)?'rgba(124,245,230,0.07)':'#2BD4C0'; c.lineCap='round'; c.beginPath();
-      for(var i=0;i<L.length;i+=4){ c.moveTo(tx(L[i]),ty(L[i+1])); c.lineTo(tx(L[i+2]),ty(L[i+3])); } c.stroke(); }
-    function buildBase(){ // faint full-model silhouette, drawn once per layout -> cheap scrubbing
-      base.width=cv.width; base.height=cv.height; bctx.setTransform(dpr,0,0,dpr,0,0); bctx.clearRect(0,0,W,Hh);
-      for(var k=0;k<layers.length;k++) stroke(bctx,layers[k],1);
-    }
-    function draw(idx){ ctx.clearRect(0,0,W,Hh); ctx.drawImage(base,0,0,W,Hh); stroke(ctx,layers[idx-1]||[],1.7); }
-    function resize(){ W=cv.clientWidth;Hh=cv.clientHeight; cv.width=W*dpr;cv.height=Hh*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); fit(); buildBase(); draw(cur); }
+    var pending=false; function schedule(){ if(pending)return; pending=true; requestAnimationFrame(function(){pending=false;draw();}); }
+    function resize(){ W=cv.clientWidth;Hh=cv.clientHeight; cv.width=W*dpr;cv.height=Hh*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); fit(); draw(); }
+
+    function rotate(dx,dy){ yaw+=dx*0.01; pitch=Math.max(0.05,Math.min(Math.PI-0.05,pitch+dy*0.01)); schedule(); }
+    function dist(t){ var a=t[0],b2=t[1],dx=a.clientX-b2.clientX,dy=a.clientY-b2.clientY; return Math.sqrt(dx*dx+dy*dy); }
+    var g=null; // gesture state
+    cv.addEventListener('touchstart',function(e){ if(e.touches.length===2){g={m:'z',d:dist(e.touches),z0:zoom};} else {g={m:'r',x:e.touches[0].clientX,y:e.touches[0].clientY};} interacting=true; },{passive:true});
+    cv.addEventListener('touchmove',function(e){ if(!g)return; e.preventDefault();
+      if(e.touches.length===2){ if(g.m!=='z')g={m:'z',d:dist(e.touches),z0:zoom}; zoom=Math.max(0.3,Math.min(7,g.z0*(dist(e.touches)/g.d))); schedule(); }
+      else if(g.m==='r'){ var nx=e.touches[0].clientX,ny=e.touches[0].clientY; rotate(nx-g.x,ny-g.y); g.x=nx; g.y=ny; } },{passive:false});
+    cv.addEventListener('touchend',function(e){ if(e.touches.length===0){g=null;interacting=false;schedule();} else {g={m:'r',x:e.touches[0].clientX,y:e.touches[0].clientY};} },{passive:true});
+    // mouse + wheel: trackpad use AND headless testing
+    cv.addEventListener('mousedown',function(e){ g={m:'r',x:e.clientX,y:e.clientY}; interacting=true; });
+    window.addEventListener('mousemove',function(e){ if(!g||g.m!=='r')return; rotate(e.clientX-g.x,e.clientY-g.y); g.x=e.clientX; g.y=e.clientY; });
+    window.addEventListener('mouseup',function(){ if(g&&g.m==='r'){g=null;interacting=false;schedule();} });
+    cv.addEventListener('wheel',function(e){ e.preventDefault(); zoom=Math.max(0.3,Math.min(7,zoom*(e.deltaY<0?1.1:0.9))); schedule(); },{passive:false});
+
     var s2=document.getElementById('s'), lbl=document.getElementById('lbl');
     s2.max=String(total); s2.value=String(total); lbl.textContent='Layer '+total+' / '+total;
-    var pending=false;
-    s2.addEventListener('input',function(){ cur=+s2.value; lbl.textContent='Layer '+cur+' / '+total; if(pending)return; pending=true; requestAnimationFrame(function(){pending=false;draw(cur);}); });
+    s2.addEventListener('input',function(){ cur=+s2.value; lbl.textContent='Layer '+cur+' / '+total; schedule(); });
     window.addEventListener('resize',resize);
     resize();
     post({type:'ready',total:total});

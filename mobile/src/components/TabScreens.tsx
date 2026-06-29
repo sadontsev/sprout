@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, ScrollView, RefreshControl, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, ActivityIndicator, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -8,6 +8,7 @@ import type { BambuddyClient } from '@/api/bambuddyClient';
 import type { LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
 import { presentDashboard, fmtDuration, normColor } from '@/dashboard/present';
+import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Breathe, Toggle, FadeRise } from './anim';
 
 function fmtBytes(n?: number): string {
   if (!n) return '';
@@ -56,9 +57,9 @@ function Empty({ icon, title, body, cta, onCta }: { icon: keyof typeof Feather.g
         <Text style={{ marginTop: 8, fontWeight: '500', fontSize: 13, lineHeight: 19, color: c.t3, textAlign: 'center', maxWidth: 250 }}>{body}</Text>
       </View>
       {cta && (
-        <Pressable onPress={onCta} style={({ pressed }) => [{ marginTop: 4, paddingHorizontal: 24, height: 48, borderRadius: 14, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.7 }]}>
+        <Tap onPress={onCta} style={{ marginTop: 4, paddingHorizontal: 24, height: 48, borderRadius: 14, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
           <Text style={{ fontWeight: '600', fontSize: 15, color: c.accentInk }}>{cta}</Text>
-        </Pressable>
+        </Tap>
       )}
     </View>
   );
@@ -77,9 +78,9 @@ export function LibraryView({ client, camToken, onUpload, onPick }: { client: Ba
     <Page
       title="Files"
       right={
-        <Pressable onPress={onUpload} style={({ pressed }) => [{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.6 }]}>
+        <Tap onPress={onUpload} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="plus" size={22} color={c.accent} />
-        </Pressable>
+        </Tap>
       }>
       {files === null && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
       {files?.length === 0 && <Empty icon="folder" title="No files yet" body="Upload an STL, 3MF, or sliced G-code and it'll show up here." cta="Upload a model" onCta={onUpload} />}
@@ -88,7 +89,7 @@ export function LibraryView({ client, camToken, onUpload, onPick }: { client: Ba
           {files.map((f) => {
             const sliced = (f.file_type || '').includes('gcode') || !!f.sliced_for_model;
             return (
-              <Pressable key={f.id} onPress={() => onPick(f)} style={({ pressed }) => [{ width: '47%', flexGrow: 1 }, pressed && { opacity: 0.7 }]}>
+              <Tap key={f.id} onPress={() => onPick(f)} style={{ width: '47%', flexGrow: 1 }}>
                 <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
                   {f.thumbnail_path ? (
                     <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
@@ -106,7 +107,7 @@ export function LibraryView({ client, camToken, onUpload, onPick }: { client: Ba
                 </View>
                 <Text numberOfLines={1} style={{ marginTop: 9, fontWeight: '600', fontSize: 13, color: c.t1 }}>{f.print_name || f.filename}</Text>
                 <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{fmtBytes(f.file_size)}</Text>
-              </Pressable>
+              </Tap>
             );
           })}
         </View>
@@ -137,10 +138,11 @@ export function QueueView({ client, status, onBrowse }: { client: BambuddyClient
           <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 11 }}>NOW PRINTING</Text>
           <View style={{ marginHorizontal: 20, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1.5, borderColor: c.running }}>
             <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{vm.heroSub || 'Current print'}</Text>
-            <Text style={{ marginTop: 5, fontWeight: '600', fontSize: 11, color: c.running, fontFamily: mono }}>{vm.progressInt}% · {vm.etaText} left</Text>
-            <View style={{ marginTop: 13, height: 4, borderRadius: 2, backgroundColor: c.s3, overflow: 'hidden' }}>
-              <View style={{ height: '100%', width: `${vm.progressInt}%`, backgroundColor: c.running }} />
+            <View style={{ marginTop: 5, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <PulseDot color={c.running} size={6} period={2000} />
+              <Text style={{ fontWeight: '600', fontSize: 11, color: c.running, fontFamily: mono }}>{vm.progressInt}% · {vm.etaText} left</Text>
             </View>
+            <HeatBar pct={vm.progressInt} color={c.running} height={4} style={{ marginTop: 13 }} />
           </View>
         </>
       )}
@@ -158,7 +160,7 @@ export function QueueView({ client, status, onBrowse }: { client: BambuddyClient
                   <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>{j.library_file_name || j.archive_name || `Job ${j.id}`}</Text>
                   <Text style={{ marginTop: 4, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{j.print_time_seconds ? fmtDuration(j.print_time_seconds / 60) : j.status}</Text>
                 </View>
-                <Pressable
+                <Tap
                   onPress={() =>
                     Alert.alert(
                       'Remove from queue?',
@@ -170,9 +172,9 @@ export function QueueView({ client, status, onBrowse }: { client: BambuddyClient
                     )
                   }
                   hitSlop={8}
-                  style={({ pressed }) => [{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.5 }]}>
+                  style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}>
                   <Feather name="x" size={16} color={c.t3} />
-                </Pressable>
+                </Tap>
               </View>
             ))}
           </View>
@@ -246,14 +248,14 @@ export function AmsView({ client, status, printerId }: { client: BambuddyClient;
               </View>
               {!t.empty ? (
                 <View style={{ marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end' }}>
-                  <Pressable onPress={() => client.amsUnload(printerId).catch(() => {})} style={({ pressed }) => [{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3 }, pressed && { opacity: 0.6 }]}>
+                  <Tap onPress={() => client.amsUnload(printerId).catch(() => {})} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3 }}>
                     <Text style={{ fontWeight: '600', fontSize: 12, color: c.t1 }}>Unload</Text>
-                  </Pressable>
+                  </Tap>
                 </View>
               ) : (
-                <Pressable onPress={() => client.amsLoad(printerId, i).catch(() => {})} style={({ pressed }) => [{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.6 }]}>
+                <Tap onPress={() => client.amsLoad(printerId, i).catch(() => {})} style={{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ fontWeight: '600', fontSize: 13, color: c.accent }}>Load filament</Text>
-                </Pressable>
+                </Tap>
               )}
             </View>
           );
@@ -339,19 +341,17 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
     <Page title="Power">
       <Text style={{ paddingHorizontal: 20, marginTop: 7, fontWeight: '500', fontSize: 13, color: c.t3 }}>{plug?.name ?? 'Printer smart plug'}</Text>
       <View style={{ marginHorizontal: 20, marginTop: 20, paddingVertical: 30, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, alignItems: 'center' }}>
-        <Pressable
-          onPress={toggle}
-          disabled={!reachable || plug === undefined}
-          style={({ pressed }) => [
-            { width: 130, height: 130, borderRadius: 65, backgroundColor: on ? c.accent : c.s3, alignItems: 'center', justifyContent: 'center', opacity: reachable ? 1 : 0.4 },
-            on && reachable && { shadowColor: c.accent, shadowOpacity: 0.5, shadowRadius: 24, shadowOffset: { width: 0, height: 0 } },
-            pressed && { opacity: 0.8 },
-          ]}>
-          <Feather name="power" size={48} color={on ? c.accentInk : c.t2} />
-        </Pressable>
+        <Breathe active={on && reachable} color={c.accent} radius={26} style={{ borderRadius: 65 }}>
+          <Tap
+            onPress={toggle}
+            disabled={!reachable || plug === undefined}
+            style={{ width: 130, height: 130, borderRadius: 65, backgroundColor: on ? c.accent : c.s3, alignItems: 'center', justifyContent: 'center', opacity: reachable ? 1 : 0.4 }}>
+            <Feather name="power" size={48} color={on ? c.accentInk : c.t2} />
+          </Tap>
+        </Breathe>
         <Text style={{ marginTop: 20, fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{on ? 'Powered on' : 'Powered off'}</Text>
         <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: reachable ? c.running : c.idle }} />
+          {reachable ? <PulseDot color={c.running} size={7} period={2000} /> : <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.idle }} />}
           <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3 }}>{reachable ? 'Plug reachable' : 'Plug unreachable'}</Text>
         </View>
         <Text style={{ marginTop: 6, fontWeight: '500', fontSize: 12, color: c.t3 }}>Tap to toggle the printer's smart plug</Text>
@@ -360,14 +360,22 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
         <View style={{ flex: 1, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
           <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.t3, fontFamily: mono }}>DRAWING NOW</Text>
           <View style={{ marginTop: 9, flexDirection: 'row', alignItems: 'baseline', gap: 4 }}>
-            <Text style={{ fontWeight: '700', fontSize: 28, color: c.t1, fontVariant: ['tabular-nums'], letterSpacing: -1 }}>{watts == null ? '—' : `${Math.round(watts)}`}</Text>
+            {watts == null ? (
+              <Text style={{ fontWeight: '700', fontSize: 28, color: c.t1, letterSpacing: -1 }}>—</Text>
+            ) : (
+              <RollingNumber value={Math.round(watts)} fontSize={28} weight="700" color={c.t1} letterSpacing={-1} />
+            )}
             <Text style={{ fontWeight: '600', fontSize: 13, color: c.t3 }}>W</Text>
           </View>
         </View>
         <View style={{ flex: 1, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
           <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.t3, fontFamily: mono }}>TODAY</Text>
           <View style={{ marginTop: 9, flexDirection: 'row', alignItems: 'baseline', gap: 4 }}>
-            <Text style={{ fontWeight: '700', fontSize: 28, color: c.t1, fontVariant: ['tabular-nums'], letterSpacing: -1 }}>{kwh == null ? '—' : kwh.toFixed(2)}</Text>
+            {kwh == null ? (
+              <Text style={{ fontWeight: '700', fontSize: 28, color: c.t1, letterSpacing: -1 }}>—</Text>
+            ) : (
+              <RollingNumber value={kwh.toFixed(2)} fontSize={28} weight="700" color={c.t1} letterSpacing={-1} />
+            )}
             <Text style={{ fontWeight: '600', fontSize: 13, color: c.t3 }}>kWh</Text>
           </View>
           <Text style={{ marginTop: 6, fontWeight: '600', fontSize: 13, color: c.accent, fontVariant: ['tabular-nums'] }}>
@@ -379,7 +387,7 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
       {running && (
         <View style={{ marginHorizontal: 20, marginTop: 12, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1.5, borderColor: c.running }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.running }} />
+            <PulseDot color={c.running} size={7} period={2000} />
             <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.running, fontFamily: mono }}>THIS PRINT</Text>
           </View>
           <Text numberOfLines={1} style={{ marginTop: 8, fontWeight: '600', fontSize: 13, color: c.t1 }}>{status?.subtask_name || 'Current print'}</Text>
@@ -403,9 +411,7 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
           <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>Auto power-off</Text>
           <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t3 }}>Turn off the plug after a print finishes and the hotend cools below 50°C.</Text>
         </View>
-        <Pressable onPress={() => setAutoOff((v) => !v)} style={{ width: 48, height: 30, borderRadius: 15, backgroundColor: autoOff ? c.accent : c.s3, justifyContent: 'center' }}>
-          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#fff', marginLeft: autoOff ? 21 : 3 }} />
-        </Pressable>
+        <Toggle value={autoOff} onChange={setAutoOff} />
       </View>
       <View style={{ marginHorizontal: 20, marginTop: 14, paddingHorizontal: 16, paddingVertical: 13, borderRadius: 14, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <Feather name="zap" size={14} color={c.t3} />
@@ -456,26 +462,22 @@ function StatBlock({ label, value, unit, accent }: { label: string; value: strin
     <View style={{ flex: 1, minWidth: '30%' }}>
       <Text style={{ fontWeight: '600', fontSize: 9.5, letterSpacing: 1, color: c.t3, fontFamily: mono }}>{label}</Text>
       <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'baseline', gap: 3 }}>
-        <Text style={{ fontWeight: '700', fontSize: 25, color: accent ? c.accent : c.t1, fontVariant: ['tabular-nums'], letterSpacing: -1 }}>{value}</Text>
+        <RollingNumber value={value} fontSize={25} weight="700" color={accent ? c.accent : c.t1} letterSpacing={-1} />
         {unit ? <Text style={{ fontWeight: '600', fontSize: 12, color: c.t3 }}>{unit}</Text> : null}
       </View>
     </View>
   );
 }
 
-/** Pure-RN circular success gauge (no SVG dep): two stacked rotated bordered circles. */
+/** Animated circular success gauge (kit ProgressRing). */
 function SuccessRing({ pct }: { pct: number }) {
-  const size = 76;
-  const ring = 7;
   return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ position: 'absolute', width: size, height: size, borderRadius: size / 2, borderWidth: ring, borderColor: c.s3 }} />
-      <View style={{ position: 'absolute', width: size, height: size, borderRadius: size / 2, borderWidth: ring, borderColor: 'transparent', borderTopColor: c.accent, borderRightColor: pct >= 50 ? c.accent : 'transparent', transform: [{ rotate: `${-90 + Math.min(pct, 100) * 3.6}deg` }] }} />
+    <ProgressRing size={76} stroke={7} progress={pct} color={c.accent}>
       <View style={{ alignItems: 'center' }}>
-        <Text style={{ fontWeight: '700', fontSize: 20, color: c.t1, fontVariant: ['tabular-nums'], letterSpacing: -0.5 }}>{pct}</Text>
+        <RollingNumber value={pct} fontSize={20} weight="700" color={c.t1} letterSpacing={-0.5} />
         <Text style={{ fontWeight: '600', fontSize: 8, letterSpacing: 0.5, color: c.t3, fontFamily: mono, marginTop: -2 }}>SUCCESS</Text>
       </View>
-    </View>
+    </ProgressRing>
   );
 }
 
@@ -489,14 +491,14 @@ function StatsBanner({ stats }: { stats: ArchiveStats }) {
   const showEnergy = stats.total_energy_kwh > 0;
 
   return (
-    <View style={{ marginHorizontal: 20, marginTop: 18 }}>
+    <FadeRise style={{ marginHorizontal: 20, marginTop: 18 }}>
       <View style={{ padding: 20, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, ...shadow1 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View>
             <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 1.2, color: c.t3, fontFamily: mono }}>LIFETIME PRINTS</Text>
-            <Text style={{ fontWeight: '700', fontSize: 46, color: c.t1, letterSpacing: -2, fontVariant: ['tabular-nums'], marginTop: 7 }}>{total}</Text>
+            <RollingNumber value={total} fontSize={46} weight="700" color={c.t1} letterSpacing={-2} style={{ marginTop: 7 }} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 4 }}>
-              <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.running }} />
+              <PulseDot color={c.running} size={7} period={2400} />
               <Text style={{ fontWeight: '500', fontSize: 12, color: c.t2 }}>{stats.successful_prints} done</Text>
               {stats.failed_prints > 0 && (
                 <>
@@ -521,7 +523,7 @@ function StatsBanner({ stats }: { stats: ArchiveStats }) {
           Energy data is warming up — costs appear after the next full job.
         </Text>
       )}
-    </View>
+    </FadeRise>
   );
 }
 
@@ -708,10 +710,10 @@ export function MaintenanceSection({ client, printerId }: { client: BambuddyClie
                 <View style={{ height: '100%', width: `${pct}%`, borderRadius: 2, backgroundColor: st.urgent ? st.color : c.accent }} />
               </View>
               <View style={{ marginTop: 13, flexDirection: 'row', justifyContent: 'flex-end' }}>
-                <Pressable onPress={() => markDone(it)} disabled={busy === it.id} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 15, paddingVertical: 9, borderRadius: 11, backgroundColor: st.urgent ? c.accent : c.s3 }, pressed && { opacity: 0.6 }, busy === it.id && { opacity: 0.5 }]}>
+                <Tap onPress={() => markDone(it)} disabled={busy === it.id} style={[{ flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 15, paddingVertical: 9, borderRadius: 11, backgroundColor: st.urgent ? c.accent : c.s3 }, busy === it.id ? { opacity: 0.5 } : null]}>
                   {busy === it.id ? <ActivityIndicator size="small" color={st.urgent ? c.accentInk : c.t1} /> : <Feather name="check" size={14} color={st.urgent ? c.accentInk : c.t1} />}
                   <Text style={{ fontWeight: '600', fontSize: 13, color: st.urgent ? c.accentInk : c.t1 }}>Mark done</Text>
-                </Pressable>
+                </Tap>
               </View>
             </View>
           );

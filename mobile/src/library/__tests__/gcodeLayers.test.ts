@@ -12,12 +12,13 @@ describe('parseGcodeLayers', () => {
       'G1 X0 Y0 E2.5', // travel-ish but extruding -> still a segment
       'G1 X10 Y0 E3',
     ].join('\n');
-    const { layers, bounds } = parseGcodeLayers(g);
+    const { layers, layerZ, bounds } = parseGcodeLayers(g);
     expect(layers.length).toBe(2);
     // layer 1: two extruding segments -> 8 numbers
     expect(layers[0].length).toBe(8);
     expect(layers[0]).toEqual([0, 0, 10, 0, 10, 0, 10, 10]);
-    expect(bounds).toEqual({ minX: 0, minY: 0, maxX: 10, maxY: 10 });
+    expect(layerZ).toEqual([0.2, 0.4]); // index-aligned per-layer Z
+    expect(bounds).toEqual({ minX: 0, minY: 0, maxX: 10, maxY: 10, minZ: 0.2, maxZ: 0.4 });
   });
 
   it('ignores travel moves (no E increase)', () => {
@@ -64,8 +65,9 @@ describe('parseGcodeLayers', () => {
   });
 
   it('returns no layers and default bounds for empty / non-print input', () => {
-    const { layers, bounds } = parseGcodeLayers('; just comments\nM104 S200\n');
+    const { layers, layerZ, bounds } = parseGcodeLayers('; just comments\nM104 S200\n');
     expect(layers).toEqual([]);
-    expect(bounds).toEqual({ minX: 0, minY: 0, maxX: 256, maxY: 256 });
+    expect(layerZ).toEqual([]);
+    expect(bounds).toEqual({ minX: 0, minY: 0, maxX: 256, maxY: 256, minZ: 0, maxZ: 1 });
   });
 });
