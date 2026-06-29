@@ -5,10 +5,16 @@
 // (numbers, not objects) to keep the payload compact for large prints.
 
 export interface GcodeLayers {
-  /** One entry per layer: flat [x0,y0,x1,y1,...] of extruding XY moves. */
+  /** One entry per layer: flat [x0,y0,x1,y1,...] of extruding XY moves (the model itself). */
   layers: number[][];
+  /** Support-structure extrusion per layer — index-aligned with `layers` (empty where none). */
+  supportLayers: number[][];
   /** Z height (mm) of each layer — index-aligned with `layers`. Drives the 3D stacking. */
   layerZ: number[];
+  /** Whether the slicer's support setting was on (`; enable_support = 1` in the G-code). */
+  supportEnabled: boolean;
+  /** Whether any actual support toolpath was generated (the honest "this print has supports"). */
+  hasSupport: boolean;
   /** XYZ extent of all extrusion, for fit-to-view. Always finite. */
   bounds: { minX: number; minY: number; maxX: number; maxY: number; minZ: number; maxZ: number };
 }
@@ -24,8 +30,10 @@ const EPS = 1e-6;
 export function parseGcodeLayers(gcode: string): GcodeLayers {
   const lines = gcode.split('\n');
   const layers: number[][] = [];
+  const supportLayers: number[][] = [];
   const zs: number[] = [];
   let seg: number[] = [];
+  let supSeg: number[] = [];
   let x = 0,
     y = 0,
     z = 0,
@@ -33,6 +41,10 @@ export function parseGcodeLayers(gcode: string): GcodeLayers {
   let absXYZ = true,
     absE = true;
   let layerZ: number | null = null;
+  let feature = ''; // current `; FEATURE: ...` block — slicers tag support toolpaths this way
+  let isSupport = false;
+  let supportEnabled = false;
+  let hasSupport = false;
   let minX = Infinity,
     minY = Infinity,
     maxX = -Infinity,
@@ -40,17 +52,32 @@ export function parseGcodeLayers(gcode: string): GcodeLayers {
 
   // Close the current layer, recording the Z it was extruded at (index-aligned with `layers`).
   const pushLayer = () => {
-    if (seg.length) {
+    if (seg.length || supSeg.length) {
       layers.push(seg);
+      supportLayers.push(supSeg);
       zs.push(layerZ ?? 0);
       seg = [];
+      supSeg = [];
     }
   };
 
   for (let li = 0; li < lines.length; li++) {
     let line = lines[li];
     const sc = line.indexOf(';');
-    if (sc >= 0) line = line.slice(0, sc);
+    if (sc >= 0) {
+      // Read slicer metadata from the comment before stripping it: which feature we're printing, and
+      // whether supports were enabled at all.
+      const comment = line.slice(sc + 1);
+      const fm = /FEATURE:\s*(.+)/i.exec(comment);
+      if (fm) {
+        feature = fm[1].trim();
+        isSupport = /support/i.test(feature);
+      } else {
+        const em = /\benable_support\s*=\s*([01])/i.exec(comment);
+        if (em) supportEnabled = em[1] === '1';
+      }
+      line = line.slice(0, sc);
+    }
     line = line.trim();
     if (!line) continue;
     const t = line.split(/\s+/);
@@ -117,7 +144,12 @@ export function parseGcodeLayers(gcode: string): GcodeLayers {
         pushLayer();
         layerZ = nz;
       }
-      seg.push(x, y, nx, ny);
+      if (isSupport) {
+        supSeg.push(x, y, nx, ny);
+        hasSupport = true;
+      } else {
+        seg.push(x, y, nx, ny);
+      }
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
@@ -143,7 +175,7 @@ export function parseGcodeLayers(gcode: string): GcodeLayers {
   }
   const minZ = zs.length ? zs[0] : 0;
   const maxZ = zs.length ? zs[zs.length - 1] : 1;
-  return { layers, layerZ: zs, bounds: { minX, minY, maxX, maxY, minZ, maxZ } };
+  return { layers, supportLayers, layerZ: zs, supportEnabled, hasSupport, bounds: { minX, minY, maxX, maxY, minZ, maxZ } };
 }
 
 /** Guard: don't try to render gigantic sliced files on-device. */
@@ -183,7 +215,7 @@ export function gcodeViewerHtml(data: GcodeLayers): string {
   function fail(m){var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t render the preview. '+m;post({type:'error',message:String(m)});}
   window.addEventListener('error',function(e){fail(e.message||'error');});
   try{
-    var DATA=${lit}, layers=DATA.layers, zs=DATA.layerZ, b=DATA.bounds;
+    var DATA=${lit}, layers=DATA.layers, sup=DATA.supportLayers||[], zs=DATA.layerZ, b=DATA.bounds;
     var total=layers.length||1;
     var cx=(b.minX+b.maxX)/2, cy=(b.minY+b.maxY)/2, cz=(b.minZ+b.maxZ)/2;
     var bw=(b.maxX-b.minX)||1, bh=(b.maxY-b.minY)||1, bd=(b.maxZ-b.minZ)||1;
@@ -197,21 +229,26 @@ export function gcodeViewerHtml(data: GcodeLayers): string {
     // teal that brightens with height -> a depth cue that reads as 3D under rotation
     function heightColor(t,top){ if(top) return '#A7FBEF';
       return 'rgb('+Math.round(24+98*t)+','+Math.round(120+125*t)+','+Math.round(108+122*t)+')'; }
+    // stroke one layer's flat [x0,y0,x1,y1,...] segments at height z, projected through the orbit camera
+    function strokeLayer(L,z,step,cyaw,syaw,cpit,spit,s){
+      ctx.beginPath();
+      for(var i=0;i<L.length;i+=4*step){
+        var ax=L[i]-cx, ay=L[i+1]-cy, bx2=L[i+2]-cx, by2=L[i+3]-cy;
+        // orbit: yaw about Z, then tilt — +z must raise the point on screen (was subtracted -> model rendered upside-down/mirrored)
+        var x1=ax*cyaw-ay*syaw, y1=(ax*syaw+ay*cyaw)*cpit + z*spit;
+        var x2=bx2*cyaw-by2*syaw, y2=(bx2*syaw+by2*cyaw)*cpit + z*spit;
+        ctx.moveTo(ox+x1*s, oy-y1*s); ctx.lineTo(ox+x2*s, oy-y2*s);
+      }
+      ctx.stroke();
+    }
     function draw(){
       var s=baseScale*zoom, cyaw=Math.cos(yaw), syaw=Math.sin(yaw), cpit=Math.cos(pitch), spit=Math.sin(pitch);
       var step=(interacting && segTotal>30000)?2:1; // while dragging a dense model, draw every other segment for a smooth framerate; full detail on release
       ctx.clearRect(0,0,W,Hh); ctx.lineWidth=1.0; ctx.lineCap='round';
       for(var k=0;k<cur;k++){
-        var L=layers[k]; if(!L||!L.length) continue;
-        var z=zs[k]-cz, t=(zs[k]-b.minZ)/zspan;
-        ctx.strokeStyle=heightColor(t,k===cur-1); ctx.beginPath();
-        for(var i=0;i<L.length;i+=4*step){
-          var ax=L[i]-cx, ay=L[i+1]-cy, bx2=L[i+2]-cx, by2=L[i+3]-cy;
-          var x1=ax*cyaw-ay*syaw, y1=(ax*syaw+ay*cyaw)*cpit - z*spit;
-          var x2=bx2*cyaw-by2*syaw, y2=(bx2*syaw+by2*cyaw)*cpit - z*spit;
-          ctx.moveTo(ox+x1*s, oy-y1*s); ctx.lineTo(ox+x2*s, oy-y2*s);
-        }
-        ctx.stroke();
+        var z=zs[k]-cz, t=(zs[k]-b.minZ)/zspan, L=layers[k], SL=sup[k];
+        if(L&&L.length){ ctx.strokeStyle=heightColor(t,k===cur-1); strokeLayer(L,z,step,cyaw,syaw,cpit,spit,s); }
+        if(SL&&SL.length){ ctx.strokeStyle='#E8A23D'; strokeLayer(SL,z,step,cyaw,syaw,cpit,spit,s); } // supports in amber
       }
     }
     var pending=false; function schedule(){ if(pending)return; pending=true; requestAnimationFrame(function(){pending=false;draw();}); }

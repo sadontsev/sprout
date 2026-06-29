@@ -15,7 +15,7 @@ import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
 import { parseGcodeLayers, gcodeViewerHtml, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
 import { selectA1Process, pickDefaultQuality, type Preset } from '@/library/presetSelect';
 import { mjpegHtml } from './mjpegHtml';
-import { Tap } from './anim';
+import { Tap, RollingNumber, HeatBar, FadeRise } from './anim';
 
 // ---------------- CAMERA FULLSCREEN ----------------
 export function CameraOverlay({ streamUrl, status, onClose, onRefresh }: { streamUrl: string | null; status: PrinterStatus | null; onClose: () => void; onRefresh: () => void }) {
@@ -93,17 +93,17 @@ export function CameraOverlay({ streamUrl, status, onClose, onRefresh }: { strea
         </View>
       )}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
-        <Pressable onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+        <Tap onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="chevron-down" size={22} color="#fff" />
-        </Pressable>
+        </Tap>
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 13, backgroundColor: 'rgba(22,24,27,0.55)' }}>
           <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: vm.stateColor }} />
           <Text style={{ fontWeight: '600', fontSize: 13, color: '#fff' }}>{vm.stateLabel}</Text>
           <Text style={{ marginLeft: 'auto', fontWeight: '600', fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: mono }}>{vm.progressInt}% · L{vm.layer}</Text>
         </View>
-        <Pressable onPress={retry} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+        <Tap onPress={retry} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="refresh-cw" size={18} color="#fff" />
-        </Pressable>
+        </Tap>
       </View>
       {live && (
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: insets.bottom + 24, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -243,10 +243,11 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
 
   return (
     <Pressable onPress={onClose} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', zIndex: 72 } as any}>
+      <Animated.View entering={SlideInDown.duration(320)}>
       <Pressable onPress={() => {}} style={{ maxHeight: '88%', backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 14, paddingTop: 10, paddingBottom: insets.bottom + 18, ...shadow1 }}>
         <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginBottom: 12 }} />
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
-          <Pressable onPress={onBack} hitSlop={10} style={{ width: 40 }}><Feather name="chevron-left" size={22} color={c.t2} /></Pressable>
+          <Tap onPress={onBack} hitSlop={10} style={{ width: 40 }}><Feather name="chevron-left" size={22} color={c.t2} /></Tap>
           <Text style={{ flex: 1, textAlign: 'center', fontWeight: '700', fontSize: 17, color: c.t1 }}>From MakerWorld</Text>
           <View style={{ width: 40 }} />
         </View>
@@ -275,9 +276,9 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
               onSubmitEditing={resolve}
               style={{ flex: 1, height: 48, borderRadius: 13, backgroundColor: c.s2, paddingHorizontal: 14, color: c.t1, fontSize: 14 }}
             />
-            <Pressable onPress={resolve} disabled={resolving || !url.trim()} style={({ pressed }) => [{ paddingHorizontal: 18, height: 48, borderRadius: 13, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: !url.trim() ? 0.4 : 1 }, pressed && { opacity: 0.8 }]}>
+            <Tap onPress={resolve} disabled={resolving || !url.trim()} style={{ paddingHorizontal: 18, height: 48, borderRadius: 13, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: !url.trim() ? 0.4 : 1 }}>
               {resolving ? <ActivityIndicator color={c.accentInk} /> : <Text style={{ fontWeight: '700', fontSize: 14, color: c.accentInk }}>Resolve</Text>}
-            </Pressable>
+            </Tap>
           </View>
 
           {err && (
@@ -317,7 +318,7 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
                       const w = instWeight(inst);
                       const fils = inst.instanceFilaments ?? inst.extention?.modelInfo?.plates?.[0]?.filaments ?? [];
                       return (
-                        <Pressable key={inst.id} onPress={() => setPicked(inst)} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 11, borderRadius: 13, backgroundColor: c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                        <Tap key={inst.id} onPress={() => setPicked(inst)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 11, borderRadius: 13, backgroundColor: c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent }}>
                           <View style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden', backgroundColor: '#0e1113', alignItems: 'center', justifyContent: 'center' }}>
                             {inst.cover ? (
                               <Image source={{ uri: client.makerworldThumbUrl(inst.cover) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
@@ -339,7 +340,7 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
                             </View>
                           </View>
                           {sel && <Feather name="check" size={16} color={c.accent} />}
-                        </Pressable>
+                        </Tap>
                       );
                     })}
                   </View>
@@ -350,18 +351,19 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
         </ScrollView>
 
         {design && (
-          <Pressable
+          <Tap
             onPress={doImport}
             disabled={importing || canDownload !== true}
-            style={({ pressed }) => [{ marginTop: 14, height: 52, borderRadius: 15, backgroundColor: canDownload === true ? c.accent : c.s3, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 9 }, pressed && { opacity: 0.85 }]}
+            style={{ marginTop: 14, height: 52, borderRadius: 15, backgroundColor: canDownload === true ? c.accent : c.s3, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 9 }}
           >
             {importing && <ActivityIndicator color={c.accentInk} />}
             <Text style={{ fontWeight: '700', fontSize: 16, color: canDownload === true ? c.accentInk : c.t3 }}>
               {importing ? 'Importing…' : canDownload === true ? (alreadyImported ? 'Import again' : 'Import to library') : 'Import unavailable'}
             </Text>
-          </Pressable>
+          </Tap>
         )}
       </Pressable>
+      </Animated.View>
     </Pressable>
   );
 }
@@ -382,6 +384,7 @@ export function GcodeViewerOverlay({ client, fileId, title, onClose }: { client:
   const insets = useSafeAreaInsets();
   const [html, setHtml] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [hasSupport, setHasSupport] = useState<boolean | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -397,6 +400,7 @@ export function GcodeViewerOverlay({ client, fileId, title, onClose }: { client:
           setErr('No printable layers were found in this file.');
           return;
         }
+        setHasSupport(parsed.hasSupport);
         setHtml(gcodeViewerHtml(parsed));
       })
       .catch((e) => alive && setErr(String(e)));
@@ -441,12 +445,18 @@ export function GcodeViewerOverlay({ client, fileId, title, onClose }: { client:
         </View>
       )}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
-        <Pressable onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+        <Tap onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="chevron-down" size={22} color="#fff" />
-        </Pressable>
+        </Tap>
         <View style={{ flex: 1, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 13, backgroundColor: 'rgba(22,24,27,0.55)' }}>
           <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 13, color: '#fff' }}>{title}</Text>
         </View>
+        {hasSupport != null && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, height: 40, borderRadius: 13, backgroundColor: 'rgba(22,24,27,0.55)' }}>
+            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: hasSupport ? '#E8A23D' : '#4f555b' }} />
+            <Text style={{ fontWeight: '600', fontSize: 12, color: hasSupport ? '#E8A23D' : '#9aa0a6' }}>{hasSupport ? 'Supports' : 'No supports'}</Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -497,9 +507,9 @@ export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlat
           {plates!.plates.map((p) => {
             const sel = p.index === vm.plateIndex;
             return (
-              <Pressable key={p.index} onPress={() => onSelectPlate?.(p.index)} style={({ pressed }) => [{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 11, backgroundColor: sel ? c.accentDim : c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+              <Tap key={p.index} onPress={() => onSelectPlate?.(p.index)} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 11, backgroundColor: sel ? c.accentDim : c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent }}>
                 <Text style={{ fontWeight: '600', fontSize: 13, color: sel ? c.accent : c.t2 }}>Plate {p.index}</Text>
-              </Pressable>
+              </Tap>
             );
           })}
         </View>
@@ -514,10 +524,10 @@ export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlat
           <Feather name="box" size={30} color={c.t3} />
         )}
         {onViewLayers && !loading && (
-          <Pressable onPress={onViewLayers} style={({ pressed }) => [{ position: 'absolute', right: 10, bottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10, backgroundColor: 'rgba(10,11,12,0.72)' }, pressed && { opacity: 0.7 }]}>
+          <Tap onPress={onViewLayers} style={{ position: 'absolute', right: 10, bottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 10, backgroundColor: 'rgba(10,11,12,0.72)' }}>
             <Feather name="layers" size={13} color={c.accent} />
             <Text style={{ fontWeight: '600', fontSize: 11.5, color: '#fff' }}>View layers</Text>
-          </Pressable>
+          </Tap>
         )}
       </View>
 
@@ -715,9 +725,9 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
 
   return (
     <View style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end', zIndex: 72 } as any}>
-      <View style={{ height: '92%', backgroundColor: c.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' }}>
+      <Animated.View entering={SlideInDown.duration(340)} style={{ height: '92%', backgroundColor: c.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' }}>
         <View style={{ paddingHorizontal: 18, paddingTop: insets.top + 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Pressable onPress={onClose} hitSlop={10}><Text style={{ fontWeight: '500', fontSize: 15, color: c.t2 }}>Cancel</Text></Pressable>
+          <Tap onPress={onClose} hitSlop={10}><Text style={{ fontWeight: '500', fontSize: 15, color: c.t2 }}>Cancel</Text></Tap>
           <View style={{ alignItems: 'center', flex: 1 }}>
             <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>{titles[step]}</Text>
             <Text numberOfLines={1} style={{ marginTop: 2, fontWeight: '500', fontSize: 11, color: c.t3 }}>{captions[step]}</Text>
@@ -734,6 +744,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
         </View>
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 18 }}>
+          <FadeRise key={step} dy={10} duration={300}>
           {step === 1 && (
             <>
               <L>SELECTED FILE</L>
@@ -780,33 +791,33 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                   {loaded.map((f) => {
                     const sel = !!f.preset && filament?.id === f.preset.id;
                     return (
-                      <Pressable
+                      <Tap
                         key={f.slot}
                         onPress={() => { if (f.preset) { setFilament(f.preset); setSlot(f.slot); } }}
                         disabled={!f.preset}
-                        style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent, opacity: f.preset ? 1 : 0.5 }, pressed && { opacity: 0.7 }]}>
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent, opacity: f.preset ? 1 : 0.5 }}>
                         <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: f.colorHex ?? c.s4, borderWidth: 1, borderColor: c.line2 }} />
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{f.colorName ? `${f.colorName} · ${f.material}` : f.material}</Text>
                           <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>Slot {f.slot + 1}{f.preset ? '' : ' · no A1 profile'}</Text>
                         </View>
                         {sel && <Feather name="check" size={16} color={c.accent} />}
-                      </Pressable>
+                      </Tap>
                     );
                   })}
                 </View>
               )}
-              <Pressable onPress={() => setShowCatalog((v) => !v)} style={({ pressed }) => [{ marginTop: loaded.length > 0 ? 14 : 0, flexDirection: 'row', alignItems: 'center', gap: 6 }, pressed && { opacity: 0.6 }]}>
+              <Tap onPress={() => setShowCatalog((v) => !v)} style={{ marginTop: loaded.length > 0 ? 14 : 0, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <Feather name={showCatalog || loaded.length === 0 ? 'chevron-down' : 'chevron-right'} size={15} color={c.t3} />
                 <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono }}>{loaded.length > 0 ? 'OR PICK ANOTHER FILAMENT' : 'CHOOSE A FILAMENT'}</Text>
-              </Pressable>
+              </Tap>
               {(showCatalog || loaded.length === 0) && (
                 <View style={{ gap: 9, marginTop: 11 }}>
                   {(presets?.catalog ?? []).map((m) => (
-                    <Pressable key={m.id} onPress={() => setFilament(m)} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: filament?.id === m.id ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                    <Tap key={m.id} onPress={() => setFilament(m)} style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: filament?.id === m.id ? 1.5 : 0, borderColor: c.accent }}>
                       <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: c.t1 }}>{m.name.replace(' @BBL A1', '')}</Text>
                       {filament?.id === m.id && <Feather name="check" size={16} color={c.accent} />}
-                    </Pressable>
+                    </Tap>
                   ))}
                 </View>
               )}
@@ -817,10 +828,10 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                   const h = q.name.match(/0\.\d+mm/)?.[0] ?? '';
                   const label = q.name.replace(/0\.\d+mm /, '').replace(' @BBL A1', '');
                   return (
-                    <Pressable key={q.id} onPress={() => setQuality(q)} style={({ pressed }) => [{ width: '47%', flexGrow: 1, padding: 15, borderRadius: 13, backgroundColor: c.s2, borderWidth: quality?.id === q.id ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                    <Tap key={q.id} onPress={() => setQuality(q)} style={{ width: '47%', flexGrow: 1, padding: 15, borderRadius: 13, backgroundColor: c.s2, borderWidth: quality?.id === q.id ? 1.5 : 0, borderColor: c.accent }}>
                       <Text style={{ fontWeight: '700', fontSize: 19, color: quality?.id === q.id ? c.accent : c.t1, fontVariant: ['tabular-nums'] }}>{h.replace('mm', '')}</Text>
                       <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, color: c.t2 }}>{label}</Text>
-                    </Pressable>
+                    </Tap>
                   );
                 })}
               </View>
@@ -829,9 +840,9 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
               <L>BUILD PLATE</L>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9 }}>
                 {BED_TYPES.map((b) => (
-                  <Pressable key={b.id} onPress={() => setBedType(b.id)} style={({ pressed }) => [{ flexGrow: 1, paddingVertical: 13, paddingHorizontal: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: bedType === b.id ? 1.5 : 0, borderColor: c.accent, alignItems: 'center' }, pressed && { opacity: 0.7 }]}>
+                  <Tap key={b.id} onPress={() => setBedType(b.id)} style={{ flexGrow: 1, paddingVertical: 13, paddingHorizontal: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: bedType === b.id ? 1.5 : 0, borderColor: c.accent, alignItems: 'center' }}>
                     <Text style={{ fontWeight: '600', fontSize: 13.5, color: bedType === b.id ? c.accent : c.t1 }}>{b.label}</Text>
-                  </Pressable>
+                  </Tap>
                 ))}
               </View>
 
@@ -848,10 +859,11 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
 
           {step === 4 && (
             <View style={{ paddingTop: 40, alignItems: 'center' }}>
-              <Text style={{ fontWeight: '700', fontSize: 46, color: c.t1, fontVariant: ['tabular-nums'], letterSpacing: -1 }}>{slicePct}<Text style={{ fontSize: 22, color: c.t3 }}>%</Text></Text>
-              <View style={{ marginTop: 18, width: '78%', height: 5, borderRadius: 3, backgroundColor: c.s3, overflow: 'hidden' }}>
-                <View style={{ height: '100%', width: `${slicePct}%`, backgroundColor: c.accent }} />
+              <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+                <RollingNumber value={slicePct} fontSize={46} weight="700" color={c.t1} letterSpacing={-1} />
+                <Text style={{ fontSize: 22, fontWeight: '700', color: c.t3, marginBottom: 3 }}>%</Text>
               </View>
+              <HeatBar pct={slicePct} color={c.accent} height={5} style={{ marginTop: 18, width: '78%' }} />
               <Text style={{ marginTop: 14, fontWeight: '500', fontSize: 13, color: c.t2 }}>Slicing on your server…</Text>
             </View>
           )}
@@ -874,13 +886,13 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                   const tray = trays[i];
                   const empty = !tray?.tray_type;
                   return (
-                    <Pressable key={i} onPress={() => !empty && setSlot(i)} style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 13, borderRadius: 13, backgroundColor: c.s2, opacity: empty ? 0.4 : 1, borderWidth: slot === i ? 1.5 : 0, borderColor: c.accent }, pressed && { opacity: 0.7 }]}>
+                    <Tap key={i} onPress={() => !empty && setSlot(i)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 13, borderRadius: 13, backgroundColor: c.s2, opacity: empty ? 0.4 : 1, borderWidth: slot === i ? 1.5 : 0, borderColor: c.accent }}>
                       <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: empty ? 'transparent' : normColor(tray?.tray_color) ?? c.s4, borderWidth: empty ? 1 : 0, borderColor: c.line2, borderStyle: 'dashed' }} />
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Slot {i + 1} · {empty ? 'Empty' : tray?.tray_type}</Text>
                       </View>
                       {slot === i && <Feather name="check" size={16} color={c.accent} />}
-                    </Pressable>
+                    </Tap>
                   );
                 })}
               </View>
@@ -903,21 +915,22 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
               </View>
             </>
           )}
+          </FadeRise>
         </ScrollView>
 
         {footer && (
           <View style={{ flexDirection: 'row', gap: 12, padding: 18, paddingBottom: insets.bottom + 16, borderTopWidth: 1, borderTopColor: c.line }}>
             {idx > 0 && step !== 7 && (
-              <Pressable onPress={back} style={({ pressed }) => [{ paddingHorizontal: 22, height: 52, borderRadius: 15, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.7 }]}>
+              <Tap onPress={back} style={{ paddingHorizontal: 22, height: 52, borderRadius: 15, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>Back</Text>
-              </Pressable>
+              </Tap>
             )}
-            <Pressable onPress={footer.onPress} disabled={starting} style={({ pressed }) => [{ flex: 1, height: 52, borderRadius: 15, backgroundColor: footer.bg, alignItems: 'center', justifyContent: 'center' }, pressed && { opacity: 0.8 }]}>
+            <Tap onPress={footer.onPress} disabled={starting} style={{ flex: 1, height: 52, borderRadius: 15, backgroundColor: footer.bg, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ fontWeight: '600', fontSize: 16, color: footer.fg }}>{footer.label}</Text>
-            </Pressable>
+            </Tap>
           </View>
         )}
-      </View>
+      </Animated.View>
       {viewLayers && <GcodeViewerOverlay client={client} fileId={viewLayers.fileId} title={viewLayers.title} onClose={() => setViewLayers(null)} />}
     </View>
   );

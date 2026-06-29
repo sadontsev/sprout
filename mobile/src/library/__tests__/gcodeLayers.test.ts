@@ -71,3 +71,43 @@ describe('parseGcodeLayers', () => {
     expect(bounds).toEqual({ minX: 0, minY: 0, maxX: 256, maxY: 256, minZ: 0, maxZ: 1 });
   });
 });
+
+describe('parseGcodeLayers — supports', () => {
+  it('separates support toolpath (; FEATURE: Support) from the model and flags it', () => {
+    const g = [
+      'G90',
+      '; enable_support = 1',
+      'G1 Z0.2',
+      'G1 X0 Y0 E0',
+      '; FEATURE: Outer wall',
+      'G1 X10 Y0 E1', // model
+      '; FEATURE: Support',
+      'G1 X0 Y5 E2', // support
+      'G1 X10 Y5 E3', // support
+      '; FEATURE: Inner wall',
+      'G1 X10 Y10 E4', // model
+    ].join('\n');
+    const { layers, supportLayers, hasSupport, supportEnabled } = parseGcodeLayers(g);
+    expect(layers).toHaveLength(1);
+    expect(supportLayers).toHaveLength(1);
+    expect(layers[0]).toEqual([0, 0, 10, 0, 10, 5, 10, 10]); // walls only
+    expect(supportLayers[0]).toEqual([10, 0, 0, 5, 0, 5, 10, 5]); // support only
+    expect(hasSupport).toBe(true);
+    expect(supportEnabled).toBe(true);
+  });
+
+  it('also catches "Support interface" as support', () => {
+    const g = ['G90', 'G1 Z0.2', '; FEATURE: Support interface', 'G1 X0 Y0 E0', 'G1 X5 Y0 E1'].join('\n');
+    const { supportLayers, hasSupport } = parseGcodeLayers(g);
+    expect(hasSupport).toBe(true);
+    expect(supportLayers[0]).toEqual([0, 0, 5, 0]);
+  });
+
+  it('reports no supports when none are present (enable_support = 0, no Support feature)', () => {
+    const g = ['G90', '; enable_support = 0', 'G1 Z0.2', '; FEATURE: Outer wall', 'G1 X0 Y0 E0', 'G1 X5 Y0 E1'].join('\n');
+    const { hasSupport, supportEnabled, supportLayers } = parseGcodeLayers(g);
+    expect(hasSupport).toBe(false);
+    expect(supportEnabled).toBe(false);
+    expect(supportLayers[0]).toEqual([]);
+  });
+});
