@@ -1,4 +1,4 @@
-import { sanitizeApiKey, sanitizeBaseUrl } from '@/app/settings';
+import { sanitizeApiKey, sanitizeBaseUrl } from '@/config/sanitize';
 
 describe('sanitizeApiKey', () => {
   it('passes a clean key through unchanged', () => {

@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import type { ThemeName } from '@/theme';
 
 /** App connection config, persisted in the iOS Keychain (this-device-only). */
 export type AppConfig = {
@@ -8,6 +9,8 @@ export type AppConfig = {
   apiKey: string;
   /** Long-lived camera stream token, minted lazily */
   cameraToken?: string;
+  /** UI theme preference (defaults to dark) */
+  theme?: ThemeName;
 };
 
 const KEY = 'bambu.config';
@@ -27,6 +30,13 @@ export async function getConfig(): Promise<AppConfig | null> {
 
 export async function setConfig(c: AppConfig): Promise<void> {
   await SecureStore.setItemAsync(KEY, JSON.stringify(c), OPTS);
+}
+
+/** Merge a partial update into the stored config (no-op if nothing is stored yet). */
+export async function patchConfig(partial: Partial<AppConfig>): Promise<void> {
+  const cur = await getConfig();
+  if (!cur) return;
+  await setConfig({ ...cur, ...partial });
 }
 
 export async function clearConfig(): Promise<void> {
