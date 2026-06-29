@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1 } from '@/theme';
 import type { DashVM } from '@/dashboard/present';
-import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton } from './anim';
+import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton, Pop, Breathe } from './anim';
 
 export interface DashHandlers {
   onSettings: () => void;
@@ -173,7 +173,9 @@ export function DashboardView({
             </View>
             <View style={{ marginHorizontal: 20, marginTop: 12, flexDirection: 'row', gap: 12 }}>
               <Tap onPress={h.onLight} style={{ flex: 1, height: 54, borderRadius: 16, backgroundColor: vm.lightOn ? c.accentDim : c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
-                <Feather name="sun" size={17} color={vm.lightOn ? c.accent : c.t1} />
+                <Breathe active={vm.lightOn} color={c.accent} radius={9}>
+                  <Feather name="sun" size={17} color={vm.lightOn ? c.accent : c.t1} />
+                </Breathe>
                 <Text style={{ fontWeight: '600', fontSize: 14, color: vm.lightOn ? c.accent : c.t1 }}>Light</Text>
                 <Text style={{ fontWeight: '600', fontSize: 12, color: vm.lightOn ? c.accent : c.t1, opacity: 0.7, fontFamily: mono }}>{vm.lightOn ? 'ON' : 'OFF'}</Text>
               </Tap>
@@ -232,9 +234,11 @@ export function DashboardView({
             <FadeRise>
             <View style={{ padding: 22, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, ...shadow1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
-                <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.runningDim, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="check" size={24} color={c.running} />
-                </View>
+                <Pop>
+                  <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.runningDim, alignItems: 'center', justifyContent: 'center' }}>
+                    <Feather name="check" size={24} color={c.running} />
+                  </View>
+                </Pop>
                 <View>
                   <Text style={{ fontWeight: '700', fontSize: 20, color: c.t1, letterSpacing: -0.3 }}>Fresh off the bed</Text>
                   <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{vm.heroSub || 'finished'}</Text>

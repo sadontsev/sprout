@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { WebView } from 'react-native-webview';
-import Animated, { SlideInDown } from 'react-native-reanimated';
+import Animated, { SlideInDown, FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
@@ -145,7 +145,8 @@ export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyC
   }
 
   return (
-    <Pressable onPress={onClose} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', zIndex: 72 } as any}>
+    <Pressable onPress={onClose} style={{ position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 72 } as any}>
+      <Animated.View entering={FadeIn.duration(220)} pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)' } as any} />
       <Animated.View entering={SlideInDown.duration(320)}>
       <Pressable onPress={() => {}} style={{ backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 14, paddingTop: 10, paddingBottom: insets.bottom + 20, ...shadow1 }}>
         <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginBottom: 16 }} />
@@ -242,7 +243,8 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
   );
 
   return (
-    <Pressable onPress={onClose} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', zIndex: 72 } as any}>
+    <Pressable onPress={onClose} style={{ position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 72 } as any}>
+      <Animated.View entering={FadeIn.duration(220)} pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)' } as any} />
       <Animated.View entering={SlideInDown.duration(320)}>
       <Pressable onPress={() => {}} style={{ maxHeight: '88%', backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 14, paddingTop: 10, paddingBottom: insets.bottom + 18, ...shadow1 }}>
         <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginBottom: 12 }} />
@@ -724,7 +726,8 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
   );
 
   return (
-    <View style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end', zIndex: 72 } as any}>
+    <View style={{ position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 72 } as any}>
+      <Animated.View entering={FadeIn.duration(220)} pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)' } as any} />
       <Animated.View entering={SlideInDown.duration(340)} style={{ height: '92%', backgroundColor: c.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' }}>
         <View style={{ paddingHorizontal: 18, paddingTop: insets.top + 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Tap onPress={onClose} hitSlop={10}><Text style={{ fontWeight: '500', fontSize: 15, color: c.t2 }}>Cancel</Text></Tap>
