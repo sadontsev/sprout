@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle } from 'react-native-svg';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1 } from '@/theme';
 import type { DashVM } from '@/dashboard/present';
+import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton } from './anim';
 
 export interface DashHandlers {
   onSettings: () => void;
@@ -18,46 +18,6 @@ export interface DashHandlers {
   onTab: (tab: string) => void;
 }
 
-const RING_R = 56;
-const RING_C = 2 * Math.PI * RING_R;
-
-function Tap({ children, onPress, style }: { children: React.ReactNode; onPress?: () => void; style?: any }) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [style, pressed && { opacity: 0.6, transform: [{ scale: 0.98 }] }]}>
-      {children}
-    </Pressable>
-  );
-}
-
-function ProgressRing({ pct, color }: { pct: number; color: string }) {
-  const offset = RING_C * (1 - Math.max(0, Math.min(100, pct)) / 100);
-  return (
-    <View style={{ width: 128, height: 128 }}>
-      <Svg width={128} height={128} viewBox="0 0 128 128">
-        <Circle cx={64} cy={64} r={RING_R} fill="none" stroke={c.s3} strokeWidth={9} />
-        <Circle
-          cx={64}
-          cy={64}
-          r={RING_R}
-          fill="none"
-          stroke={color}
-          strokeWidth={9}
-          strokeLinecap="round"
-          strokeDasharray={RING_C}
-          strokeDashoffset={offset}
-          transform="rotate(-90 64 64)"
-        />
-      </Svg>
-      <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' } as any}>
-        <Text style={{ fontWeight: '700', fontSize: 32, color: c.t1, letterSpacing: -1, fontVariant: ['tabular-nums'] }}>
-          {pct}
-          <Text style={{ fontSize: 15, color: c.t3 }}>%</Text>
-        </Text>
-      </View>
-    </View>
-  );
-}
-
 function TempCard({ label, now, target, heating }: { label: string; now: number; target: number; heating: boolean }) {
   const barColor = heating ? c.heating : c.running;
   const pct = target > 0 ? Math.max(4, Math.min(100, (now / target) * 100)) : 4;
@@ -65,18 +25,16 @@ function TempCard({ label, now, target, heating }: { label: string; now: number;
     <View style={{ flex: 1, padding: 14, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={{ fontWeight: '600', fontSize: 12, color: c.t2 }}>{label}</Text>
-        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: barColor, opacity: 0.9 }} />
+        {heating ? <PulseDot color={barColor} size={7} period={1400} /> : <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: barColor, opacity: 0.9 }} />}
       </View>
       <View style={{ marginTop: 9, flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-        <Text style={{ fontWeight: '700', fontSize: 26, color: c.t1, fontVariant: ['tabular-nums'], letterSpacing: -0.5 }}>
-          {now}
-          <Text style={{ fontSize: 13, color: c.t3 }}>°</Text>
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+          <RollingNumber value={now} fontSize={26} weight="700" color={c.t1} letterSpacing={-0.5} />
+          <Text style={{ fontWeight: '700', fontSize: 13, color: c.t3 }}>°</Text>
+        </View>
         <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>→ {target}°</Text>
       </View>
-      <View style={{ marginTop: 11, height: 3, borderRadius: 2, backgroundColor: c.s3, overflow: 'hidden' }}>
-        <View style={{ height: '100%', width: `${pct}%`, borderRadius: 2, backgroundColor: barColor }} />
-      </View>
+      <HeatBar pct={pct} color={barColor} heating={heating} height={3} style={{ marginTop: 11 }} />
     </View>
   );
 }
@@ -112,7 +70,7 @@ export function DashboardView({
           <View>
             <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1.4, fontFamily: mono }}>BAMBU LAB A1</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 6 }}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: vm.stateColor }} />
+              <PulseDot color={vm.stateColor} size={8} />
               <Text style={{ fontWeight: '600', fontSize: 17, color: c.t1, letterSpacing: -0.2 }}>A1 Printer</Text>
             </View>
           </View>
@@ -123,6 +81,7 @@ export function DashboardView({
 
         {/* maintenance alert chip — only when something needs attention */}
         {!!maintAlert && (maintAlert.due > 0 || maintAlert.warn > 0) && (
+          <FadeRise>
           <Tap
             onPress={() => h.onTab('ams')}
             style={{ marginHorizontal: 20, marginTop: 14, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: maintAlert.due > 0 ? c.errorDim : c.heatingDim, borderWidth: 1, borderColor: maintAlert.due > 0 ? c.error : c.heating }}>
@@ -134,6 +93,7 @@ export function DashboardView({
             </Text>
             <Feather name="chevron-right" size={16} color={c.t3} />
           </Tap>
+          </FadeRise>
         )}
 
         {/* hero */}
@@ -157,7 +117,7 @@ export function DashboardView({
                   </View>
                 )}
                 <View style={{ position: 'absolute', top: 11, left: 11, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.55)' }}>
-                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: camLoaded ? c.running : c.t3 }} />
+                  {camLoaded ? <PulseDot color={c.running} size={6} period={2000} /> : <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.t3 }} />}
                   <Text style={{ fontWeight: '600', fontSize: 9.5, letterSpacing: 0.6, color: '#fff' }}>{camLoaded ? 'LIVE · 1 fps' : 'WAKING…'}</Text>
                 </View>
                 <View style={{ position: 'absolute', bottom: 9, left: 11, width: 26, height: 26, borderRadius: 7, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
@@ -172,18 +132,24 @@ export function DashboardView({
         {vm.kind === 'live' && (
           <>
             <View style={{ marginHorizontal: 20, marginTop: 16, padding: 20, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 18, ...shadow1 }}>
-              <ProgressRing pct={vm.progressInt} color={vm.stateColor} />
+              <ProgressRing progress={vm.progressInt} color={vm.stateColor} glow={!vm.isPaused}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+                  <RollingNumber value={vm.progressInt} fontSize={32} weight="700" color={c.t1} letterSpacing={-1} />
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: c.t3, marginBottom: 2 }}>%</Text>
+                </View>
+              </ProgressRing>
               <View style={{ flex: 1, gap: 15 }}>
                 <View>
                   <Label>LAYER</Label>
-                  <Text style={{ marginTop: 5, fontWeight: '600', fontSize: 19, color: c.t1, fontFamily: mono, fontVariant: ['tabular-nums'] }}>
-                    {vm.layer} <Text style={{ color: c.t3, fontWeight: '500' }}>/ {vm.totalLayers}</Text>
-                  </Text>
+                  <View style={{ marginTop: 5, flexDirection: 'row', alignItems: 'flex-end' }}>
+                    <RollingNumber value={vm.layer} fontSize={19} weight="600" color={c.t1} />
+                    <Text style={{ fontWeight: '500', fontSize: 19, color: c.t3, fontFamily: mono }}> / {vm.totalLayers}</Text>
+                  </View>
                 </View>
                 <View style={{ height: 1, backgroundColor: c.line }} />
                 <View>
                   <Label>TIME LEFT</Label>
-                  <Text style={{ marginTop: 5, fontWeight: '600', fontSize: 19, color: c.t1, fontVariant: ['tabular-nums'] }}>{vm.etaText}</Text>
+                  <RollingNumber value={vm.etaText} fontSize={19} weight="600" color={c.t1} style={{ marginTop: 5 }} />
                   <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 12, color: c.t3 }}>done ~ {vm.doneText}</Text>
                 </View>
               </View>
@@ -232,7 +198,7 @@ export function DashboardView({
                     <View style={{ width: 32, height: 32, borderRadius: 9, backgroundColor: t.empty ? 'transparent' : t.color, borderWidth: t.empty ? 1 : 0, borderColor: c.line2, borderStyle: t.empty ? 'dashed' : 'solid' }} />
                     <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 9.5, color: c.t2 }}>{t.label}</Text>
                     <Text style={{ fontWeight: '600', fontSize: 11, color: c.t1, fontFamily: mono, fontVariant: ['tabular-nums'] }}>{t.pct}</Text>
-                    <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: c.accent, opacity: t.active ? 1 : 0 }} />
+                    {t.active ? <PulseDot color={c.accent} size={5} period={2000} /> : <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: c.accent, opacity: 0 }} />}
                   </View>
                 ))}
               </View>
@@ -243,6 +209,7 @@ export function DashboardView({
         {/* ---- IDLE ---- */}
         {vm.kind === 'idle' && (
           <>
+            <FadeRise>
             <View style={{ marginHorizontal: 20, marginTop: 18, padding: 22, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, alignItems: 'center', ...shadow1 }}>
               <Text style={{ fontWeight: '600', fontSize: 14, lineHeight: 20, color: c.t2, textAlign: 'center', maxWidth: 250 }}>No active job. The bed is clear and filament is loaded.</Text>
               <Tap onPress={() => h.onTab('library')} style={{ marginTop: 16, width: '100%', height: 52, borderRadius: 15, backgroundColor: c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
@@ -250,6 +217,7 @@ export function DashboardView({
                 <Text style={{ fontWeight: '600', fontSize: 16, color: c.accentInk }}>New print</Text>
               </Tap>
             </View>
+            </FadeRise>
             <View style={{ marginHorizontal: 20, marginTop: 14, flexDirection: 'row', gap: 12 }}>
               <TempCard label="Nozzle" now={vm.nozzleNow} target={vm.nozzleTarget} heating={false} />
               <TempCard label="Bed" now={vm.bedNow} target={vm.bedTarget} heating={false} />
@@ -259,25 +227,31 @@ export function DashboardView({
 
         {/* ---- COMPLETE ---- */}
         {vm.kind === 'complete' && (
-          <View style={{ marginHorizontal: 20, marginTop: 18, padding: 22, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, ...shadow1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
-              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.runningDim, alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="check" size={24} color={c.running} />
+          <View style={{ marginHorizontal: 20, marginTop: 18 }}>
+            <Confetti count={22} />
+            <FadeRise>
+            <View style={{ padding: 22, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, ...shadow1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
+                <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: c.runningDim, alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="check" size={24} color={c.running} />
+                </View>
+                <View>
+                  <Text style={{ fontWeight: '700', fontSize: 20, color: c.t1, letterSpacing: -0.3 }}>Fresh off the bed</Text>
+                  <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{vm.heroSub || 'finished'}</Text>
+                </View>
               </View>
-              <View>
-                <Text style={{ fontWeight: '700', fontSize: 20, color: c.t1, letterSpacing: -0.3 }}>Print complete</Text>
-                <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{vm.heroSub || 'finished'}</Text>
-              </View>
+              <Tap onPress={() => h.onTab('library')} style={{ marginTop: 18, height: 52, borderRadius: 15, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontWeight: '600', fontSize: 16, color: c.accentInk }}>Print again</Text>
+              </Tap>
             </View>
-            <Tap onPress={() => h.onTab('library')} style={{ marginTop: 18, height: 52, borderRadius: 15, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontWeight: '600', fontSize: 16, color: c.accentInk }}>Print again</Text>
-            </Tap>
+            </FadeRise>
           </View>
         )}
 
         {/* ---- ERROR ---- */}
         {vm.kind === 'error' && (
           <>
+            <FadeRise>
             <View style={{ marginHorizontal: 20, marginTop: 18, padding: 20, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, ...shadow1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: c.errorDim, alignItems: 'center', justifyContent: 'center' }}>
@@ -289,6 +263,7 @@ export function DashboardView({
                 </View>
               </View>
             </View>
+            </FadeRise>
             <View style={{ marginHorizontal: 20, marginTop: 14, flexDirection: 'row', gap: 12 }}>
               <Tap onPress={h.onPauseResume} style={{ flex: 2, height: 54, borderRadius: 16, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ fontWeight: '600', fontSize: 16, color: c.accentInk }}>Resume print</Text>
@@ -302,6 +277,7 @@ export function DashboardView({
 
         {/* ---- OFFLINE ---- */}
         {vm.kind === 'offline' && (
+          <FadeRise>
           <View style={{ marginHorizontal: 24, marginTop: 48, alignItems: 'center', gap: 16 }}>
             <View style={{ width: 72, height: 72, borderRadius: 22, backgroundColor: c.s2, alignItems: 'center', justifyContent: 'center' }}>
               <Feather name="wifi-off" size={32} color={c.t3} />
@@ -316,13 +292,22 @@ export function DashboardView({
               <Text style={{ fontWeight: '600', fontSize: 15, color: c.accentInk }}>Retry connection</Text>
             </Tap>
           </View>
+          </FadeRise>
         )}
 
         {/* ---- CONNECTING ---- */}
         {vm.kind === 'connecting' && (
-          <View style={{ marginTop: 60, alignItems: 'center', gap: 16 }}>
-            <ActivityIndicator color={c.accent} />
-            <Text style={{ fontWeight: '500', fontSize: 13, color: c.t3 }}>Connecting…</Text>
+          <View style={{ paddingHorizontal: 20, paddingTop: 16 }}>
+            <Skeleton style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 18 }} />
+            <View style={{ marginTop: 16, padding: 20, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 18 }}>
+              <Skeleton style={{ width: 110, height: 110, borderRadius: 55 }} />
+              <View style={{ flex: 1, gap: 12 }}>
+                <Skeleton style={{ height: 13, width: '55%', borderRadius: 5 }} />
+                <Skeleton style={{ height: 22, width: '85%', borderRadius: 6 }} />
+                <Skeleton style={{ height: 13, width: '42%', borderRadius: 5 }} />
+              </View>
+            </View>
+            <Text style={{ marginTop: 20, textAlign: 'center', fontWeight: '500', fontSize: 12, color: c.t3 }}>Reaching your A1…</Text>
           </View>
         )}
     </ScrollView>

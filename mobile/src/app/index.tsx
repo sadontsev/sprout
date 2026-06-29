@@ -14,6 +14,7 @@ import { DashboardView, type DashHandlers } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
 import { LibraryView, QueueView, AmsView, PowerView, HistoryView } from '@/components/TabScreens';
 import { CameraOverlay, UploadSheet, WizardOverlay } from '@/components/Overlays';
+import { FadeRise } from '@/components/anim';
 import type { LibraryFile } from '@/api/types';
 import { c } from '@/theme';
 
@@ -181,12 +182,14 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      {tab === 'printer' && <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} />}
-      {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
-      {tab === 'queue' && <QueueView client={client} status={status} onBrowse={() => setTab('library')} />}
-      {tab === 'ams' && <AmsView client={client} status={status} printerId={PRINTER_ID} />}
-      {tab === 'power' && <PowerView client={client} printerId={PRINTER_ID} status={status} />}
-      {tab === 'history' && <HistoryView client={client} camToken={camToken} />}
+      <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
+        {tab === 'printer' && <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} />}
+        {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
+        {tab === 'queue' && <QueueView client={client} status={status} onBrowse={() => setTab('library')} />}
+        {tab === 'ams' && <AmsView client={client} status={status} printerId={PRINTER_ID} />}
+        {tab === 'power' && <PowerView client={client} printerId={PRINTER_ID} status={status} />}
+        {tab === 'history' && <HistoryView client={client} camToken={camToken} />}
+      </FadeRise>
 
       <TabBar active={tab} onTab={setTab} />
 
