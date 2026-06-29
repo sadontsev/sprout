@@ -178,17 +178,17 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
         { text: 'Keep printing', style: 'cancel' },
         { text: 'Stop', style: 'destructive', onPress: () => client.stop(PRINTER_ID).catch((e) => Alert.alert('Stop failed', String(e))) },
       ]),
-    onSpeed: () => {
-      const nextI = ((speedIdx % 4) + 1) as 1 | 2 | 3 | 4;
-      setSpeedIdx(nextI);
-      client.setSpeed(PRINTER_ID, nextI).catch((e) => Alert.alert('Speed failed', String(e)));
+    onSpeedSet: (i: number) => {
+      const mode = i as 1 | 2 | 3 | 4;
+      setSpeedIdx(mode);
+      client.setSpeed(PRINTER_ID, mode).catch((e) => Alert.alert('Speed failed', String(e)));
     },
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
-        {tab === 'printer' && <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} />}
+        {tab === 'printer' && <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} />}
         {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={PRINTER_ID} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
         {tab === 'queue' && <QueueView client={client} status={status} onBrowse={() => setTab('library')} />}
         {tab === 'ams' && <AmsView client={client} status={status} printerId={PRINTER_ID} />}

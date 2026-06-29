@@ -13,10 +13,18 @@ export interface DashHandlers {
   onPauseResume: () => void;
   onStop: () => void;
   onLight: () => void;
-  onSpeed: () => void;
+  onSpeedSet: (i: number) => void;
   onRetry: () => void;
   onTab: (tab: string) => void;
 }
+
+/** Bambu A1 print-speed modes (design: the speed popover). */
+const SPEEDS: { i: number; name: string; hint: string; dot: string }[] = [
+  { i: 1, name: 'Silent', hint: '50%', dot: c.paused },
+  { i: 2, name: 'Standard', hint: '100%', dot: c.running },
+  { i: 3, name: 'Sport', hint: '124%', dot: c.heating },
+  { i: 4, name: 'Ludicrous', hint: '166%', dot: c.error },
+];
 
 function TempCard({ label, now, target, heating }: { label: string; now: number; target: number; heating: boolean }) {
   const barColor = heating ? c.heating : c.running;
@@ -48,17 +56,20 @@ export function DashboardView({
   snapshotUri,
   h,
   maintAlert,
+  speedIdx,
 }: {
   vm: DashVM;
   snapshotUri: string | null;
   h: DashHandlers;
   maintAlert?: { due: number; warn: number };
+  speedIdx: number;
 }) {
   const insets = useSafeAreaInsets();
   const showCamera = vm.kind === 'live' || vm.kind === 'idle' || vm.kind === 'complete' || vm.kind === 'error';
   // The cold A1 snapshot takes ~7s to decode — don't claim "LIVE" over a blank tile until a frame lands.
   const [camLoaded, setCamLoaded] = useState(false);
   useEffect(() => { if (!snapshotUri) setCamLoaded(false); }, [snapshotUri]);
+  const [speedOpen, setSpeedOpen] = useState(false);
 
   return (
     <ScrollView
@@ -173,16 +184,37 @@ export function DashboardView({
             </View>
             <View style={{ marginHorizontal: 20, marginTop: 12, flexDirection: 'row', gap: 12 }}>
               <Tap onPress={h.onLight} style={{ flex: 1, height: 54, borderRadius: 16, backgroundColor: vm.lightOn ? c.accentDim : c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
-                <Breathe active={vm.lightOn} color={c.accent} radius={9}>
+                <Breathe active={vm.lightOn} color={c.accent} grow={0.8} maxOpacity={0.5}>
                   <Feather name="sun" size={17} color={vm.lightOn ? c.accent : c.t1} />
                 </Breathe>
                 <Text style={{ fontWeight: '600', fontSize: 14, color: vm.lightOn ? c.accent : c.t1 }}>Light</Text>
                 <Text style={{ fontWeight: '600', fontSize: 12, color: vm.lightOn ? c.accent : c.t1, opacity: 0.7, fontFamily: mono }}>{vm.lightOn ? 'ON' : 'OFF'}</Text>
               </Tap>
-              <Tap onPress={h.onSpeed} style={{ flex: 1, height: 54, borderRadius: 16, backgroundColor: c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
-                <Feather name="zap" size={17} color={c.t1} />
-                <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{vm.speedLabel}</Text>
-              </Tap>
+              <View style={{ flex: 1, zIndex: speedOpen ? 30 : 0 } as any}>
+                <Tap onPress={() => setSpeedOpen((o) => !o)} style={{ width: '100%', height: 54, borderRadius: 16, backgroundColor: speedOpen ? c.s4 : c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
+                  <Feather name="zap" size={17} color={c.t1} />
+                  <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{vm.speedLabel}</Text>
+                  <Feather name="chevrons-up" size={13} color={c.t3} />
+                </Tap>
+                {speedOpen && (
+                  <FadeRise dy={6} duration={170} style={{ position: 'absolute', left: -6, right: -6, bottom: 62, zIndex: 30 } as any}>
+                    <View style={{ backgroundColor: c.s1, borderWidth: 1, borderColor: c.line2, borderRadius: 16, padding: 5, ...shadow1, shadowOpacity: 0.55, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } }}>
+                      <Text style={{ paddingHorizontal: 10, paddingTop: 7, paddingBottom: 6, fontWeight: '600', fontSize: 9, letterSpacing: 1, color: c.t3, fontFamily: mono }}>SPEED</Text>
+                      {SPEEDS.map((s) => {
+                        const on = speedIdx === s.i;
+                        return (
+                          <Tap key={s.i} onPress={() => { h.onSpeedSet(s.i); setSpeedOpen(false); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 11, paddingVertical: 11, borderRadius: 11, backgroundColor: on ? c.s3 : 'transparent' }}>
+                            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.dot }} />
+                            <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: c.t1 }}>{s.name}</Text>
+                            <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{s.hint}</Text>
+                            {on && <Feather name="check" size={15} color={c.accent} />}
+                          </Tap>
+                        );
+                      })}
+                    </View>
+                  </FadeRise>
+                )}
+              </View>
             </View>
 
             {/* AMS strip */}
