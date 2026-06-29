@@ -18,7 +18,7 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
-import Svg, { Circle } from 'react-native-svg';
+import Svg, { Circle, Rect, Polygon } from 'react-native-svg';
 import { c } from '@/theme';
 import { splitDigits, confettiPieces, clamp01, type ConfettiPiece } from './animUtils';
 
@@ -259,6 +259,74 @@ export function Toggle({ value, onChange, onColor = c.accent, offColor = c.s3 }:
         <Animated.View style={[{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#fff' }, knob]} />
       </Animated.View>
     </Tap>
+  );
+}
+
+// ---------------------------------------------------------------- Pop
+/** Scale-bounce entrance: 0.4 → 1.12 → 1 (design: @keyframes popIn). */
+export function Pop({ children, delay = 0, style }: { children?: React.ReactNode; delay?: number; style?: StyleProp<ViewStyle> }) {
+  const s = useSharedValue(0.4);
+  const o = useSharedValue(0);
+  useEffect(() => {
+    o.value = withDelay(delay, withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) }));
+    s.value = withDelay(delay, withSequence(withTiming(1.12, { duration: 320, easing: Easing.out(Easing.cubic) }), withTiming(1, { duration: 220, easing: SPRING })));
+  }, [delay, s, o]);
+  const a = useAnimatedStyle(() => ({ opacity: o.value, transform: [{ scale: s.value }] }));
+  return <Animated.View style={[style, a]}>{children}</Animated.View>;
+}
+
+// ---------------------------------------------------------------- Spark
+function SparkParticle({ i, count, color, size, spread }: { i: number; count: number; color: string; size: number; spread: number }) {
+  const t = useSharedValue(0);
+  useEffect(() => {
+    t.value = withDelay((i / count) * 1200, withRepeat(withTiming(1, { duration: 1300, easing: Easing.out(Easing.cubic) }), -1, false));
+    return () => cancelAnimation(t);
+  }, [t, i, count]);
+  const ang = (i / count) * Math.PI * 2;
+  const dx = Math.cos(ang) * spread;
+  const dy = Math.sin(ang) * spread - 8; // bias slightly upward
+  const a = useAnimatedStyle(() => ({
+    opacity: t.value < 0.18 ? t.value / 0.18 : 1 - (t.value - 0.18) / 0.82,
+    transform: [{ translateX: dx * t.value }, { translateY: dy * t.value }, { scale: 1 - 0.8 * t.value }],
+  }));
+  return <Animated.View style={[{ position: 'absolute', width: size, height: size, borderRadius: size / 2, backgroundColor: color }, a]} />;
+}
+
+/** A small cluster of particles drifting outward on a loop (design: @keyframes spark). Absolutely
+ * positioned — drop it inside a relative parent at the emit point. */
+export function Spark({ color = c.accent, count = 6, size = 4, spread = 20 }: { color?: string; count?: number; size?: number; spread?: number }) {
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', width: 0, height: 0 }}>
+      {Array.from({ length: count }).map((_, i) => (
+        <SparkParticle key={i} i={i} count={count} color={color} size={size} spread={spread} />
+      ))}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------- ExtrudeBar
+/** Progress bar with a nozzle glyph riding the leading edge + a glowing fill (design: extrudeBar). */
+export function ExtrudeBar({ pct, color = c.accent, height = 8, track = c.s3 }: { pct: number; color?: string; height?: number; track?: string }) {
+  const w = useSharedValue(clamp01(pct / 100));
+  useEffect(() => {
+    w.value = withTiming(clamp01(pct / 100), { duration: 700, easing: Easing.bezier(0.4, 0, 0.2, 1) });
+  }, [pct, w]);
+  const fill = useAnimatedStyle(() => ({ width: `${w.value * 100}%` }));
+  const noz = useAnimatedStyle(() => ({ left: `${w.value * 100}%` }));
+  return (
+    <View style={{ height: height + 30, paddingTop: 30 }}>
+      <View style={{ height, borderRadius: height / 2, backgroundColor: track }}>
+        <Animated.View style={[{ position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: height / 2, backgroundColor: color, shadowColor: color, shadowOpacity: 0.85, shadowRadius: 6, shadowOffset: { width: 0, height: 0 } }, fill]} />
+      </View>
+      <Animated.View style={[{ position: 'absolute', top: 0, transform: [{ translateX: -12 }] }, noz]}>
+        <Svg width={24} height={32} viewBox="48 30 96 128">
+          <Rect x={60} y={36} width={72} height={50} rx={12} fill="#C2C7CC" />
+          <Rect x={60} y={80} width={72} height={9} rx={4.5} fill="#878D94" />
+          <Polygon points="74,92 118,92 106,128 96,150 86,128" fill="#C2C7CC" />
+          <Circle cx={96} cy={117} r={11} fill={color} />
+        </Svg>
+      </Animated.View>
+    </View>
   );
 }
 

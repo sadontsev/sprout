@@ -8,7 +8,7 @@ import type { BambuddyClient } from '@/api/bambuddyClient';
 import type { LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
 import { presentDashboard, fmtDuration, normColor } from '@/dashboard/present';
-import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Breathe, Toggle, FadeRise } from './anim';
+import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, ExtrudeBar, Spark, Breathe, Toggle, FadeRise } from './anim';
 
 function fmtBytes(n?: number): string {
   if (!n) return '';
@@ -142,7 +142,7 @@ export function QueueView({ client, status, onBrowse }: { client: BambuddyClient
               <PulseDot color={c.running} size={6} period={2000} />
               <Text style={{ fontWeight: '600', fontSize: 11, color: c.running, fontFamily: mono }}>{vm.progressInt}% · {vm.etaText} left</Text>
             </View>
-            <HeatBar pct={vm.progressInt} color={c.running} height={4} style={{ marginTop: 13 }} />
+            <ExtrudeBar pct={vm.progressInt} color={c.running} height={5} />
           </View>
         </>
       )}
@@ -358,7 +358,10 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
       </View>
       <View style={{ marginHorizontal: 20, marginTop: 14, flexDirection: 'row', gap: 12 }}>
         <View style={{ flex: 1, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
-          <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.t3, fontFamily: mono }}>DRAWING NOW</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.t3, fontFamily: mono }}>DRAWING NOW</Text>
+            {watts != null && watts > 5 && <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: c.accent }}><Spark color={c.accent} count={6} size={3} spread={14} /></View>}
+          </View>
           <View style={{ marginTop: 9, flexDirection: 'row', alignItems: 'baseline', gap: 4 }}>
             {watts == null ? (
               <Text style={{ fontWeight: '700', fontSize: 28, color: c.t1, letterSpacing: -1 }}>—</Text>
