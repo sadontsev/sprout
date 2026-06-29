@@ -1,32 +1,47 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import { getConfig, setConfig, clearConfig } from '@/config/secureConfig';
-import { c, mono } from '@/theme';
+import Constants from 'expo-constants';
+import { getConfig, setConfig, clearConfig, patchConfig } from '@/config/secureConfig';
+import { c, mono, useTheme, setTheme, getThemeName, type ThemeName } from '@/theme';
+import { Tap } from '@/components/anim';
+import { sanitizeBaseUrl, sanitizeApiKey } from '@/config/sanitize';
 
 const DEFAULT_URL = 'https://bambuddy.example.com';
 
-/** Trim whitespace and any stray trailing slash; keep scheme + host. */
-export function sanitizeBaseUrl(raw: string): string {
-  return raw.trim().replace(/\s+/g, '').replace(/\/+$/, '');
+function maskKey(key: string): string {
+  if (!key) return '—';
+  return key.length > 9 ? `${key.slice(0, 5)}••••${key.slice(-4)}` : key;
+}
+function hostOf(url: string): string {
+  return url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
 }
 
-/**
- * API keys are `bb_` + base62 ([A-Za-z0-9]). Pasting often appends a stray trailing char —
- * whitespace, a newline, or a `%` (zsh's no-newline EOL marker / a URL-encode artifact). Trim both
- * ends, then strip any leading/trailing chars that aren't valid key characters (keep `_` for the
- * `bb_` prefix). Interior characters are never touched, so a legitimate key can't be corrupted.
- */
-export function sanitizeApiKey(raw: string): string {
-  return raw.trim().replace(/^[^A-Za-z0-9_]+/, '').replace(/[^A-Za-z0-9_]+$/, '');
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <View style={{ marginTop: 24 }}>
+      <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginBottom: 10, marginLeft: 4 }}>{title}</Text>
+      <View style={{ borderRadius: 16, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, overflow: 'hidden' }}>{children}</View>
+    </View>
+  );
+}
+function Row({ label, value, last, valueColor }: { label: string; value: string; last?: boolean; valueColor?: string }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: last ? 0 : 1, borderBottomColor: c.line }}>
+      <Text style={{ fontWeight: '500', fontSize: 13, color: c.t2, flexShrink: 0 }}>{label}</Text>
+      <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 13, color: valueColor ?? c.t1, fontFamily: mono }}>{value}</Text>
+    </View>
+  );
 }
 
 export default function Settings() {
+  useTheme(); // re-theme this screen live when the toggle flips
   const [baseUrl, setBaseUrl] = useState(DEFAULT_URL);
   const [apiKey, setApiKey] = useState('');
   const [hasConfig, setHasConfig] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -35,106 +50,127 @@ export default function Settings() {
         setBaseUrl(cfg.baseUrl);
         setApiKey(cfg.apiKey);
         setHasConfig(true);
+      } else {
+        setEditing(true); // first run — go straight to the form
       }
     });
   }, []);
 
   const canSave = sanitizeBaseUrl(baseUrl).length > 0 && /^bb_[A-Za-z0-9]{6,}$/.test(sanitizeApiKey(apiKey));
+  const theme = getThemeName();
+  const appVersion = Constants.expoConfig?.version ?? '1.0.0';
 
   const save = async () => {
     setSaving(true);
-    await setConfig({ baseUrl: sanitizeBaseUrl(baseUrl), apiKey: sanitizeApiKey(apiKey) });
+    const cur = await getConfig();
+    await setConfig({ baseUrl: sanitizeBaseUrl(baseUrl), apiKey: sanitizeApiKey(apiKey), cameraToken: cur?.cameraToken, theme: cur?.theme ?? theme });
     setSaving(false);
-    router.replace('/');
+    if (hasConfig) setEditing(false);
+    else router.replace('/');
+  };
+
+  const pickTheme = (name: ThemeName) => {
+    setTheme(name);
+    void patchConfig({ theme: name });
   };
 
   const field = {
-    backgroundColor: c.s1,
+    backgroundColor: c.s2,
     borderWidth: 1,
     borderColor: c.line,
-    borderRadius: 14,
-    paddingHorizontal: 15,
-    paddingVertical: 14,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
     color: c.t1,
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: mono,
   } as const;
+
+  const form = (
+    <>
+      {!hasConfig && (
+        <Text style={{ color: c.t2, fontSize: 14, lineHeight: 20, marginBottom: 20 }}>
+          Point the app at your Bambuddy server and paste the app API key. Both are stored only in this device's Keychain.
+        </Text>
+      )}
+      <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginBottom: 9 }}>BAMBUDDY URL</Text>
+      <TextInput value={baseUrl} onChangeText={setBaseUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder={DEFAULT_URL} placeholderTextColor={c.t3} style={field} />
+      <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 18, marginBottom: 9 }}>API KEY</Text>
+      <TextInput value={apiKey} onChangeText={setApiKey} autoCapitalize="none" autoCorrect={false} secureTextEntry placeholder="bb_…" placeholderTextColor={c.t3} style={field} />
+      <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
+        {hasConfig && (
+          <Tap onPress={() => setEditing(false)} style={{ paddingHorizontal: 22, height: 54, borderRadius: 16, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>Cancel</Text>
+          </Tap>
+        )}
+        <Tap onPress={save} disabled={!canSave || saving} style={{ flex: 1, height: 54, borderRadius: 16, backgroundColor: canSave ? c.accent : c.s3, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontWeight: '700', fontSize: 16, color: canSave ? c.accentInk : c.t3 }}>{saving ? 'Saving…' : hasConfig ? 'Save' : 'Connect'}</Text>
+        </Tap>
+      </View>
+    </>
+  );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.bg }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
-            <Text style={{ fontWeight: '700', fontSize: 28, color: c.t1, letterSpacing: -0.6 }}>
-              {hasConfig ? 'Settings' : 'Connect'}
-            </Text>
+        <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 48 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <Text style={{ fontWeight: '700', fontSize: 30, color: c.t1, letterSpacing: -0.8 }}>{hasConfig ? 'Settings' : 'Connect'}</Text>
             {hasConfig && (
-              <Pressable onPress={() => router.back()} hitSlop={12}>
-                <Feather name="x" size={24} color={c.t2} />
-              </Pressable>
+              <Tap onPress={() => router.back()} hitSlop={12} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.s2, alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="x" size={20} color={c.t2} />
+              </Tap>
             )}
           </View>
 
-          {!hasConfig && (
-            <Text style={{ color: c.t2, fontSize: 14, lineHeight: 20, marginBottom: 24 }}>
-              Point the app at your Bambuddy server and paste the app API key. Both are stored only in this device's Keychain.
-            </Text>
-          )}
+          {editing ? (
+            <View style={{ marginTop: 16 }}>{form}</View>
+          ) : (
+            <>
+              {/* CONNECTION */}
+              <Section title="CONNECTION">
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: c.line }}>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: c.running, shadowColor: c.running, shadowOpacity: 0.8, shadowRadius: 6 }} />
+                  <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: c.t1 }}>Configured</Text>
+                  <Tap onPress={() => setEditing(true)} hitSlop={8} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                    <Feather name="edit-2" size={13} color={c.accent} />
+                    <Text style={{ fontWeight: '600', fontSize: 13, color: c.accent }}>Edit</Text>
+                  </Tap>
+                </View>
+                <Row label="Server" value={hostOf(baseUrl)} />
+                <Row label="API key" value={maskKey(apiKey)} valueColor={c.t3} last />
+              </Section>
 
-          <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginBottom: 9 }}>
-            BAMBUDDY URL
-          </Text>
-          <TextInput
-            value={baseUrl}
-            onChangeText={setBaseUrl}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            placeholder={DEFAULT_URL}
-            placeholderTextColor={c.t3}
-            style={field}
-          />
+              {/* APPEARANCE */}
+              <View style={{ marginTop: 24 }}>
+                <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginBottom: 10, marginLeft: 4 }}>APPEARANCE</Text>
+                <View style={{ flexDirection: 'row', gap: 4, padding: 4, borderRadius: 13, backgroundColor: c.s2 }}>
+                  {(['dark', 'light'] as ThemeName[]).map((name) => {
+                    const on = theme === name;
+                    return (
+                      <Tap key={name} onPress={() => pickTheme(name)} style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: on ? c.s4 : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ fontWeight: '600', fontSize: 14, color: on ? c.t1 : c.t2 }}>{name === 'dark' ? 'Dark' : 'Light'}</Text>
+                      </Tap>
+                    );
+                  })}
+                </View>
+              </View>
 
-          <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 20, marginBottom: 9 }}>
-            API KEY
-          </Text>
-          <TextInput
-            value={apiKey}
-            onChangeText={setApiKey}
-            autoCapitalize="none"
-            autoCorrect={false}
-            secureTextEntry
-            placeholder="bb_…"
-            placeholderTextColor={c.t3}
-            style={field}
-          />
+              {/* ABOUT */}
+              <Section title="ABOUT">
+                <Row label="App version" value={appVersion} />
+                <Row label="Printer" value="Bambu Lab A1" last />
+              </Section>
 
-          <Pressable
-            onPress={save}
-            disabled={!canSave || saving}
-            style={({ pressed }) => ({
-              marginTop: 28,
-              height: 54,
-              borderRadius: 16,
-              backgroundColor: canSave ? c.accent : c.s3,
-              alignItems: 'center',
-              justifyContent: 'center',
-              opacity: pressed ? 0.7 : 1,
-            })}>
-            <Text style={{ fontWeight: '700', fontSize: 16, color: canSave ? c.accentInk : c.t3 }}>
-              {saving ? 'Saving…' : hasConfig ? 'Save' : 'Connect'}
-            </Text>
-          </Pressable>
-
-          {hasConfig && (
-            <Pressable
-              onPress={async () => {
-                await clearConfig();
-                router.replace('/settings');
-              }}
-              style={{ marginTop: 16, alignItems: 'center' }}>
-              <Text style={{ color: c.error, fontSize: 14, fontWeight: '600' }}>Sign out / clear key</Text>
-            </Pressable>
+              <Tap
+                onPress={async () => {
+                  await clearConfig();
+                  router.replace('/settings');
+                }}
+                style={{ marginTop: 24, height: 50, borderRadius: 14, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: c.error, fontSize: 15, fontWeight: '600' }}>Sign out · clear key</Text>
+              </Tap>
+            </>
           )}
         </ScrollView>
       </KeyboardAvoidingView>

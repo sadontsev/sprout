@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
-import type { LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter } from '@/api/types';
+import type { LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFileList } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
 import { presentDashboard, fmtDuration, normColor } from '@/dashboard/present';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, ExtrudeBar, Spark, Breathe, Toggle, FadeRise } from './anim';
@@ -66,50 +66,149 @@ function Empty({ icon, title, body, cta, onCta }: { icon: keyof typeof Feather.g
 }
 
 // ---------------- LIBRARY ----------------
-export function LibraryView({ client, camToken, onUpload, onPick }: { client: BambuddyClient; camToken: string | null; onUpload: () => void; onPick: (f: LibraryFile) => void }) {
+type LibSource = 'library' | 'printer';
+type TypeFilter = 'all' | 'models' | 'sliced';
+/** Sliced = ready-to-print G-code (or a 3MF already sliced for a model); otherwise a raw model. */
+const isSlicedFile = (f: LibraryFile) => (f.file_type || '').includes('gcode') || !!f.sliced_for_model;
+
+function Segmented<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  return (
+    <View style={{ flexDirection: 'row', gap: 4, padding: 4, borderRadius: 12, backgroundColor: c.s2 }}>
+      {options.map(([k, label]) => {
+        const on = value === k;
+        return (
+          <Tap key={k} onPress={() => onChange(k)} style={{ flex: 1, height: 38, borderRadius: 9, backgroundColor: on ? c.s4 : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontWeight: '600', fontSize: 13.5, color: on ? c.t1 : c.t2 }}>{label}</Text>
+          </Tap>
+        );
+      })}
+    </View>
+  );
+}
+
+export function LibraryView({ client, camToken, printerId, onUpload, onPick }: { client: BambuddyClient; camToken: string | null; printerId: number; onUpload: () => void; onPick: (f: LibraryFile) => void }) {
+  const [source, setSource] = useState<LibSource>('library');
   const [files, setFiles] = useState<LibraryFile[] | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [filter, setFilter] = useState<TypeFilter>('all');
   const load = useCallback(() => {
     client.listFiles().then(setFiles).catch(() => setFiles([]));
   }, [client]);
   useEffect(load, [load]);
 
+  // Printer onboard storage (SD card) browser.
+  const [pList, setPList] = useState<PrinterFileList | null>(null);
+  const [pPath, setPPath] = useState('/');
+  const [pLoading, setPLoading] = useState(false);
+  const loadPrinter = useCallback(
+    (path: string) => {
+      setPLoading(true);
+      client
+        .listPrinterFiles(printerId, path)
+        .then((r) => { setPList(r); setPPath(r.path || path); })
+        .catch(() => setPList({ path, files: [] }))
+        .finally(() => setPLoading(false));
+    },
+    [client, printerId],
+  );
+  useEffect(() => { if (source === 'printer' && !pList) loadPrinter('/'); }, [source, pList, loadPrinter]);
+
+  const confirmDelete = (f: LibraryFile) =>
+    Alert.alert('Delete file?', `“${f.print_name || f.filename}” will be removed from the library. This can’t be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => client.deleteFile(f.id).then(load).catch((e) => Alert.alert('Couldn’t delete', String(e))) },
+    ]);
+
+  const counts: Record<TypeFilter, number> = {
+    all: files?.length ?? 0,
+    models: (files ?? []).filter((f) => !isSlicedFile(f)).length,
+    sliced: (files ?? []).filter(isSlicedFile).length,
+  };
+  const shown = (files ?? []).filter((f) => (filter === 'all' ? true : filter === 'sliced' ? isSlicedFile(f) : !isSlicedFile(f)));
+  const pSorted = pList ? [...pList.files].sort((a, b) => (a.is_directory === b.is_directory ? a.name.localeCompare(b.name) : a.is_directory ? -1 : 1)) : [];
+
   return (
     <Page
       title="Files"
       right={
-        <Tap onPress={onUpload} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
-          <Feather name="plus" size={22} color={c.accent} />
-        </Tap>
+        source === 'library' ? (
+          <Tap onPress={onUpload} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="plus" size={22} color={c.accent} />
+          </Tap>
+        ) : null
       }>
-      {files === null && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
-      {files?.length === 0 && <Empty icon="folder" title="No files yet" body="Upload an STL, 3MF, or sliced G-code and it'll show up here." cta="Upload a model" onCta={onUpload} />}
-      {!!files?.length && (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, paddingTop: 16, gap: 13 }}>
-          {files.map((f) => {
-            const sliced = (f.file_type || '').includes('gcode') || !!f.sliced_for_model;
-            return (
-              <Tap key={f.id} onPress={() => onPick(f)} style={{ width: '47%', flexGrow: 1 }}>
-                <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
-                  {f.thumbnail_path ? (
-                    <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
-                  ) : (
-                    <Feather name={(f.file_type || '').includes('gcode') ? 'box' : 'file'} size={26} color={c.t3} />
-                  )}
-                  <View style={{ position: 'absolute', top: 8, left: 8, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.5)' }}>
-                    <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: 'rgba(255,255,255,0.8)', fontFamily: mono }}>{(f.file_type || '').toUpperCase()}</Text>
-                  </View>
-                  {sliced && (
-                    <View style={{ position: 'absolute', top: 7, right: 7, width: 18, height: 18, borderRadius: 9, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
-                      <Feather name="check" size={11} color={c.accentInk} />
-                    </View>
-                  )}
-                </View>
-                <Text numberOfLines={1} style={{ marginTop: 9, fontWeight: '600', fontSize: 13, color: c.t1 }}>{f.print_name || f.filename}</Text>
-                <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{fmtBytes(f.file_size)}</Text>
+      <View style={{ paddingHorizontal: 20, paddingTop: 14 }}>
+        <Segmented value={source} options={[['library', 'Library'], ['printer', 'Printer']]} onChange={setSource} />
+      </View>
+
+      {source === 'library' ? (
+        <>
+          {!!files?.length && (
+            <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingTop: 14 }}>
+              {(['all', 'models', 'sliced'] as TypeFilter[]).map((k) => {
+                const on = filter === k;
+                return (
+                  <Tap key={k} onPress={() => setFilter(k)} style={{ paddingHorizontal: 13, height: 32, borderRadius: 10, backgroundColor: on ? c.accentDim : c.s2, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ fontWeight: '600', fontSize: 12, color: on ? c.accent : c.t2 }}>{k === 'all' ? 'All' : k === 'models' ? 'Models' : 'Sliced'}</Text>
+                    <Text style={{ fontWeight: '600', fontSize: 11, color: on ? c.accent : c.t3, fontFamily: mono }}>{counts[k]}</Text>
+                  </Tap>
+                );
+              })}
+            </View>
+          )}
+          {files === null && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
+          {files?.length === 0 && <Empty icon="folder" title="No files yet" body="Upload an STL, 3MF, or sliced G-code and it'll show up here." cta="Upload a model" onCta={onUpload} />}
+          {!!files?.length && (
+            <>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, paddingTop: 14, gap: 13 }}>
+                {shown.map((f) => {
+                  const sliced = isSlicedFile(f);
+                  return (
+                    <Tap key={f.id} onPress={() => onPick(f)} onLongPress={() => confirmDelete(f)} style={{ width: '47%', flexGrow: 1 }}>
+                      <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+                        {f.thumbnail_path ? (
+                          <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                        ) : (
+                          <Feather name={(f.file_type || '').includes('gcode') ? 'box' : 'file'} size={26} color={c.t3} />
+                        )}
+                        <View style={{ position: 'absolute', top: 8, left: 8, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                          <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: 'rgba(255,255,255,0.8)', fontFamily: mono }}>{(f.file_type || '').toUpperCase()}</Text>
+                        </View>
+                        {sliced && (
+                          <View style={{ position: 'absolute', top: 7, right: 7, width: 18, height: 18, borderRadius: 9, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
+                            <Feather name="check" size={11} color={c.accentInk} />
+                          </View>
+                        )}
+                      </View>
+                      <Text numberOfLines={1} style={{ marginTop: 9, fontWeight: '600', fontSize: 13, color: c.t1 }}>{f.print_name || f.filename}</Text>
+                      <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{fmtBytes(f.file_size)}</Text>
+                    </Tap>
+                  );
+                })}
+              </View>
+              <Text style={{ textAlign: 'center', marginTop: 16, fontWeight: '500', fontSize: 11, color: c.t3 }}>Tap to print · hold to delete</Text>
+            </>
+          )}
+        </>
+      ) : (
+        <View style={{ paddingHorizontal: 20, paddingTop: 14 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            {pPath !== '/' && (
+              <Tap onPress={() => loadPrinter(pPath.replace(/\/[^/]+\/?$/, '') || '/')} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 9, backgroundColor: c.s2, alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="arrow-up" size={16} color={c.t2} />
               </Tap>
-            );
-          })}
+            )}
+            <Text numberOfLines={1} style={{ flex: 1, fontWeight: '600', fontSize: 12, color: c.t3, fontFamily: mono }}>printer:{pPath}</Text>
+          </View>
+          {pLoading && <ActivityIndicator color={c.accent} style={{ marginTop: 30 }} />}
+          {!pLoading && pList && pSorted.length === 0 && <Empty icon="hard-drive" title="Empty folder" body="Nothing here on the printer's onboard storage." />}
+          {!pLoading &&
+            pSorted.map((pf) => (
+              <Tap key={pf.path} onPress={() => pf.is_directory && loadPrinter(pf.path)} disabled={!pf.is_directory} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 13, borderRadius: 13, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, marginBottom: 9 }}>
+                <Feather name={pf.is_directory ? 'folder' : 'file'} size={18} color={pf.is_directory ? c.accent : c.t3} />
+                <Text numberOfLines={1} style={{ flex: 1, fontWeight: '600', fontSize: 13.5, color: c.t1 }}>{pf.name}</Text>
+                {pf.is_directory ? <Feather name="chevron-right" size={16} color={c.t3} /> : <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{fmtBytes(pf.size)}</Text>}
+              </Tap>
+            ))}
         </View>
       )}
     </Page>

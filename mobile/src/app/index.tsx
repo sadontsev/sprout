@@ -16,7 +16,7 @@ import { LibraryView, QueueView, AmsView, PowerView, HistoryView } from '@/compo
 import { CameraOverlay, UploadSheet, WizardOverlay } from '@/components/Overlays';
 import { FadeRise } from '@/components/anim';
 import type { LibraryFile } from '@/api/types';
-import { c } from '@/theme';
+import { c, setTheme, useTheme } from '@/theme';
 
 const PRINTER_ID = 1;
 const SPEED_LABELS = ['', 'Silent', 'Standard', 'Sport', 'Ludicrous'];
@@ -24,11 +24,16 @@ const SPEED_LABELS = ['', 'Silent', 'Standard', 'Sport', 'Ludicrous'];
 export default function AppScreen() {
   const [config, setConfig] = useState<AppConfig | null | undefined>(undefined);
   const [reload, setReload] = useState(0);
+  useTheme(); // re-render the whole app when the theme is toggled (Settings)
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      getConfig().then((cfg) => active && setConfig(cfg));
+      getConfig().then((cfg) => {
+        if (!active) return;
+        if (cfg) setTheme(cfg.theme ?? 'dark');
+        setConfig(cfg);
+      });
       return () => {
         active = false;
       };
@@ -184,7 +189,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
         {tab === 'printer' && <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} />}
-        {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
+        {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={PRINTER_ID} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
         {tab === 'queue' && <QueueView client={client} status={status} onBrowse={() => setTab('library')} />}
         {tab === 'ams' && <AmsView client={client} status={status} printerId={PRINTER_ID} />}
         {tab === 'power' && <PowerView client={client} printerId={PRINTER_ID} status={status} />}

@@ -1,5 +1,5 @@
 import { File, UploadType } from 'expo-file-system';
-import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse, PlatesResponse } from './types';
+import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse, PlatesResponse, PrinterFileList } from './types';
 
 export interface BambuddyClientConfig {
   /** e.g. https://bambuddy.example.com */
@@ -132,6 +132,16 @@ export class BambuddyClient {
   /** Raw G-code text of a sliced file — used to render the layer-by-layer preview. Can be large. */
   getGcode(fileId: number): Promise<string> {
     return this.req(`/api/v1/library/files/${fileId}/gcode`).then((r) => r.text());
+  }
+  /** Delete a library file. Needs the Manage-Library scope (works on Bambuddy ≥ 0.2.4.8, #1832). */
+  deleteFile(fileId: number): Promise<void> {
+    return this.req(`/api/v1/library/files/${fileId}`, { method: 'DELETE' }).then(() => undefined);
+  }
+
+  // --- Printer onboard storage (SD card) ---
+  /** Browse the printer's onboard filesystem at `path` (directories nest; files carry a size). */
+  listPrinterFiles(printerId: number, path = '/'): Promise<PrinterFileList> {
+    return this.req(`/api/v1/printers/${printerId}/files?path=${encodeURIComponent(path)}`).then((r) => r.json());
   }
 
   // --- Slicing ---

@@ -40,6 +40,19 @@ export interface LibraryFile {
   metadata?: FileMetadata | null;
 }
 
+/** One entry in the printer's onboard storage (SD card) listing. */
+export interface PrinterFile {
+  name: string;
+  is_directory: boolean;
+  size: number;
+  path: string;
+  mtime?: string;
+}
+export interface PrinterFileList {
+  path: string;
+  files: PrinterFile[];
+}
+
 /** A filament a plate/slot consumes (from /plates or file metadata). */
 export interface PlateFilament {
   slot_id: number;
