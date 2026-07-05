@@ -7,7 +7,7 @@ import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
 import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFileList } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
-import { presentDashboard, fmtDuration, normColor, asNum } from '@/dashboard/present';
+import { presentDashboard, presentNozzles, fmtDuration, normColor, asNum } from '@/dashboard/present';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, ExtrudeBar, Spark, Breathe, Toggle, FadeRise } from './anim';
 
 function fmtBytes(n?: number): string {
@@ -444,8 +444,76 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
           );
         })}
       </View>
+      <NozzlesSection status={status} />
       <MaintenanceSection client={client} printerId={printerId} />
     </Page>
+  );
+}
+
+// ---------------- NOZZLES / HOTENDS ----------------
+function NozzlesSection({ status }: { status: PrinterStatus | null }) {
+  const { mounted, rack, dual } = presentNozzles(status);
+  if (mounted.length === 0 && rack.length === 0) return null;
+
+  return (
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 26, paddingBottom: 12 }}>
+        <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1.2, color: c.t3, fontFamily: mono }}>{dual ? 'HOTENDS' : 'NOZZLE'}</Text>
+        {rack.length > 0 && <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, fontFamily: mono }}>{rack.length} in rack</Text>}
+      </View>
+
+      {/* Mounted hotend(s) — live temps */}
+      {mounted.length > 0 && (
+        <View style={{ paddingHorizontal: 20, flexDirection: 'row', gap: 12 }}>
+          {mounted.map((n, i) => (
+            <View key={i} style={{ flex: 1, padding: 15, borderRadius: 18, backgroundColor: c.s1, borderWidth: n.active ? 1.5 : 1, borderColor: n.active ? c.accent : c.line, ...shadow1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>{n.label}</Text>
+                {n.active ? (
+                  <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: c.accentDim }}>
+                    <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: c.accent, fontFamily: mono }}>ACTIVE</Text>
+                  </View>
+                ) : n.heating ? (
+                  <PulseDot color={c.heating} size={7} period={1400} />
+                ) : null}
+              </View>
+              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'flex-end', gap: 5 }}>
+                <RollingNumber value={n.now} fontSize={24} weight="700" color={c.t1} letterSpacing={-0.5} />
+                <Text style={{ fontWeight: '700', fontSize: 12, color: c.t3 }}>°</Text>
+                <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono, marginBottom: 2 }}>→ {n.target}°</Text>
+              </View>
+              {(n.diameter || n.type) && (
+                <Text style={{ marginTop: 7, fontWeight: '600', fontSize: 11, color: c.t2, fontFamily: mono }}>
+                  {[n.diameter, n.type].filter(Boolean).join(' · ')}
+                </Text>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Swappable nozzle rack */}
+      {rack.length > 0 && (
+        <>
+          <Text style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 10, fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.t3, fontFamily: mono }}>IN THE RACK</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10 }}>
+            {rack.map((r) => (
+              <View key={r.id} style={{ width: '47%', flexGrow: 1, padding: 13, borderRadius: 15, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: r.colorHex ?? c.s3, borderWidth: r.colorHex ? 0 : 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="chevrons-down" size={14} color={r.colorHex ? '#fff' : c.t3} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>{r.diameter || 'Nozzle'}</Text>
+                  <Text numberOfLines={1} style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>
+                    {[r.type, r.serial && `#${r.serial}`].filter(Boolean).join(' · ')}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+    </View>
   );
 }
 
