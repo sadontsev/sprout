@@ -1,4 +1,4 @@
-import { selectA1Process, pickDefaultQuality, isA1, type PresetsResponse, type Preset } from '../presetSelect';
+import { selectA1Process, pickDefaultQuality, isA1, supportTwinName, type PresetsResponse, type Preset } from '../presetSelect';
 
 // Realistic slice of a /slicer/presets response (names verified against the live backend).
 const RESP: PresetsResponse = {
@@ -20,28 +20,31 @@ const RESP: PresetsResponse = {
 };
 
 describe('selectA1Process', () => {
-  it('keeps only A1 0.4-nozzle process presets (no 0.2/0.6/0.8-nozzle variants, no A1M/other printers)', () => {
+  it('keeps only A1 0.4-nozzle BASE quality presets — support twins are not in the quality list', () => {
     const { qualities } = selectA1Process(RESP);
     const names = qualities.map((q) => q.name);
     expect(names).toEqual([
       '0.20mm Standard @BBL A1',
       '0.20mm Strength @BBL A1',
       '0.08mm Extra Fine @BBL A1',
-      '0.20mm Standard + Supports @BBL A1', // custom profile surfaced
     ]);
+    expect(names.some((n) => /\+ Supports/i.test(n))).toBe(false); // twin excluded from the grid
     expect(names.some((n) => /0\.[268] nozzle/.test(n))).toBe(false);
     expect(names.some((n) => /A1M|P1P/.test(n))).toBe(false);
   });
 
-  it('merges the user\'s custom profile from the local group', () => {
-    const { qualities } = selectA1Process(RESP);
-    expect(qualities.find((q) => q.id === '100')).toBeTruthy();
+  it('pairs each base quality to its support twin from the local group', () => {
+    const { supportByBase, hasSupportProfile } = selectA1Process(RESP);
+    expect(hasSupportProfile).toBe(true);
+    expect(supportByBase['0.20mm Standard @BBL A1'].id).toBe('100'); // the local twin
+    expect(supportByBase['0.20mm Strength @BBL A1']).toBeUndefined(); // no twin for this one
   });
 
-  it('detects a support-enabled profile by name', () => {
-    expect(selectA1Process(RESP).hasSupportProfile).toBe(true);
+  it('reports no support profile when none exist', () => {
     const noSupport: PresetsResponse = { standard: { process: [{ id: '1', name: '0.20mm Standard @BBL A1' }] } };
-    expect(selectA1Process(noSupport).hasSupportProfile).toBe(false);
+    const r = selectA1Process(noSupport);
+    expect(r.hasSupportProfile).toBe(false);
+    expect(r.supportByBase).toEqual({});
   });
 
   it('dedupes a profile echoed into multiple groups by id', () => {
@@ -53,8 +56,15 @@ describe('selectA1Process', () => {
   });
 
   it('is safe on empty / missing input', () => {
-    expect(selectA1Process(null)).toEqual({ qualities: [], hasSupportProfile: false });
-    expect(selectA1Process({})).toEqual({ qualities: [], hasSupportProfile: false });
+    expect(selectA1Process(null)).toEqual({ qualities: [], supportByBase: {}, hasSupportProfile: false });
+    expect(selectA1Process({})).toEqual({ qualities: [], supportByBase: {}, hasSupportProfile: false });
+  });
+});
+
+describe('supportTwinName', () => {
+  it('inserts "+ Supports" before the @BBL A1 suffix (matches the provisioning script)', () => {
+    expect(supportTwinName('0.20mm Standard @BBL A1')).toBe('0.20mm Standard + Supports @BBL A1');
+    expect(supportTwinName('Custom')).toBe('Custom + Supports');
   });
 });
 
