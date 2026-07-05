@@ -1,10 +1,7 @@
 import { normColor } from '@/dashboard/present';
+import type { Preset } from '@/library/presetSelect';
 
-export interface FilamentPreset {
-  id: string;
-  name: string;
-  source?: string;
-}
+export type FilamentPreset = Preset;
 
 export interface AmsTray {
   id: number;
@@ -44,28 +41,32 @@ const MATERIAL_BASE: Record<string, string> = {
   PVA: 'Bambu Support For PLA',
 };
 
-/** A1 0.4-nozzle filament presets only (drops A1M/A2L and other nozzle sizes). */
-function a1Filaments(presets: FilamentPreset[]): FilamentPreset[] {
+/** This printer's default-nozzle filament presets only (drops other models + other nozzle sizes).
+ *  `token` is the "@BBL <model>" suffix, e.g. "@BBL A1" / "@BBL H2C". */
+function modelFilaments(presets: FilamentPreset[], token: string): FilamentPreset[] {
   return presets.filter((p) => {
     const n = p.name || '';
-    if (!n.includes('@BBL A1')) return false;
-    if (/A1M|A2L/.test(n)) return false;
-    if (/0\.2 nozzle|0\.6 nozzle|0\.8 nozzle/.test(n)) return false;
-    return true; // leaves "… @BBL A1" and "… @BBL A1 0.4 nozzle"
+    const at = n.indexOf(token);
+    if (at < 0) return false;
+    const after = n.slice(at + token.length);
+    // "" (exact) or " 0.4 nozzle" pass; "M"/" mini"/other-model suffixes fail.
+    if (after !== '' && !/^ 0\.4 nozzle$/.test(after)) return false;
+    return true;
   });
 }
 
-/** Best A1 filament preset for a slicer name (preferred) or a raw material type. */
+/** Best filament preset for a slicer name (preferred) or a raw material type. */
 export function matchFilamentPreset(
   presets: FilamentPreset[],
   slicerName: string | null | undefined,
   material: string | null | undefined,
+  token = '@BBL A1',
 ): FilamentPreset | null {
-  const a1 = a1Filaments(presets);
+  const pool = modelFilaments(presets, token);
   const byBase = (base: string): FilamentPreset | null =>
-    a1.find((p) => p.name === `${base} @BBL A1`) ??
-    a1.find((p) => p.name === `${base} @BBL A1 0.4 nozzle`) ??
-    a1.find((p) => p.name.startsWith(`${base} @BBL A1`)) ??
+    pool.find((p) => p.name === `${base} ${token}`) ??
+    pool.find((p) => p.name === `${base} ${token} 0.4 nozzle`) ??
+    pool.find((p) => p.name.startsWith(`${base} ${token}`)) ??
     null;
   if (slicerName) {
     const m = byBase(slicerName);
@@ -83,6 +84,7 @@ export function loadedFilaments(
   trays: AmsTray[],
   assignments: AssignmentLike[],
   presets: FilamentPreset[],
+  token = '@BBL A1',
 ): LoadedFilament[] {
   const out: LoadedFilament[] = [];
   for (const t of trays) {
@@ -96,7 +98,7 @@ export function loadedFilaments(
       material,
       colorHex,
       colorName: asg?.spool?.color_name ?? null,
-      preset: matchFilamentPreset(presets, slicerName, material),
+      preset: matchFilamentPreset(presets, slicerName, material, token),
       isSupport: /support|^PLA-S$|^PVA$/i.test(material),
     });
   }

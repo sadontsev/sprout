@@ -3,23 +3,23 @@ import { Alert, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { File, Paths } from 'expo-file-system';
-import { getConfig, type AppConfig } from '@/config/secureConfig';
+import { getConfig, patchConfig, type AppConfig } from '@/config/secureConfig';
 import { BambuddyClient } from '@/api/bambuddyClient';
 import { usePrinterStatus } from '@/realtime/usePrinterStatus';
 import { useCameraStream } from '@/realtime/useCameraStream';
 import { useLiveActivity } from '@/liveactivity/useLiveActivity';
 import { writeModelThumb } from '@/liveactivity/modelThumb';
-import { presentDashboard } from '@/dashboard/present';
-import { DashboardView, type DashHandlers } from '@/components/DashboardView';
+import { presentDashboard, type DashVM } from '@/dashboard/present';
+import { printerProfile } from '@/printers/profile';
+import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
 import { LibraryView, QueueView, AmsView, PowerView, HistoryView } from '@/components/TabScreens';
 import { CameraOverlay, UploadSheet, WizardOverlay } from '@/components/Overlays';
 import { FadeRise } from '@/components/anim';
-import type { LibraryFile } from '@/api/types';
+import type { LibraryFile, Printer } from '@/api/types';
 import { c, setTheme, useTheme } from '@/theme';
 
-const PRINTER_ID = 1;
-const SPEED_LABELS = ['', 'Silent', 'Standard', 'Sport', 'Ludicrous'];
+const CAM_TOKEN_TTL_MS = 55 * 60 * 1000; // backend camera tokens live 60 min; refresh early
 
 export default function AppScreen() {
   const [config, setConfig] = useState<AppConfig | null | undefined>(undefined);
@@ -50,24 +50,88 @@ export default function AppScreen() {
 
 function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) {
   const client = useMemo(() => new BambuddyClient({ baseUrl: config.baseUrl, apiKey: config.apiKey }), [config]);
-  const { status } = usePrinterStatus(client, PRINTER_ID);
+
+  // ---- Printer fleet + selection (persisted) ----
+  const [printers, setPrinters] = useState<Printer[] | null>(null);
+  const [printerId, setPrinterId] = useState<number>(config.printerId ?? 1);
+  useEffect(() => {
+    let alive = true;
+    client
+      .listPrinters()
+      .then((ps) => alive && setPrinters(ps.filter((p) => p.is_active)))
+      .catch(() => alive && setPrinters([])); // offline-ish: keep working against the persisted id
+    return () => {
+      alive = false;
+    };
+  }, [client]);
+  useEffect(() => {
+    // If the persisted selection vanished from the backend, fall back to the first printer.
+    if (printers?.length && !printers.some((p) => p.id === printerId)) setPrinterId(printers[0].id);
+  }, [printers, printerId]);
+  const printer = printers?.find((p) => p.id === printerId) ?? null;
+  const profile = printerProfile(printer);
+  const selectPrinter = (id: number) => {
+    setPrinterId(id);
+    const name = printers?.find((p) => p.id === id)?.name;
+    void patchConfig({ printerId: id, printerName: name });
+  };
+
+  const { status, statuses } = usePrinterStatus(client, printerId);
   const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
 
+  // Fleet rows for the switcher: every printer with its live state (the shared WS carries all).
+  const fleet: FleetEntry[] = useMemo(
+    () =>
+      (printers ?? []).map((p) => {
+        const pvm = presentDashboard(statuses[p.id] ?? null, Date.now());
+        return { printer: p, kind: pvm.kind, stateLabel: pvm.stateLabel, stateColor: pvm.stateColor, progressInt: pvm.progressInt };
+      }),
+    [printers, statuses],
+  );
+
+  // ---- Camera token: mint, auto-refresh before the 60-min TTL, retry failed mints ----
   const [camToken, setCamToken] = useState<string | null>(config.cameraToken ?? null);
+  const camMintedAt = useRef(0);
   useEffect(() => {
-    if (!camToken) client.mintCameraToken().then(setCamToken).catch(() => {});
+    let alive = true;
+    const mint = () =>
+      client.mintCameraToken().then((t) => {
+        if (!alive) return;
+        camMintedAt.current = Date.now();
+        setCamToken(t);
+      }).catch(() => {});
+    if (!camToken) void mint();
+    const id = setInterval(() => {
+      if (!camToken || Date.now() - camMintedAt.current > CAM_TOKEN_TTL_MS) void mint();
+    }, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
   }, [client, camToken]);
 
+  // ---- Live Activity: follow the machine that's actually printing (prefer the selected one) ----
+  const laId = useMemo(() => {
+    if (vm.kind === 'live') return printerId;
+    const other = (printers ?? []).find((p) => p.id !== printerId && presentDashboard(statuses[p.id] ?? null).kind === 'live');
+    return other?.id ?? printerId;
+  }, [vm.kind, printerId, printers, statuses]);
+  const laStatus = statuses[laId] ?? null;
+  const laVm: DashVM = useMemo(() => (laId === printerId ? vm : presentDashboard(laStatus, Date.now())), [laId, printerId, vm, laStatus]);
+
   // Live Activity model picture: match the active print to a library file by name, then cache its
-  // plate thumbnail to the App Group so the widget (separate process) can show it.
+  // plate thumbnail to the App Group so the widget (separate process) can show it. Resolution
+  // needs the camera token — don't latch a print name until the token exists, and unlatch on
+  // failure so the next status frame retries.
   const [modelUri, setModelUri] = useState<string | null>(null);
   const modelForRef = useRef<string | null>(null);
   useEffect(() => {
-    const name = vm.kind === 'live' ? status?.subtask_name ?? null : null;
+    const name = laVm.kind === 'live' ? laStatus?.subtask_name ?? null : null;
     if (!name) {
       if (modelForRef.current) { modelForRef.current = null; setModelUri(null); }
       return;
     }
+    if (!camToken) return; // wait for the token; effect re-runs when it arrives
     if (modelForRef.current === name) return; // already resolved for this print
     modelForRef.current = name;
     setModelUri(null);
@@ -80,65 +144,82 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
           if (modelForRef.current === name) setModelUri(uri);
         }
       } catch {
-        /* no library match -> the activity falls back to the nozzle glyph */
+        // No thumb this time (network blip / no library match) — allow a retry on the next frame.
+        if (modelForRef.current === name) modelForRef.current = null;
       }
     })();
-  }, [vm.kind, status?.subtask_name, client, camToken]);
+  }, [laVm.kind, laStatus?.subtask_name, client, camToken]);
 
-  // Live Activity queue summary.
+  // Live Activity queue summary — only jobs targeting the printer the activity tracks.
   const [queue, setQueue] = useState<{ count: number; next: string | null }>({ count: 0, next: null });
   useEffect(() => {
     const poll = () =>
       client.listQueue().then((items) => {
-        const up = items.filter((i) => i.status === 'pending' || i.status === 'queued');
+        const up = items.filter(
+          (i) => (i.status === 'pending' || i.status === 'queued') && (i.printer_id == null || i.printer_id === laId),
+        );
         setQueue({ count: up.length, next: up[0]?.library_file_name ?? up[0]?.archive_name ?? null });
       }).catch(() => {});
     poll();
     const id = setInterval(poll, 15000);
     return () => clearInterval(id);
-  }, [client]);
+  }, [client, laId]);
 
-  useLiveActivity(vm, status, { modelUri, queueCount: queue.count, nextName: queue.next });
+  useLiveActivity(laVm, laStatus, { modelUri, queueCount: queue.count, nextName: queue.next });
 
   const [tab, setTab] = useState<TabKey>('printer');
   const [overlay, setOverlay] = useState<'camera' | 'upload' | null>(null);
   const [wizardFile, setWizardFile] = useState<LibraryFile | null>(null);
-  const [speedIdx, setSpeedIdx] = useState(2);
   const [libKey, setLibKey] = useState(0);
+
+  // Speed: the printer's real speed_level drives the UI; a short-lived optimistic override bridges
+  // the gap between tapping a mode and the next status frame reflecting it.
+  const [speedOverride, setSpeedOverride] = useState<number | null>(null);
+  useEffect(() => {
+    if (speedOverride != null && vm.speedIdx === speedOverride) setSpeedOverride(null);
+  }, [vm.speedIdx, speedOverride]);
+  useEffect(() => {
+    if (speedOverride == null) return;
+    const t = setTimeout(() => setSpeedOverride(null), 15000);
+    return () => clearTimeout(t);
+  }, [speedOverride]);
+  const speedIdx = speedOverride ?? vm.speedIdx;
 
   // Live MJPEG camera stream — mints a token only while the fullscreen camera is open.
   const cameraOpen = overlay === 'camera';
-  const { streamUrl, remint } = useCameraStream(client, PRINTER_ID, cameraOpen, 10);
+  const { streamUrl, remint } = useCameraStream(client, printerId, cameraOpen, 10);
 
   // Dashboard snapshot tile (1 frame / 2s). Paused while the fullscreen stream is open so the two
-  // don't contend for the single on-demand A1 camera (which would slow the live stream's warm-up).
+  // don't contend for the single on-demand camera (which would slow the live stream's warm-up).
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (cameraOpen) return;
     const id = setInterval(() => setTick((t) => t + 1), 2000);
     return () => clearInterval(id);
   }, [cameraOpen]);
-  const snapshotUri = camToken && !cameraOpen ? `${client.snapshotUrl(PRINTER_ID, camToken)}&_t=${tick}` : null;
+  const snapshotUri = camToken && !cameraOpen ? `${client.snapshotUrl(printerId, camToken)}&_t=${tick}` : null;
 
-  // Maintenance due/warning rollup for the dashboard chip (invisible when all-clear).
+  // Maintenance due/warning rollup for the dashboard chip — scoped to the SELECTED printer.
   const [maintAlert, setMaintAlert] = useState<{ due: number; warn: number }>({ due: 0, warn: 0 });
   useEffect(() => {
-    const poll = () => client.getMaintenanceSummary().then((s) => setMaintAlert({ due: s.total_due, warn: s.total_warning })).catch(() => {});
+    setMaintAlert({ due: 0, warn: 0 });
+    const poll = () =>
+      client.getMaintenance(printerId).then((m) => setMaintAlert({ due: m.due_count, warn: m.warning_count })).catch(() => {});
     poll();
     const id = setInterval(poll, 60000);
     return () => clearInterval(id);
-  }, [client]);
+  }, [client, printerId]);
 
   // Inbound files: when a .3mf/.stl/.gcode is shared/opened into the app, copy it into cache and
   // upload it to the library. The SceneDelegate forwards openURLContexts, so expo-linking sees it.
-  const [importing, setImporting] = useState(false);
+  const importingRef = useRef(false);
   useEffect(() => {
     let handledInitial = false;
     const handleUrl = async (url: string | null) => {
-      if (!url || importing) return;
+      if (!url || importingRef.current) return;
       if (!url.startsWith('file://') && !url.startsWith('content://')) return; // ignore our own bambu:// links
       try {
-        setImporting(true);
+        importingRef.current = true;
         const src = new File(url);
         const name = src.name || `import-${Date.now()}.3mf`;
         const dest = new File(Paths.cache, name);
@@ -151,7 +232,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       } catch (e) {
         Alert.alert('Couldn’t import file', String(e));
       } finally {
-        setImporting(false);
+        importingRef.current = false;
       }
     };
     Linking.getInitialURL().then((url) => {
@@ -170,36 +251,61 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
     onCamera: () => setOverlay('camera'),
     onRetry,
     onTab: (t) => setTab(t as TabKey),
-    onLight: () => client.setLight(PRINTER_ID, !vm.lightOn).catch((e) => Alert.alert('Light failed', String(e))),
+    onSelectPrinter: selectPrinter,
+    onLight: () => client.setLight(printerId, !vm.lightOn).catch((e) => Alert.alert('Light failed', String(e))),
     onPauseResume: () =>
-      (vm.isPaused ? client.resume(PRINTER_ID) : client.pause(PRINTER_ID)).catch((e) => Alert.alert('Action failed', String(e))),
+      (vm.isPaused ? client.resume(printerId) : client.pause(printerId)).catch((e) => Alert.alert('Action failed', String(e))),
     onStop: () =>
       Alert.alert('Stop print?', 'This cancels the current job. It can’t be undone.', [
         { text: 'Keep printing', style: 'cancel' },
-        { text: 'Stop', style: 'destructive', onPress: () => client.stop(PRINTER_ID).catch((e) => Alert.alert('Stop failed', String(e))) },
+        { text: 'Stop', style: 'destructive', onPress: () => client.stop(printerId).catch((e) => Alert.alert('Stop failed', String(e))) },
       ]),
     onSpeedSet: (i: number) => {
       const mode = i as 1 | 2 | 3 | 4;
-      setSpeedIdx(mode);
-      client.setSpeed(PRINTER_ID, mode).catch((e) => Alert.alert('Speed failed', String(e)));
+      setSpeedOverride(mode);
+      client.setSpeed(printerId, mode).catch((e) => {
+        setSpeedOverride(null); // roll back the optimistic label
+        Alert.alert('Speed failed', String(e));
+      });
+    },
+    onHmsClear: () =>
+      client.clearHms(printerId).catch((e) => Alert.alert('Couldn’t clear', String(e))),
+    onPlateCleared: () =>
+      client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', String(e))),
+    onPrintAgain: () => {
+      const archiveId = status?.current_archive_id;
+      if (archiveId == null) {
+        setTab('library');
+        return;
+      }
+      Alert.alert('Print this again?', 'The finished job goes back into the queue.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Print again',
+          onPress: () =>
+            client.reprint(archiveId, printerId).then(() => setTab('queue')).catch((e) => Alert.alert('Couldn’t reprint', String(e))),
+        },
+      ]);
     },
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
-        {tab === 'printer' && <DashboardView vm={{ ...vm, speedLabel: SPEED_LABELS[speedIdx] }} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} />}
-        {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={PRINTER_ID} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
-        {tab === 'queue' && <QueueView client={client} status={status} onBrowse={() => setTab('library')} />}
-        {tab === 'ams' && <AmsView client={client} status={status} printerId={PRINTER_ID} />}
-        {tab === 'power' && <PowerView client={client} printerId={PRINTER_ID} status={status} />}
-        {tab === 'history' && <HistoryView client={client} camToken={camToken} />}
+        {tab === 'printer' && (
+          <DashboardView vm={vm} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} printer={printer} fleet={fleet} />
+        )}
+        {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={printerId} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
+        {tab === 'queue' && <QueueView client={client} status={status} printerId={printerId} printers={printers ?? []} onBrowse={() => setTab('library')} />}
+        {tab === 'ams' && <AmsView client={client} status={status} printerId={printerId} amsLabel={profile.amsLabel} />}
+        {tab === 'power' && <PowerView client={client} printerId={printerId} status={status} />}
+        {tab === 'history' && <HistoryView client={client} camToken={camToken} printerId={printerId} />}
       </FadeRise>
 
       <TabBar active={tab} onTab={setTab} />
 
       {overlay === 'camera' && (
-        <CameraOverlay streamUrl={streamUrl} status={status} onClose={() => setOverlay(null)} onRefresh={remint} />
+        <CameraOverlay streamUrl={streamUrl} status={status} cameraHint={profile.cameraHint} onClose={() => setOverlay(null)} onRefresh={remint} />
       )}
       {overlay === 'upload' && (
         <UploadSheet client={client} onClose={() => setOverlay(null)} onUploaded={() => setLibKey((k) => k + 1)} />
@@ -210,7 +316,8 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
           file={wizardFile}
           camToken={camToken}
           status={status}
-          printerId={PRINTER_ID}
+          printerId={printerId}
+          printer={printer}
           onClose={() => setWizardFile(null)}
           onStarted={() => {
             setWizardFile(null);

@@ -1,4 +1,4 @@
-import { selectA1Process, pickDefaultQuality, isA1, supportTwinName, type PresetsResponse, type Preset } from '../presetSelect';
+import { selectProcess, selectA1Process, pickDefaultQuality, isA1, supportTwinName, type PresetsResponse, type Preset } from '../presetSelect';
 
 // Realistic slice of a /slicer/presets response (names verified against the live backend).
 const RESP: PresetsResponse = {
@@ -65,6 +65,32 @@ describe('supportTwinName', () => {
   it('inserts "+ Supports" before the @BBL A1 suffix (matches the provisioning script)', () => {
     expect(supportTwinName('0.20mm Standard @BBL A1')).toBe('0.20mm Standard + Supports @BBL A1');
     expect(supportTwinName('Custom')).toBe('Custom + Supports');
+  });
+  it('works for other model tokens', () => {
+    expect(supportTwinName('0.20mm Standard @BBL H2C', '@BBL H2C')).toBe('0.20mm Standard + Supports @BBL H2C');
+  });
+});
+
+describe('selectProcess with the H2C token (names verified against the live backend)', () => {
+  const H2C: PresetsResponse = {
+    standard: {
+      process: [
+        { id: 'h1', name: '0.20mm Standard @BBL H2C' },
+        { id: 'h2', name: '0.08mm High Quality @BBL H2C' },
+        { id: 'h3', name: '0.10mm Standard @BBL H2C 0.2 nozzle' }, // wrong nozzle
+        { id: 'd1', name: '0.20mm Standard @BBL H2D' }, // different machine
+        { id: 'd2', name: '0.08mm Extra Fine @BBL H2DP' }, // H2D Pro must not leak in
+        { id: 'a1', name: '0.20mm Standard @BBL A1' }, // different machine
+      ],
+    },
+  };
+  it('keeps only H2C 0.4-nozzle presets — no other H2-family machines, no A1', () => {
+    const { qualities } = selectProcess(H2C, '@BBL H2C');
+    expect(qualities.map((q) => q.name)).toEqual(['0.20mm Standard @BBL H2C', '0.08mm High Quality @BBL H2C']);
+  });
+  it('the A1 token does not pick up H2C presets', () => {
+    const { qualities } = selectProcess(H2C, '@BBL A1');
+    expect(qualities.map((q) => q.name)).toEqual(['0.20mm Standard @BBL A1']);
   });
 });
 

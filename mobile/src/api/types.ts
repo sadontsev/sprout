@@ -1,7 +1,32 @@
+/** A printer registered in Bambuddy (GET /printers/). */
+export interface Printer {
+  id: number;
+  name: string;
+  model: string; // "A1" | "H2C" | ...
+  nozzle_count: number; // 2 on the H2-series dual-extruder machines
+  location?: string | null;
+  is_active: boolean;
+  serial_number?: string;
+  ip_address?: string;
+}
+
+/** One HMS (health-management-system) record from the printer. Present even mid-print for
+ *  benign notices — presence alone does NOT mean the print failed. */
+export interface HmsError {
+  code?: string;
+  attr?: number;
+  module?: number;
+  severity?: number;
+  full_code?: string; // e.g. "0500050000010007"
+  actions?: unknown[];
+}
+
 /** The subset of Bambuddy's printer status the app consumes (see docs/phase0-results.md §3). */
 export interface PrinterStatus {
+  id?: number;
+  name?: string;
   connected: boolean;
-  state: string; // RUNNING | PAUSE | IDLE | FINISH | ...
+  state: string; // RUNNING | PAUSE | IDLE | FINISH | FAILED | ...
   progress: number | null; // %
   remaining_time: number | null; // minutes
   layer_num: number | null;
@@ -11,17 +36,46 @@ export interface PrinterStatus {
   temperatures: {
     nozzle?: number;
     nozzle_target?: number;
+    nozzle_heating?: boolean;
+    /** Second extruder on dual-nozzle machines (H2-series). */
+    nozzle_2?: number;
+    nozzle_2_target?: number;
+    nozzle_2_heating?: boolean;
     bed?: number;
     bed_target?: number;
+    bed_heating?: boolean;
+    /** Enclosed machines only. */
+    chamber?: number;
+    chamber_target?: number;
+    chamber_heating?: boolean;
   } | null;
   ams?: Array<{
     id: number;
+    humidity?: number; // %
+    temp?: number; // °C inside the AMS
+    is_ams_ht?: boolean;
+    module_type?: string; // e.g. "n3f" (AMS 2 Pro)
+    dry_status?: number; // non-zero while drying
     tray: Array<{ id: number; tray_type?: string; tray_color?: string; remain?: number; tray_uuid?: string | null }>;
   }>;
-  /** Active tray index across the AMS (Bambu `tray_now`). */
+  /** Active tray index across the AMS (Bambu `tray_now`; 255 = none/external). */
   tray_now?: number;
-  hms_errors?: Array<{ code?: string; attr?: string; module?: string; severity?: string }>;
+  hms_errors?: HmsError[];
   print_error?: number;
+  /** 1 Silent | 2 Standard | 3 Sport | 4 Ludicrous — the printer's real speed mode. */
+  speed_level?: number;
+  /** Human-readable sub-stage while printing, e.g. "Changing filament", "Auto bed leveling". */
+  stg_cur_name?: string | null;
+  /** True after FINISH until the user confirms the plate is clear (gates the queue). */
+  awaiting_plate_clear?: boolean;
+  door_open?: boolean;
+  wifi_signal?: number; // dBm
+  active_extruder?: number;
+  supports_drying?: boolean;
+  supports_chamber_heater?: boolean;
+  /** Archive of the current/most recent print — reprint target. */
+  current_archive_id?: number | null;
+  nozzles?: Array<{ nozzle_type?: string; nozzle_diameter?: string }>;
 }
 
 export type SpeedMode = 1 | 2 | 3 | 4; // silent | standard | sport | ludicrous
@@ -105,6 +159,8 @@ export interface QueueItem {
   id: number;
   status: string; // pending | printing | completed | failed | ...
   position?: number;
+  printer_id?: number | null;
+  printer_name?: string | null;
   library_file_name?: string | null;
   archive_name?: string | null;
   library_file_thumbnail?: string | null;

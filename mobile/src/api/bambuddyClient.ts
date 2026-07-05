@@ -1,5 +1,5 @@
 import { File, UploadType } from 'expo-file-system';
-import type { PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse, PlatesResponse, PrinterFileList } from './types';
+import type { Printer, PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse, PlatesResponse, PrinterFileList } from './types';
 
 export interface BambuddyClientConfig {
   /** e.g. https://bambuddy.example.com */
@@ -43,8 +43,34 @@ export class BambuddyClient {
     return res;
   }
 
+  /** All registered printers (A1, H2C, …). */
+  listPrinters(): Promise<Printer[]> {
+    return this.req('/api/v1/printers/').then((r) => r.json());
+  }
   getStatus(printerId: number): Promise<PrinterStatus> {
     return this.req(`/api/v1/printers/${printerId}/status`).then((r) => r.json());
+  }
+  /** Clear the printer's HMS notices (e.g. the benign mid-print ones the H2C emits). */
+  async clearHms(printerId: number): Promise<void> {
+    await this.req(`/api/v1/printers/${printerId}/hms/clear`, { method: 'POST' });
+  }
+  /** Confirm the plate is clear so the queue can dispatch the next job. */
+  async queueResume(printerId: number): Promise<void> {
+    await this.req(`/api/v1/queue/printer/${printerId}/resume`, { method: 'POST' });
+  }
+  /** Start AMS filament drying (H2-series; params are query-string on this endpoint). */
+  async dryingStart(printerId: number, amsId: number, temp?: number, durationMin?: number): Promise<void> {
+    const q = new URLSearchParams({ ams_id: String(amsId) });
+    if (temp != null) q.set('temp', String(temp));
+    if (durationMin != null) q.set('duration', String(durationMin));
+    await this.req(`/api/v1/printers/${printerId}/drying/start?${q}`, { method: 'POST' });
+  }
+  async dryingStop(printerId: number, amsId: number): Promise<void> {
+    await this.req(`/api/v1/printers/${printerId}/drying/stop?ams_id=${amsId}`, { method: 'POST' });
+  }
+  /** Queue a past print (archive) again on the given printer. */
+  async reprint(archiveId: number, printerId: number): Promise<void> {
+    await this.req(`/api/v1/archives/${archiveId}/reprint?printer_id=${printerId}`, { method: 'POST' });
   }
   /** Server config incl. electricity price (energy_cost_per_kwh) + currency. Read works with the
    *  API key; writes are admin-JWT only. */

@@ -1,11 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, ActivityIndicator, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
-import type { LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFileList } from '@/api/types';
+import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFileList } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
 import { presentDashboard, fmtDuration, normColor } from '@/dashboard/present';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, ExtrudeBar, Spark, Breathe, Toggle, FadeRise } from './anim';
@@ -30,12 +30,13 @@ function fmtMoney(sym: string, n: number): string {
   return `${sym}${n.toFixed(2)}`;
 }
 
-function Page({ title, right, children }: { title: string; right?: React.ReactNode; sub?: string; children: React.ReactNode }) {
+function Page({ title, right, refreshControl, children }: { title: string; right?: React.ReactNode; sub?: string; refreshControl?: React.ReactElement<import('react-native').RefreshControlProps>; children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: c.bg }}
       showsVerticalScrollIndicator={false}
+      refreshControl={refreshControl}
       contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: 120 }}>
       <View style={{ paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={{ fontWeight: '700', fontSize: 30, color: c.t1, letterSpacing: -0.8 }}>{title}</Text>
@@ -43,6 +44,19 @@ function Page({ title, right, children }: { title: string; right?: React.ReactNo
       </View>
       {children}
     </ScrollView>
+  );
+}
+
+/** A list fetch failed — distinct from a real empty state. */
+function LoadFailed({ onRetry }: { onRetry: () => void }) {
+  return (
+    <View style={{ marginHorizontal: 20, marginTop: 20, padding: 16, borderRadius: 16, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <Feather name="wifi-off" size={18} color={c.t3} />
+      <Text style={{ flex: 1, fontWeight: '500', fontSize: 13, color: c.t2 }}>Couldn’t reach the server.</Text>
+      <Tap onPress={onRetry} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3 }}>
+        <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Retry</Text>
+      </Tap>
+    </View>
   );
 }
 
@@ -89,11 +103,18 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
 export function LibraryView({ client, camToken, printerId, onUpload, onPick }: { client: BambuddyClient; camToken: string | null; printerId: number; onUpload: () => void; onPick: (f: LibraryFile) => void }) {
   const [source, setSource] = useState<LibSource>('library');
   const [files, setFiles] = useState<LibraryFile[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<TypeFilter>('all');
   const load = useCallback(() => {
-    client.listFiles().then(setFiles).catch(() => setFiles([]));
+    // A failed fetch is NOT an empty library — show a retry state instead of "No files yet".
+    return client.listFiles().then((f) => { setFiles(f); setLoadFailed(false); }).catch(() => { setFiles((prev) => prev ?? []); setLoadFailed(true); });
   }, [client]);
-  useEffect(load, [load]);
+  useEffect(() => { void load(); }, [load]);
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    void load().finally(() => setRefreshing(false));
+  }, [load]);
 
   // Printer onboard storage (SD card) browser.
   const [pList, setPList] = useState<PrinterFileList | null>(null);
@@ -129,6 +150,7 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
   return (
     <Page
       title="Files"
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}
       right={
         source === 'library' ? (
           <Tap onPress={onUpload} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
@@ -142,6 +164,7 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
 
       {source === 'library' ? (
         <>
+          {loadFailed && <LoadFailed onRetry={() => void load()} />}
           {!!files?.length && (
             <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingTop: 14 }}>
               {(['all', 'models', 'sliced'] as TypeFilter[]).map((k) => {
@@ -155,8 +178,8 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
               })}
             </View>
           )}
-          {files === null && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
-          {files?.length === 0 && <Empty icon="folder" title="No files yet" body="Upload an STL, 3MF, or sliced G-code and it'll show up here." cta="Upload a model" onCta={onUpload} />}
+          {files === null && !loadFailed && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
+          {files?.length === 0 && !loadFailed && <Empty icon="folder" title="No files yet" body="Upload an STL, 3MF, or sliced G-code and it'll show up here." cta="Upload a model" onCta={onUpload} />}
           {!!files?.length && (
             <>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, paddingTop: 14, gap: 13 }}>
@@ -164,7 +187,7 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
                   const sliced = isSlicedFile(f);
                   return (
                     <Tap key={f.id} onPress={() => onPick(f)} onLongPress={() => confirmDelete(f)} style={{ width: '47%', flexGrow: 1 }}>
-                      <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+                      <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
                         {f.thumbnail_path ? (
                           <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
                         ) : (
@@ -216,22 +239,31 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
 }
 
 // ---------------- QUEUE ----------------
-export function QueueView({ client, status, onBrowse }: { client: BambuddyClient; status: PrinterStatus | null; onBrowse: () => void }) {
+export function QueueView({ client, status, printerId, printers, onBrowse }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; printers: Printer[]; onBrowse: () => void }) {
   const [items, setItems] = useState<QueueItem[] | null>(null);
-  const load = useCallback(() => client.listQueue().then(setItems).catch(() => setItems([])), [client]);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const load = useCallback(
+    () => client.listQueue().then((i) => { setItems(i); setLoadFailed(false); }).catch(() => { setItems((prev) => prev ?? []); setLoadFailed(true); }),
+    [client],
+  );
   useEffect(() => {
     load();
     const id = setInterval(load, 5000);
     return () => clearInterval(id);
   }, [load]);
   const vm = presentDashboard(status, Date.now());
-  const upcoming = (items ?? []).filter((i) => i.status === 'pending' || i.status === 'queued');
+  const pending = (items ?? []).filter((i) => i.status === 'pending' || i.status === 'queued');
+  // The queue is backend-global; this tab shows the selected printer's lane (untargeted jobs included).
+  const upcoming = pending.filter((i) => i.printer_id == null || i.printer_id === printerId);
+  const elsewhere = pending.length - upcoming.length;
+  const otherNames = [...new Set(pending.filter((i) => !upcoming.includes(i)).map((i) => i.printer_name || printers.find((p) => p.id === i.printer_id)?.name || 'another printer'))];
   const printing = vm.kind === 'live';
 
   return (
     <Page title="Queue">
-      {items === null && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
-      {items?.length === 0 && !printing && <Empty icon="list" title="Queue is empty" body="Files you send to print line up here. Start one from your library." cta="Browse files" onCta={onBrowse} />}
+      {items === null && !loadFailed && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
+      {loadFailed && <LoadFailed onRetry={() => void load()} />}
+      {items?.length === 0 && !printing && !loadFailed && <Empty icon="list" title="Queue is empty" body="Files you send to print line up here. Start one from your library." cta="Browse files" onCta={onBrowse} />}
       {printing && (
         <>
           <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 11 }}>NOW PRINTING</Text>
@@ -279,15 +311,23 @@ export function QueueView({ client, status, onBrowse }: { client: BambuddyClient
           </View>
         </>
       )}
+      {elsewhere > 0 && (
+        <Text style={{ paddingHorizontal: 20, paddingTop: 18, fontWeight: '500', fontSize: 12, color: c.t3 }}>
+          {elsewhere} more {elsewhere === 1 ? 'job' : 'jobs'} queued for {otherNames.join(', ')}.
+        </Text>
+      )}
     </Page>
   );
 }
 
 // ---------------- AMS ----------------
-export function AmsView({ client, status, printerId }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number }) {
+export function AmsView({ client, status, printerId, amsLabel }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; amsLabel: string }) {
   const vm = presentDashboard(status, Date.now());
-  const trays = status?.ams?.[0]?.tray ?? [];
-  const amsId = status?.ams?.[0]?.id ?? 0;
+  const unit = status?.ams?.[0];
+  const trays = unit?.tray ?? [];
+  const amsId = unit?.id ?? 0;
+  const drying = (unit?.dry_status ?? 0) !== 0;
+  const [dryBusy, setDryBusy] = useState(false);
 
   const [assigns, setAssigns] = useState<SlotAssignment[] | null>(null);
   const loadInv = useCallback(() => {
@@ -304,11 +344,52 @@ export function AmsView({ client, status, printerId }: { client: BambuddyClient;
     return hit?.spool ?? null;
   };
 
+  const toggleDrying = () => {
+    setDryBusy(true);
+    const done = () => setDryBusy(false);
+    if (drying) {
+      client.dryingStop(printerId, amsId).then(done).catch((e) => { done(); Alert.alert('Couldn’t stop drying', String(e)); });
+    } else {
+      Alert.alert('Dry filament?', 'Runs the AMS heater to dry the loaded spools (uses the filament’s default temperature and time).', [
+        { text: 'Cancel', style: 'cancel', onPress: done },
+        { text: 'Start drying', onPress: () => client.dryingStart(printerId, amsId).then(done).catch((e) => { done(); Alert.alert('Couldn’t start drying', String(e)); }) },
+      ]);
+    }
+  };
+
   return (
-    <Page title="AMS Lite">
-      <Text style={{ paddingHorizontal: 20, marginTop: 7, fontWeight: '500', fontSize: 13, color: c.t3 }}>
-        {trays.filter((t) => t.tray_type).length} of {Math.max(trays.length, 4)} slots loaded
-      </Text>
+    <Page title={amsLabel}>
+      <View style={{ paddingHorizontal: 20, marginTop: 7, flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <Text style={{ fontWeight: '500', fontSize: 13, color: c.t3 }}>
+          {trays.filter((t) => t.tray_type).length} of {Math.max(trays.length, 4)} slots loaded
+        </Text>
+        {unit?.humidity != null && unit.humidity > 0 && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: c.s2 }}>
+            <Feather name="droplet" size={11} color={c.t3} />
+            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t2, fontFamily: mono }}>{Math.round(unit.humidity)}%</Text>
+          </View>
+        )}
+        {unit?.temp != null && unit.temp > 0 && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: c.s2 }}>
+            <Feather name="thermometer" size={11} color={c.t3} />
+            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t2, fontFamily: mono }}>{unit.temp.toFixed(1)}°</Text>
+          </View>
+        )}
+      </View>
+      {status?.supports_drying && (
+        <View style={{ marginHorizontal: 20, marginTop: 14, padding: 14, borderRadius: 16, backgroundColor: drying ? c.heatingDim : c.s1, borderWidth: 1, borderColor: drying ? c.heating : c.line, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Feather name="wind" size={17} color={drying ? c.heating : c.t2} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{drying ? 'Drying filament…' : 'Filament drying'}</Text>
+            <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>
+              {drying ? 'The AMS heater is running.' : 'Dry damp spools right in the AMS.'}
+            </Text>
+          </View>
+          <Tap onPress={toggleDrying} disabled={dryBusy} style={{ paddingHorizontal: 15, paddingVertical: 9, borderRadius: 11, backgroundColor: drying ? c.s3 : c.accent, opacity: dryBusy ? 0.5 : 1 }}>
+            <Text style={{ fontWeight: '600', fontSize: 13, color: drying ? c.t1 : c.accentInk }}>{drying ? 'Stop' : 'Dry'}</Text>
+          </Tap>
+        </View>
+      )}
       <View style={{ paddingHorizontal: 20, paddingTop: 18, gap: 12 }}>
         {vm.ams.map((t, i) => {
           const spool = spoolForSlot(i);
@@ -347,12 +428,12 @@ export function AmsView({ client, status, printerId }: { client: BambuddyClient;
               </View>
               {!t.empty ? (
                 <View style={{ marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end' }}>
-                  <Tap onPress={() => client.amsUnload(printerId).catch(() => {})} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3 }}>
+                  <Tap onPress={() => client.amsUnload(printerId).catch((e) => Alert.alert('Unload failed', String(e)))} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3 }}>
                     <Text style={{ fontWeight: '600', fontSize: 12, color: c.t1 }}>Unload</Text>
                   </Tap>
                 </View>
               ) : (
-                <Tap onPress={() => client.amsLoad(printerId, i).catch(() => {})} style={{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
+                <Tap onPress={() => client.amsLoad(printerId, i).catch((e) => Alert.alert('Load failed', String(e)))} style={{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ fontWeight: '600', fontSize: 13, color: c.accent }}>Load filament</Text>
                 </Tap>
               )}
@@ -379,10 +460,14 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
     client.getPlug(printerId).then((p) => setPlug(p ?? null)).catch(() => setPlug(null));
     client.getSettings().then(setSettings).catch(() => setSettings(null));
   }, [client, printerId]);
+  // While a toggle command is settling, ignore poll results — HA takes a few seconds to reflect
+  // the new state and the stale poll would visibly bounce the switch back.
+  const pendingUntil = useRef(0);
   useEffect(() => {
     if (!plug) return;
     const poll = () =>
       client.plugStatus(plug.id).then((s) => {
+        if (Date.now() < pendingUntil.current) return;
         setOn(s.state?.toUpperCase() === 'ON');
         setReachable(!!s.reachable);
         const e = s.energy ?? null;
@@ -397,7 +482,12 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
   const applyPlug = (next: boolean) => {
     if (!plug) return;
     setOn(next);
-    client.plugControl(plug.id, next).catch(() => setOn(!next));
+    pendingUntil.current = Date.now() + 8000;
+    client.plugControl(plug.id, next).catch((e) => {
+      pendingUntil.current = 0;
+      setOn(!next);
+      Alert.alert('Plug command failed', String(e));
+    });
   };
   const toggle = () => {
     if (!plug) return;
@@ -528,13 +618,13 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
 }
 
 // ---------------- HISTORY ----------------
-const STATUS_META: Record<string, { label: string; color: string; dim: string }> = {
-  completed: { label: 'Done', color: c.running, dim: c.runningDim },
-  failed: { label: 'Failed', color: c.error, dim: c.errorDim },
-  cancelled: { label: 'Canceled', color: c.idle, dim: c.idleDim },
-};
-function statusMeta(s: string) {
-  return STATUS_META[s] ?? { label: s ? s[0].toUpperCase() + s.slice(1) : 'Unknown', color: c.idle, dim: c.idleDim };
+// Computed per call — `c` tokens are live-mutated on theme switch, so a module-level table would
+// freeze the dark palette.
+function statusMeta(s: string): { label: string; color: string; dim: string } {
+  if (s === 'completed') return { label: 'Done', color: c.running, dim: c.runningDim };
+  if (s === 'failed') return { label: 'Failed', color: c.error, dim: c.errorDim };
+  if (s === 'cancelled') return { label: 'Canceled', color: c.idle, dim: c.idleDim };
+  return { label: s ? s[0].toUpperCase() + s.slice(1) : 'Unknown', color: c.idle, dim: c.idleDim };
 }
 
 /** "2026-06-28T15:07:35.681213" is naive *local* time (no Z); new Date() parses naive as local. */
@@ -583,7 +673,7 @@ function SuccessRing({ pct }: { pct: number }) {
   );
 }
 
-function StatsBanner({ stats }: { stats: ArchiveStats }) {
+function StatsBanner({ stats, sym }: { stats: ArchiveStats; sym: string }) {
   const total = stats.total_prints || 0;
   const success = total > 0 ? Math.round((stats.successful_prints / total) * 100) : 0;
   const grams = stats.total_filament_grams || 0;
@@ -617,7 +707,7 @@ function StatsBanner({ stats }: { stats: ArchiveStats }) {
       <View style={{ marginTop: 12, padding: 18, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', flexWrap: 'wrap', rowGap: 18, columnGap: 12 }}>
         <StatBlock label="PRINT HOURS" value={stats.total_print_time_hours.toFixed(1)} unit="h" />
         <StatBlock label="FILAMENT" value={filamentVal} unit={filamentUnit} />
-        {showCost && <StatBlock label="EST. COST" value={`$${stats.total_cost.toFixed(2)}`} accent />}
+        {showCost && <StatBlock label="EST. COST" value={fmtMoney(sym, stats.total_cost)} accent />}
         <StatBlock label="ENERGY" value={showEnergy ? stats.total_energy_kwh.toFixed(2) : '—'} unit={showEnergy ? 'kWh' : undefined} />
       </View>
       {stats.energy_data_warming_up && (
@@ -629,7 +719,7 @@ function StatsBanner({ stats }: { stats: ArchiveStats }) {
   );
 }
 
-function HistoryRow({ entry, client, camToken }: { entry: PrintLogEntry; client: BambuddyClient; camToken: string | null }) {
+function HistoryRow({ entry, client, camToken, sym, onReprint }: { entry: PrintLogEntry; client: BambuddyClient; camToken: string | null; sym: string; onReprint?: (e: PrintLogEntry) => void }) {
   const meta = statusMeta(entry.status);
   const swatch = firstColor(entry.filament_color);
   const thumb = client.printLogThumbUrl(entry.id, camToken, entry.thumbnail_path);
@@ -640,10 +730,11 @@ function HistoryRow({ entry, client, camToken }: { entry: PrintLogEntry; client:
   if (entry.filament_used_grams != null) facts.push(`${Math.round(entry.filament_used_grams)}g`);
   if (entry.energy_kwh != null) facts.push(`${entry.energy_kwh.toFixed(2)} kWh`);
   const cost = entry.cost ?? entry.energy_cost;
+  const canReprint = !!onReprint && entry.archive_id != null;
 
   return (
-    <View style={{ flexDirection: 'row', gap: 13, padding: 12, borderRadius: 16, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
-      <View style={{ width: 58, height: 58, borderRadius: 12, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+    <Tap onPress={canReprint ? () => onReprint!(entry) : undefined} disabled={!canReprint} style={{ flexDirection: 'row', gap: 13, padding: 12, borderRadius: 16, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
+      <View style={{ width: 58, height: 58, borderRadius: 12, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
         {thumb ? (
           <Image source={{ uri: thumb }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
         ) : (
@@ -662,41 +753,61 @@ function HistoryRow({ entry, client, camToken }: { entry: PrintLogEntry; client:
           <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{relTime(entry.started_at)}</Text>
           {facts.length > 0 && <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>· {facts.join(' · ')}</Text>}
           {cost != null && cost > 0 && (
-            <Text style={{ fontWeight: '600', fontSize: 11, color: c.accent, fontFamily: mono }}>· ${cost.toFixed(2)}</Text>
+            <Text style={{ fontWeight: '600', fontSize: 11, color: c.accent, fontFamily: mono }}>· {fmtMoney(sym, cost)}</Text>
           )}
         </View>
+        {!!entry.printer_name && (
+          <Text style={{ marginTop: 4, fontWeight: '500', fontSize: 10, color: c.t3, fontFamily: mono }}>{entry.printer_name}</Text>
+        )}
       </View>
-    </View>
+    </Tap>
   );
 }
 
-export function HistoryView({ client, camToken }: { client: BambuddyClient; camToken: string | null }) {
+export function HistoryView({ client, camToken, printerId }: { client: BambuddyClient; camToken: string | null; printerId: number }) {
   const [entries, setEntries] = useState<PrintLogEntry[] | null>(null);
   const [stats, setStats] = useState<ArchiveStats | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const sym = currencySymbol(settings?.currency);
 
   const load = useCallback(() => {
-    client.getPrintLog(50).then((p) => setEntries(p.items)).catch(() => setEntries([]));
+    client.getPrintLog(50).then((p) => { setEntries(p.items); setLoadFailed(false); }).catch(() => { setEntries((prev) => prev ?? []); setLoadFailed(true); });
     client.getArchiveStats().then(setStats).catch(() => setStats(null));
   }, [client]);
   useEffect(() => {
     load();
+    client.getSettings().then(setSettings).catch(() => setSettings(null));
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, client]);
+
+  const reprint = (e: PrintLogEntry) => {
+    if (e.archive_id == null) return;
+    Alert.alert('Print again?', `“${e.print_name || `Print ${e.id}`}” goes back into the queue.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Print again',
+        onPress: () =>
+          client.reprint(e.archive_id!, printerId).then(() => Alert.alert('Queued', 'The job is back in the queue.')).catch((err) => Alert.alert('Couldn’t reprint', String(err))),
+      },
+    ]);
+  };
 
   return (
     <Page title="History">
-      {entries === null && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
-      {entries !== null && stats && stats.total_prints > 0 && <StatsBanner stats={stats} />}
-      {entries?.length === 0 && (
+      {entries === null && !loadFailed && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
+      {loadFailed && <LoadFailed onRetry={load} />}
+      {entries !== null && stats && stats.total_prints > 0 && <StatsBanner stats={stats} sym={sym} />}
+      {entries?.length === 0 && !loadFailed && (
         <Empty icon="clock" title="No prints yet" body="Once you finish a print it's archived here with its stats, filament, and cost." />
       )}
       {!!entries?.length && (
         <>
-          <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono, paddingHorizontal: 20, paddingTop: 26, paddingBottom: 12 }}>RECENT PRINTS</Text>
+          <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono, paddingHorizontal: 20, paddingTop: 26, paddingBottom: 12 }}>RECENT PRINTS · TAP TO REPRINT</Text>
           <View style={{ paddingHorizontal: 20, gap: 10 }}>
             {entries.map((e) => (
-              <HistoryRow key={e.id} entry={e} client={client} camToken={camToken} />
+              <HistoryRow key={e.id} entry={e} client={client} camToken={camToken} sym={sym} onReprint={reprint} />
             ))}
           </View>
         </>

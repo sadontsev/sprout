@@ -31,6 +31,10 @@ const dark = {
   idleDim: 'rgba(142,147,152,0.14)',
   sheet: '#16181B',
   tabbar: 'rgba(13,14,16,0.72)',
+  /** Neutral well behind thumbnails/camera tiles. */
+  thumb: '#0e1113',
+  /** Supports accent (amber) — matches the layer-view support color. */
+  supports: '#E8A23D',
 };
 
 const light: typeof dark = {
@@ -59,6 +63,8 @@ const light: typeof dark = {
   idleDim: 'rgba(154,160,166,0.14)',
   sheet: '#FFFFFF',
   tabbar: 'rgba(244,246,248,0.8)',
+  thumb: '#E4E7EA',
+  supports: '#C77E14',
 };
 
 export const themes: Record<ThemeName, Palette> = { dark, light };
