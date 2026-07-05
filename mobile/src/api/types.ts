@@ -77,7 +77,21 @@ export interface PrinterStatus {
   supports_chamber_heater?: boolean;
   /** Archive of the current/most recent print — reprint target. */
   current_archive_id?: number | null;
+  /** The nozzle(s) mounted on the toolhead now — index 0 = nozzle/left, 1 = nozzle_2/right. */
   nozzles?: Array<{ nozzle_type?: string; nozzle_diameter?: string }>;
+  /** H2-series swappable-nozzle store. Empty slots carry serial "N/A" / max_temp 0. Numeric
+   *  fields may arrive as strings over the WS — coerce with asNum(). */
+  nozzle_rack?: Array<{
+    id: number;
+    nozzle_type?: string; // "HS01" | "HS00" | ...
+    nozzle_diameter?: string | number; // "0.4"
+    wear?: number | string;
+    max_temp?: number | string;
+    serial_number?: string; // "N/A" when the slot is empty
+    filament_color?: string; // RGBA hex of the filament last paired to this nozzle
+    filament_id?: string;
+    filament_type?: string;
+  }>;
 }
 
 export type SpeedMode = 1 | 2 | 3 | 4; // silent | standard | sport | ludicrous

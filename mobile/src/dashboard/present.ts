@@ -92,6 +92,65 @@ export function normColor(hex?: string): string | null {
   return null;
 }
 
+// ---- Nozzles / hotends (H2-series dual toolhead + swappable rack) ----
+export interface HotendVM {
+  label: string; // "Left" | "Right" | "Nozzle"
+  type: string; // "HS01", "Hardened steel", …
+  diameter: string; // "0.4 mm"
+  now: number;
+  target: number;
+  heating: boolean;
+  active: boolean;
+}
+export interface RackNozzleVM {
+  id: number;
+  diameter: string; // "0.4 mm"
+  type: string;
+  colorHex: string | null; // filament last paired to this nozzle
+  serial: string; // short tail of the serial, '' if none
+}
+
+const NOZZLE_TYPE_LABEL: Record<string, string> = {
+  HS01: 'Hardened',
+  HS00: 'Stainless',
+  hardened_steel: 'Hardened',
+  stainless_steel: 'Stainless',
+};
+const nozzleType = (t?: string): string => (t ? NOZZLE_TYPE_LABEL[t] ?? t : '');
+const nozzleDia = (d?: string | number): string => {
+  const n = asNum(d);
+  return n != null ? `${n} mm` : '';
+};
+
+/** Pure: the mounted hotend(s) + the swappable rack for the printer-hardware view. Empty rack
+ *  slots (serial "N/A"/blank) are dropped. Mirrors presentDashboard's active-nozzle logic. */
+export function presentNozzles(status: PrinterStatus | null): { mounted: HotendVM[]; rack: RackNozzleVM[]; dual: boolean } {
+  if (!status) return { mounted: [], rack: [], dual: false };
+  const vm = presentDashboard(status);
+  const mountedInfo = status.nozzles ?? [];
+  const dual = vm.nozzles.length > 1;
+  const mounted: HotendVM[] = vm.nozzles.map((n, i) => ({
+    label: dual ? (i === 0 ? 'Left' : 'Right') : 'Nozzle',
+    type: nozzleType(mountedInfo[i]?.nozzle_type),
+    diameter: nozzleDia(mountedInfo[i]?.nozzle_diameter),
+    now: n.now,
+    target: n.target,
+    heating: n.heating,
+    active: n.active,
+  }));
+  const rack: RackNozzleVM[] = (status.nozzle_rack ?? [])
+    .filter((r) => r.serial_number && r.serial_number !== 'N/A' && (asNum(r.max_temp) ?? 0) > 0)
+    .map((r) => ({
+      id: r.id,
+      diameter: nozzleDia(r.nozzle_diameter),
+      type: nozzleType(r.nozzle_type),
+      // "00000000" = alpha 0 = no filament paired; anything else is a real swatch.
+      colorHex: r.filament_color && r.filament_color !== '00000000' ? normColor(r.filament_color) : null,
+      serial: r.serial_number ? r.serial_number.slice(-4) : '',
+    }));
+  return { mounted, rack, dual };
+}
+
 /** "0500050000010007" -> "0500-0500-0001-0007" (the format Bambu's HMS docs use). */
 export function fmtHmsCode(fullCode?: string | null): string | null {
   if (!fullCode) return null;

@@ -1,4 +1,4 @@
-import { presentDashboard, fmtDuration, normColor, fmtHmsCode, asNum } from '../present';
+import { presentDashboard, presentNozzles, fmtDuration, normColor, fmtHmsCode, asNum } from '../present';
 import type { PrinterStatus } from '../../api/types';
 
 const running: PrinterStatus = {
@@ -176,6 +176,56 @@ test('presentDashboard tolerates string temps in the temperatures block', () => 
   const vm = presentDashboard({ ...running, temperatures: { nozzle: '220' as unknown as number, nozzle_target: '220' as unknown as number, bed: '60' as unknown as number, bed_target: '60' as unknown as number } });
   expect(vm.nozzleNow).toBe(220);
   expect(vm.bedNow).toBe(60);
+});
+
+// Mirrors the real live H2C nozzle payload (dual toolhead + swappable rack, 2026-07-05).
+const h2cNozzles: PrinterStatus = {
+  ...h2cRunning,
+  temperatures: { ...h2cRunning.temperatures, nozzle: 250, nozzle_target: 250, nozzle_2: 47, nozzle_2_target: 25 },
+  nozzles: [{ nozzle_type: 'HS01', nozzle_diameter: '0.4' }, { nozzle_type: 'HS01', nozzle_diameter: '0.4' }],
+  nozzle_rack: [
+    { id: 0, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2413139', filament_color: 'C9A38180' },
+    { id: 1, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 0, max_temp: 0, serial_number: 'N/A', filament_color: '00000000' }, // empty slot
+    { id: 17, nozzle_type: 'HS00', nozzle_diameter: '0.2', wear: 128, max_temp: 350, serial_number: '20D06A5A2411698', filament_color: '00000000' },
+    { id: 19, nozzle_type: 'HS01', nozzle_diameter: '0.6', wear: 128, max_temp: 350, serial_number: '20D06A5A1504039', filament_color: '00000000' },
+  ],
+};
+
+describe('presentNozzles', () => {
+  it('surfaces both mounted hotends with live temps; active = the hotter/driven one', () => {
+    const { mounted, dual } = presentNozzles(h2cNozzles);
+    expect(dual).toBe(true);
+    expect(mounted.map((m) => m.label)).toEqual(['Left', 'Right']);
+    expect(mounted[0]).toMatchObject({ now: 250, target: 250, diameter: '0.4 mm', type: 'Hardened', active: true });
+    expect(mounted[1]).toMatchObject({ now: 47, active: false });
+  });
+
+  it('lists rack nozzles, dropping the empty slot, with diameter/type/serial', () => {
+    const { rack } = presentNozzles(h2cNozzles);
+    expect(rack.map((r) => r.id)).toEqual([0, 17, 19]); // slot 1 (serial N/A / max_temp 0) dropped
+    expect(rack.find((r) => r.id === 17)).toMatchObject({ diameter: '0.2 mm', type: 'Stainless', serial: '1698' });
+    expect(rack.find((r) => r.id === 19)?.diameter).toBe('0.6 mm');
+  });
+
+  it('pairs a filament color only when one is set (00000000 = none)', () => {
+    const { rack } = presentNozzles(h2cNozzles);
+    expect(rack.find((r) => r.id === 0)?.colorHex).toBe('#C9A381'); // has filament
+    expect(rack.find((r) => r.id === 17)?.colorHex).toBeNull(); // 00000000
+  });
+
+  it('single-nozzle A1: one mounted nozzle, no rack', () => {
+    const a1: PrinterStatus = { ...running, nozzles: [{ nozzle_type: 'hardened_steel', nozzle_diameter: '0.4' }, { nozzle_type: '', nozzle_diameter: '' }], nozzle_rack: [] };
+    const { mounted, rack, dual } = presentNozzles(a1);
+    expect(dual).toBe(false);
+    expect(mounted).toHaveLength(1);
+    expect(mounted[0]).toMatchObject({ label: 'Nozzle', diameter: '0.4 mm', type: 'Hardened' });
+    expect(rack).toEqual([]);
+  });
+
+  it('is safe with no nozzle data', () => {
+    expect(presentNozzles(null)).toEqual({ mounted: [], rack: [], dual: false });
+    expect(presentNozzles(running).rack).toEqual([]);
+  });
 });
 
 test('fmtDuration + normColor + fmtHmsCode helpers', () => {
