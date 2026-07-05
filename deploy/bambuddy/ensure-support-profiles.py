@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Ensure a support-enabled twin of each A1 quality profile exists in Bambuddy.
+Ensure a support-enabled twin of each quality profile exists in Bambuddy, per printer model
+(A1 + H2C — extend MODEL_TOKENS when a new machine joins the fleet).
 
 WHY: the app's scoped API key cannot create presets (admin-only, 403), and Bambuddy's slice API has
 no per-setting override — so the only way to slice *with supports* from the app is to have a
-support-enabled *process profile* already present. This creates one per A1 0.4-nozzle quality preset
+support-enabled *process profile* already present. This creates one per 0.4-nozzle quality preset
 by INHERITING the standard profile and flipping `enable_support` on (Bambuddy resolves `inherits`
 against its cached base presets, so we only store the delta). The app then offers a "Supports" toggle
 that selects the matching twin.
@@ -23,7 +24,9 @@ USAGE:
 import argparse, getpass, json, os, re, sys, urllib.error, urllib.request
 
 BASE = os.environ.get("BAMBUDDY_URL", "https://bambuddy.example.com").rstrip("/")
-SUFFIX = " @BBL A1"
+# "@BBL <model>" preset-name suffixes, one per machine in the fleet (matches the app's
+# mobile/src/printers/profile.ts presetToken values).
+MODEL_TOKENS = ["@BBL A1", "@BBL H2C"]
 TWIN_INSERT = " + Supports"  # "0.20mm Standard @BBL A1" -> "0.20mm Standard + Supports @BBL A1"
 
 
@@ -51,12 +54,19 @@ def req(method, path, token=None, body=None):
             return e.code, {}
 
 
-def is_a1(name):
-    return "A1" in name and "A1M" not in name and "mini" not in name.lower()
+def is_model_quality(name, token):
+    """A 0.4-nozzle (unsuffixed) quality preset for exactly this model — "@BBL A1" must not
+    match "@BBL A1M", and 0.2/0.6/0.8-nozzle variants are excluded."""
+    if not re.search(r"0\.\d+mm .*" + re.escape(token) + r"(?!\S)", name):
+        return False
+    if re.search(r"0\.[268] nozzle", name):
+        return False
+    return True
 
 
-def twin_name(base_name):
-    return base_name.replace(SUFFIX, TWIN_INSERT + SUFFIX) if base_name.endswith(SUFFIX) else base_name + TWIN_INSERT
+def twin_name(base_name, token):
+    suffix = " " + token
+    return base_name.replace(suffix, TWIN_INSERT + suffix) if base_name.endswith(suffix) else base_name + TWIN_INSERT
 
 
 def main():
@@ -72,22 +82,28 @@ def main():
     if not pw:
         pw = getpass.getpass("Bambuddy admin password (hidden): ")
 
-    st, login = req("POST", "/api/v1/auth/login", body={"username": user, "password": pw})
-    token = login.get("access_token")
-    if not token:
-        if login.get("requires_2fa"):
-            sys.exit("Admin account has 2FA enabled — run this where you can complete 2FA, or disable it for this service account.")
-        sys.exit(f"Login failed (HTTP {st}): {json.dumps(login)[:300]}")
+    def login():
+        st, resp = req("POST", "/api/v1/auth/login", body={"username": user, "password": pw})
+        tok = resp.get("access_token")
+        if not tok:
+            if resp.get("requires_2fa"):
+                sys.exit("Admin account has 2FA enabled — run this where you can complete 2FA, or disable it for this service account.")
+            sys.exit(f"Login failed (HTTP {st}): {json.dumps(resp)[:300]}")
+        return tok
+
+    token = login()
 
     st, presets = req("GET", "/api/v1/slicer/presets", token)
     if st != 200:
         sys.exit(f"Couldn't read presets (HTTP {st})")
 
     std = (presets.get("standard") or {}).get("process") or []
-    # the same A1 0.4-nozzle quality set the app shows (exclude 0.2/0.6/0.8-nozzle variants and existing support twins)
+    # the same 0.4-nozzle quality set the app shows per model (no nozzle variants, no existing twins)
     qualities = [
-        p for p in std
-        if is_a1(p.get("name", "")) and re.search(r"0\.\d+mm .*@BBL A1", p["name"]) and not re.search(r"0\.[268] nozzle", p["name"]) and not re.search(r"support|tree", p["name"], re.I)
+        (p, token)
+        for token in MODEL_TOKENS
+        for p in std
+        if is_model_quality(p.get("name", ""), token) and not re.search(r"support|tree", p["name"], re.I)
     ]
 
     # Map existing local presets by name -> (id, type) across ALL groups, so we can detect twins that
@@ -101,8 +117,8 @@ def main():
                     existing[it["name"]] = (it.get("id"), it.get("preset_type") or grp)
 
     created, skipped, failed = [], [], []
-    for q in qualities:
-        name = twin_name(q["name"])
+    for q, token in qualities:
+        name = twin_name(q["name"], token)
         prev = existing.get(name)
         if prev and prev[1] == "process":
             skipped.append(name)
@@ -125,9 +141,13 @@ def main():
         if prev:  # mis-typed twin from an earlier run -> remove it first
             req("DELETE", f"/api/v1/local-presets/{prev[0]}", token)
         st, resp = req("POST", "/api/v1/local-presets/", token, {"name": name, "preset_type": "process", "setting": setting})
+        if st == 401:  # token can expire mid-run (the preset aggregation read is slow) — re-login once
+            token = login()
+            st, resp = req("POST", "/api/v1/local-presets/", token, {"name": name, "preset_type": "process", "setting": setting})
         (created if st in (200, 201) else failed).append(name if st in (200, 201) else f"{name}  -> HTTP {st}: {json.dumps(resp)[:160]}")
 
-    print(f"\nBase A1 qualities found: {len(qualities)}")
+    per_model = {t: sum(1 for _, tk in qualities if tk == t) for t in MODEL_TOKENS}
+    print(f"\nBase qualities found: {len(qualities)} ({', '.join(f'{t}: {n}' for t, n in per_model.items())})")
     print(f"Created : {len(created)}")
     for n in created:
         print("   +", n)
