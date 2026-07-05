@@ -51,8 +51,10 @@ export interface PrinterStatus {
   } | null;
   ams?: Array<{
     id: number;
-    humidity?: number; // %
-    temp?: number; // °C inside the AMS
+    // NOTE: the WebSocket delivers these as STRINGS ("30.4"); REST sends real numbers. Read via
+    // asNum() (src/dashboard/present.ts) before any number method — a raw .toFixed() crashes.
+    humidity?: number | string; // %
+    temp?: number | string; // °C inside the AMS
     is_ams_ht?: boolean;
     module_type?: string; // e.g. "n3f" (AMS 2 Pro)
     dry_status?: number; // non-zero while drying
