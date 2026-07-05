@@ -40,7 +40,8 @@ const h2cRunning: PrinterStatus = {
   hms_errors: [{ code: '0x10007', attr: 83887360, module: 5, severity: 5, full_code: '0500050000010007' }],
   speed_level: 2,
   stg_cur_name: 'Printing',
-  active_extruder: 0,
+  // active_extruder omitted -> tests exercise the temperature fallback; the dedicated test below
+  // covers the active_extruder path explicitly.
 };
 
 test('null -> connecting', () => {
@@ -192,40 +193,49 @@ const h2cNozzles: PrinterStatus = {
 };
 
 describe('presentNozzles', () => {
-  it('surfaces both mounted hotends with live temps; active = the hotter/driven one', () => {
-    const { mounted, dual } = presentNozzles(h2cNozzles);
+  it('mounted = spec per toolhead (Left/Right), no temps duplicated; active from active_extruder', () => {
+    const { mounted, dual } = presentNozzles({ ...h2cNozzles, active_extruder: 1 });
     expect(dual).toBe(true);
     expect(mounted.map((m) => m.label)).toEqual(['Left', 'Right']);
-    expect(mounted[0]).toMatchObject({ now: 250, target: 250, diameter: '0.4 mm', type: 'Hardened', active: true });
-    expect(mounted[1]).toMatchObject({ now: 47, active: false });
+    expect(mounted[0]).toMatchObject({ spec: '0.4 mm · Hardened', active: false });
+    expect(mounted[1]).toMatchObject({ spec: '0.4 mm · Hardened', active: true }); // active_extruder 1 = right
+    // spec-only: no temperature fields leak into the inventory view
+    expect((mounted[0] as unknown as Record<string, unknown>).now).toBeUndefined();
   });
 
-  it('lists rack nozzles, dropping the empty slot, with diameter/type/serial', () => {
-    const { rack } = presentNozzles(h2cNozzles);
-    expect(rack.map((r) => r.id)).toEqual([0, 17, 19]); // slot 1 (serial N/A / max_temp 0) dropped
-    expect(rack.find((r) => r.id === 17)).toMatchObject({ diameter: '0.2 mm', type: 'Stainless', serial: '1698' });
-    expect(rack.find((r) => r.id === 19)?.diameter).toBe('0.6 mm');
+  it('vortex lists rack nozzles, drops the empty slot, flags the loaded one', () => {
+    const { vortex } = presentNozzles(h2cNozzles);
+    expect(vortex.map((r) => r.id)).toEqual([0, 17, 19]); // slot 1 (serial N/A / max_temp 0) dropped
+    expect(vortex.find((r) => r.id === 17)).toMatchObject({ diameter: '0.2 mm', type: 'Stainless', serial: '1698', loaded: false });
+    expect(vortex.find((r) => r.id === 19)?.diameter).toBe('0.6 mm');
+    // id 0 has filament threaded -> loaded, with a swatch
+    expect(vortex.find((r) => r.id === 0)).toMatchObject({ loaded: true, colorHex: '#C9A381' });
+    expect(vortex.find((r) => r.id === 17)?.colorHex).toBeNull(); // 00000000 = none
   });
 
-  it('pairs a filament color only when one is set (00000000 = none)', () => {
-    const { rack } = presentNozzles(h2cNozzles);
-    expect(rack.find((r) => r.id === 0)?.colorHex).toBe('#C9A381'); // has filament
-    expect(rack.find((r) => r.id === 17)?.colorHex).toBeNull(); // 00000000
-  });
-
-  it('single-nozzle A1: one mounted nozzle, no rack', () => {
+  it('single-nozzle A1: one mounted nozzle, no vortex', () => {
     const a1: PrinterStatus = { ...running, nozzles: [{ nozzle_type: 'hardened_steel', nozzle_diameter: '0.4' }, { nozzle_type: '', nozzle_diameter: '' }], nozzle_rack: [] };
-    const { mounted, rack, dual } = presentNozzles(a1);
+    const { mounted, vortex, dual } = presentNozzles(a1);
     expect(dual).toBe(false);
     expect(mounted).toHaveLength(1);
-    expect(mounted[0]).toMatchObject({ label: 'Nozzle', diameter: '0.4 mm', type: 'Hardened' });
-    expect(rack).toEqual([]);
+    expect(mounted[0]).toMatchObject({ label: 'Nozzle', spec: '0.4 mm · Hardened' });
+    expect(vortex).toEqual([]);
   });
 
   it('is safe with no nozzle data', () => {
-    expect(presentNozzles(null)).toEqual({ mounted: [], rack: [], dual: false });
-    expect(presentNozzles(running).rack).toEqual([]);
+    expect(presentNozzles(null)).toEqual({ mounted: [], vortex: [], dual: false });
+    expect(presentNozzles(running).vortex).toEqual([]);
   });
+});
+
+test('active nozzle follows active_extruder, not just temperature', () => {
+  // Left hotter (250) but the printer says the right (1) is active — trust the printer.
+  const vm = presentDashboard({ ...h2cRunning, active_extruder: 1, temperatures: { nozzle: 250, nozzle_target: 250, nozzle_2: 220, nozzle_2_target: 225 } });
+  expect(vm.nozzles[0].active).toBe(false);
+  expect(vm.nozzles[1].active).toBe(true);
+  // Without active_extruder, fall back to the hotter nozzle.
+  const vm2 = presentDashboard({ ...h2cRunning, active_extruder: undefined, temperatures: { nozzle: 250, nozzle_target: 250, nozzle_2: 220, nozzle_2_target: 225 } });
+  expect(vm2.nozzles[0].active).toBe(true);
 });
 
 test('fmtDuration + normColor + fmtHmsCode helpers', () => {
