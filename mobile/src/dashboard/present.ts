@@ -92,21 +92,23 @@ export function normColor(hex?: string): string | null {
   return null;
 }
 
-// ---- Nozzles / hotends (H2-series dual toolhead + swappable vortex) ----
-// Inventory view: which nozzle is on each toolhead + the swap pool. Temperatures live on the
-// dashboard (labelled Left/Right) — this view is deliberately spec-only so they aren't duplicated.
-export interface MountedNozzleVM {
-  label: string; // "Left" | "Right" | "Nozzle"
-  spec: string; // "0.4 mm · Hardened"
-  active: boolean; // the currently-selected extruder
-}
+// ---- Nozzles / hotends (H2-series: a fixed Left toolhead + a swappable Right "vortex") ----
+// Inventory view grouped by toolhead. Temperatures live on the dashboard (labelled Left/Right) —
+// this view is deliberately spec-only so they aren't duplicated.
 export interface RackNozzleVM {
-  id: number;
+  key: string;
   diameter: string; // "0.4 mm"
   type: string; // "Hardened" | "Stainless"
-  colorHex: string | null; // filament currently threaded (=> loaded)
+  colorHex: string | null; // filament currently threaded (=> mounted)
   serial: string; // short tail of the serial, '' if none
-  loaded: boolean; // has filament -> currently in use on a toolhead
+  mounted: boolean; // has filament -> currently mounted on the toolhead
+}
+export interface ToolheadVM {
+  side: 'left' | 'right' | 'single';
+  label: string; // "Left" | "Right" | "Nozzle"
+  active: boolean; // the currently-selected extruder
+  swappable: boolean; // has a vortex (more than one nozzle to choose from)
+  nozzles: RackNozzleVM[];
 }
 
 const NOZZLE_TYPE_LABEL: Record<string, string> = {
@@ -121,32 +123,67 @@ const nozzleDia = (d?: string | number): string => {
   return n != null ? `${n} mm` : '';
 };
 
-/** Pure: the mounted nozzle(s) per toolhead + the swappable vortex pool, for the hardware view.
- *  Empty rack slots (serial "N/A"/blank) are dropped. Spec-only (no temps — see above). */
-export function presentNozzles(status: PrinterStatus | null): { mounted: MountedNozzleVM[]; vortex: RackNozzleVM[]; dual: boolean } {
-  if (!status) return { mounted: [], vortex: [], dual: false };
+/**
+ * Pure: nozzles grouped by toolhead. On the H2-series the nozzle_rack `id` encodes the extruder in
+ * its high nibble — `id >> 4` is 0 for the LEFT toolhead (a single fixed nozzle) and 1 for the RIGHT
+ * (a vortex it swaps between). Verified against active_extruder + ams_extruder_map. Machines with no
+ * rack (A1) fall back to their mounted `nozzles` spec. Empty rack slots (serial "N/A") are dropped.
+ */
+export function presentNozzles(status: PrinterStatus | null): { toolheads: ToolheadVM[]; hasVortex: boolean } {
+  if (!status) return { toolheads: [], hasVortex: false };
+  const ae = asNum(status.active_extruder);
+  const rack = (status.nozzle_rack ?? []).filter((r) => r.serial_number && r.serial_number !== 'N/A' && (asNum(r.max_temp) ?? 0) > 0);
+
+  if (rack.length > 0) {
+    const toNozzle = (r: NonNullable<PrinterStatus['nozzle_rack']>[number]): RackNozzleVM => {
+      const mounted = !!(r.filament_color && r.filament_color !== '00000000');
+      return {
+        key: String(r.id),
+        diameter: nozzleDia(r.nozzle_diameter),
+        type: nozzleType(r.nozzle_type),
+        colorHex: mounted ? normColor(r.filament_color) : null,
+        serial: r.serial_number ? r.serial_number.slice(-4) : '',
+        mounted,
+      };
+    };
+    const byExtruder = new Map<number, RackNozzleVM[]>();
+    for (const r of rack) {
+      const ext = Math.max(0, r.id) >> 4; // 0 = left, 1 = right
+      byExtruder.set(ext, [...(byExtruder.get(ext) ?? []), toNozzle(r)]);
+    }
+    const exts = [...byExtruder.keys()].sort((a, b) => a - b);
+    const dual = exts.length > 1;
+    const toolheads: ToolheadVM[] = exts.map((ext) => {
+      const nozzles = byExtruder.get(ext)!;
+      return {
+        side: dual ? (ext === 0 ? 'left' : 'right') : 'single',
+        label: dual ? (ext === 0 ? 'Left' : 'Right') : 'Nozzle',
+        active: ae === ext,
+        swappable: nozzles.length > 1,
+        nozzles,
+      };
+    });
+    return { toolheads, hasVortex: toolheads.some((t) => t.swappable) };
+  }
+
+  // No rack (A1 etc.): one non-swappable toolhead per mounted nozzle, spec from status.nozzles.
   const vm = presentDashboard(status);
   const info = status.nozzles ?? [];
   const dual = vm.nozzles.length > 1;
-  const mounted: MountedNozzleVM[] = vm.nozzles.map((n, i) => ({
-    label: dual ? (i === 0 ? 'Left' : 'Right') : 'Nozzle',
-    spec: [nozzleDia(info[i]?.nozzle_diameter), nozzleType(info[i]?.nozzle_type)].filter(Boolean).join(' · '),
-    active: n.active,
-  }));
-  const vortex: RackNozzleVM[] = (status.nozzle_rack ?? [])
-    .filter((r) => r.serial_number && r.serial_number !== 'N/A' && (asNum(r.max_temp) ?? 0) > 0)
-    .map((r) => {
-      const loaded = !!(r.filament_color && r.filament_color !== '00000000');
+  const toolheads: ToolheadVM[] = vm.nozzles
+    .map((n, i): ToolheadVM => {
+      const diameter = nozzleDia(info[i]?.nozzle_diameter);
+      const type = nozzleType(info[i]?.nozzle_type);
       return {
-        id: r.id,
-        diameter: nozzleDia(r.nozzle_diameter),
-        type: nozzleType(r.nozzle_type),
-        colorHex: loaded ? normColor(r.filament_color) : null,
-        serial: r.serial_number ? r.serial_number.slice(-4) : '',
-        loaded,
+        side: dual ? (i === 0 ? 'left' : 'right') : 'single',
+        label: dual ? (i === 0 ? 'Left' : 'Right') : 'Nozzle',
+        active: n.active,
+        swappable: false,
+        nozzles: diameter || type ? [{ key: `m${i}`, diameter, type, colorHex: null, serial: '', mounted: n.active }] : [],
       };
-    });
-  return { mounted, vortex, dual };
+    })
+    .filter((t) => t.nozzles.length > 0);
+  return { toolheads, hasVortex: false };
 }
 
 /** "0500050000010007" -> "0500-0500-0001-0007" (the format Bambu's HMS docs use). */

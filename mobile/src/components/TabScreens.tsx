@@ -462,69 +462,70 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
 }
 
 // ---------------- NOZZLES / HOTENDS ----------------
-// Inventory view. No temperatures here (those are on the dashboard, labelled Left/Right) so nothing
-// is shown twice. When the machine has a swap rack (H2-series vortex), that grid IS the nozzle
-// inventory — "in use" badges mark the ones currently mounted, so we don't add redundant mounted
-// cards. Single-toolhead machines with no rack fall back to a simple spec card.
+// Inventory grouped by toolhead. No temperatures here (those are on the dashboard, labelled
+// Left/Right) so nothing is shown twice. The H2-series has a fixed Left nozzle and a Right "vortex"
+// it swaps between — each toolhead gets its own labelled group so it's clear which is which.
+type NozzleCardVM = ReturnType<typeof presentNozzles>['toolheads'][number]['nozzles'][number];
+
+function NozzleCard({ n, showMounted }: { n: NozzleCardVM; showMounted: boolean }) {
+  const highlight = showMounted && n.mounted; // only spotlight the mounted one within a vortex
+  return (
+    <View style={{ width: '47%', flexGrow: 1, padding: 13, borderRadius: 15, backgroundColor: c.s1, borderWidth: highlight ? 1.5 : 1, borderColor: highlight ? c.accent : c.line, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+      <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: n.colorHex ?? c.s3, borderWidth: n.colorHex ? 0 : 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
+        <Feather name="chevron-down" size={14} color={n.colorHex ? '#fff' : c.t3} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>{n.diameter || 'Nozzle'}</Text>
+          {showMounted && n.mounted && (
+            <View style={{ paddingHorizontal: 5, paddingVertical: 1.5, borderRadius: 5, backgroundColor: c.accentDim }}>
+              <Text style={{ fontWeight: '600', fontSize: 7.5, letterSpacing: 0.4, color: c.accent, fontFamily: mono }}>MOUNTED</Text>
+            </View>
+          )}
+        </View>
+        <Text numberOfLines={1} style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>
+          {[n.type, n.serial && `#${n.serial}`].filter(Boolean).join(' · ')}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function NozzlesSection({ status }: { status: PrinterStatus | null }) {
-  const { mounted, vortex } = presentNozzles(status);
-  const specced = mounted.filter((m) => m.spec); // only cards that actually carry a diameter/type
-  if (vortex.length === 0 && specced.length === 0) return null;
-  const inUse = vortex.filter((r) => r.loaded).length;
+  const { toolheads } = presentNozzles(status);
+  if (toolheads.length === 0) return null;
 
   return (
     <View>
-      <SectionHead label="NOZZLES" right={vortex.length > 0 ? `${vortex.length} total` : undefined} />
-
-      {vortex.length > 0 ? (
-        <>
-          <Text style={{ paddingHorizontal: 20, paddingBottom: 12, fontWeight: '500', fontSize: 12, lineHeight: 16, color: c.t3 }}>
-            The printer swaps these onto its toolheads.{inUse > 0 ? ` ${inUse} mounted now (“in use”).` : ''}
-          </Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10 }}>
-            {vortex.map((r) => (
-              <View key={r.id} style={{ width: '47%', flexGrow: 1, padding: 13, borderRadius: 15, backgroundColor: c.s1, borderWidth: r.loaded ? 1.5 : 1, borderColor: r.loaded ? c.accent : c.line, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
-                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: r.colorHex ?? c.s3, borderWidth: r.colorHex ? 0 : 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="chevron-down" size={14} color={r.colorHex ? '#fff' : c.t3} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>{r.diameter || 'Nozzle'}</Text>
-                    {r.loaded && (
-                      <View style={{ paddingHorizontal: 5, paddingVertical: 1.5, borderRadius: 5, backgroundColor: c.accentDim }}>
-                        <Text style={{ fontWeight: '600', fontSize: 7.5, letterSpacing: 0.4, color: c.accent, fontFamily: mono }}>IN USE</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text numberOfLines={1} style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>
-                    {[r.type, r.serial && `#${r.serial}`].filter(Boolean).join(' · ')}
-                  </Text>
-                </View>
+      <SectionHead label="NOZZLES" />
+      {toolheads.map((th) => (
+        <View key={th.side + th.label} style={{ marginBottom: 4 }}>
+          {/* Sub-header: which side, fixed vs vortex, and whether it's the active extruder. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingBottom: 10 }}>
+            <Text style={{ fontWeight: '700', fontSize: 13, color: c.t1 }}>{th.label}</Text>
+            {th.side !== 'single' && (
+              <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: c.t3, fontFamily: mono }}>
+                {th.swappable ? `VORTEX · ${th.nozzles.length}` : 'FIXED'}
+              </Text>
+            )}
+            {th.active && (
+              <View style={{ paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 5, backgroundColor: c.accentDim }}>
+                <Text style={{ fontWeight: '600', fontSize: 8, letterSpacing: 0.5, color: c.accent, fontFamily: mono }}>ACTIVE</Text>
               </View>
+            )}
+          </View>
+          {th.swappable && (
+            <Text style={{ paddingHorizontal: 20, paddingBottom: 10, fontWeight: '500', fontSize: 11.5, lineHeight: 15, color: c.t3 }}>
+              Swaps between these — “mounted” is loaded now.
+            </Text>
+          )}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10 }}>
+            {th.nozzles.map((n) => (
+              <NozzleCard key={n.key} n={n} showMounted={th.swappable} />
             ))}
           </View>
-        </>
-      ) : (
-        // No swap rack — just the mounted nozzle spec(s).
-        <View style={{ paddingHorizontal: 20, flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-          {specced.map((n, i) => (
-            <View key={i} style={{ flexGrow: 1, minWidth: '46%', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: c.s1, borderWidth: n.active ? 1.5 : 1, borderColor: n.active ? c.accent : c.line, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <Feather name="chevron-down" size={16} color={n.active ? c.accent : c.t3} />
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-                  <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>{n.label}</Text>
-                  {n.active && (
-                    <View style={{ paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 5, backgroundColor: c.accentDim }}>
-                      <Text style={{ fontWeight: '600', fontSize: 8, letterSpacing: 0.5, color: c.accent, fontFamily: mono }}>ACTIVE</Text>
-                    </View>
-                  )}
-                </View>
-                <Text numberOfLines={1} style={{ marginTop: 2, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{n.spec}</Text>
-              </View>
-            </View>
-          ))}
         </View>
-      )}
+      ))}
     </View>
   );
 }
