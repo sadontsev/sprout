@@ -22,3 +22,4 @@ ios/build/
 # Misc
 .idea/
 .vscode/
+mobile/simseed.json

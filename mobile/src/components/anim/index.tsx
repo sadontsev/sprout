@@ -44,6 +44,9 @@ type TapProps = {
 };
 export function Tap({ onPress, onLongPress, children, style, disabled, hitSlop, scale = 0.955, dim = 0.62 }: TapProps) {
   const p = useSharedValue(0);
+  // Cancel a mid-press animation on unmount — flushing updates for a view being torn down is the
+  // reanimated-4 New-Arch crash/freeze race (swmansion/react-native-reanimated#9402).
+  useEffect(() => () => cancelAnimation(p), [p]);
   const a = useAnimatedStyle(() => ({
     transform: [{ scale: 1 - (1 - scale) * p.value }],
     opacity: 1 - (1 - dim) * p.value,
@@ -71,6 +74,7 @@ function RollDigit({ d, h, fontSize, weight, color, letterSpacing }: { d: number
   const ty = useSharedValue(-d * h);
   useEffect(() => {
     ty.value = withTiming(-d * h, { duration: 600, easing: ROLL_EASE });
+    return () => cancelAnimation(ty);
   }, [d, h, ty]);
   const a = useAnimatedStyle(() => ({ transform: [{ translateY: ty.value }] }));
   return (
@@ -135,6 +139,7 @@ export function ProgressRing({ size = 128, stroke = 9, progress, color, track = 
   const off = useSharedValue(target);
   useEffect(() => {
     off.value = withTiming(target, { duration: 700, easing: Easing.bezier(0.4, 0, 0.2, 1) });
+    return () => cancelAnimation(off);
   }, [target, off]);
   const ringProps = useAnimatedProps(() => ({ strokeDashoffset: off.value }));
 
@@ -168,6 +173,7 @@ export function HeatBar({ pct, color, heating = false, height = 3, track = c.s3,
   const w = useSharedValue(clamp01(pct / 100));
   useEffect(() => {
     w.value = withTiming(clamp01(pct / 100), { duration: 600, easing: Easing.out(Easing.quad) });
+    return () => cancelAnimation(w);
   }, [pct, w]);
   const o = useSharedValue(1);
   useEffect(() => {
@@ -212,6 +218,7 @@ function Piece({ p }: { p: ConfettiPiece }) {
   const t = useSharedValue(0);
   useEffect(() => {
     t.value = withDelay(p.delay, withTiming(1, { duration: 1100 + p.fall, easing: Easing.bezier(0.2, 0.6, 0.4, 1) }));
+    return () => cancelAnimation(t);
   }, [t, p]);
   const a = useAnimatedStyle(() => ({
     opacity: t.value < 0.12 ? t.value / 0.12 : 1 - (t.value - 0.12) / 0.88,
@@ -239,6 +246,7 @@ export function FadeRise({ children, delay = 0, dy = 11, duration = 340, style }
   const t = useSharedValue(0);
   useEffect(() => {
     t.value = withDelay(delay, withTiming(1, { duration, easing: RISE_EASE }));
+    return () => cancelAnimation(t);
   }, [t, delay, duration]);
   const a = useAnimatedStyle(() => ({ opacity: t.value, transform: [{ translateY: (1 - t.value) * dy }] }));
   return <Animated.View style={[style, a]}>{children}</Animated.View>;
@@ -250,6 +258,7 @@ export function Toggle({ value, onChange, onColor = c.accent, offColor = c.s3 }:
   const p = useSharedValue(value ? 1 : 0);
   useEffect(() => {
     p.value = withTiming(value ? 1 : 0, { duration: 240, easing: SPRING });
+    return () => cancelAnimation(p);
   }, [value, p]);
   const track = useAnimatedStyle(() => ({ backgroundColor: interpolateColor(p.value, [0, 1], [offColor, onColor]) }));
   const knob = useAnimatedStyle(() => ({ transform: [{ translateX: 3 + p.value * 21 }] }));
@@ -270,6 +279,10 @@ export function Pop({ children, delay = 0, style }: { children?: React.ReactNode
   useEffect(() => {
     o.value = withDelay(delay, withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) }));
     s.value = withDelay(delay, withSequence(withTiming(1.12, { duration: 320, easing: Easing.out(Easing.cubic) }), withTiming(1, { duration: 220, easing: SPRING })));
+    return () => {
+      cancelAnimation(o);
+      cancelAnimation(s);
+    };
   }, [delay, s, o]);
   const a = useAnimatedStyle(() => ({ opacity: o.value, transform: [{ scale: s.value }] }));
   return <Animated.View style={[style, a]}>{children}</Animated.View>;
@@ -308,17 +321,22 @@ export function Spark({ color = c.accent, count = 6, size = 4, spread = 20 }: { 
 /** Progress bar with a nozzle glyph riding the leading edge + a glowing fill (design: extrudeBar). */
 export function ExtrudeBar({ pct, color = c.accent, height = 8, track = c.s3 }: { pct: number; color?: string; height?: number; track?: string }) {
   const w = useSharedValue(clamp01(pct / 100));
+  // Track width lives in a shared value (set from onLayout) so the nozzle can ride the edge via a
+  // TRANSFORM — animating `left`/layout props commits a ShadowTree transaction per frame, which
+  // both costs more and widens the New-Arch teardown race window.
+  const trackW = useSharedValue(0);
   useEffect(() => {
     w.value = withTiming(clamp01(pct / 100), { duration: 700, easing: Easing.bezier(0.4, 0, 0.2, 1) });
+    return () => cancelAnimation(w);
   }, [pct, w]);
   const fill = useAnimatedStyle(() => ({ width: `${w.value * 100}%` }));
-  const noz = useAnimatedStyle(() => ({ left: `${w.value * 100}%` }));
+  const noz = useAnimatedStyle(() => ({ transform: [{ translateX: w.value * trackW.value - 12 }] }));
   return (
     <View style={{ height: height + 30, paddingTop: 30 }}>
-      <View style={{ height, borderRadius: height / 2, backgroundColor: track }}>
+      <View onLayout={(e: LayoutChangeEvent) => { trackW.value = e.nativeEvent.layout.width; }} style={{ height, borderRadius: height / 2, backgroundColor: track }}>
         <Animated.View style={[{ position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: height / 2, backgroundColor: color, shadowColor: color, shadowOpacity: 0.85, shadowRadius: 6, shadowOffset: { width: 0, height: 0 } }, fill]} />
       </View>
-      <Animated.View style={[{ position: 'absolute', top: 0, transform: [{ translateX: -12 }] }, noz]}>
+      <Animated.View style={[{ position: 'absolute', top: 0, left: 0 }, noz]}>
         <Svg width={24} height={32} viewBox="48 30 96 128">
           <Rect x={60} y={36} width={72} height={50} rx={12} fill="#C2C7CC" />
           <Rect x={60} y={80} width={72} height={9} rx={4.5} fill="#878D94" />
