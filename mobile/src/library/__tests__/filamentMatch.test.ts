@@ -30,6 +30,24 @@ describe('matchFilamentPreset', () => {
   });
 });
 
+describe('matchFilamentPreset with the H2C token', () => {
+  const H2C_PRESETS: FilamentPreset[] = [
+    { id: 'h1', name: 'Bambu PETG HF @BBL H2C' },
+    { id: 'h2', name: 'Bambu PETG HF @BBL H2C 0.8 nozzle' }, // wrong nozzle
+    { id: 'd1', name: 'Bambu PETG HF @BBL H2D' }, // different machine
+    ...PRESETS,
+  ];
+  it('picks the H2C preset, never the H2D or A1 one', () => {
+    expect(matchFilamentPreset(H2C_PRESETS, null, 'PETG', '@BBL H2C')?.id).toBe('h1');
+  });
+  it('the default token still resolves to the A1', () => {
+    expect(matchFilamentPreset(H2C_PRESETS, null, 'PLA')?.id).toBe('a');
+  });
+  it('returns null when the machine has no preset for the material', () => {
+    expect(matchFilamentPreset(H2C_PRESETS, null, 'ABS', '@BBL H2C')).toBeNull();
+  });
+});
+
 describe('loadedFilaments', () => {
   // Real AMS shape: tray 0 support, 1 PETG-CF (gray), 2 PLA (black), 3 empty.
   const TRAYS: AmsTray[] = [

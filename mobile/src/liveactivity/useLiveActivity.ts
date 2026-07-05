@@ -58,7 +58,14 @@ function meaningfulChange(a: PrintActivityProps | null, b: PrintActivityProps): 
     a.name !== b.name ||
     a.modelUri !== b.modelUri ||
     a.queueCount !== b.queueCount ||
-    a.nextName !== b.nextName
+    a.nextName !== b.nextName ||
+    // Temps + ETA are rendered on the lock screen — without these, a heat-up that doesn't
+    // advance progress/layer never pushes and the activity shows cold temps for minutes.
+    Math.abs(a.nozzle - b.nozzle) >= 2 ||
+    Math.abs(a.bed - b.bed) >= 2 ||
+    a.nozzleTarget !== b.nozzleTarget ||
+    a.bedTarget !== b.bedTarget ||
+    Math.abs(a.etaEpochMs - b.etaEpochMs) >= 60_000
   );
 }
 

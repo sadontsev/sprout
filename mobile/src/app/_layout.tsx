@@ -1,11 +1,12 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { c } from '@/theme';
+import { c, useTheme } from '@/theme';
 
 export default function RootLayout() {
+  const theme = useTheme(); // re-render on theme switch so the status bar + background follow
   return (
     <>
-      <StatusBar style="light" />
+      <StatusBar style={theme === 'light' ? 'dark' : 'light'} />
       <Stack
         screenOptions={{
           headerShown: false,

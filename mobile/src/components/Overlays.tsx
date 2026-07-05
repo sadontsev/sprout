@@ -8,17 +8,18 @@ import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
-import type { LibraryFile, PrinterStatus, MakerWorldResolved, MWInstance, PlatesResponse, FileMetadata, SlotAssignment } from '@/api/types';
+import type { LibraryFile, Printer, PrinterStatus, MakerWorldResolved, MWInstance, PlatesResponse, FileMetadata, SlotAssignment } from '@/api/types';
 import { presentDashboard, normColor } from '@/dashboard/present';
 import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
 import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
 import { parseGcodeLayers, gcodeViewerHtml, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
-import { selectA1Process, pickDefaultQuality, type Preset } from '@/library/presetSelect';
+import { selectProcess, pickDefaultQuality, type Preset } from '@/library/presetSelect';
+import { printerProfile, slicedForMatchesPrinter } from '@/printers/profile';
 import { mjpegHtml } from './mjpegHtml';
 import { Tap, RollingNumber, HeatBar, FadeRise } from './anim';
 
 // ---------------- CAMERA FULLSCREEN ----------------
-export function CameraOverlay({ streamUrl, status, onClose, onRefresh }: { streamUrl: string | null; status: PrinterStatus | null; onClose: () => void; onRefresh: () => void }) {
+export function CameraOverlay({ streamUrl, status, cameraHint, onClose, onRefresh }: { streamUrl: string | null; status: PrinterStatus | null; cameraHint?: string; onClose: () => void; onRefresh: () => void }) {
   const insets = useSafeAreaInsets();
   const vm = presentDashboard(status, Date.now());
   // connecting = minting token / camera warming up; live = ≥1 frame decoded; failed = gave up (warm-up
@@ -75,7 +76,7 @@ export function CameraOverlay({ streamUrl, status, onClose, onRefresh }: { strea
               <Text style={{ marginTop: 12, color: '#6b7177', fontSize: 13, lineHeight: 19, textAlign: 'center' }}>
                 {vm.kind === 'offline'
                   ? 'Printer is offline. The chamber camera needs the printer powered on and connected to Wi-Fi, then tap Retry.'
-                  : 'Couldn’t wake the chamber camera. The A1’s camera is on-demand and can be slow — give it a moment and tap Retry. Make sure the printer is powered on.'}
+                  : `Couldn’t wake the chamber camera. ${cameraHint ?? 'Give it a moment and tap Retry.'} Make sure the printer is powered on.`}
               </Text>
               <Tap onPress={retry} style={{ marginTop: 18, paddingHorizontal: 18, height: 42, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Retry</Text>
@@ -86,7 +87,7 @@ export function CameraOverlay({ streamUrl, status, onClose, onRefresh }: { strea
               <ActivityIndicator color="#6b7177" />
               <Text style={{ marginTop: 14, fontFamily: mono, color: '#6b7177', letterSpacing: 2, fontSize: 11 }}>CONNECTING…</Text>
               <Text style={{ marginTop: 10, color: '#4f555b', fontSize: 12.5, lineHeight: 18, textAlign: 'center' }}>
-                Waking the chamber camera — the first frame can take a few seconds on the A1.
+                Waking the chamber camera — the first frame can take a few seconds.
               </Text>
             </>
           )}
@@ -292,7 +293,7 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
 
           {design && (
             <>
-              <View style={{ marginTop: 18, width: '100%', aspectRatio: 16 / 10, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line }}>
+              <View style={{ marginTop: 18, width: '100%', aspectRatio: 16 / 10, borderRadius: 16, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line }}>
                 {design.coverUrl ? (
                   <Image source={{ uri: client.makerworldThumbUrl(design.coverUrl) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
                 ) : (
@@ -321,7 +322,7 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
                       const fils = inst.instanceFilaments ?? inst.extention?.modelInfo?.plates?.[0]?.filaments ?? [];
                       return (
                         <Tap key={inst.id} onPress={() => setPicked(inst)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 11, borderRadius: 13, backgroundColor: c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent }}>
-                          <View style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden', backgroundColor: '#0e1113', alignItems: 'center', justifyContent: 'center' }}>
+                          <View style={{ width: 52, height: 52, borderRadius: 10, overflow: 'hidden', backgroundColor: c.thumb, alignItems: 'center', justifyContent: 'center' }}>
                             {inst.cover ? (
                               <Image source={{ uri: client.makerworldThumbUrl(inst.cover) }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
                             ) : (
@@ -371,14 +372,7 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
 }
 
 // ---------------- PRINT WIZARD ----------------
-
-// Build plates the A1 supports — `id` is the canonical bed_type the slicer expects.
-const BED_TYPES: { id: string; label: string }[] = [
-  { id: 'Textured PEI Plate', label: 'Textured PEI' },
-  { id: 'Smooth PEI Plate', label: 'Smooth PEI' },
-  { id: 'Cool Plate', label: 'Cool Plate' },
-  { id: 'Engineering Plate', label: 'Engineering' },
-];
+// Build plates come from the printer's profile (src/printers/profile.ts) — they differ per model.
 
 // ---------------- GCODE LAYER VIEWER (scrub the sliced model layer by layer) ----------------
 // Pure parser + HTML builder live in @/library/gcodeLayers (unit-tested, headless-renderable).
@@ -455,8 +449,8 @@ export function GcodeViewerOverlay({ client, fileId, title, onClose }: { client:
         </View>
         {hasSupport != null && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, height: 40, borderRadius: 13, backgroundColor: 'rgba(22,24,27,0.55)' }}>
-            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: hasSupport ? '#E8A23D' : '#4f555b' }} />
-            <Text style={{ fontWeight: '600', fontSize: 12, color: hasSupport ? '#E8A23D' : '#9aa0a6' }}>{hasSupport ? 'Supports' : 'No supports'}</Text>
+            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: hasSupport ? c.supports : '#4f555b' }} />
+            <Text style={{ fontWeight: '600', fontSize: 12, color: hasSupport ? c.supports : '#9aa0a6' }}>{hasSupport ? 'Supports' : 'No supports'}</Text>
           </View>
         )}
       </View>
@@ -517,7 +511,7 @@ export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlat
         </View>
       )}
 
-      <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0e1113', borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
         {thumb ? (
           <Image source={{ uri: thumb }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
         ) : loading ? (
@@ -568,8 +562,10 @@ export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlat
   );
 }
 
-export function WizardOverlay({ client, file, camToken, status, printerId, onClose, onStarted }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; onClose: () => void; onStarted: () => void }) {
+export function WizardOverlay({ client, file, camToken, status, printerId, printer, onClose, onStarted }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; printer: Printer | null; onClose: () => void; onStarted: () => void }) {
   const insets = useSafeAreaInsets();
+  const profile = printerProfile(printer);
+  const token = profile.presetToken; // "@BBL A1" / "@BBL H2C" — preset-name suffix for this machine
   const alreadySliced = (file.file_type || '').includes('gcode');
   const [step, setStep] = useState(1);
   const [presets, setPresets] = useState<{ printer?: Preset; qualities: Preset[]; catalog: Preset[]; allFilaments: Preset[]; hasSupportProfile?: boolean; supportByBase?: Record<string, Preset> } | null>(null);
@@ -580,12 +576,16 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
   const [quality, setQuality] = useState<Preset | null>(null);
   const [slicePct, setSlicePct] = useState(0);
   const [result, setResult] = useState<{ print_time_seconds?: number; filament_used_g?: number; library_file_id?: number } | null>(null);
-  const [slot, setSlot] = useState<number>(status?.tray_now ?? 0);
+  // tray_now's idle sentinel is 255 ("no active tray") — never seed the mapping slot with it.
+  const trayNow = status?.tray_now;
+  const [slot, setSlot] = useState<number>(typeof trayNow === 'number' && trayNow >= 0 && trayNow <= 3 ? trayNow : 0);
   const [selectedPlate, setSelectedPlate] = useState(1);
-  const [bedType, setBedType] = useState('Textured PEI Plate');
+  const [bedType, setBedType] = useState(profile.bedTypes[0].id);
   const [supports, setSupports] = useState(false);
   const [viewLayers, setViewLayers] = useState<{ fileId: number; title: string } | null>(null);
   const [starting, setStarting] = useState(false);
+  // Which machine a pre-sliced file was sliced FOR (from the 3MF) — mismatched G-code is blocked.
+  const [slicedFor, setSlicedFor] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -593,15 +593,21 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
       .then(([p, a]) => {
         if (!alive) return;
         const std = p.standard ?? {};
-        const a1 = (arr: Preset[] = []) => arr.filter((x) => x.name.includes('A1') && !x.name.includes('A1M') && !x.name.toLowerCase().includes('mini'));
-        const printer = a1(std.printer).find((x) => x.name.includes('0.4 nozzle'));
-        // Quality profiles for this A1's 0.4 nozzle, merged across all preset groups (incl. the user's
-        // custom profiles), with non-0.4-nozzle variants excluded. Pure + unit-tested in presetSelect.
-        const { qualities, hasSupportProfile, supportByBase } = selectA1Process(p);
+        // This machine's stock printer preset: the default-nozzle variant ("Bambu Lab H2C 0.4 nozzle").
+        const printerPresets: Preset[] = std.printer ?? [];
+        const printerPreset =
+          printerPresets.find((x) => x.name === `${profile.printerPresetBase} 0.4 nozzle`) ??
+          printerPresets.find((x) => x.name === profile.printerPresetBase);
+        // Quality profiles for this machine's 0.4 nozzle, merged across all preset groups (incl. the
+        // user's custom profiles), non-0.4-nozzle variants excluded. Pure + unit-tested in presetSelect.
+        const { qualities, hasSupportProfile, supportByBase } = selectProcess(p, token);
         const allFilaments: Preset[] = std.filament ?? [];
-        // Curated "Other filament" catalog (common A1 materials) shown when the AMS choice isn't enough.
-        const catalog = a1(allFilaments).filter((x) => /Bambu (PLA Basic|PLA Matte|PETG HF|PETG-CF|ABS|ASA|TPU 95A HF|Support For PLA) @BBL A1($| 0\.4 nozzle$)/.test(x.name));
-        setPresets({ printer, qualities, catalog, allFilaments, hasSupportProfile, supportByBase });
+        // Curated "Other filament" catalog (common materials) shown when the AMS choice isn't enough.
+        const catalogRe = new RegExp(
+          `Bambu (PLA Basic|PLA Matte|PETG HF|PETG-CF|ABS|ASA|TPU 95A HF|Support For PLA) ${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($| 0\\.4 nozzle$)`,
+        );
+        const catalog = allFilaments.filter((x) => catalogRe.test(x.name));
+        setPresets({ printer: printerPreset, qualities, catalog, allFilaments, hasSupportProfile, supportByBase });
         setAssigns(a as SlotAssignment[]);
         setQuality(pickDefaultQuality(qualities));
       })
@@ -609,7 +615,18 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
     return () => {
       alive = false;
     };
-  }, [client, printerId]);
+  }, [client, printerId, token, profile.printerPresetBase]);
+
+  // Pre-sliced files carry the target machine in the 3MF — read it to catch wrong-printer G-code.
+  useEffect(() => {
+    if (!alreadySliced) return;
+    let alive = true;
+    client.getPlates(file.id).then((p) => alive && setSlicedFor(p.embedded_printer ?? file.sliced_for_model ?? null)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [client, file.id, file.sliced_for_model, alreadySliced]);
+  const printerMismatch = alreadySliced && !slicedForMatchesPrinter(slicedFor, profile);
 
   // Slicing step
   useEffect(() => {
@@ -660,6 +677,14 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
   }, [step]);
 
   const start = async () => {
+    if (printerMismatch) {
+      Alert.alert('Wrong printer', `This file was sliced for ${slicedFor}. Reslice it for ${printer?.name ?? 'this printer'} before printing.`);
+      return;
+    }
+    if (slot < 0 || slot > 3) {
+      Alert.alert('Pick a slot', 'Choose which AMS slot to print from first.');
+      return;
+    }
     setStarting(true);
     try {
       const mapping = Array(4).fill(-1);
@@ -695,7 +720,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
 
   const trays = status?.ams?.[0]?.tray ?? [];
   // Filaments actually loaded in the AMS, mapped to slicer presets (drops support material).
-  const loaded: LoadedFilament[] = presets ? loadedFilaments(trays, assigns, presets.allFilaments).filter((f) => !f.isSupport) : [];
+  const loaded: LoadedFilament[] = presets ? loadedFilaments(trays, assigns, presets.allFilaments, token).filter((f) => !f.isSupport) : [];
 
   // Default-select the loaded filament (matching the active tray) once the AMS + presets are known.
   const loadedKey = loaded.map((f) => `${f.slot}:${f.preset?.id ?? ''}`).join(',');
@@ -758,6 +783,14 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                 <>
                   <Text style={{ fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
                   <Text style={{ marginTop: 5, marginBottom: 16, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · pre-sliced</Text>
+                  {printerMismatch && (
+                    <View style={{ flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.errorDim, borderWidth: 1, borderColor: c.error, marginBottom: 14 }}>
+                      <Feather name="alert-triangle" size={17} color={c.error} />
+                      <Text style={{ flex: 1, fontWeight: '500', fontSize: 12.5, lineHeight: 18, color: c.t1 }}>
+                        Sliced for {slicedFor} — not for {printer?.name ?? 'this printer'}. G-code from another machine can crash the toolhead. Reslice the model instead.
+                      </Text>
+                    </View>
+                  )}
                   <PlateReview client={client} fileId={file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} onViewLayers={() => setViewLayers({ fileId: file.id, title: file.print_name || file.filename })} />
                 </>
               ) : (
@@ -779,13 +812,16 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                   <Feather name="cpu" size={26} color={c.t2} />
                 </View>
                 <View>
-                  <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1 }}>Bambu Lab A1</Text>
+                  <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1 }}>{printer?.name ?? 'Printer'}</Text>
                   <View style={{ marginTop: 5, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: status?.connected ? c.running : c.idle }} />
-                    <Text style={{ fontWeight: '500', fontSize: 12, color: c.t2 }}>{status?.connected ? 'Connected' : 'Offline'}</Text>
+                    <Text style={{ fontWeight: '500', fontSize: 12, color: c.t2 }}>
+                      {printer ? `${profile.printerPresetBase}${printer.location ? ` · ${printer.location}` : ''} · ` : ''}{status?.connected ? 'Connected' : 'Offline'}
+                    </Text>
                   </View>
                 </View>
               </View>
+              <Text style={{ marginTop: 13, fontWeight: '500', fontSize: 12, color: c.t3 }}>Switch printers from the dashboard header.</Text>
             </>
           )}
 
@@ -805,7 +841,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                         <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: f.colorHex ?? c.s4, borderWidth: 1, borderColor: c.line2 }} />
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{f.colorName ? `${f.colorName} · ${f.material}` : f.material}</Text>
-                          <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>Slot {f.slot + 1}{f.preset ? '' : ' · no A1 profile'}</Text>
+                          <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>Slot {f.slot + 1}{f.preset ? '' : ' · no matching profile'}</Text>
                         </View>
                         {sel && <Feather name="check" size={16} color={c.accent} />}
                       </Tap>
@@ -821,7 +857,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                 <View style={{ gap: 9, marginTop: 11 }}>
                   {(presets?.catalog ?? []).map((m) => (
                     <Tap key={m.id} onPress={() => setFilament(m)} style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: filament?.id === m.id ? 1.5 : 0, borderColor: c.accent }}>
-                      <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: c.t1 }}>{m.name.replace(' @BBL A1', '')}</Text>
+                      <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: c.t1 }}>{m.name.replace(` ${token}`, '')}</Text>
                       {filament?.id === m.id && <Feather name="check" size={16} color={c.accent} />}
                     </Tap>
                   ))}
@@ -832,7 +868,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9 }}>
                 {(presets?.qualities ?? []).map((q) => {
                   const h = q.name.match(/0\.\d+mm/)?.[0] ?? '';
-                  const label = q.name.replace(/0\.\d+mm /, '').replace(' @BBL A1', '');
+                  const label = q.name.replace(/0\.\d+mm /, '').replace(` ${token}`, '');
                   return (
                     <Tap key={q.id} onPress={() => setQuality(q)} style={{ width: '47%', flexGrow: 1, padding: 15, borderRadius: 13, backgroundColor: c.s2, borderWidth: quality?.id === q.id ? 1.5 : 0, borderColor: c.accent }}>
                       <Text style={{ fontWeight: '700', fontSize: 19, color: quality?.id === q.id ? c.accent : c.t1, fontVariant: ['tabular-nums'] }}>{h.replace('mm', '')}</Text>
@@ -845,7 +881,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
               <View style={{ height: 22 }} />
               <L>BUILD PLATE</L>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9 }}>
-                {BED_TYPES.map((b) => (
+                {profile.bedTypes.map((b) => (
                   <Tap key={b.id} onPress={() => setBedType(b.id)} style={{ flexGrow: 1, paddingVertical: 13, paddingHorizontal: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: bedType === b.id ? 1.5 : 0, borderColor: c.accent, alignItems: 'center' }}>
                     <Text style={{ fontWeight: '600', fontSize: 13.5, color: bedType === b.id ? c.accent : c.t1 }}>{b.label}</Text>
                   </Tap>
@@ -855,13 +891,13 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
               <View style={{ height: 22 }} />
               {quality && presets?.supportByBase?.[quality.name] ? (
                 // Supports toggle — slices with the "+ Supports" twin of the selected quality.
-                <Tap onPress={() => setSupports((s) => !s)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 15, borderRadius: 14, backgroundColor: c.s2, borderWidth: supports ? 1.5 : 0, borderColor: '#E8A23D' }}>
-                  <Feather name="git-merge" size={19} color={supports ? '#E8A23D' : c.t2} />
+                <Tap onPress={() => setSupports((s) => !s)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 15, borderRadius: 14, backgroundColor: c.s2, borderWidth: supports ? 1.5 : 0, borderColor: c.supports }}>
+                  <Feather name="git-merge" size={19} color={supports ? c.supports : c.t2} />
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: '700', fontSize: 15, color: supports ? '#E8A23D' : c.t1 }}>Supports</Text>
+                    <Text style={{ fontWeight: '700', fontSize: 15, color: supports ? c.supports : c.t1 }}>Supports</Text>
                     <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11.5, lineHeight: 16, color: c.t3 }}>Tree supports under overhangs. Adds print time + material; shown in amber in the layer view.</Text>
                   </View>
-                  <View style={{ width: 48, height: 29, borderRadius: 15, backgroundColor: supports ? '#E8A23D' : c.s4, justifyContent: 'center', paddingHorizontal: 3 }}>
+                  <View style={{ width: 48, height: 29, borderRadius: 15, backgroundColor: supports ? c.supports : c.s4, justifyContent: 'center', paddingHorizontal: 3 }}>
                     <View style={{ width: 23, height: 23, borderRadius: 12, backgroundColor: '#fff', alignSelf: supports ? 'flex-end' : 'flex-start' }} />
                   </View>
                 </Tap>
@@ -924,7 +960,8 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
               <L>READY TO PRINT</L>
               <View style={{ borderRadius: 16, backgroundColor: c.s2, overflow: 'hidden' }}>
                 <Row k="File" v={file.print_name || file.filename} />
-                <Row k="Material" v={(filament?.name ?? 'As sliced').replace(' @BBL A1', '')} />
+                <Row k="Printer" v={printer?.name ?? '—'} />
+                <Row k="Material" v={(filament?.name ?? 'As sliced').replace(` ${token}`, '')} />
                 <Row k="Mapped to" v={`Slot ${slot + 1}`} />
                 <Row k="Est. time" v={result?.print_time_seconds ? `${Math.round(result.print_time_seconds / 60)} min` : '—'} />
               </View>

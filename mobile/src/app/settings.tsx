@@ -43,12 +43,14 @@ export default function Settings() {
   const [hasConfig, setHasConfig] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [printerName, setPrinterName] = useState<string | null>(null);
 
   useEffect(() => {
     getConfig().then((cfg) => {
       if (cfg) {
         setBaseUrl(cfg.baseUrl);
         setApiKey(cfg.apiKey);
+        setPrinterName(cfg.printerName ?? null);
         setHasConfig(true);
       } else {
         setEditing(true); // first run — go straight to the form
@@ -159,7 +161,7 @@ export default function Settings() {
               {/* ABOUT */}
               <Section title="ABOUT">
                 <Row label="App version" value={appVersion} />
-                <Row label="Printer" value="Bambu Lab A1" last />
+                <Row label="Printer" value={printerName ?? '—'} last />
               </Section>
 
               <Tap

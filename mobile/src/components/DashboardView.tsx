@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView } from 'react-native';
+import { View, Text, ScrollView, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { c, mono, shadow1 } from '@/theme';
-import type { DashVM } from '@/dashboard/present';
+import { c, mono, shadow1, type Palette } from '@/theme';
+import type { DashVM, DashKind } from '@/dashboard/present';
+import type { Printer } from '@/api/types';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton, Pop, Breathe } from './anim';
 
 export interface DashHandlers {
@@ -14,23 +15,37 @@ export interface DashHandlers {
   onStop: () => void;
   onLight: () => void;
   onSpeedSet: (i: number) => void;
+  onSelectPrinter: (id: number) => void;
+  onHmsClear: () => void;
+  onPlateCleared: () => void;
+  onPrintAgain: () => void;
   onRetry: () => void;
   onTab: (tab: string) => void;
 }
 
-/** Bambu A1 print-speed modes (design: the speed popover). */
-const SPEEDS: { i: number; name: string; hint: string; dot: string }[] = [
-  { i: 1, name: 'Silent', hint: '50%', dot: c.paused },
-  { i: 2, name: 'Standard', hint: '100%', dot: c.running },
-  { i: 3, name: 'Sport', hint: '124%', dot: c.heating },
-  { i: 4, name: 'Ludicrous', hint: '166%', dot: c.error },
+/** A printer + its live state, for the fleet switcher. */
+export interface FleetEntry {
+  printer: Printer;
+  kind: DashKind;
+  stateLabel: string;
+  stateColor: string;
+  progressInt: number;
+}
+
+// Bambu print-speed modes (design: the speed popover). Dot colors are palette KEYS resolved at
+// render — the live `c` object mutates on theme switch, so captured values would go stale.
+const SPEEDS: { i: number; name: string; hint: string; dot: keyof Palette }[] = [
+  { i: 1, name: 'Silent', hint: '50%', dot: 'paused' },
+  { i: 2, name: 'Standard', hint: '100%', dot: 'running' },
+  { i: 3, name: 'Sport', hint: '124%', dot: 'heating' },
+  { i: 4, name: 'Ludicrous', hint: '166%', dot: 'error' },
 ];
 
-function TempCard({ label, now, target, heating }: { label: string; now: number; target: number; heating: boolean }) {
+function TempCard({ label, now, target, heating, active }: { label: string; now: number; target: number; heating: boolean; active?: boolean }) {
   const barColor = heating ? c.heating : c.running;
   const pct = target > 0 ? Math.max(4, Math.min(100, (now / target) * 100)) : 4;
   return (
-    <View style={{ flex: 1, padding: 14, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
+    <View style={{ flex: 1, padding: 14, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: active ? c.accent : c.line }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={{ fontWeight: '600', fontSize: 12, color: c.t2 }}>{label}</Text>
         {heating ? <PulseDot color={barColor} size={7} period={1400} /> : <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: barColor, opacity: 0.9 }} />}
@@ -47,6 +62,30 @@ function TempCard({ label, now, target, heating }: { label: string; now: number;
   );
 }
 
+/** Nozzle(s) + bed (+ chamber on enclosed machines), 2 cards per row. */
+function TempGrid({ vm, heatingEnabled }: { vm: DashVM; heatingEnabled: boolean }) {
+  const dual = vm.nozzles.length > 1;
+  const cards: { label: string; now: number; target: number; heating: boolean; active?: boolean }[] = dual
+    ? vm.nozzles.map((n, i) => ({ label: `Nozzle ${i + 1}`, now: n.now, target: n.target, heating: heatingEnabled && n.heating, active: n.active }))
+    : [{ label: 'Nozzle', now: vm.nozzleNow, target: vm.nozzleTarget, heating: heatingEnabled && vm.nozzleHeating }];
+  cards.push({ label: 'Bed', now: vm.bedNow, target: vm.bedTarget, heating: heatingEnabled && vm.bedHeating });
+  if (vm.hasChamber) cards.push({ label: 'Chamber', now: vm.chamberNow, target: vm.chamberTarget, heating: heatingEnabled && vm.chamberHeating });
+  const rows: (typeof cards)[] = [];
+  for (let i = 0; i < cards.length; i += 2) rows.push(cards.slice(i, i + 2));
+  return (
+    <>
+      {rows.map((row, r) => (
+        <View key={r} style={{ marginHorizontal: 20, marginTop: r === 0 ? 14 : 12, flexDirection: 'row', gap: 12 }}>
+          {row.map((card) => (
+            <TempCard key={card.label} {...card} />
+          ))}
+          {row.length === 1 && <View style={{ flex: 1 }} />}
+        </View>
+      ))}
+    </>
+  );
+}
+
 function Label({ children }: { children: React.ReactNode }) {
   return <Text style={{ fontWeight: '600', fontSize: 10, color: c.t3, letterSpacing: 1, fontFamily: mono }}>{children}</Text>;
 }
@@ -57,19 +96,30 @@ export function DashboardView({
   h,
   maintAlert,
   speedIdx,
+  printer,
+  fleet,
 }: {
   vm: DashVM;
   snapshotUri: string | null;
   h: DashHandlers;
   maintAlert?: { due: number; warn: number };
   speedIdx: number;
+  printer: Printer | null;
+  fleet: FleetEntry[];
 }) {
   const insets = useSafeAreaInsets();
   const showCamera = vm.kind === 'live' || vm.kind === 'idle' || vm.kind === 'complete' || vm.kind === 'error';
-  // The cold A1 snapshot takes ~7s to decode — don't claim "LIVE" over a blank tile until a frame lands.
+  // A cold camera can take seconds to produce a frame — don't claim "LIVE" over a blank tile.
   const [camLoaded, setCamLoaded] = useState(false);
   useEffect(() => { if (!snapshotUri) setCamLoaded(false); }, [snapshotUri]);
   const [speedOpen, setSpeedOpen] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+
+  const printerName = printer?.name ?? 'Printer';
+  const brand = printer ? `BAMBU LAB ${printer.model.toUpperCase()}` : 'BAMBU LAB';
+  const canSwitch = fleet.length > 1;
+  // HMS notices are non-blocking (the printer keeps printing) — a warning chip, not an error page.
+  const showHms = vm.hmsCount > 0 && vm.kind !== 'error' && vm.kind !== 'offline' && vm.kind !== 'connecting';
 
   return (
     <ScrollView
@@ -78,17 +128,47 @@ export function DashboardView({
       contentContainerStyle={{ paddingTop: insets.top + 6, paddingBottom: 120 }}>
         {/* header */}
         <View style={{ paddingHorizontal: 20, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <View>
-            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1.4, fontFamily: mono }}>BAMBU LAB A1</Text>
+          <Tap onPress={() => canSwitch && setSwitcherOpen((o) => !o)} disabled={!canSwitch}>
+            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1.4, fontFamily: mono }}>{brand}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 6 }}>
               <PulseDot color={vm.stateColor} size={8} />
-              <Text style={{ fontWeight: '600', fontSize: 17, color: c.t1, letterSpacing: -0.2 }}>A1 Printer</Text>
+              <Text style={{ fontWeight: '600', fontSize: 17, color: c.t1, letterSpacing: -0.2 }}>{printerName}</Text>
+              {canSwitch && <Feather name={switcherOpen ? 'chevron-up' : 'chevron-down'} size={15} color={c.t3} />}
             </View>
-          </View>
+          </Tap>
           <Tap onPress={h.onSettings} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: c.s2, alignItems: 'center', justifyContent: 'center' }}>
             <Feather name="settings" size={19} color={c.t2} />
           </Tap>
         </View>
+
+        {/* Tap-away layer (under the switcher, over everything else) */}
+        {switcherOpen && <Pressable onPress={() => setSwitcherOpen(false)} style={{ position: 'absolute', inset: 0 } as any} />}
+
+        {/* fleet switcher */}
+        {switcherOpen && (
+          <FadeRise dy={-6} duration={180}>
+            <View style={{ marginHorizontal: 20, marginTop: 12, borderRadius: 16, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line2, padding: 5, ...shadow1 }}>
+              {fleet.map((f) => {
+                const on = f.printer.id === printer?.id;
+                return (
+                  <Tap
+                    key={f.printer.id}
+                    onPress={() => { setSwitcherOpen(false); if (!on) h.onSelectPrinter(f.printer.id); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 12, paddingVertical: 12, borderRadius: 12, backgroundColor: on ? c.s3 : 'transparent' }}>
+                    <PulseDot color={f.stateColor} size={8} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{f.printer.name}</Text>
+                      <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>
+                        {f.printer.model}{f.printer.location ? ` · ${f.printer.location}` : ''} · {f.kind === 'live' ? `${f.stateLabel} ${f.progressInt}%` : f.stateLabel}
+                      </Text>
+                    </View>
+                    {on && <Feather name="check" size={15} color={c.accent} />}
+                  </Tap>
+                );
+              })}
+            </View>
+          </FadeRise>
+        )}
 
         {/* maintenance alert chip — only when something needs attention */}
         {!!maintAlert && (maintAlert.due > 0 || maintAlert.warn > 0) && (
@@ -107,6 +187,24 @@ export function DashboardView({
           </FadeRise>
         )}
 
+        {/* HMS notice chip — the printer flagged something but keeps going */}
+        {showHms && (
+          <FadeRise>
+          <View style={{ marginHorizontal: 20, marginTop: 14, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: c.heatingDim, borderWidth: 1, borderColor: c.heating }}>
+            <Feather name="alert-circle" size={16} color={c.heating} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>
+                {vm.hmsCount === 1 ? 'Printer notice' : `${vm.hmsCount} printer notices`}
+              </Text>
+              {!!vm.hmsCode && <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>HMS {vm.hmsCode}</Text>}
+            </View>
+            <Tap onPress={h.onHmsClear} hitSlop={8} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: c.s3 }}>
+              <Text style={{ fontWeight: '600', fontSize: 12, color: c.t1 }}>Clear</Text>
+            </Tap>
+          </View>
+          </FadeRise>
+        )}
+
         {/* hero */}
         <View style={{ paddingHorizontal: 20, paddingTop: 18, paddingBottom: 2 }}>
           <Text style={{ fontWeight: '700', fontSize: 36, letterSpacing: -1, color: vm.stateColor }}>{vm.stateLabel}</Text>
@@ -119,7 +217,7 @@ export function DashboardView({
         {showCamera && (
           <View style={{ paddingHorizontal: 20, paddingTop: 16 }}>
             <Tap onPress={h.onCamera} style={{ width: '100%' }}>
-              <View style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 18, overflow: 'hidden', backgroundColor: '#0d0f11', borderWidth: 1, borderColor: c.line, ...shadow1 }}>
+              <View style={{ width: '100%', aspectRatio: 16 / 10, borderRadius: 18, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line, ...shadow1 }}>
                 {snapshotUri ? (
                   <Image source={{ uri: snapshotUri }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} onLoad={() => setCamLoaded(true)} />
                 ) : (
@@ -166,10 +264,7 @@ export function DashboardView({
               </View>
             </View>
 
-            <View style={{ marginHorizontal: 20, marginTop: 14, flexDirection: 'row', gap: 12 }}>
-              <TempCard label="Nozzle" now={vm.nozzleNow} target={vm.nozzleTarget} heating={vm.nozzleHeating} />
-              <TempCard label="Bed" now={vm.bedNow} target={vm.bedTarget} heating={vm.bedHeating} />
-            </View>
+            <TempGrid vm={vm} heatingEnabled />
 
             {/* controls */}
             <View style={{ marginHorizontal: 20, marginTop: 18, flexDirection: 'row', gap: 12 }}>
@@ -193,7 +288,7 @@ export function DashboardView({
               <View style={{ flex: 1, zIndex: speedOpen ? 30 : 0 } as any}>
                 <Tap onPress={() => setSpeedOpen((o) => !o)} style={{ width: '100%', height: 54, borderRadius: 16, backgroundColor: speedOpen ? c.s4 : c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
                   <Feather name="zap" size={17} color={c.t1} />
-                  <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{vm.speedLabel}</Text>
+                  <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{SPEEDS.find((s) => s.i === speedIdx)?.name ?? vm.speedLabel}</Text>
                   <Feather name="chevrons-up" size={13} color={c.t3} />
                 </Tap>
                 {speedOpen && (
@@ -204,7 +299,7 @@ export function DashboardView({
                         const on = speedIdx === s.i;
                         return (
                           <Tap key={s.i} onPress={() => { h.onSpeedSet(s.i); setSpeedOpen(false); }} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 11, paddingVertical: 11, borderRadius: 11, backgroundColor: on ? c.s3 : 'transparent' }}>
-                            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.dot }} />
+                            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: c[s.dot] as string }} />
                             <Text style={{ flex: 1, fontWeight: '600', fontSize: 14, color: c.t1 }}>{s.name}</Text>
                             <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{s.hint}</Text>
                             {on && <Feather name="check" size={15} color={c.accent} />}
@@ -220,7 +315,7 @@ export function DashboardView({
             {/* AMS strip */}
             <View style={{ marginHorizontal: 20, marginTop: 20, marginBottom: 8 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 11 }}>
-                <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1.2, color: c.t3, fontFamily: mono }}>AMS LITE</Text>
+                <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1.2, color: c.t3, fontFamily: mono }}>AMS</Text>
                 <Tap onPress={() => h.onTab('ams')} style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                   <Text style={{ fontWeight: '600', fontSize: 13, color: c.accent }}>Details</Text>
                   <Feather name="chevron-right" size={13} color={c.accent} />
@@ -252,10 +347,7 @@ export function DashboardView({
               </Tap>
             </View>
             </FadeRise>
-            <View style={{ marginHorizontal: 20, marginTop: 14, flexDirection: 'row', gap: 12 }}>
-              <TempCard label="Nozzle" now={vm.nozzleNow} target={vm.nozzleTarget} heating={false} />
-              <TempCard label="Bed" now={vm.bedNow} target={vm.bedTarget} heating={false} />
-            </View>
+            <TempGrid vm={vm} heatingEnabled={false} />
           </>
         )}
 
@@ -276,8 +368,14 @@ export function DashboardView({
                   <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{vm.heroSub || 'finished'}</Text>
                 </View>
               </View>
-              <Tap onPress={() => h.onTab('library')} style={{ marginTop: 18, height: 52, borderRadius: 15, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontWeight: '600', fontSize: 16, color: c.accentInk }}>Print again</Text>
+              {vm.awaitingPlateClear && (
+                <Tap onPress={h.onPlateCleared} style={{ marginTop: 18, height: 52, borderRadius: 15, backgroundColor: c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <Feather name="check-square" size={16} color={c.accentInk} />
+                  <Text style={{ fontWeight: '600', fontSize: 16, color: c.accentInk }}>Plate cleared — continue queue</Text>
+                </Tap>
+              )}
+              <Tap onPress={h.onPrintAgain} style={{ marginTop: vm.awaitingPlateClear ? 10 : 18, height: 52, borderRadius: 15, backgroundColor: vm.awaitingPlateClear ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontWeight: '600', fontSize: 16, color: vm.awaitingPlateClear ? c.t1 : c.accentInk }}>Print again</Text>
               </Tap>
             </View>
             </FadeRise>
@@ -295,7 +393,9 @@ export function DashboardView({
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontWeight: '700', fontSize: 17, lineHeight: 20, color: c.t1 }}>Printer reported an error</Text>
-                  <Text style={{ marginTop: 4, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{vm.heroSub || 'HMS error'}</Text>
+                  <Text style={{ marginTop: 4, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>
+                    {vm.hmsCode ? `HMS ${vm.hmsCode}` : vm.heroSub || 'Print error'}
+                  </Text>
                 </View>
               </View>
             </View>
@@ -319,7 +419,7 @@ export function DashboardView({
               <Feather name="wifi-off" size={32} color={c.t3} />
             </View>
             <View style={{ alignItems: 'center' }}>
-              <Text style={{ fontWeight: '700', fontSize: 20, color: c.t1, letterSpacing: -0.3 }}>Can't reach your printer</Text>
+              <Text style={{ fontWeight: '700', fontSize: 20, color: c.t1, letterSpacing: -0.3 }}>Can't reach {printerName}</Text>
               <Text style={{ marginTop: 8, fontWeight: '500', fontSize: 13, lineHeight: 19, color: c.t3, textAlign: 'center', maxWidth: 260 }}>
                 No response right now. Make sure it's powered on and on your network.
               </Text>
@@ -343,9 +443,10 @@ export function DashboardView({
                 <Skeleton style={{ height: 13, width: '42%', borderRadius: 5 }} />
               </View>
             </View>
-            <Text style={{ marginTop: 20, textAlign: 'center', fontWeight: '500', fontSize: 12, color: c.t3 }}>Reaching your A1…</Text>
+            <Text style={{ marginTop: 20, textAlign: 'center', fontWeight: '500', fontSize: 12, color: c.t3 }}>Reaching {printerName}…</Text>
           </View>
         )}
+
     </ScrollView>
   );
 }

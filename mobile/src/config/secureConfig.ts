@@ -11,6 +11,9 @@ export type AppConfig = {
   cameraToken?: string;
   /** UI theme preference (defaults to dark) */
   theme?: ThemeName;
+  /** Last-selected printer (restored on launch). */
+  printerId?: number;
+  printerName?: string;
 };
 
 const KEY = 'bambu.config';
