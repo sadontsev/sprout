@@ -66,7 +66,7 @@ function TempCard({ label, now, target, heating, active }: { label: string; now:
 function TempGrid({ vm, heatingEnabled }: { vm: DashVM; heatingEnabled: boolean }) {
   const dual = vm.nozzles.length > 1;
   const cards: { label: string; now: number; target: number; heating: boolean; active?: boolean }[] = dual
-    ? vm.nozzles.map((n, i) => ({ label: `Nozzle ${i + 1}`, now: n.now, target: n.target, heating: heatingEnabled && n.heating, active: n.active }))
+    ? vm.nozzles.map((n, i) => ({ label: i === 0 ? 'Left nozzle' : 'Right nozzle', now: n.now, target: n.target, heating: heatingEnabled && n.heating, active: n.active }))
     : [{ label: 'Nozzle', now: vm.nozzleNow, target: vm.nozzleTarget, heating: heatingEnabled && vm.nozzleHeating }];
   cards.push({ label: 'Bed', now: vm.bedNow, target: vm.bedTarget, heating: heatingEnabled && vm.bedHeating });
   if (vm.hasChamber) cards.push({ label: 'Chamber', now: vm.chamberNow, target: vm.chamberTarget, heating: heatingEnabled && vm.chamberHeating });

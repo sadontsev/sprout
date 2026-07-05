@@ -12,7 +12,7 @@ const TABS: [TabKey, string, keyof typeof Feather.glyphMap][] = [
   ['printer', 'Printer', 'cpu'],
   ['library', 'Files', 'folder'],
   ['queue', 'Queue', 'list'],
-  ['ams', 'AMS', 'grid'],
+  ['ams', 'Hardware', 'box'],
   ['power', 'Power', 'power'],
   ['history', 'History', 'clock'],
 ];
