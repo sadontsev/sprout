@@ -29,7 +29,8 @@ export default function AppScreen() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      getConfig().then((cfg) => {
+      // A Keychain read failure must land on the onboarding screen, not an eternal blank gate.
+      getConfig().catch(() => null).then((cfg) => {
         if (!active) return;
         if (cfg) setTheme(cfg.theme ?? 'dark');
         setConfig(cfg);
@@ -195,14 +196,15 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   const cameraOpen = overlay === 'camera';
   const { streamUrl, remint } = useCameraStream(client, printerId, cameraOpen, 10);
 
-  // Dashboard snapshot tile (1 frame / 2s). Paused while the fullscreen stream is open so the two
-  // don't contend for the single on-demand camera (which would slow the live stream's warm-up).
+  // Dashboard snapshot tile (1 frame / 2s). Paused while the fullscreen stream is open (the two
+  // would contend for the single on-demand camera) and while the dashboard tab is hidden (it
+  // stays mounted — see the render below — so the interval would otherwise poll unseen).
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    if (cameraOpen) return;
+    if (cameraOpen || tab !== 'printer') return;
     const id = setInterval(() => setTick((t) => t + 1), 2000);
     return () => clearInterval(id);
-  }, [cameraOpen]);
+  }, [cameraOpen, tab]);
   const snapshotUri = camToken && !cameraOpen ? `${client.snapshotUrl(printerId, camToken)}&_t=${tick}` : null;
 
   // Maintenance due/warning rollup for the dashboard chip — scoped to the SELECTED printer.
@@ -297,16 +299,21 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
-        {tab === 'printer' && (
-          <DashboardView vm={vm} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} printer={printer} fleet={fleet} />
-        )}
-        {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={printerId} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
-        {tab === 'queue' && <QueueView client={client} status={status} printerId={printerId} printers={printers ?? []} onBrowse={() => setTab('library')} />}
-        {tab === 'ams' && <AmsView client={client} status={status} printerId={printerId} amsLabel={profile.amsLabel} />}
-        {tab === 'power' && <PowerView client={client} printerId={printerId} status={status} />}
-        {tab === 'history' && <HistoryView client={client} camToken={camToken} printerId={printerId} />}
-      </FadeRise>
+      {/* The live dashboard is a dense tree of looping reanimated animations. Unmounting it
+          mid-flight on a tab switch hits a reanimated-4 New-Arch teardown race (upstream #9402 /
+          #9293: crash or whole-app freeze), so it stays mounted and is HIDDEN instead. */}
+      <View style={{ flex: 1, display: tab === 'printer' ? 'flex' : 'none' }}>
+        <DashboardView vm={vm} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} printer={printer} fleet={fleet} />
+      </View>
+      {tab !== 'printer' && (
+        <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
+          {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={printerId} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
+          {tab === 'queue' && <QueueView client={client} status={status} printerId={printerId} printers={printers ?? []} onBrowse={() => setTab('library')} />}
+          {tab === 'ams' && <AmsView client={client} status={status} printerId={printerId} amsLabel={profile.amsLabel} />}
+          {tab === 'power' && <PowerView client={client} printerId={printerId} status={status} />}
+          {tab === 'history' && <HistoryView client={client} camToken={camToken} printerId={printerId} />}
+        </FadeRise>
+      )}
 
       <TabBar active={tab} onTab={setTab} />
 
