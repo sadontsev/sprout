@@ -184,47 +184,52 @@ const h2cNozzles: PrinterStatus = {
   ...h2cRunning,
   temperatures: { ...h2cRunning.temperatures, nozzle: 250, nozzle_target: 250, nozzle_2: 47, nozzle_2_target: 25 },
   nozzles: [{ nozzle_type: 'HS01', nozzle_diameter: '0.4' }, { nozzle_type: 'HS01', nozzle_diameter: '0.4' }],
+  // id >> 4 encodes the extruder: 0/1 = LEFT toolhead, 17-21 = RIGHT vortex.
   nozzle_rack: [
-    { id: 0, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2413139', filament_color: 'C9A38180' },
-    { id: 1, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 0, max_temp: 0, serial_number: 'N/A', filament_color: '00000000' }, // empty slot
-    { id: 17, nozzle_type: 'HS00', nozzle_diameter: '0.2', wear: 128, max_temp: 350, serial_number: '20D06A5A2411698', filament_color: '00000000' },
-    { id: 19, nozzle_type: 'HS01', nozzle_diameter: '0.6', wear: 128, max_temp: 350, serial_number: '20D06A5A1504039', filament_color: '00000000' },
+    { id: 0, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2413139', filament_color: 'C9A38180' }, // LEFT, mounted (has filament)
+    { id: 1, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 0, max_temp: 0, serial_number: 'N/A', filament_color: '00000000' }, // LEFT empty slot -> dropped
+    { id: 17, nozzle_type: 'HS00', nozzle_diameter: '0.2', wear: 128, max_temp: 350, serial_number: '20D06A5A2411698', filament_color: '00000000' }, // RIGHT vortex
+    { id: 18, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2416569', filament_color: 'C12E1FFF' }, // RIGHT vortex, mounted
+    { id: 19, nozzle_type: 'HS01', nozzle_diameter: '0.6', wear: 128, max_temp: 350, serial_number: '20D06A5A1504039', filament_color: '00000000' }, // RIGHT vortex
   ],
 };
 
 describe('presentNozzles', () => {
-  it('mounted = spec per toolhead (Left/Right), no temps duplicated; active from active_extruder', () => {
-    const { mounted, dual } = presentNozzles({ ...h2cNozzles, active_extruder: 1 });
-    expect(dual).toBe(true);
-    expect(mounted.map((m) => m.label)).toEqual(['Left', 'Right']);
-    expect(mounted[0]).toMatchObject({ spec: '0.4 mm · Hardened', active: false });
-    expect(mounted[1]).toMatchObject({ spec: '0.4 mm · Hardened', active: true }); // active_extruder 1 = right
-    // spec-only: no temperature fields leak into the inventory view
-    expect((mounted[0] as unknown as Record<string, unknown>).now).toBeUndefined();
+  it('groups by toolhead: Left is the fixed single nozzle, Right is the vortex (id >> 4)', () => {
+    const { toolheads, hasVortex } = presentNozzles({ ...h2cNozzles, active_extruder: 0 });
+    expect(hasVortex).toBe(true);
+    expect(toolheads.map((t) => t.label)).toEqual(['Left', 'Right']);
+
+    const left = toolheads[0];
+    expect(left).toMatchObject({ side: 'left', swappable: false, active: true }); // active_extruder 0
+    expect(left.nozzles.map((n) => n.key)).toEqual(['0']); // id 1 (empty) dropped
+    expect(left.nozzles[0]).toMatchObject({ diameter: '0.4 mm', type: 'Hardened', mounted: true, colorHex: '#C9A381' });
+
+    const right = toolheads[1];
+    expect(right).toMatchObject({ side: 'right', swappable: true, active: false });
+    expect(right.nozzles.map((n) => n.diameter)).toEqual(['0.2 mm', '0.4 mm', '0.6 mm']); // ids 17,18,19
+    expect(right.nozzles.find((n) => n.key === '18')).toMatchObject({ mounted: true }); // has filament
+    expect(right.nozzles.find((n) => n.key === '17')).toMatchObject({ mounted: false });
   });
 
-  it('vortex lists rack nozzles, drops the empty slot, flags the loaded one', () => {
-    const { vortex } = presentNozzles(h2cNozzles);
-    expect(vortex.map((r) => r.id)).toEqual([0, 17, 19]); // slot 1 (serial N/A / max_temp 0) dropped
-    expect(vortex.find((r) => r.id === 17)).toMatchObject({ diameter: '0.2 mm', type: 'Stainless', serial: '1698', loaded: false });
-    expect(vortex.find((r) => r.id === 19)?.diameter).toBe('0.6 mm');
-    // id 0 has filament threaded -> loaded, with a swatch
-    expect(vortex.find((r) => r.id === 0)).toMatchObject({ loaded: true, colorHex: '#C9A381' });
-    expect(vortex.find((r) => r.id === 17)?.colorHex).toBeNull(); // 00000000 = none
+  it('active toolhead follows active_extruder', () => {
+    const { toolheads } = presentNozzles({ ...h2cNozzles, active_extruder: 1 });
+    expect(toolheads[0].active).toBe(false); // left
+    expect(toolheads[1].active).toBe(true); // right
   });
 
-  it('single-nozzle A1: one mounted nozzle, no vortex', () => {
+  it('single-nozzle A1: one non-swappable toolhead, no vortex', () => {
     const a1: PrinterStatus = { ...running, nozzles: [{ nozzle_type: 'hardened_steel', nozzle_diameter: '0.4' }, { nozzle_type: '', nozzle_diameter: '' }], nozzle_rack: [] };
-    const { mounted, vortex, dual } = presentNozzles(a1);
-    expect(dual).toBe(false);
-    expect(mounted).toHaveLength(1);
-    expect(mounted[0]).toMatchObject({ label: 'Nozzle', spec: '0.4 mm · Hardened' });
-    expect(vortex).toEqual([]);
+    const { toolheads, hasVortex } = presentNozzles(a1);
+    expect(hasVortex).toBe(false);
+    expect(toolheads).toHaveLength(1);
+    expect(toolheads[0]).toMatchObject({ side: 'single', label: 'Nozzle', swappable: false });
+    expect(toolheads[0].nozzles[0]).toMatchObject({ diameter: '0.4 mm', type: 'Hardened' });
   });
 
   it('is safe with no nozzle data', () => {
-    expect(presentNozzles(null)).toEqual({ mounted: [], vortex: [], dual: false });
-    expect(presentNozzles(running).vortex).toEqual([]);
+    expect(presentNozzles(null)).toEqual({ toolheads: [], hasVortex: false });
+    expect(presentNozzles(running).toolheads).toEqual([]);
   });
 });
 
