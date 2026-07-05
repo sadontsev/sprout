@@ -56,12 +56,18 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   const [printerId, setPrinterId] = useState<number>(config.printerId ?? 1);
   useEffect(() => {
     let alive = true;
-    client
-      .listPrinters()
-      .then((ps) => alive && setPrinters(ps.filter((p) => p.is_active)))
-      .catch(() => alive && setPrinters([])); // offline-ish: keep working against the persisted id
+    const load = () =>
+      client
+        .listPrinters()
+        .then((ps) => alive && setPrinters(ps.filter((p) => p.is_active)))
+        .catch(() => alive && setPrinters((prev) => prev ?? null)); // keep retrying below
+    load();
+    // Retry until loaded, then refresh occasionally — a one-shot fetch would hide the fleet
+    // switcher forever after a single launch-time failure (and never see newly added printers).
+    const id = setInterval(load, 30_000);
     return () => {
       alive = false;
+      clearInterval(id);
     };
   }, [client]);
   useEffect(() => {
