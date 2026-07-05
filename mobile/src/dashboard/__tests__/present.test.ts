@@ -1,4 +1,4 @@
-import { presentDashboard, fmtDuration, normColor, fmtHmsCode } from '../present';
+import { presentDashboard, fmtDuration, normColor, fmtHmsCode, asNum } from '../present';
 import type { PrinterStatus } from '../../api/types';
 
 const running: PrinterStatus = {
@@ -154,6 +154,28 @@ test('heating: running, cold, no progress', () => {
   const vm = presentDashboard({ ...running, progress: 0, temperatures: { nozzle: 40, nozzle_target: 220, bed: 25, bed_target: 60 } });
   expect(vm.stateLabel).toBe('Heating');
   expect(vm.stateColor).not.toBe('');
+});
+
+// The WS sends AMS temp as a STRING ("30.4"); a raw .toFixed on it crashed the AMS tab (2026-07-05).
+test('asNum coerces WS string-numbers and rejects junk', () => {
+  expect(asNum('30.4')).toBe(30.4); // the exact WS value that crashed
+  expect(asNum(31.2)).toBe(31.2); // REST number form
+  expect(asNum(0)).toBe(0);
+  expect(asNum('0')).toBe(0);
+  expect(asNum(null)).toBeNull();
+  expect(asNum(undefined)).toBeNull();
+  expect(asNum('')).toBeNull();
+  expect(asNum('n/a')).toBeNull();
+  expect(asNum(NaN)).toBeNull();
+  // Guard usage: a finite result is safe for .toFixed; null is filtered out before rendering.
+  const t = asNum('30.4');
+  expect(t != null && t > 0 ? t.toFixed(1) : '—').toBe('30.4');
+});
+
+test('presentDashboard tolerates string temps in the temperatures block', () => {
+  const vm = presentDashboard({ ...running, temperatures: { nozzle: '220' as unknown as number, nozzle_target: '220' as unknown as number, bed: '60' as unknown as number, bed_target: '60' as unknown as number } });
+  expect(vm.nozzleNow).toBe(220);
+  expect(vm.bedNow).toBe(60);
 });
 
 test('fmtDuration + normColor + fmtHmsCode helpers', () => {

@@ -7,7 +7,7 @@ import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
 import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFileList } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
-import { presentDashboard, fmtDuration, normColor } from '@/dashboard/present';
+import { presentDashboard, fmtDuration, normColor, asNum } from '@/dashboard/present';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, ExtrudeBar, Spark, Breathe, Toggle, FadeRise } from './anim';
 
 function fmtBytes(n?: number): string {
@@ -327,6 +327,9 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
   const trays = unit?.tray ?? [];
   const amsId = unit?.id ?? 0;
   const drying = (unit?.dry_status ?? 0) !== 0;
+  // The WS delivers AMS temp (and sometimes humidity) as STRINGS — coerce before any number method.
+  const amsHumidity = asNum(unit?.humidity);
+  const amsTemp = asNum(unit?.temp);
   const [dryBusy, setDryBusy] = useState(false);
 
   const [assigns, setAssigns] = useState<SlotAssignment[] | null>(null);
@@ -363,16 +366,16 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
         <Text style={{ fontWeight: '500', fontSize: 13, color: c.t3 }}>
           {trays.filter((t) => t.tray_type).length} of {Math.max(trays.length, 4)} slots loaded
         </Text>
-        {unit?.humidity != null && unit.humidity > 0 && (
+        {amsHumidity != null && amsHumidity > 0 && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: c.s2 }}>
             <Feather name="droplet" size={11} color={c.t3} />
-            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t2, fontFamily: mono }}>{Math.round(unit.humidity)}%</Text>
+            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t2, fontFamily: mono }}>{Math.round(amsHumidity)}%</Text>
           </View>
         )}
-        {unit?.temp != null && unit.temp > 0 && (
+        {amsTemp != null && amsTemp > 0 && (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: c.s2 }}>
             <Feather name="thermometer" size={11} color={c.t3} />
-            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t2, fontFamily: mono }}>{unit.temp.toFixed(1)}°</Text>
+            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t2, fontFamily: mono }}>{amsTemp.toFixed(1)}°</Text>
           </View>
         )}
       </View>

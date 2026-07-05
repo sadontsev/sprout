@@ -55,7 +55,16 @@ export interface DashVM {
   ams: AmsTrayVM[];
 }
 
-const round = (n: number | undefined | null): number => Math.round(n ?? 0);
+const round = (n: number | undefined | null): number => Math.round(Number(n ?? 0)) || 0;
+
+/** Coerce a Bambuddy numeric field to a finite number, else null. The WebSocket delivers some
+ *  numbers as strings (e.g. AMS `temp` = "30.4") while REST sends real numbers — callers that use
+ *  number-only methods (.toFixed) MUST go through this or they crash on the string form. */
+export function asNum(x: unknown): number | null {
+  if (x == null || x === '') return null;
+  const n = typeof x === 'number' ? x : Number(x);
+  return Number.isFinite(n) ? n : null;
+}
 
 export const SPEED_LABELS = ['', 'Silent', 'Standard', 'Sport', 'Ludicrous'];
 
