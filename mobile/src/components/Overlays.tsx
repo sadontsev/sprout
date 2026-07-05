@@ -572,7 +572,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
   const insets = useSafeAreaInsets();
   const alreadySliced = (file.file_type || '').includes('gcode');
   const [step, setStep] = useState(1);
-  const [presets, setPresets] = useState<{ printer?: Preset; qualities: Preset[]; catalog: Preset[]; allFilaments: Preset[]; hasSupportProfile?: boolean } | null>(null);
+  const [presets, setPresets] = useState<{ printer?: Preset; qualities: Preset[]; catalog: Preset[]; allFilaments: Preset[]; hasSupportProfile?: boolean; supportByBase?: Record<string, Preset> } | null>(null);
   const [assigns, setAssigns] = useState<SlotAssignment[]>([]);
   const [showCatalog, setShowCatalog] = useState(false);
   const defaultedRef = useRef(false);
@@ -583,6 +583,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
   const [slot, setSlot] = useState<number>(status?.tray_now ?? 0);
   const [selectedPlate, setSelectedPlate] = useState(1);
   const [bedType, setBedType] = useState('Textured PEI Plate');
+  const [supports, setSupports] = useState(false);
   const [viewLayers, setViewLayers] = useState<{ fileId: number; title: string } | null>(null);
   const [starting, setStarting] = useState(false);
 
@@ -596,15 +597,15 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
         const printer = a1(std.printer).find((x) => x.name.includes('0.4 nozzle'));
         // Quality profiles for this A1's 0.4 nozzle, merged across all preset groups (incl. the user's
         // custom profiles), with non-0.4-nozzle variants excluded. Pure + unit-tested in presetSelect.
-        const { qualities, hasSupportProfile } = selectA1Process(p);
+        const { qualities, hasSupportProfile, supportByBase } = selectA1Process(p);
         const allFilaments: Preset[] = std.filament ?? [];
         // Curated "Other filament" catalog (common A1 materials) shown when the AMS choice isn't enough.
         const catalog = a1(allFilaments).filter((x) => /Bambu (PLA Basic|PLA Matte|PETG HF|PETG-CF|ABS|ASA|TPU 95A HF|Support For PLA) @BBL A1($| 0\.4 nozzle$)/.test(x.name));
-        setPresets({ printer, qualities, catalog, allFilaments, hasSupportProfile });
+        setPresets({ printer, qualities, catalog, allFilaments, hasSupportProfile, supportByBase });
         setAssigns(a as SlotAssignment[]);
         setQuality(pickDefaultQuality(qualities));
       })
-      .catch(() => alive && setPresets({ qualities: [], catalog: [], allFilaments: [] }));
+      .catch(() => alive && setPresets({ qualities: [], catalog: [], allFilaments: [], supportByBase: {} }));
     return () => {
       alive = false;
     };
@@ -621,11 +622,13 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
     }
     let cancelled = false;
     setSlicePct(5);
+    // Supports on -> slice with the quality's "+ Supports" twin profile (provisioned in Bambuddy).
+    const processPreset = (supports && quality && presets?.supportByBase?.[quality.name]) || quality;
     (async () => {
       try {
         const { job_id } = await client.slice(file.id, {
           printer_preset: presets?.printer,
-          process_preset: quality,
+          process_preset: processPreset,
           filament_preset: filament,
           plate: selectedPlate,
           bed_type: bedType,
@@ -849,14 +852,27 @@ export function WizardOverlay({ client, file, camToken, status, printerId, onClo
                 ))}
               </View>
 
-              {(presets?.hasSupportProfile === false) && (
-                <View style={{ marginTop: 18, flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.s2 }}>
+              <View style={{ height: 22 }} />
+              {quality && presets?.supportByBase?.[quality.name] ? (
+                // Supports toggle — slices with the "+ Supports" twin of the selected quality.
+                <Tap onPress={() => setSupports((s) => !s)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 15, borderRadius: 14, backgroundColor: c.s2, borderWidth: supports ? 1.5 : 0, borderColor: '#E8A23D' }}>
+                  <Feather name="git-merge" size={19} color={supports ? '#E8A23D' : c.t2} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: '700', fontSize: 15, color: supports ? '#E8A23D' : c.t1 }}>Supports</Text>
+                    <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11.5, lineHeight: 16, color: c.t3 }}>Tree supports under overhangs. Adds print time + material; shown in amber in the layer view.</Text>
+                  </View>
+                  <View style={{ width: 48, height: 29, borderRadius: 15, backgroundColor: supports ? '#E8A23D' : c.s4, justifyContent: 'center', paddingHorizontal: 3 }}>
+                    <View style={{ width: 23, height: 23, borderRadius: 12, backgroundColor: '#fff', alignSelf: supports ? 'flex-end' : 'flex-start' }} />
+                  </View>
+                </Tap>
+              ) : presets?.hasSupportProfile === false ? (
+                <View style={{ flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.s2 }}>
                   <Feather name="info" size={16} color={c.t3} style={{ marginTop: 1 }} />
                   <Text style={{ flex: 1, fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t3 }}>
-                    Need supports, custom infill, or a dedicated support filament? Save a quality profile with those settings in Bambu Studio (or Bambuddy) — it’ll show up here under Quality, and you can pick the support tray when you map filament.
+                    Supports aren’t set up yet. Run the one-time provisioning on your server (deploy/bambuddy/ensure-support-profiles.py) and a Supports toggle appears here.
                   </Text>
                 </View>
-              )}
+              ) : null}
             </>
           )}
 
