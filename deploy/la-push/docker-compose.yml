@@ -1,0 +1,20 @@
+services:
+  la-push:
+    build: .
+    container_name: bambu-la-push
+    restart: unless-stopped
+    # Host network so it reaches Bambuddy at localhost:8910 and exposes its own :8911 on the host.
+    network_mode: host
+    environment:
+      BAMBUDDY_URL: http://localhost:8910
+      BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY}   # from ./.env (never committed)
+      APNS_KEY_PATH: /keys/apns_key.p8
+      APNS_KEY_ID: <YOUR_APNS_KEY_ID>
+      APNS_TEAM_ID: <YOUR_TEAM_ID>
+      APNS_TOPIC: com.mvks5.bambu.push-type.liveactivity
+      # SANDBOX for local Xcode/dev builds; switch to api.push.apple.com for TestFlight/App Store.
+      APNS_HOST: ${APNS_HOST:-api.sandbox.push.apple.com}
+      DATA_DIR: /data
+    volumes:
+      - /home/max/.config/bambu-phase0/apns_key.p8:/keys/apns_key.p8:ro
+      - ./data:/data

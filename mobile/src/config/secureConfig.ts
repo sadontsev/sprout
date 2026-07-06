@@ -14,6 +14,8 @@ export type AppConfig = {
   /** Last-selected printer (restored on launch). */
   printerId?: number;
   printerName?: string;
+  /** la-push base URL for Live-Activity APNs push (defaults to the bambuddy host as lapush.*). */
+  pushUrl?: string;
 };
 
 const KEY = 'bambu.config';

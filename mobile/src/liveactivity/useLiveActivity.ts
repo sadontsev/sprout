@@ -87,6 +87,17 @@ export type ActivityEntry = {
   extras?: LiveActivityExtras;
 };
 
+/** Register a card's APNs push token with the la-push service (keyed by printer) so it keeps updating
+ *  when the app is closed. Fire-and-forget — push is a bonus; foreground updates work regardless. */
+function registerPushToken(pushUrl: string, printerId: number, printerName: string, pushToken: string): void {
+  if (!pushToken) return;
+  fetch(`${pushUrl.replace(/\/+$/, '')}/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ printer_id: printerId, push_token: pushToken, printer_name: printerName, icon_uri: nozzleIconUri() }),
+  }).catch(() => {});
+}
+
 /**
  * Drives ONE iOS Live Activity per printer that's actively printing — so both machines show as
  * separate cards on the lock screen. v1 pushes updates while the app is running (foreground /
@@ -95,11 +106,24 @@ export type ActivityEntry = {
  * offline/connecting are deliberately no-ops so a WS blip doesn't kill a card mid-print; only
  * complete/error/idle end it.
  */
-export function usePrinterActivities(entries: ActivityEntry[]) {
+export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string | null) {
   const instances = useRef(new Map<number, LiveActivity<PrintActivityProps>>());
   const lastPush = useRef(new Map<number, number>());
   const lastState = useRef(new Map<number, PrintActivityProps>());
+  const subs = useRef(new Map<number, { remove: () => void }>());
   const adopted = useRef(false);
+
+  // Grab the card's APNs push token (now + on rotation) and register it with la-push.
+  const wirePush = (printerId: number, printerName: string, inst: LiveActivity<PrintActivityProps>) => {
+    if (!pushUrl || subs.current.has(printerId)) return;
+    try {
+      inst.getPushToken().then((tok) => tok && registerPushToken(pushUrl, printerId, printerName, tok)).catch(() => {});
+      const sub = inst.addPushTokenListener((ev) => registerPushToken(pushUrl, printerId, printerName, ev.pushToken));
+      subs.current.set(printerId, sub);
+    } catch {
+      /* older expo-widgets / push disabled — foreground updates still work */
+    }
+  };
 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
@@ -113,7 +137,10 @@ export function usePrinterActivities(entries: ActivityEntry[]) {
         const pool = printActivity.getInstances();
         const live = entries.filter((e) => isLive(e.vm) && e.status);
         live.forEach((e, i) => {
-          if (pool[i]) instances.current.set(e.printerId, pool[i]);
+          if (pool[i]) {
+            instances.current.set(e.printerId, pool[i]);
+            wirePush(e.printerId, e.printerName, pool[i]);
+          }
         });
         pool.slice(live.length).forEach((inst) => inst.end('default', GENERIC_END, new Date()).catch(() => {}));
       } catch {
@@ -134,6 +161,8 @@ export function usePrinterActivities(entries: ActivityEntry[]) {
           instances.current.delete(e.printerId);
           lastState.current.delete(e.printerId);
           lastPush.current.delete(e.printerId);
+          subs.current.get(e.printerId)?.remove();
+          subs.current.delete(e.printerId);
         }
         continue;
       }
@@ -141,9 +170,11 @@ export function usePrinterActivities(entries: ActivityEntry[]) {
       // Live, no card yet -> start one for this printer (deep links back into the app).
       if (isLive(e.vm) && !inst) {
         try {
-          instances.current.set(e.printerId, printActivity.start(next, 'bambu://'));
+          const ni = printActivity.start(next, 'bambu://');
+          instances.current.set(e.printerId, ni);
           lastState.current.set(e.printerId, next);
           lastPush.current.set(e.printerId, now);
+          wirePush(e.printerId, e.printerName, ni);
         } catch {
           /* disabled by user / not a dev build — app UI still works */
         }
@@ -160,5 +191,6 @@ export function usePrinterActivities(entries: ActivityEntry[]) {
         }
       }
     }
-  }, [entries]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, pushUrl]);
 }

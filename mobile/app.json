@@ -136,7 +136,7 @@
         {
           "bundleIdentifier": "com.mvks5.bambu.LiveActivity",
           "groupIdentifier": "group.com.mvks5.bambu",
-          "enablePushNotifications": false,
+          "enablePushNotifications": true,
           "frequentUpdates": true,
           "widgets": []
         }
