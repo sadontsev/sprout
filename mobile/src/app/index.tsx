@@ -129,7 +129,12 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       })),
     [printers, statuses, printerId, vm],
   );
-  usePrinterActivities(activityEntries);
+  // la-push endpoint: explicit config override, else derive from the bambuddy host (bambuddy.* -> lapush.*).
+  const pushUrl = useMemo(
+    () => config.pushUrl ?? (config.baseUrl.includes('bambuddy.') ? config.baseUrl.replace('bambuddy.', 'lapush.') : null),
+    [config.pushUrl, config.baseUrl],
+  );
+  usePrinterActivities(activityEntries, pushUrl);
 
   const [tab, setTab] = useState<TabKey>('printer');
   const [overlay, setOverlay] = useState<'camera' | 'upload' | null>(null);
