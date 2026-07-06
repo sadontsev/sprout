@@ -11,6 +11,7 @@ import { font, foregroundStyle, padding, tint, frame, resizable, aspectRatio, co
 
 /** Flat, JSON-serializable ContentState the activity renders. */
 export type PrintActivityProps = {
+  printerName: string; // "A1" | "H2C" — which machine this card is for (one activity per printer)
   name: string; // subtask/file name
   stateLabel: string; // "Printing" | "Heating" | "Paused" | "Complete" | "Error"
   progress: number; // 0..100
@@ -61,8 +62,8 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
         <HStack spacing={12}>
           {lead(40)}
           <VStack alignment="leading" spacing={2}>
-            <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundStyle(T1)]}>{p.name || 'Bambu A1'}</Text>
-            <Text modifiers={[font({ size: 12 }), foregroundStyle(T2)]}>{p.stateLabel} · Layer {layers}</Text>
+            <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundStyle(T1)]}>{p.printerName || 'Printer'}</Text>
+            <Text modifiers={[font({ size: 12 }), foregroundStyle(T2)]}>{p.name ? `${p.name}  ·  L${layers}` : `${p.stateLabel}  ·  L${layers}`}</Text>
           </VStack>
           <Spacer />
           <VStack alignment="trailing" spacing={1}>
@@ -105,8 +106,8 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
     // Dynamic Island — expanded
     expandedLeading: (
       <VStack alignment="leading" spacing={1} modifiers={[padding({ leading: 6 })]}>
-        <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundStyle(T1)]}>{p.stateLabel}</Text>
-        <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>Layer {layers}</Text>
+        <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundStyle(T1)]}>{p.printerName || p.stateLabel}</Text>
+        <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{p.stateLabel} · L{layers}</Text>
       </VStack>
     ),
     expandedTrailing: (

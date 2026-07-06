@@ -6,7 +6,7 @@ import type { LiveActivity } from 'expo-widgets';
 import type { PrinterStatus } from '@/api/types';
 import type { DashVM } from '@/dashboard/present';
 
-const MIN_UPDATE_MS = 4000; // don't push to ActivityKit more than ~once / 4s
+const MIN_UPDATE_MS = 4000; // don't push to ActivityKit more than ~once / 4s per printer
 const PROGRESS_EPS = 1; // ...unless progress moved >= 1%
 
 // state label -> SF Symbol shown in the activity.
@@ -21,11 +21,12 @@ const SYMBOLS: Record<string, string> = {
 export type LiveActivityExtras = { modelUri?: string | null; queueCount?: number; nextName?: string | null };
 
 /** Pure: DashVM (+raw status) -> the flat ContentState the activity renders. */
-export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number, iconUri = '', extras: LiveActivityExtras = {}): PrintActivityProps {
+export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number, iconUri = '', printerName = '', extras: LiveActivityExtras = {}): PrintActivityProps {
   const finished = vm.kind === 'complete';
   const remainingMin = status.remaining_time ?? 0;
   const t = status.temperatures;
   return {
+    printerName,
     iconUri,
     modelUri: extras.modelUri ?? '',
     queueCount: extras.queueCount ?? 0,
@@ -49,13 +50,21 @@ export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number,
 const isLive = (vm: DashVM) => vm.kind === 'live'; // Printing | Heating | Paused
 const isTerminal = (vm: DashVM) => vm.kind === 'complete' || vm.kind === 'error' || vm.kind === 'idle';
 
-function meaningfulChange(a: PrintActivityProps | null, b: PrintActivityProps): boolean {
+// Minimal content used only to dismiss an orphaned activity we can't map back to a printer.
+const GENERIC_END: PrintActivityProps = {
+  printerName: '', name: '', stateLabel: 'Complete', progress: 100, layer: 0, totalLayers: 0, etaEpochMs: 0,
+  finished: true, symbol: 'checkmark.circle.fill', iconUri: '', tint: '#30D158', nozzle: 0, nozzleTarget: 0, bed: 0, bedTarget: 0,
+  modelUri: '', queueCount: 0, nextName: '',
+};
+
+export function meaningfulChange(a: PrintActivityProps | null, b: PrintActivityProps): boolean {
   if (!a) return true;
   return (
     Math.abs(a.progress - b.progress) >= PROGRESS_EPS ||
     a.layer !== b.layer ||
     a.stateLabel !== b.stateLabel ||
     a.name !== b.name ||
+    a.printerName !== b.printerName ||
     a.modelUri !== b.modelUri ||
     a.queueCount !== b.queueCount ||
     a.nextName !== b.nextName ||
@@ -69,68 +78,87 @@ function meaningfulChange(a: PrintActivityProps | null, b: PrintActivityProps): 
   );
 }
 
+/** One printer's slice of the fleet, fed into usePrinterActivities. */
+export type ActivityEntry = {
+  printerId: number;
+  printerName: string;
+  vm: DashVM;
+  status: PrinterStatus | null;
+  extras?: LiveActivityExtras;
+};
+
 /**
- * Drives an iOS Live Activity from the printer's DashVM.
- * v1: the app pushes updates while running (foreground/background). v2 (not built): ActivityKit APNs
- * push so it survives app-kill — flip enablePushNotifications + wire instance.getPushToken() and have
- * Bambuddy POST to APNs. `offline`/`connecting` are deliberately no-ops so a WS blip doesn't kill the
- * activity mid-print; only complete/error/idle end it.
+ * Drives ONE iOS Live Activity per printer that's actively printing — so both machines show as
+ * separate cards on the lock screen. v1 pushes updates while the app is running (foreground /
+ * briefly background). v2 (in progress): ActivityKit APNs push so each card keeps tracking with the
+ * app closed — the app registers each activity's push token and a <your-server>-side service pushes updates.
+ * offline/connecting are deliberately no-ops so a WS blip doesn't kill a card mid-print; only
+ * complete/error/idle end it.
  */
-export function useLiveActivity(vm: DashVM | null, status: PrinterStatus | null, extras: LiveActivityExtras = {}) {
-  const instanceRef = useRef<LiveActivity<PrintActivityProps> | null>(null);
-  const lastPushRef = useRef(0);
-  const lastStateRef = useRef<PrintActivityProps | null>(null);
-  const reattachedRef = useRef(false);
+export function usePrinterActivities(entries: ActivityEntry[]) {
+  const instances = useRef(new Map<number, LiveActivity<PrintActivityProps>>());
+  const lastPush = useRef(new Map<number, number>());
+  const lastState = useRef(new Map<number, PrintActivityProps>());
+  const adopted = useRef(false);
 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
-    if (!vm || !status) return;
 
-    // Re-attach to an activity left running from a previous app launch (once).
-    if (!reattachedRef.current) {
-      reattachedRef.current = true;
+    // Adopt activities left over from a previous launch (once). We can't map an orphan back to its
+    // printer, but a card's identity is just its content — so we hand each orphan to a currently-live
+    // printer and let the update loop below rewrite it with the right data. Surplus orphans are ended.
+    if (!adopted.current) {
+      adopted.current = true;
       try {
-        const existing = printActivity.getInstances();
-        if (existing.length > 0) instanceRef.current = existing[0];
+        const pool = printActivity.getInstances();
+        const live = entries.filter((e) => isLive(e.vm) && e.status);
+        live.forEach((e, i) => {
+          if (pool[i]) instances.current.set(e.printerId, pool[i]);
+        });
+        pool.slice(live.length).forEach((inst) => inst.end('default', GENERIC_END, new Date()).catch(() => {}));
       } catch {
         /* Expo Go / no native module — ignore */
       }
     }
 
     const now = Date.now();
-    const next = toContentState(vm, status, now, nozzleIconUri(), extras);
+    for (const e of entries) {
+      if (!e.status) continue;
+      const next = toContentState(e.vm, e.status, now, nozzleIconUri(), e.printerName, e.extras ?? {});
+      const inst = instances.current.get(e.printerId);
 
-    // 1) Terminal -> end the activity.
-    if (isTerminal(vm)) {
-      const inst = instanceRef.current;
+      // Terminal -> end this printer's card.
+      if (isTerminal(e.vm)) {
+        if (inst) {
+          inst.end('default', next, new Date(now)).catch(() => {});
+          instances.current.delete(e.printerId);
+          lastState.current.delete(e.printerId);
+          lastPush.current.delete(e.printerId);
+        }
+        continue;
+      }
+
+      // Live, no card yet -> start one for this printer (deep links back into the app).
+      if (isLive(e.vm) && !inst) {
+        try {
+          instances.current.set(e.printerId, printActivity.start(next, 'bambu://'));
+          lastState.current.set(e.printerId, next);
+          lastPush.current.set(e.printerId, now);
+        } catch {
+          /* disabled by user / not a dev build — app UI still works */
+        }
+        continue;
+      }
+
+      // Live, card exists -> throttled update on meaningful change.
       if (inst) {
-        inst.end('default', next, new Date(now)).catch(() => {});
-        instanceRef.current = null;
-        lastStateRef.current = null;
-      }
-      return;
-    }
-
-    // 2) Live, no activity yet -> start one (deep links back into the app).
-    if (isLive(vm) && !instanceRef.current) {
-      try {
-        instanceRef.current = printActivity.start(next, 'bambu://');
-        lastStateRef.current = next;
-        lastPushRef.current = now;
-      } catch {
-        instanceRef.current = null; // disabled by user / not a dev build — app UI still works
-      }
-      return;
-    }
-
-    // 3) Live, activity exists -> throttled update on meaningful change.
-    if (instanceRef.current) {
-      const due = now - lastPushRef.current >= MIN_UPDATE_MS;
-      if (due && meaningfulChange(lastStateRef.current, next)) {
-        instanceRef.current.update(next).catch(() => {});
-        lastStateRef.current = next;
-        lastPushRef.current = now;
+        const due = now - (lastPush.current.get(e.printerId) ?? 0) >= MIN_UPDATE_MS;
+        if (due && meaningfulChange(lastState.current.get(e.printerId) ?? null, next)) {
+          inst.update(next).catch(() => {});
+          lastState.current.set(e.printerId, next);
+          lastPush.current.set(e.printerId, now);
+        }
       }
     }
-  }, [vm, status, extras.modelUri, extras.queueCount, extras.nextName]);
+  }, [entries]);
 }

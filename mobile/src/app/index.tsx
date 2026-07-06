@@ -7,8 +7,7 @@ import { getConfig, patchConfig, type AppConfig } from '@/config/secureConfig';
 import { BambuddyClient } from '@/api/bambuddyClient';
 import { usePrinterStatus } from '@/realtime/usePrinterStatus';
 import { useCameraStream } from '@/realtime/useCameraStream';
-import { useLiveActivity } from '@/liveactivity/useLiveActivity';
-import { writeModelThumb } from '@/liveactivity/modelThumb';
+import { usePrinterActivities, type ActivityEntry } from '@/liveactivity/useLiveActivity';
 import { presentDashboard, type DashVM } from '@/dashboard/present';
 import { printerProfile } from '@/printers/profile';
 import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
@@ -117,62 +116,20 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
     };
   }, [client, camToken]);
 
-  // ---- Live Activity: follow the machine that's actually printing (prefer the selected one) ----
-  const laId = useMemo(() => {
-    if (vm.kind === 'live') return printerId;
-    const other = (printers ?? []).find((p) => p.id !== printerId && presentDashboard(statuses[p.id] ?? null).kind === 'live');
-    return other?.id ?? printerId;
-  }, [vm.kind, printerId, printers, statuses]);
-  const laStatus = statuses[laId] ?? null;
-  const laVm: DashVM = useMemo(() => (laId === printerId ? vm : presentDashboard(laStatus, Date.now())), [laId, printerId, vm, laStatus]);
-
-  // Live Activity model picture: match the active print to a library file by name, then cache its
-  // plate thumbnail to the App Group so the widget (separate process) can show it. Resolution
-  // needs the camera token — don't latch a print name until the token exists, and unlatch on
-  // failure so the next status frame retries.
-  const [modelUri, setModelUri] = useState<string | null>(null);
-  const modelForRef = useRef<string | null>(null);
-  useEffect(() => {
-    const name = laVm.kind === 'live' ? laStatus?.subtask_name ?? null : null;
-    if (!name) {
-      if (modelForRef.current) { modelForRef.current = null; setModelUri(null); }
-      return;
-    }
-    if (!camToken) return; // wait for the token; effect re-runs when it arrives
-    if (modelForRef.current === name) return; // already resolved for this print
-    modelForRef.current = name;
-    setModelUri(null);
-    (async () => {
-      try {
-        const files = await client.listFiles();
-        const m = files.find((f) => (f.filename && f.filename.includes(name)) || (f.print_name && f.print_name.includes(name)));
-        if (m?.thumbnail_path) {
-          const uri = await writeModelThumb(client, m.id, camToken);
-          if (modelForRef.current === name) setModelUri(uri);
-        }
-      } catch {
-        // No thumb this time (network blip / no library match) — allow a retry on the next frame.
-        if (modelForRef.current === name) modelForRef.current = null;
-      }
-    })();
-  }, [laVm.kind, laStatus?.subtask_name, client, camToken]);
-
-  // Live Activity queue summary — only jobs targeting the printer the activity tracks.
-  const [queue, setQueue] = useState<{ count: number; next: string | null }>({ count: 0, next: null });
-  useEffect(() => {
-    const poll = () =>
-      client.listQueue().then((items) => {
-        const up = items.filter(
-          (i) => (i.status === 'pending' || i.status === 'queued') && (i.printer_id == null || i.printer_id === laId),
-        );
-        setQueue({ count: up.length, next: up[0]?.library_file_name ?? up[0]?.archive_name ?? null });
-      }).catch(() => {});
-    poll();
-    const id = setInterval(poll, 15000);
-    return () => clearInterval(id);
-  }, [client, laId]);
-
-  useLiveActivity(laVm, laStatus, { modelUri, queueCount: queue.count, nextName: queue.next });
+  // ---- Live Activities: one lock-screen card per printer that's actively printing ----
+  // Every printer in the fleet gets an entry; the hook starts/updates/ends a card per printer based
+  // on its live state, so A1 and H2C show as two separate cards on the lock screen.
+  const activityEntries: ActivityEntry[] = useMemo(
+    () =>
+      (printers ?? []).map((p) => ({
+        printerId: p.id,
+        printerName: p.name,
+        status: statuses[p.id] ?? null,
+        vm: p.id === printerId ? vm : presentDashboard(statuses[p.id] ?? null, Date.now()),
+      })),
+    [printers, statuses, printerId, vm],
+  );
+  usePrinterActivities(activityEntries);
 
   const [tab, setTab] = useState<TabKey>('printer');
   const [overlay, setOverlay] = useState<'camera' | 'upload' | null>(null);
