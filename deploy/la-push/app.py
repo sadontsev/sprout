@@ -29,7 +29,9 @@ BAMBUDDY_API_KEY = os.environ["BAMBUDDY_API_KEY"]
 APNS_KEY_PATH = os.environ.get("APNS_KEY_PATH", "/keys/apns_key.p8")
 APNS_KEY_ID = os.environ["APNS_KEY_ID"]
 APNS_TEAM_ID = os.environ["APNS_TEAM_ID"]
-APNS_TOPIC = os.environ.get("APNS_TOPIC", "com.mvks5.bambu.push-type.liveactivity")
+APNS_TOPIC = os.environ.get("APNS_TOPIC", "com.mvks5.bambu.push-type.liveactivity")  # Live Activity topic
+# The bundle id is the topic for regular alert notifications (print done / error).
+APNS_BUNDLE_ID = os.environ.get("APNS_BUNDLE_ID", APNS_TOPIC.replace(".push-type.liveactivity", ""))
 # Dev/Xcode builds use the SANDBOX gateway; TestFlight/App Store use production. Flip via env.
 APNS_HOST = os.environ.get("APNS_HOST", "api.sandbox.push.apple.com")
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
@@ -122,21 +124,30 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
     )
 
 
-# ---- registrations (activityId -> {printerId, pushToken, printerName, iconUri, lastPush, lastState}) ----
+# ---- state ----
+# _regs: str(printerId) -> Live-Activity card {printerId, pushToken, printerName, iconUri, lastPush, lastState}
 _regs: dict[str, dict] = {}
+# _device_tokens: raw APNs device tokens for regular alert notifications (print done / error).
+_device_tokens: list[str] = []
+# _last_kind: printerId -> last-seen kind, for edge-triggered notifications (not persisted; rebuilt on boot).
+_last_kind: dict[int, str] = {}
+# _printers_cache: printerId -> name, refreshed from Bambuddy.
+_printers_cache: dict[int, str] = {}
 
 
 def _load() -> None:
-    global _regs
+    global _regs, _device_tokens
     try:
-        _regs = json.loads(REG_FILE.read_text())
+        data = json.loads(REG_FILE.read_text())
+        _regs = data.get("regs", {})
+        _device_tokens = data.get("devices", [])
     except (FileNotFoundError, json.JSONDecodeError):
-        _regs = {}
+        _regs, _device_tokens = {}, []
 
 
 def _save() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    REG_FILE.write_text(json.dumps(_regs))
+    REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens}))
 
 
 # ---- APNs ----
@@ -185,6 +196,32 @@ async def _get_status(client: httpx.AsyncClient, printer_id: int) -> dict | None
         return None
 
 
+async def _list_printers(client: httpx.AsyncClient) -> dict[int, str]:
+    try:
+        r = await client.get(f"{BAMBUDDY_URL}/api/v1/printers/", headers={"X-API-Key": BAMBUDDY_API_KEY}, timeout=8)
+        arr = r.json() if r.status_code == 200 else []
+        return {p["id"]: (p.get("name") or f"Printer {p['id']}") for p in arr if p.get("is_active", True)}
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError):
+        return {}
+
+
+# ---- alert notifications (print done / error) ----
+async def _notify(client: httpx.AsyncClient, title: str, body: str) -> None:
+    for tok in list(_device_tokens):
+        try:
+            r = await client.post(
+                f"https://{APNS_HOST}/3/device/{tok}",
+                headers={"authorization": f"bearer {_apns_token()}", "apns-topic": APNS_BUNDLE_ID, "apns-push-type": "alert", "apns-priority": "10"},
+                json={"aps": {"alert": {"title": title, "body": body}, "sound": "default"}},
+            )
+            print(f"[notify] {title!r} -> {r.status_code}", flush=True)
+            if r.status_code in (400, 410):
+                _device_tokens.remove(tok)
+                _save()
+        except httpx.HTTPError as e:
+            print(f"[notify] error: {e}", flush=True)
+
+
 # ---- poll loop ----
 async def _poll_loop() -> None:
     async with httpx.AsyncClient(http2=True, timeout=15) as client:
@@ -197,37 +234,54 @@ async def _poll_loop() -> None:
 
 
 async def _tick(client: httpx.AsyncClient) -> None:
-    if not _regs:
+    # Poll every printer with a Live-Activity card; also the whole fleet when a device token is
+    # registered (so print-done/error alerts fire even with no card up).
+    ids: set[int] = {int(k) for k in _regs}
+    if _device_tokens:
+        names = await _list_printers(client)
+        if names:
+            _printers_cache.update(names)
+        ids |= set(_printers_cache)
+    if not ids:
         return
-    by_printer: dict[int, list[str]] = {}
-    for aid, reg in _regs.items():
-        by_printer.setdefault(reg["printerId"], []).append(aid)
 
-    for printer_id, aids in by_printer.items():
-        status = await _get_status(client, printer_id)
+    now = time.time()
+    for pid in ids:
+        status = await _get_status(client, pid)
         if status is None:
             continue
         fields, kind = classify(status)
-        now = time.time()
-        for aid in aids:
-            reg = _regs.get(aid)
-            if not reg:
-                continue
-            cs = {"printerName": reg.get("printerName", ""), "iconUri": reg.get("iconUri", ""), **fields}
+        reg = _regs.get(str(pid))
+        name = (reg or {}).get("printerName") or _printers_cache.get(pid) or f"Printer {pid}"
+
+        # 1) Live-Activity card: throttled update, or end on a terminal state.
+        if reg:
+            cs = {"printerName": name, "iconUri": reg.get("iconUri", ""), **fields}
             if kind in ("complete", "error", "idle"):
                 code = await _push_end(client, reg, cs)
-                print(f"[end] printer {printer_id} activity {aid[:8]} -> {code}", flush=True)
-                _regs.pop(aid, None)
+                print(f"[end] printer {pid} -> {code}", flush=True)
+                _regs.pop(str(pid), None)
                 _save()
             elif meaningful_change(reg.get("lastState"), cs) and (now - reg.get("lastPush", 0) >= MIN_UPDATE_S):
                 code = await _push_update(client, reg, cs)
-                if code in (400, 410):  # BadDeviceToken / Unregistered — drop it
-                    print(f"[drop] activity {aid[:8]} -> {code}", flush=True)
-                    _regs.pop(aid, None)
+                if code in (400, 410):
+                    print(f"[drop] printer {pid} -> {code}", flush=True)
+                    _regs.pop(str(pid), None)
                     _save()
                 else:
                     reg["lastState"], reg["lastPush"] = cs, now
                     _save()
+
+        # 2) Alert on a state transition (edge-triggered; the first observation is silent).
+        if _device_tokens:
+            prev = _last_kind.get(pid)
+            if prev is not None and prev != kind:
+                model = fields.get("name") or "your print"
+                if kind == "complete":
+                    await _notify(client, f"✅ {name} — print finished", model)
+                elif kind == "error":
+                    await _notify(client, f"⚠️ {name} — needs attention", model)
+            _last_kind[pid] = kind
 
 
 # ---- HTTP API ----
@@ -241,17 +295,31 @@ class Register(BaseModel):
     icon_uri: str = ""
 
 
+class DeviceReg(BaseModel):
+    device_token: str  # raw APNs device token for regular alert notifications
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     _load()
     _apns_token()  # fail fast if the .p8 / key id is wrong
     asyncio.create_task(_poll_loop())
-    print(f"la-push up — APNs {APNS_HOST}, topic {APNS_TOPIC}, {len(_regs)} registrations", flush=True)
+    print(f"la-push up — APNs {APNS_HOST}, LA topic {APNS_TOPIC}, alert topic {APNS_BUNDLE_ID}, "
+          f"{len(_regs)} cards, {len(_device_tokens)} device(s)", flush=True)
 
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "registrations": len(_regs), "apns_host": APNS_HOST}
+    return {"ok": True, "registrations": len(_regs), "devices": len(_device_tokens), "apns_host": APNS_HOST}
+
+
+@app.post("/register-device")
+async def register_device(r: DeviceReg) -> dict:
+    if r.device_token not in _device_tokens:
+        _device_tokens.append(r.device_token)
+        _save()
+        print(f"[device] registered {r.device_token[:8]}… ({len(_device_tokens)} total)", flush=True)
+    return {"ok": True}
 
 
 @app.post("/register")

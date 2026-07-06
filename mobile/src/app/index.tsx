@@ -8,6 +8,7 @@ import { BambuddyClient } from '@/api/bambuddyClient';
 import { usePrinterStatus } from '@/realtime/usePrinterStatus';
 import { useCameraStream } from '@/realtime/useCameraStream';
 import { usePrinterActivities, type ActivityEntry } from '@/liveactivity/useLiveActivity';
+import { useStatusNotifications } from '@/notifications/useStatusNotifications';
 import { presentDashboard, type DashVM } from '@/dashboard/present';
 import { printerProfile } from '@/printers/profile';
 import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
@@ -135,6 +136,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
     [config.pushUrl, config.baseUrl],
   );
   usePrinterActivities(activityEntries, pushUrl);
+  useStatusNotifications(pushUrl); // print-done / error banners via la-push
 
   const [tab, setTab] = useState<TabKey>('printer');
   const [overlay, setOverlay] = useState<'camera' | 'upload' | null>(null);
