@@ -161,25 +161,28 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
 _regs: dict[str, dict] = {}
 # _device_tokens: raw APNs device tokens for regular alert notifications (print done / error).
 _device_tokens: list[str] = []
-# _last_kind: printerId -> last-seen kind, for edge-triggered notifications (not persisted; rebuilt on boot).
+# _last_kind: printerId -> last-seen kind, for edge-triggered notifications. Persisted (in REG_FILE) so a
+# restart/crash mid-print doesn't lose the live->complete/error edge and silently drop the alert.
 _last_kind: dict[int, str] = {}
 # _printers_cache: printerId -> name, refreshed from Bambuddy.
 _printers_cache: dict[int, str] = {}
 
 
 def _load() -> None:
-    global _regs, _device_tokens
+    global _regs, _device_tokens, _last_kind
     try:
         data = json.loads(REG_FILE.read_text())
         _regs = data.get("regs", {})
         _device_tokens = data.get("devices", [])
+        # JSON object keys are strings; _last_kind is keyed by int printer id, so coerce back.
+        _last_kind = {int(k): v for k, v in data.get("last_kind", {}).items()}
     except (FileNotFoundError, json.JSONDecodeError):
-        _regs, _device_tokens = {}, []
+        _regs, _device_tokens, _last_kind = {}, [], {}
 
 
 def _save() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens}))
+    REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind}))
 
 
 # ---- APNs ----
@@ -304,7 +307,8 @@ async def _tick(client: httpx.AsyncClient) -> None:
                     reg["lastState"], reg["lastPush"] = cs, now
                     _save()
 
-        # 2) Alert on a state transition (edge-triggered; the first observation is silent).
+        # 2) Alert on a state transition (edge-triggered; the first observation is silent). _last_kind is
+        # persisted, so a restart/crash mid-print still fires the finish/error edge on the next poll.
         if _device_tokens:
             prev = _last_kind.get(pid)
             if prev is not None and prev != kind:
@@ -313,7 +317,9 @@ async def _tick(client: httpx.AsyncClient) -> None:
                     await _notify(client, f"✅ {name} — print finished", model)
                 elif kind == "error":
                     await _notify(client, f"⚠️ {name} — needs attention", model)
-            _last_kind[pid] = kind
+            if prev != kind:
+                _last_kind[pid] = kind
+                _save()
 
 
 # ---- HTTP API ----
