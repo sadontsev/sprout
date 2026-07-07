@@ -262,12 +262,19 @@ export function presentDashboard(status: PrinterStatus | null, nowMs = 0): DashV
       active: false,
     });
   }
-  // Which extruder is selected: trust the printer's active_extruder (0=left, 1=right); fall back to
-  // the hotter one only when the payload doesn't report it.
+  // Which extruder is selected (0=left, 1=right):
+  //  1. trust the printer's active_extruder when it reports one;
+  //  2. else the nozzle that's being DRIVEN — exactly one has a target set (the idle one reads 0).
+  //     This is the reliable signal: a just-deactivated nozzle can still be hotter than a
+  //     just-activated one, so a temperature compare picks the wrong head mid tool-change;
+  //  3. else (both or neither driven) fall back to the hotter one.
   let activeIdx = 0;
   if (nozzles.length > 1) {
     const ae = asNum(status.active_extruder);
-    activeIdx = ae === 0 || ae === 1 ? ae : nozzles[1].now > nozzles[0].now ? 1 : 0;
+    const driven0 = nozzles[0].target > 0;
+    const driven1 = nozzles[1].target > 0;
+    activeIdx =
+      ae === 0 || ae === 1 ? ae : driven0 !== driven1 ? (driven1 ? 1 : 0) : nozzles[1].now > nozzles[0].now ? 1 : 0;
   }
   nozzles.forEach((n, i) => (n.active = i === activeIdx));
   const active = nozzles[activeIdx] ?? n1;
