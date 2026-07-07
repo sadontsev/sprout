@@ -52,6 +52,19 @@ test('dual-nozzle H2C: driven-but-cooler right head is still the active one', ()
   expect(s.nozzle2).toBe(60);
 });
 
+// Live H2C left-nozzle print: active_extruder=1 (WRONG) while nozzle idx0 is driven at 245/245.
+// The card must show the LEFT head active, not follow the bogus active_extruder.
+test('dual-nozzle H2C: contradictory active_extruder ignored -> left (driven) is active', () => {
+  const s = cs({
+    ...base,
+    active_extruder: 1,
+    temperatures: { bed: 70, bed_target: 70, nozzle: 245, nozzle_target: 245, nozzle_2: 46, nozzle_2_target: 0 },
+  });
+  expect(s.activeNozzle).toBe(0);
+  expect(s.nozzle).toBe(245);
+  expect(s.nozzle2).toBe(46);
+});
+
 test('meaningfulChange fires on a change to the second (right) nozzle', () => {
   const a = cs({ ...base, temperatures: { bed: 55, bed_target: 55, nozzle: 41, nozzle_target: 0, nozzle_2: 200, nozzle_2_target: 220 } });
   const b = cs({ ...base, temperatures: { bed: 55, bed_target: 55, nozzle: 41, nozzle_target: 0, nozzle_2: 220, nozzle_2_target: 220 } });

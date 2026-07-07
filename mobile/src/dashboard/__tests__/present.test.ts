@@ -140,6 +140,20 @@ test('dual nozzle: matches the live H2C payload — right active, left idle', ()
   expect(vm.nozzleTarget).toBe(220);
 });
 
+// Regression (live H2C, 2026-07-07): active_extruder is UNRELIABLE — it read 1 (right) while the LEFT
+// nozzle (idx 0) was the driven/hot one at 245/245 and the right sat idle at 46/0 (and ams_extruder_map
+// pointed at extruder 0). Trusting active_extruder would show the idle nozzle; the driven target wins.
+test('dual nozzle: a contradictory active_extruder is ignored — the driven head wins', () => {
+  const vm = presentDashboard({
+    ...h2cRunning,
+    active_extruder: 1,
+    temperatures: { bed: 70, bed_target: 70, nozzle: 245, nozzle_target: 245, nozzle_2: 46, nozzle_2_target: 0 },
+  });
+  expect(vm.nozzles[0].active).toBe(true); // left, driven
+  expect(vm.nozzles[1].active).toBe(false); // right, idle — despite active_extruder=1
+  expect(vm.nozzleNow).toBe(245);
+});
+
 test('chamber: surfaced only when the payload reports it', () => {
   const vm = presentDashboard(h2cRunning, 0);
   expect(vm.hasChamber).toBe(true);
@@ -259,12 +273,13 @@ describe('presentNozzles', () => {
   });
 });
 
-test('active nozzle follows active_extruder, not just temperature', () => {
-  // Left hotter (250) but the printer says the right (1) is active — trust the printer.
+test('active nozzle ignores active_extruder (unreliable) — driven, else hotter, wins', () => {
+  // Both nozzles driven (250/250 vs 220/225) and the printer claims the RIGHT (1) is active — but
+  // active_extruder is unreliable on the live H2C, so the hotter of the two driven heads (left) wins.
   const vm = presentDashboard({ ...h2cRunning, active_extruder: 1, temperatures: { nozzle: 250, nozzle_target: 250, nozzle_2: 220, nozzle_2_target: 225 } });
-  expect(vm.nozzles[0].active).toBe(false);
-  expect(vm.nozzles[1].active).toBe(true);
-  // Without active_extruder, fall back to the hotter nozzle.
+  expect(vm.nozzles[0].active).toBe(true);
+  expect(vm.nozzles[1].active).toBe(false);
+  // Same result with active_extruder absent — the field never drives the choice either way.
   const vm2 = presentDashboard({ ...h2cRunning, active_extruder: undefined, temperatures: { nozzle: 250, nozzle_target: 250, nozzle_2: 220, nozzle_2_target: 225 } });
   expect(vm2.nozzles[0].active).toBe(true);
 });
