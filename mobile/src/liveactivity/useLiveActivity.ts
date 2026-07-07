@@ -1,82 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
-import { printActivity, type PrintActivityProps } from './PrintActivity';
+import { printActivity } from './PrintActivity';
+import { toContentState, meaningfulChange, GENERIC_END, type PrintActivityProps, type LiveActivityExtras } from './contentState';
 import { nozzleIconUri } from './nozzleIcon';
 import type { LiveActivity } from 'expo-widgets';
 import type { PrinterStatus } from '@/api/types';
 import type { DashVM } from '@/dashboard/present';
 
 const MIN_UPDATE_MS = 4000; // don't push to ActivityKit more than ~once / 4s per printer
-const PROGRESS_EPS = 1; // ...unless progress moved >= 1%
-
-// state label -> SF Symbol shown in the activity.
-const SYMBOLS: Record<string, string> = {
-  Printing: 'printer.fill',
-  Heating: 'thermometer.medium',
-  Paused: 'pause.circle.fill',
-  Complete: 'checkmark.circle.fill',
-  Error: 'exclamationmark.triangle.fill',
-};
-
-export type LiveActivityExtras = { modelUri?: string | null; queueCount?: number; nextName?: string | null };
-
-/** Pure: DashVM (+raw status) -> the flat ContentState the activity renders. */
-export function toContentState(vm: DashVM, status: PrinterStatus, nowMs: number, iconUri = '', printerName = '', extras: LiveActivityExtras = {}): PrintActivityProps {
-  const finished = vm.kind === 'complete';
-  const remainingMin = status.remaining_time ?? 0;
-  const t = status.temperatures;
-  return {
-    printerName,
-    iconUri,
-    modelUri: extras.modelUri ?? '',
-    queueCount: extras.queueCount ?? 0,
-    nextName: extras.nextName ?? '',
-    name: status.subtask_name ?? '',
-    stateLabel: vm.stateLabel,
-    progress: vm.progressInt,
-    layer: status.layer_num ?? 0,
-    totalLayers: status.total_layers ?? 0,
-    etaEpochMs: !finished && remainingMin > 0 ? nowMs + remainingMin * 60000 : 0,
-    finished,
-    symbol: SYMBOLS[vm.stateLabel] ?? (vm.kind === 'error' ? SYMBOLS.Error : SYMBOLS.Printing),
-    tint: vm.stateColor,
-    nozzle: Math.round(t?.nozzle ?? 0),
-    nozzleTarget: Math.round(t?.nozzle_target ?? 0),
-    bed: Math.round(t?.bed ?? 0),
-    bedTarget: Math.round(t?.bed_target ?? 0),
-  };
-}
 
 const isLive = (vm: DashVM) => vm.kind === 'live'; // Printing | Heating | Paused
 const isTerminal = (vm: DashVM) => vm.kind === 'complete' || vm.kind === 'error' || vm.kind === 'idle';
-
-// Minimal content used only to dismiss an orphaned activity we can't map back to a printer.
-const GENERIC_END: PrintActivityProps = {
-  printerName: '', name: '', stateLabel: 'Complete', progress: 100, layer: 0, totalLayers: 0, etaEpochMs: 0,
-  finished: true, symbol: 'checkmark.circle.fill', iconUri: '', tint: '#30D158', nozzle: 0, nozzleTarget: 0, bed: 0, bedTarget: 0,
-  modelUri: '', queueCount: 0, nextName: '',
-};
-
-export function meaningfulChange(a: PrintActivityProps | null, b: PrintActivityProps): boolean {
-  if (!a) return true;
-  return (
-    Math.abs(a.progress - b.progress) >= PROGRESS_EPS ||
-    a.layer !== b.layer ||
-    a.stateLabel !== b.stateLabel ||
-    a.name !== b.name ||
-    a.printerName !== b.printerName ||
-    a.modelUri !== b.modelUri ||
-    a.queueCount !== b.queueCount ||
-    a.nextName !== b.nextName ||
-    // Temps + ETA are rendered on the lock screen — without these, a heat-up that doesn't
-    // advance progress/layer never pushes and the activity shows cold temps for minutes.
-    Math.abs(a.nozzle - b.nozzle) >= 2 ||
-    Math.abs(a.bed - b.bed) >= 2 ||
-    a.nozzleTarget !== b.nozzleTarget ||
-    a.bedTarget !== b.bedTarget ||
-    Math.abs(a.etaEpochMs - b.etaEpochMs) >= 60_000
-  );
-}
 
 /** One printer's slice of the fleet, fed into usePrinterActivities. */
 export type ActivityEntry = {

@@ -8,28 +8,8 @@
 import { createLiveActivity, type LiveActivityEnvironment } from 'expo-widgets';
 import { HStack, VStack, Text, Image, Spacer, ProgressView } from '@expo/ui/swift-ui';
 import { font, foregroundStyle, padding, tint, frame, resizable, aspectRatio, cornerRadius } from '@expo/ui/swift-ui/modifiers';
-
-/** Flat, JSON-serializable ContentState the activity renders. */
-export type PrintActivityProps = {
-  printerName: string; // "A1" | "H2C" — which machine this card is for (one activity per printer)
-  name: string; // subtask/file name
-  stateLabel: string; // "Printing" | "Heating" | "Paused" | "Complete" | "Error"
-  progress: number; // 0..100
-  layer: number;
-  totalLayers: number; // 0 if unknown
-  etaEpochMs: number; // absolute finish time, ms epoch; 0 if unknown
-  finished: boolean;
-  symbol: string; // SF Symbol fallback name
-  iconUri: string; // file:// URI of the brand nozzle glyph in the App Group ('' -> fall back to symbol)
-  tint: string; // hex accent
-  nozzle: number;
-  nozzleTarget: number;
-  bed: number;
-  bedTarget: number;
-  modelUri: string; // file:// URI of the plate thumbnail in the App Group ('' -> nozzle glyph) — leading visual
-  queueCount: number; // prints waiting in the queue (drives the "Up next" banner row)
-  nextName: string; // name of the next queued print ('' if none)
-};
+// The ContentState shape lives in the pure (jest-testable) contentState.ts; this file only renders it.
+import type { PrintActivityProps } from './contentState';
 
 const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => {
   'widget';
@@ -40,7 +20,24 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
   const eta = p.etaEpochMs > 0 && !p.finished;
   const endDate = new Date(p.etaEpochMs || Date.now());
   const temp = (cur: number, target: number) => (target > 0 && target !== cur ? `${cur}/${target}°` : `${cur}°`);
-  const tempsLine = `Nozzle ${temp(p.nozzle, p.nozzleTarget)}  ·  Bed ${temp(p.bed, p.bedTarget)}`;
+  const dim = (s: string) => <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{s}</Text>;
+  // Nozzle temps row: dual-nozzle machines (H2-series) show BOTH heads — the driven one bright, the
+  // idle one dimmed — so a right-nozzle print never reads as the (idle, cool) left. Single machines
+  // show one "Nozzle". `activeNozzle` (0=left, 1=right) is decided upstream in present.ts / la-push.
+  const nozSeg = (label: string, cur: number, target: number, active: boolean) => (
+    <HStack spacing={3}>
+      {dim(label)}
+      <Text modifiers={[font(active ? { size: 11, weight: 'semibold' } : { size: 11 }), foregroundStyle(active ? T1 : T2)]}>{temp(cur, target)}</Text>
+    </HStack>
+  );
+  const nozzleTemps = () => (
+    <HStack spacing={8}>
+      {p.hasNozzle2 ? nozSeg('L', p.nozzle, p.nozzleTarget, p.activeNozzle === 0) : null}
+      {p.hasNozzle2 ? nozSeg('R', p.nozzle2, p.nozzle2Target, p.activeNozzle === 1) : nozSeg('Nozzle', p.nozzle, p.nozzleTarget, true)}
+      {dim('·')}
+      {dim(`Bed ${temp(p.bed, p.bedTarget)}`)}
+    </HStack>
+  );
   // Brand nozzle glyph from the App Group (uiImage); falls back to the SF symbol if unavailable.
   const glyph = (s: number) =>
     p.iconUri
@@ -80,7 +77,7 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
         </HStack>
         <ProgressView value={Math.max(0, Math.min(1, p.progress / 100))} modifiers={[tint(p.tint)]} />
         <HStack spacing={8}>
-          <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{tempsLine}</Text>
+          {nozzleTemps()}
           <Spacer />
           {eta ? (
             <Text modifiers={[font({ size: 11, weight: 'semibold', design: 'rounded' }), foregroundStyle(T2)]} date={endDate} dateStyle="timer" />
@@ -124,7 +121,7 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
       <VStack spacing={6} modifiers={[padding({ horizontal: 6, top: 4 })]}>
         <ProgressView value={Math.max(0, Math.min(1, p.progress / 100))} modifiers={[tint(p.tint)]} />
         <HStack spacing={8}>
-          <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{tempsLine}</Text>
+          {nozzleTemps()}
           <Spacer />
           {eta ? (
             <HStack spacing={3}>

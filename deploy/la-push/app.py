@@ -60,7 +60,8 @@ def classify(status: dict) -> tuple[dict, str]:
     if not status.get("connected"):
         return ({"name": "", "stateLabel": "Offline", "tint": COLORS["idle"], "progress": 0, "layer": 0,
                  "totalLayers": 0, "etaEpochMs": 0, "finished": False, "symbol": SYMBOLS["Error"],
-                 "nozzle": 0, "nozzleTarget": 0, "bed": 0, "bedTarget": 0,
+                 "nozzle": 0, "nozzleTarget": 0, "nozzle2": 0, "nozzle2Target": 0,
+                 "hasNozzle2": False, "activeNozzle": 0, "bed": 0, "bedTarget": 0,
                  "modelUri": "", "queueCount": 0, "nextName": ""}, "offline")
 
     state = (status.get("state") or "").upper()
@@ -69,12 +70,23 @@ def classify(status: dict) -> tuple[dict, str]:
     total = int(status.get("total_layers") or 0)
     remaining = status.get("remaining_time") or 0
 
-    noz, noz_t = _rnd(t.get("nozzle")), _rnd(t.get("nozzle_target"))
-    if t.get("nozzle_2") is not None:  # dual-nozzle (H2 series) — pick the active/hotter extruder
+    # Nozzles are physical: n1 = left/only head, n2 = right (H2-series). Pick the ACTIVE head exactly
+    # as present.ts does: trust active_extruder; else the head that's DRIVEN (only one has a target —
+    # the idle one reads 0); else the hotter one. A just-deactivated head can still be hotter, so a
+    # temperature compare alone picks the wrong nozzle mid tool-change.
+    n1, n1t = _rnd(t.get("nozzle")), _rnd(t.get("nozzle_target"))
+    has_n2 = t.get("nozzle_2") is not None
+    n2, n2t = _rnd(t.get("nozzle_2")), _rnd(t.get("nozzle_2_target"))
+    active_idx = 0
+    if has_n2:
         ae = status.get("active_extruder")
-        n2, n2t = _rnd(t.get("nozzle_2")), _rnd(t.get("nozzle_2_target"))
-        if ae == 1 or (ae not in (0, 1) and n2 > noz):
-            noz, noz_t = n2, n2t
+        if ae == 0 or ae == 1:
+            active_idx = ae
+        elif (n1t > 0) != (n2t > 0):
+            active_idx = 1 if n2t > 0 else 0
+        else:
+            active_idx = 1 if n2 > n1 else 0
+    anoz, anoz_t = (n2, n2t) if active_idx == 1 else (n1, n1t)  # active head, for the heating heuristic
     bed, bed_t = _rnd(t.get("bed")), _rnd(t.get("bed_target"))
 
     finished = False
@@ -89,7 +101,7 @@ def classify(status: dict) -> tuple[dict, str]:
     else:
         stage = (status.get("stg_cur_name") or "").strip()
         in_stage = bool(stage) and stage.lower() != "printing"
-        heating_up = ((noz < noz_t - 3) or (bed < bed_t - 2)) and progress < 2
+        heating_up = ((anoz < anoz_t - 3) or (bed < bed_t - 2)) and progress < 2
         label = stage if in_stage else ("Heating" if heating_up else "Printing")
         color = COLORS["heating"] if (in_stage or heating_up) else COLORS["running"]
         kind = "live"
@@ -102,7 +114,8 @@ def classify(status: dict) -> tuple[dict, str]:
         "progress": progress, "layer": layer, "totalLayers": total,
         "etaEpochMs": eta, "finished": finished,
         "symbol": SYMBOLS.get(label, SYMBOLS["Error"] if kind == "error" else "printer.fill"),
-        "nozzle": noz, "nozzleTarget": noz_t, "bed": bed, "bedTarget": bed_t,
+        "nozzle": n1, "nozzleTarget": n1t, "nozzle2": n2, "nozzle2Target": n2t,
+        "hasNozzle2": has_n2, "activeNozzle": active_idx, "bed": bed, "bedTarget": bed_t,
         "modelUri": "", "queueCount": 0, "nextName": "",
     }, kind)
 
@@ -117,8 +130,13 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
         or a["stateLabel"] != b["stateLabel"]
         or a["name"] != b["name"]
         or abs(a["nozzle"] - b["nozzle"]) >= 2
+        # New keys use .get(): a card's lastState persists across deploys, so an old-schema stored
+        # state (pre-dual-nozzle) may lack these — treat missing as 0 rather than KeyError-ing the tick.
+        or abs(a.get("nozzle2", 0) - b["nozzle2"]) >= 2
         or abs(a["bed"] - b["bed"]) >= 2
         or a["nozzleTarget"] != b["nozzleTarget"]
+        or a.get("nozzle2Target", 0) != b["nozzle2Target"]
+        or a.get("activeNozzle", 0) != b["activeNozzle"]
         or a["bedTarget"] != b["bedTarget"]
         or abs(a["etaEpochMs"] - b["etaEpochMs"]) >= 60_000
     )

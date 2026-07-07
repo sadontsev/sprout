@@ -114,6 +114,32 @@ test('dual nozzle: falls back to the hotter one when both/neither have targets',
   expect(vm.nozzleNow).toBe(250);
 });
 
+// Regression (the real Live-Activity bug, 2026-07-07): the RIGHT nozzle prints (target 220) while the
+// LEFT sits idle (target 0) but has NOT cooled yet — so "hotter" would wrongly pick the idle left.
+// The only reliable signal is "which nozzle has a target set", so the driven one must win regardless.
+test('dual nozzle: active follows the driven target, even when the idle one is still hotter', () => {
+  const vm = presentDashboard({
+    ...h2cRunning,
+    // left just deactivated (cooling from 150, target 0); right just activated (heating 60 -> 220).
+    temperatures: { ...h2cRunning.temperatures, nozzle: 150, nozzle_target: 0, nozzle_2: 60, nozzle_2_target: 220 },
+  });
+  expect(vm.nozzles[0].active).toBe(false); // left, idle
+  expect(vm.nozzles[1].active).toBe(true); // right, driven
+  expect(vm.nozzleNow).toBe(60);
+  expect(vm.nozzleTarget).toBe(220);
+});
+
+// The exact live payload pulled off the H2C mid-print: right printing at 220/220, left idle 41/0.
+test('dual nozzle: matches the live H2C payload — right active, left idle', () => {
+  const vm = presentDashboard({
+    ...h2cRunning,
+    temperatures: { bed: 55, bed_target: 55, nozzle: 41, nozzle_target: 0, nozzle_2: 220, nozzle_2_target: 220 },
+  });
+  expect(vm.nozzles[1].active).toBe(true);
+  expect(vm.nozzleNow).toBe(220);
+  expect(vm.nozzleTarget).toBe(220);
+});
+
 test('chamber: surfaced only when the payload reports it', () => {
   const vm = presentDashboard(h2cRunning, 0);
   expect(vm.hasChamber).toBe(true);
