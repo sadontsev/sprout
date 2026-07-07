@@ -79,19 +79,16 @@ def classify(status: dict) -> tuple[dict, str]:
     total = int(status.get("total_layers") or 0)
     remaining = status.get("remaining_time") or 0
 
-    # Nozzles are physical: n1 = left/only head, n2 = right (H2-series). Pick the ACTIVE head exactly
-    # as present.ts does: trust active_extruder; else the head that's DRIVEN (only one has a target —
-    # the idle one reads 0); else the hotter one. A just-deactivated head can still be hotter, so a
-    # temperature compare alone picks the wrong nozzle mid tool-change.
+    # Nozzles are physical: n1 = left/only head, n2 = right (H2-series). Pick the ACTIVE head exactly as
+    # present.ts does: the DRIVEN head (only one has a target; the idle one reads 0), else the hotter one
+    # (a just-deactivated head can still be hotter mid tool-change, so a temp compare alone misfires).
+    # status.active_extruder is intentionally IGNORED — it reports the wrong index on the live H2C.
     n1, n1t = _rnd(t.get("nozzle")), _rnd(t.get("nozzle_target"))
     has_n2 = t.get("nozzle_2") is not None
     n2, n2t = _rnd(t.get("nozzle_2")), _rnd(t.get("nozzle_2_target"))
     active_idx = 0
     if has_n2:
-        ae = status.get("active_extruder")
-        if ae == 0 or ae == 1:
-            active_idx = ae
-        elif (n1t > 0) != (n2t > 0):
+        if (n1t > 0) != (n2t > 0):
             active_idx = 1 if n2t > 0 else 0
         else:
             active_idx = 1 if n2 > n1 else 0
