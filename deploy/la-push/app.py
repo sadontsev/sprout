@@ -54,6 +54,15 @@ def _rnd(x: Any) -> int:
         return 0
 
 
+def _heating(explicit: Any, now: float, target: float, gap: float) -> bool:
+    """Mirror present.ts heating(): trust the payload's explicit heating flag when present, else
+    derive it from the temp gap. Keeps the background push card's Heating/Printing label in sync
+    with the foreground app instead of second-guessing it from temperatures alone."""
+    if isinstance(explicit, bool):
+        return explicit
+    return target > 0 and now < target - gap
+
+
 def classify(status: dict) -> tuple[dict, str]:
     """Return (content-state-fields, kind). kind ∈ live|complete|error|idle|offline."""
     t = status.get("temperatures") or {}
@@ -101,7 +110,12 @@ def classify(status: dict) -> tuple[dict, str]:
     else:
         stage = (status.get("stg_cur_name") or "").strip()
         in_stage = bool(stage) and stage.lower() != "printing"
-        heating_up = ((anoz < anoz_t - 3) or (bed < bed_t - 2)) and progress < 2
+        # Mirror present.ts: explicit heating flag (for the ACTIVE head) wins over the temp gap; gate on
+        # RAW progress, not the rounded display value — else the pushed card's label can disagree with
+        # the in-app dashboard during the early-print heat-soak.
+        noz_heat = _heating(t.get("nozzle_2_heating") if active_idx == 1 else t.get("nozzle_heating"), anoz, anoz_t, 3)
+        bed_heat = _heating(t.get("bed_heating"), bed, bed_t, 2)
+        heating_up = (noz_heat or bed_heat) and (status.get("progress") or 0) < 2
         label = stage if in_stage else ("Heating" if heating_up else "Printing")
         color = COLORS["heating"] if (in_stage or heating_up) else COLORS["running"]
         kind = "live"
