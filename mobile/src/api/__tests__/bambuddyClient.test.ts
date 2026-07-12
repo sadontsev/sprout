@@ -1,4 +1,4 @@
-import { BambuddyClient } from '../bambuddyClient';
+import { BambuddyClient, apiErrorDetail } from '../bambuddyClient';
 
 const fetchMock = jest.fn();
 global.fetch = fetchMock as unknown as typeof fetch;
@@ -68,4 +68,31 @@ test('extra headers (e.g. CF Access) are sent', async () => {
   fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
   await c.getStatus(1);
   expect(fetchMock.mock.calls.at(-1)![1].headers['CF-Access-Client-Id']).toBe('id');
+});
+
+test('dryingStart sends hours (not minutes), filament and rotate_tray as query params', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+  await client.dryingStart(2, 0, { temp: 65, hours: 8, filament: 'PETG', rotate: true });
+  const [url, opts] = fetchMock.mock.calls.at(-1)!;
+  expect(url).toBe('https://x/api/v1/printers/2/drying/start?ams_id=0&temp=65&duration=8&filament=PETG&rotate_tray=true');
+  expect(opts.method).toBe('POST');
+});
+
+test('dryingStart omits filament/rotate when not provided', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+  await client.dryingStart(2, 0, { temp: 55, hours: 4 });
+  expect(fetchMock.mock.calls.at(-1)![0]).toBe('https://x/api/v1/printers/2/drying/start?ams_id=0&temp=55&duration=4');
+});
+
+test('dryingStop targets the unit', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+  await client.dryingStop(2, 0);
+  expect(fetchMock.mock.calls.at(-1)![0]).toBe('https://x/api/v1/printers/2/drying/stop?ams_id=0');
+});
+
+test('apiErrorDetail surfaces the JSON detail from a Bambuddy error, else the raw message', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: false, status: 409, text: async () => '{"detail":"AMS is busy"}' });
+  const err = await client.dryingStart(2, 0, { temp: 55, hours: 4 }).catch((e) => e);
+  expect(apiErrorDetail(err)).toBe('AMS is busy');
+  expect(apiErrorDetail(new Error('plain failure'))).toBe('plain failure');
 });

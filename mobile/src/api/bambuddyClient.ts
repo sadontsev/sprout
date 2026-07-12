@@ -10,6 +10,14 @@ export interface BambuddyClientConfig {
   extraHeaders?: Record<string, string>;
 }
 
+/** Human message from a thrown Bambuddy error — surfaces the API's JSON `detail` (e.g. a drying
+ *  409's "AMS is busy") instead of the raw `Bambuddy POST … -> HTTP 409 {...}` string. */
+export function apiErrorDetail(e: unknown): string {
+  const s = String(e instanceof Error ? e.message : e);
+  const m = s.match(/\{"detail"\s*:\s*"([^"]+)"/);
+  return m ? m[1] : s;
+}
+
 /** Thin typed wrapper over the Bambuddy endpoints the app uses. No React. */
 export class BambuddyClient {
   readonly baseUrl: string;
@@ -58,11 +66,18 @@ export class BambuddyClient {
   async queueResume(printerId: number): Promise<void> {
     await this.req(`/api/v1/queue/printer/${printerId}/resume`, { method: 'POST' });
   }
-  /** Start AMS filament drying (H2-series; params are query-string on this endpoint). */
-  async dryingStart(printerId: number, amsId: number, temp?: number, durationMin?: number): Promise<void> {
-    const q = new URLSearchParams({ ams_id: String(amsId) });
-    if (temp != null) q.set('temp', String(temp));
-    if (durationMin != null) q.set('duration', String(durationMin));
+  /** Start AMS filament drying. NOTE: duration is HOURS (Bambuddy validates 1-24 — minutes would
+   *  400), temp is 45-85°C server-side but the AMS 2 Pro's hardware max is 65°C (85 = AMS-HT only)
+   *  — clamp via presentDryer's maxTemp before calling. `rotate` spins the spool for even drying.
+   *  A blocked start returns 409 with a human reason — show it via apiErrorDetail(). */
+  async dryingStart(
+    printerId: number,
+    amsId: number,
+    opts: { temp: number; hours: number; filament?: string; rotate?: boolean },
+  ): Promise<void> {
+    const q = new URLSearchParams({ ams_id: String(amsId), temp: String(opts.temp), duration: String(opts.hours) });
+    if (opts.filament) q.set('filament', opts.filament);
+    if (opts.rotate !== undefined) q.set('rotate_tray', String(opts.rotate));
     await this.req(`/api/v1/printers/${printerId}/drying/start?${q}`, { method: 'POST' });
   }
   async dryingStop(printerId: number, amsId: number): Promise<void> {

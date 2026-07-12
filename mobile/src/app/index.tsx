@@ -72,8 +72,14 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
     };
   }, [client]);
   useEffect(() => {
-    // If the persisted selection vanished from the backend, fall back to the first printer.
-    if (printers?.length && !printers.some((p) => p.id === printerId)) setPrinterId(printers[0].id);
+    // If the persisted selection vanished from the backend (printer sold/removed), fall back to the
+    // first printer AND persist it — otherwise every cold launch re-lives the ghost id until the
+    // fleet list loads. Added/removed printers are picked up by the 30s refresh above.
+    if (printers?.length && !printers.some((p) => p.id === printerId)) {
+      const next = printers[0];
+      setPrinterId(next.id);
+      void patchConfig({ printerId: next.id, printerName: next.name });
+    }
   }, [printers, printerId]);
   const printer = printers?.find((p) => p.id === printerId) ?? null;
   const profile = printerProfile(printer);
