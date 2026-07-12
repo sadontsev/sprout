@@ -140,7 +140,8 @@
           "frequentUpdates": true,
           "widgets": []
         }
-      ]
+      ],
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -131,3 +131,10 @@ test('authHeaders exposes the API key + extra headers for image/download request
   const c2 = new BambuddyClient({ baseUrl: 'https://x', apiKey: 'k', extraHeaders: { 'CF-Access-Client-Id': 'id' } });
   expect(c2.authHeaders()).toEqual({ 'X-API-Key': 'k', 'CF-Access-Client-Id': 'id' });
 });
+
+test('getPrinterFileGcode returns raw text from the SD gcode endpoint', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, text: async () => '; HEADER_BLOCK_START\nG1 X0' });
+  const g = await client.getPrinterFileGcode(2, '/Bambu_Cube_XYZ.gcode.3mf');
+  expect(g).toContain('HEADER_BLOCK_START');
+  expect(fetchMock.mock.calls.at(-1)![0]).toBe('https://x/api/v1/printers/2/files/gcode?path=%2FBambu_Cube_XYZ.gcode.3mf');
+});

@@ -376,7 +376,9 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
 
 // ---------------- GCODE LAYER VIEWER (scrub the sliced model layer by layer) ----------------
 // Pure parser + HTML builder live in @/library/gcodeLayers (unit-tested, headless-renderable).
-export function GcodeViewerOverlay({ client, fileId, title, onClose }: { client: BambuddyClient; fileId: number; title: string; onClose: () => void }) {
+// `load` fetches the raw gcode — library files pass () => client.getGcode(id), the SD-card browser
+// passes () => client.getPrinterFileGcode(printerId, path). Same viewer either way.
+export function GcodeViewerOverlay({ load, title, onClose }: { load: () => Promise<string>; title: string; onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const [html, setHtml] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -384,7 +386,7 @@ export function GcodeViewerOverlay({ client, fileId, title, onClose }: { client:
 
   useEffect(() => {
     let alive = true;
-    client.getGcode(fileId)
+    load()
       .then((g) => {
         if (!alive) return;
         if (g.length > MAX_GCODE_BYTES) {
@@ -403,7 +405,10 @@ export function GcodeViewerOverlay({ client, fileId, title, onClose }: { client:
     return () => {
       alive = false;
     };
-  }, [client, fileId]);
+    // Mounted per-file (callers conditionally render one overlay per viewed file) — fetch exactly
+    // once. Depending on `load` would refetch+reparse on every parent re-render (inline arrow).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <View style={{ position: 'absolute', inset: 0, backgroundColor: '#0A0B0C', zIndex: 80 } as any}>
@@ -987,7 +992,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
           </View>
         )}
       </Animated.View>
-      {viewLayers && <GcodeViewerOverlay client={client} fileId={viewLayers.fileId} title={viewLayers.title} onClose={() => setViewLayers(null)} />}
+      {viewLayers && <GcodeViewerOverlay key={viewLayers.fileId} load={() => client.getGcode(viewLayers.fileId)} title={viewLayers.title} onClose={() => setViewLayers(null)} />}
     </View>
   );
 }

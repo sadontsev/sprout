@@ -206,6 +206,10 @@ export class BambuddyClient {
   async deletePrinterFile(printerId: number, path: string): Promise<void> {
     await this.req(`/api/v1/printers/${printerId}/files?${new URLSearchParams({ path })}`, { method: 'DELETE' });
   }
+  /** Raw G-code text of a sliced 3MF on the SD card — feeds the same layer viewer as getGcode(). */
+  getPrinterFileGcode(printerId: number, path: string): Promise<string> {
+    return this.req(`/api/v1/printers/${printerId}/files/gcode?${new URLSearchParams({ path })}`).then((r) => r.text());
+  }
 
   // --- Slicing ---
   getPresets(): Promise<any> {
