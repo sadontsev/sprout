@@ -71,15 +71,25 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       clearInterval(id);
     };
   }, [client]);
+  const missedPolls = useRef(0);
   useEffect(() => {
     // If the persisted selection vanished from the backend (printer sold/removed), fall back to the
     // first printer AND persist it — otherwise every cold launch re-lives the ghost id until the
-    // fleet list loads. Added/removed printers are picked up by the 30s refresh above.
-    if (printers?.length && !printers.some((p) => p.id === printerId)) {
-      const next = printers[0];
-      setPrinterId(next.id);
-      void patchConfig({ printerId: next.id, printerName: next.name });
+    // fleet list loads. Heal only on the SECOND consecutive fleet response missing it: a single
+    // absence can be transient (is_active toggled during maintenance, a flaky list response), and
+    // persisting on a blip would permanently rewrite the stored selection. Until then the selected
+    // printer just shows offline — which is true. Add/remove is picked up by the 30s refresh above.
+    if (!printers?.length) return;
+    if (printers.some((p) => p.id === printerId)) {
+      missedPolls.current = 0;
+      return;
     }
+    missedPolls.current += 1;
+    if (missedPolls.current < 2) return;
+    missedPolls.current = 0;
+    const next = printers[0];
+    setPrinterId(next.id);
+    void patchConfig({ printerId: next.id, printerName: next.name });
   }, [printers, printerId]);
   const printer = printers?.find((p) => p.id === printerId) ?? null;
   const profile = printerProfile(printer);

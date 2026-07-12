@@ -81,10 +81,19 @@ export interface DryerVM {
   options: DryOption[];
 }
 
-/** Pure: one DryerVM per AMS unit on a drying-capable machine (empty array otherwise). */
+type AmsUnit = NonNullable<PrinterStatus['ams']>[number];
+
+/** supports_drying is PRINTER-level — a heaterless first-gen AMS on the same hub must not get a
+ *  drying card. Fail-open per unit: real dryers always publish dry_time (verified live on the
+ *  AMS 2 Pro), and is_ams_ht / module_type "n3f" identify the drying models explicitly. */
+function unitCanDry(u: AmsUnit): boolean {
+  return u.is_ams_ht === true || u.module_type === 'n3f' || u.dry_time !== undefined || u.dry_target_temp !== undefined || u.dry_filament !== undefined;
+}
+
+/** Pure: one DryerVM per drying-capable AMS unit on a drying-capable machine. */
 export function presentDryer(status: PrinterStatus | null): DryerVM[] {
   if (!status?.supports_drying || !status.ams?.length) return [];
-  return status.ams.map((unit) => {
+  return status.ams.filter(unitCanDry).map((unit) => {
     const isHt = unit.is_ams_ht === true;
     const maxTemp = isHt ? 85 : 65;
     const remainingMin = Math.max(0, Math.round(asNum(unit.dry_time) ?? 0));
