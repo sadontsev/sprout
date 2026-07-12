@@ -337,6 +337,7 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
   const unit = status?.ams?.[0];
   const trays = unit?.tray ?? [];
   const amsId = unit?.id ?? 0;
+  const dryers = presentDryer(status);
   // The WS delivers AMS temp (and sometimes humidity) as STRINGS — coerce before any number method.
   const amsHumidity = asNum(unit?.humidity);
   const amsTemp = asNum(unit?.temp);
@@ -376,8 +377,8 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
           </View>
         )}
       </View>
-      {presentDryer(status).map((d) => (
-        <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} />
+      {dryers.map((d, i) => (
+        <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryers.length > 1 ? `${d.isHt ? 'AMS-HT' : 'AMS'} ${i + 1}` : null} />
       ))}
       <View style={{ paddingHorizontal: 20, paddingTop: 18, gap: 12 }}>
         {vm.ams.map((t, i) => {
@@ -439,23 +440,30 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
 // ---------------- AMS DRYER ----------------
 // Handy-style drying: pick a loaded filament -> its recommended temp/time (from the RFID/preset,
 // with per-type fallbacks), adjust, optional spool rotation; live cycle detail + Stop while running.
-function DryerCard({ d, client, printerId }: { d: DryerVM; client: BambuddyClient; printerId: number }) {
+function DryerCard({ d, client, printerId, unitLabel }: { d: DryerVM; client: BambuddyClient; printerId: number; unitLabel: string | null }) {
   const [open, setOpen] = useState(false);
   const [selType, setSelType] = useState<string | null>(null);
-  const [temp, setTemp] = useState<number | null>(null); // null = follow the recommendation
-  const [hours, setHours] = useState<number | null>(null);
+  // Manual ± tweaks are KEYED to the filament type they were made for. The options list is live
+  // (WS tray updates): if the selected spool is pulled mid-config, `opt` silently falls back to
+  // another filament — stale absolute numbers must NOT carry over (a PA temp applied to PLA
+  // deforms the spool). A tweak for a type that's no longer resolved is simply ignored.
+  const [tweak, setTweak] = useState<{ type: string; temp: number | null; hours: number | null } | null>(null);
   const [rotate, setRotate] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const opt = d.options.find((o) => o.type === selType) ?? d.options[0] ?? null;
-  const effTemp = temp ?? opt?.temp ?? 55;
-  const effHours = hours ?? opt?.hours ?? 8;
+  const t = tweak && opt && tweak.type === opt.type ? tweak : null;
+  const effTemp = t?.temp ?? opt?.temp ?? 55;
+  const effHours = t?.hours ?? opt?.hours ?? 8;
   const pick = (type: string) => {
     // Selecting a filament re-follows its recommendation; manual tweaks apply on top of it.
     setSelType(type);
-    setTemp(null);
-    setHours(null);
+    setTweak(null);
   };
+  const adjTemp = (delta: number) =>
+    opt && setTweak({ type: opt.type, temp: Math.min(Math.max(effTemp + delta, DRY_MIN_TEMP), d.maxTemp), hours: t?.hours ?? null });
+  const adjHours = (delta: number) =>
+    opt && setTweak({ type: opt.type, hours: Math.min(Math.max(effHours + delta, 1), DRY_MAX_HOURS), temp: t?.temp ?? null });
 
   const start = () => {
     setBusy(true);
@@ -487,7 +495,10 @@ function DryerCard({ d, client, printerId }: { d: DryerVM; client: BambuddyClien
       <View style={{ marginHorizontal: 20, marginTop: 14, padding: 16, borderRadius: 16, backgroundColor: c.heatingDim, borderWidth: 1, borderColor: c.heating }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <PulseDot color={c.heating} size={9} />
-          <Text style={{ flex: 1, fontWeight: '700', fontSize: 15, color: c.t1 }}>Drying {d.filament || 'filament'}</Text>
+          <Text style={{ flex: 1, fontWeight: '700', fontSize: 15, color: c.t1 }}>
+            Drying {d.filament || 'filament'}
+            {unitLabel ? <Text style={{ fontSize: 12, fontWeight: '600', color: c.t3 }}> · {unitLabel}</Text> : null}
+          </Text>
           <Tap onPress={stop} disabled={busy} style={{ paddingHorizontal: 15, paddingVertical: 8, borderRadius: 11, backgroundColor: c.s3, opacity: busy ? 0.5 : 1 }}>
             <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Stop</Text>
           </Tap>
@@ -522,7 +533,7 @@ function DryerCard({ d, client, printerId }: { d: DryerVM; client: BambuddyClien
       <Tap onPress={() => setOpen(!open)} style={{ padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         <Feather name="wind" size={17} color={c.t2} />
         <View style={{ flex: 1 }}>
-          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>Filament drying</Text>
+          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{unitLabel ? `Filament drying · ${unitLabel}` : 'Filament drying'}</Text>
           <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>
             {open ? `This AMS dries up to ${d.maxTemp}°C.` : 'Dry damp spools right in the AMS.'}
           </Text>
@@ -547,8 +558,8 @@ function DryerCard({ d, client, printerId }: { d: DryerVM; client: BambuddyClien
             {!d.options.length && <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3 }}>No filament loaded.</Text>}
           </View>
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <Stepper label="Temperature" value={`${effTemp}°`} onMinus={() => setTemp(Math.max(DRY_MIN_TEMP, effTemp - 5))} onPlus={() => setTemp(Math.min(d.maxTemp, effTemp + 5))} />
-            <Stepper label="Duration" value={`${effHours}h`} onMinus={() => setHours(Math.max(1, effHours - 1))} onPlus={() => setHours(Math.min(DRY_MAX_HOURS, effHours + 1))} />
+            <Stepper label="Temperature" value={`${effTemp}°`} onMinus={() => adjTemp(-5)} onPlus={() => adjTemp(5)} />
+            <Stepper label="Duration" value={`${effHours}h`} onMinus={() => adjHours(-1)} onPlus={() => adjHours(1)} />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <View style={{ flex: 1 }}>

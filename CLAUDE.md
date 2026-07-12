@@ -31,7 +31,7 @@ LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 CI=1 npx expo prebuild --clean --platform io
 # Build (JS-only changes need just this — the RN bundle phase re-bundles):
 LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 xcodebuild \
   -workspace ios/Bambu.xcworkspace -scheme Bambu -configuration Release \
-  -destination 'id=<YOUR_DEVICE_UDID>' -allowProvisioningUpdates \
+  -destination 'generic/platform=iOS' -allowProvisioningUpdates \
   DEVELOPMENT_TEAM=<YOUR_TEAM_ID> CODE_SIGN_STYLE=Automatic ENABLE_USER_SCRIPT_SANDBOXING=NO build
 # Install + launch (DerivedData path: ~/Library/Developer/Xcode/DerivedData/Bambu-*/Build/Products/Release-iphoneos/Bambu.app):
 xcrun devicectl device install app --device <YOUR_DEVICE_UDID> "<.../Bambu.app>"
@@ -39,6 +39,7 @@ xcrun devicectl device process launch --device <YOUR_DEVICE_UDID> --terminate-ex
 ```
 
 Why each non-obvious flag/step matters (forgetting these costs build cycles):
+- `-destination 'generic/platform=iOS'`, **never** `id=<UDID>` — with the UDID destination a LOCKED phone fails the build instantly at destination resolution ("needs to be unlocked to enable development services"), and piping to `tail`/`grep` hides it (pipeline exit is 0 while the `.app` stays stale). Verify with `grep "BUILD SUCCEEDED"` on the log, not the exit code.
 - `DEVELOPER_DIR=…Xcode-beta…` — stable Xcode can't mount the iOS-27 developer disk image.
 - `ENABLE_USER_SCRIPT_SANDBOXING=NO` — Xcode 27's script sandbox otherwise fails the "Bundle React Native code" phase with `EPERM unlink main.jsbundle` on rebuilds.
 - `DEVELOPMENT_TEAM=<YOUR_TEAM_ID>` (+ `ios.appleTeamId` in app.json) — `expo prebuild` does not write a team into the project; the app and the Live Activity widget extension both need it for automatic signing.

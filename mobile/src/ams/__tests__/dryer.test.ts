@@ -120,6 +120,29 @@ test('unsupported machine or no AMS -> no dryers', () => {
   expect(presentDryer({ ...liveDrying, ams: [] } as PrinterStatus)).toEqual([]);
 });
 
+test('heaterless unit (first-gen AMS on the same hub) gets NO card; dry-capable siblings still do', () => {
+  const heaterless = { id: 1, humidity: 40, temp: 28, is_ams_ht: false, module_type: 'f1', tray: [{ id: 0, tray_type: 'PLA' }] };
+  const s = { ...liveDrying, ams: [liveDrying.ams![0], heaterless] } as PrinterStatus;
+  const dryers = presentDryer(s);
+  expect(dryers).toHaveLength(1);
+  expect(dryers[0].amsId).toBe(0);
+});
+
+test('fail-open: a unit with module_type n3f but no dry_* fields yet still gets a card', () => {
+  const fresh = { id: 1, module_type: 'n3f', tray: [{ id: 0, tray_type: 'PLA' }] };
+  const s = { ...liveDrying, ams: [fresh] } as PrinterStatus;
+  const dryers = presentDryer(s);
+  expect(dryers).toHaveLength(1);
+  expect(dryers[0].active).toBe(false);
+  expect(dryers[0].maxTemp).toBe(65);
+});
+
+test('fail-open: an unidentified unit that publishes dry_time gets a card', () => {
+  const mystery = { id: 2, dry_time: 0, tray: [{ id: 0, tray_type: 'PLA' }] };
+  const s = { ...liveDrying, ams: [mystery] } as PrinterStatus;
+  expect(presentDryer(s)).toHaveLength(1);
+});
+
 test('empty trays produce no options', () => {
   const s = { ...liveDrying, ams: [{ ...liveDrying.ams![0], dry_time: 0, tray: [{ id: 0 }, { id: 1 }] }] } as PrinterStatus;
   expect(presentDryer(s)[0].options).toEqual([]);
