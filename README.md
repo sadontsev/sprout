@@ -57,14 +57,12 @@ printer (MQTT/FTPS/RTSP)  ──►  Bambuddy (Docker, your server)  ──►  
 
 ### 2. Push service (optional — Live Activities + banners when the app is closed)
 
-1. Create an **APNs auth key** (.p8) in your Apple Developer account (max 2 per team).
-2. Copy `deploy/la-push/` to your server, put the `.p8` where the compose file mounts it,
-   and fill `.env` (`BAMBUDDY_API_KEY`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC` =
-   `<bundle-id>.push-type.liveactivity`).
-3. Dev/Xcode builds use `APNS_HOST=api.sandbox.push.apple.com`; TestFlight/App Store use
-   `api.push.apple.com`.
-4. Expose it to the phone (the app derives the URL from your Bambuddy host by swapping
-   `bambuddy.` → `lapush.`, or set it explicitly in the app config).
+Full walkthrough: [**docs/guides/push-notifications.md**](docs/guides/push-notifications.md)
+(APNs key, `la-push` deploy, sandbox-vs-production, token flow, troubleshooting).
+The short version: create an APNs auth key, deploy `deploy/la-push/` with it, expose it at
+a `lapush.` hostname next to your Bambuddy one.
+
+Android status (spoiler: not yet): [docs/guides/android.md](docs/guides/android.md).
 
 ### 3. iOS app
 

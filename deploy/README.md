@@ -3,6 +3,9 @@
 Both stacks run on <your-server> via Docker Compose, copied to `<deploy-dir>/bambuddy/`
 and `<deploy-dir>/slicer-api/`. Tailnet-only; never exposed via cloudflared.
 
+For push notifications / Live Activities, also deploy `la-push` — see
+[docs/guides/push-notifications.md](../docs/guides/push-notifications.md).
+
 ## Slicer
 
     cd <deploy-dir>/slicer-api && docker compose --profile bambu up -d
@@ -14,6 +17,16 @@ and `<deploy-dir>/slicer-api/`. Tailnet-only; never exposed via cloudflared.
 After deploy: set `preferred_slicer = bambu_studio` and slicer URL
 `http://localhost:3001` in Bambuddy Settings → Slicer. Front with
 `tailscale serve --bg 8000`.
+
+## Register the printer + mint the app's API key
+
+1. Open Bambuddy's web UI → add the printer (LAN IP + access code from the printer's
+   screen; give it a DHCP reservation — a lease change silently strands Bambuddy on the
+   old IP and everything reads "offline").
+2. Settings → enable authentication, set the admin password.
+3. Settings → API keys → create a **scoped key** (`bb_…`) for the app: status, control,
+   queue, and library scopes. This key + your Bambuddy URL are all the app's onboarding
+   asks for. **Never commit it anywhere** — including test fixtures.
 
 ## Support profiles (enables the app's "Supports" toggle)
 
