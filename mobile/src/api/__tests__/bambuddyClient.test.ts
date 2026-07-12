@@ -96,3 +96,38 @@ test('apiErrorDetail surfaces the JSON detail from a Bambuddy error, else the ra
   expect(apiErrorDetail(err)).toBe('AMS is busy');
   expect(apiErrorDetail(new Error('plain failure'))).toBe('plain failure');
 });
+
+test('printerFileDownloadUrl encodes paths with spaces AND literal %20 (both exist on the real SD card)', () => {
+  expect(client.printerFileDownloadUrl(2, '/Bambu_Cube_XYZ.gcode.3mf')).toBe(
+    'https://x/api/v1/printers/2/files/download?path=%2FBambu_Cube_XYZ.gcode.3mf',
+  );
+  // Spaces -> +/%20; a literal "%20" in the NAME must round-trip as %2520, not collapse to a space.
+  expect(client.printerFileDownloadUrl(2, '/Print%20plate Donor.gcode.3mf')).toBe(
+    'https://x/api/v1/printers/2/files/download?path=%2FPrint%2520plate+Donor.gcode.3mf',
+  );
+});
+
+test('printerPlateThumbUrl defaults to plate 1', () => {
+  expect(client.printerPlateThumbUrl(2, '/a b.3mf')).toBe('https://x/api/v1/printers/2/files/plate-thumbnail/1?path=%2Fa+b.3mf');
+  expect(client.printerPlateThumbUrl(2, '/a.3mf', 2)).toBe('https://x/api/v1/printers/2/files/plate-thumbnail/2?path=%2Fa.3mf');
+});
+
+test('deletePrinterFile DELETEs with the path query', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+  await client.deletePrinterFile(2, '/junk file.3mf');
+  const [url, opts] = fetchMock.mock.calls.at(-1)!;
+  expect(url).toBe('https://x/api/v1/printers/2/files?path=%2Fjunk+file.3mf');
+  expect(opts.method).toBe('DELETE');
+});
+
+test('getPrinterFilePlates hits the plates endpoint', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ printer_id: 2, path: '/a.3mf', filename: 'a.3mf', plates: [] }) });
+  await client.getPrinterFilePlates(2, '/a.3mf');
+  expect(fetchMock.mock.calls.at(-1)![0]).toBe('https://x/api/v1/printers/2/files/plates?path=%2Fa.3mf');
+});
+
+test('authHeaders exposes the API key + extra headers for image/download requests', () => {
+  expect(client.authHeaders()).toEqual({ 'X-API-Key': 'bb_k' });
+  const c2 = new BambuddyClient({ baseUrl: 'https://x', apiKey: 'k', extraHeaders: { 'CF-Access-Client-Id': 'id' } });
+  expect(c2.authHeaders()).toEqual({ 'X-API-Key': 'k', 'CF-Access-Client-Id': 'id' });
+});

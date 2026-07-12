@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, ActivityIndicator, Alert, Modal, Share } from 'react-native';
+import { File, Paths } from 'expo-file-system';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1 } from '@/theme';
 import { apiErrorDetail, type BambuddyClient } from '@/api/bambuddyClient';
 import { presentDryer, DRY_MIN_TEMP, DRY_MAX_HOURS, type DryerVM } from '@/ams/dryer';
-import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFileList } from '@/api/types';
+import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFile, PrinterFileList, PrinterFilePlates } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
 import { presentDashboard, presentNozzles, fmtDuration, normColor, asNum } from '@/dashboard/present';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, ExtrudeBar, Spark, Breathe, Toggle, FadeRise } from './anim';
@@ -144,6 +145,37 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
   );
   useEffect(() => { if (source === 'printer' && !pList) loadPrinter('/'); }, [source, pList, loadPrinter]);
 
+  // SD-card file actions: tap -> sheet (preview for 3MFs) with Download/Delete; hold -> delete.
+  const [sheetFile, setSheetFile] = useState<PrinterFile | null>(null);
+  const [dlBusy, setDlBusy] = useState(false);
+  const confirmDeletePf = (pf: PrinterFile) =>
+    Alert.alert('Delete from printer?', `“${pf.name}” will be removed from the printer’s storage. This can’t be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          client
+            .deletePrinterFile(printerId, pf.path)
+            .then(() => { setSheetFile(null); loadPrinter(pPath); })
+            .catch((e) => Alert.alert('Couldn’t delete', apiErrorDetail(e))),
+      },
+    ]);
+  const downloadAndShare = async (pf: PrinterFile) => {
+    setDlBusy(true);
+    try {
+      // Download to cache with the auth header (the URL alone 401s), then hand to the share sheet.
+      const dest = new File(Paths.cache, pf.name);
+      if (dest.exists) dest.delete();
+      const file = await File.downloadFileAsync(client.printerFileDownloadUrl(printerId, pf.path), dest, { headers: client.authHeaders() });
+      await Share.share({ url: file.uri });
+    } catch (e) {
+      Alert.alert('Couldn’t download', apiErrorDetail(e));
+    } finally {
+      setDlBusy(false);
+    }
+  };
+
   const confirmDelete = (f: LibraryFile) =>
     Alert.alert('Delete file?', `“${f.print_name || f.filename}” will be removed from the library. This can’t be undone.`, [
       { text: 'Cancel', style: 'cancel' },
@@ -237,15 +269,87 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
           {!pLoading && pList && pSorted.length === 0 && <Empty icon="hard-drive" title="Empty folder" body="Nothing here on the printer's onboard storage." />}
           {!pLoading &&
             pSorted.map((pf) => (
-              <Tap key={pf.path} onPress={() => pf.is_directory && loadPrinter(pf.path)} disabled={!pf.is_directory} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 13, borderRadius: 13, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, marginBottom: 9 }}>
-                <Feather name={pf.is_directory ? 'folder' : 'file'} size={18} color={pf.is_directory ? c.accent : c.t3} />
+              <Tap
+                key={pf.path}
+                onPress={() => (pf.is_directory ? loadPrinter(pf.path) : setSheetFile(pf))}
+                onLongPress={() => !pf.is_directory && confirmDeletePf(pf)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 13, borderRadius: 13, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, marginBottom: 9 }}
+              >
+                <Feather name={pf.is_directory ? 'folder' : /\.3mf$/i.test(pf.name) ? 'box' : 'file'} size={18} color={pf.is_directory ? c.accent : c.t3} />
                 <Text numberOfLines={1} style={{ flex: 1, fontWeight: '600', fontSize: 13.5, color: c.t1 }}>{pf.name}</Text>
                 {pf.is_directory ? <Feather name="chevron-right" size={16} color={c.t3} /> : <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{fmtBytes(pf.size)}</Text>}
               </Tap>
             ))}
+          {!pLoading && pSorted.some((pf) => !pf.is_directory) && (
+            <Text style={{ textAlign: 'center', marginTop: 8, fontWeight: '500', fontSize: 11, color: c.t3 }}>Tap a file for preview & actions · hold to delete</Text>
+          )}
         </View>
       )}
+      {sheetFile && (
+        <PrinterFileSheet
+          client={client}
+          printerId={printerId}
+          file={sheetFile}
+          busy={dlBusy}
+          onShare={() => void downloadAndShare(sheetFile)}
+          onDelete={() => confirmDeletePf(sheetFile)}
+          onClose={() => setSheetFile(null)}
+        />
+      )}
     </Page>
+  );
+}
+
+// ---------------- PRINTER FILE SHEET ----------------
+// Tap an SD-card file: sliced 3MFs get a real plate preview (plate-thumbnail served straight off
+// the printer; X-API-Key goes via image headers) + print time/filament from /files/plates.
+// Download saves to cache and opens the iOS share sheet; Delete removes the file from the printer.
+function PrinterFileSheet({ client, printerId, file, busy, onShare, onDelete, onClose }: { client: BambuddyClient; printerId: number; file: PrinterFile; busy: boolean; onShare: () => void; onDelete: () => void; onClose: () => void }) {
+  const sliced = /\.3mf$/i.test(file.name);
+  const [plates, setPlates] = useState<PrinterFilePlates | null>(null);
+  useEffect(() => {
+    if (!sliced) return;
+    let alive = true;
+    client.getPrinterFilePlates(printerId, file.path).then((p) => alive && setPlates(p)).catch(() => {}); // preview is best-effort
+    return () => {
+      alive = false;
+    };
+  }, [client, printerId, file.path, sliced]);
+  const plate = plates?.plates?.[0];
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' }}>
+        <Tap onPress={onClose} style={{ flex: 1 }} />
+        <View style={{ backgroundColor: c.s1, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, borderWidth: 1, borderColor: c.line }}>
+          {sliced && (
+            <View style={{ width: 210, height: 210, alignSelf: 'center', borderRadius: 18, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line, marginBottom: 14 }}>
+              <Image
+                source={{ uri: client.printerPlateThumbUrl(printerId, file.path), headers: client.authHeaders() }}
+                style={{ width: '100%', height: '100%' }}
+                contentFit="contain"
+                transition={150}
+                cachePolicy="memory-disk"
+              />
+            </View>
+          )}
+          <Text numberOfLines={2} style={{ fontWeight: '700', fontSize: 15.5, color: c.t1, textAlign: 'center' }}>{plate?.name || file.name}</Text>
+          <Text style={{ marginTop: 6, textAlign: 'center', fontWeight: '500', fontSize: 11.5, color: c.t3, fontFamily: mono }}>
+            {fmtBytes(file.size)}
+            {plate?.print_time_seconds ? `  ·  ${fmtDuration(plate.print_time_seconds / 60)}` : ''}
+            {plate?.filament_used_grams ? `  ·  ${Math.round(plate.filament_used_grams)}g` : ''}
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+            <Tap onPress={onShare} disabled={busy} style={{ flex: 1, height: 46, borderRadius: 13, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, opacity: busy ? 0.5 : 1 }}>
+              {busy ? <ActivityIndicator color={c.accentInk} size="small" /> : <Feather name="download" size={15} color={c.accentInk} />}
+              <Text style={{ fontWeight: '700', fontSize: 14, color: c.accentInk }}>{busy ? 'Downloading…' : 'Download'}</Text>
+            </Tap>
+            <Tap onPress={onDelete} disabled={busy} style={{ width: 52, height: 46, borderRadius: 13, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.5 : 1 }}>
+              <Feather name="trash-2" size={16} color={c.error} />
+            </Tap>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 

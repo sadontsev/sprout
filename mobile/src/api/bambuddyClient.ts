@@ -1,5 +1,5 @@
 import { File, UploadType } from 'expo-file-system';
-import type { Printer, PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse, PlatesResponse, PrinterFileList } from './types';
+import type { Printer, PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse, PlatesResponse, PrinterFileList, PrinterFilePlates } from './types';
 
 export interface BambuddyClientConfig {
   /** e.g. https://bambuddy.example.com */
@@ -183,6 +183,28 @@ export class BambuddyClient {
   /** Browse the printer's onboard filesystem at `path` (directories nest; files carry a size). */
   listPrinterFiles(printerId: number, path = '/'): Promise<PrinterFileList> {
     return this.req(`/api/v1/printers/${printerId}/files?path=${encodeURIComponent(path)}`).then((r) => r.json());
+  }
+  /** Auth headers for endpoints fetched OUTSIDE req() — expo-image `source.headers` and
+   *  File.downloadFileAsync both take a headers map. These SD-card endpoints use X-API-Key
+   *  (verified live), NOT the camera `?token=` that gates library thumbnails. */
+  authHeaders(): Record<string, string> {
+    return this.headers();
+  }
+  /** Direct download URL for an SD-card file — pair with authHeaders() (401 otherwise). */
+  printerFileDownloadUrl(printerId: number, path: string): string {
+    return `${this.baseUrl}/api/v1/printers/${printerId}/files/download?${new URLSearchParams({ path })}`;
+  }
+  /** Plate preview PNG for a sliced 3MF straight off the SD card — pair with authHeaders(). */
+  printerPlateThumbUrl(printerId: number, path: string, plateIndex = 1): string {
+    return `${this.baseUrl}/api/v1/printers/${printerId}/files/plate-thumbnail/${plateIndex}?${new URLSearchParams({ path })}`;
+  }
+  /** Plate metadata (name, print time, filament grams) for a sliced 3MF on the SD card. */
+  getPrinterFilePlates(printerId: number, path: string): Promise<PrinterFilePlates> {
+    return this.req(`/api/v1/printers/${printerId}/files/plates?${new URLSearchParams({ path })}`).then((r) => r.json());
+  }
+  /** Delete a file from the printer's SD card. Irreversible. */
+  async deletePrinterFile(printerId: number, path: string): Promise<void> {
+    await this.req(`/api/v1/printers/${printerId}/files?${new URLSearchParams({ path })}`, { method: 'DELETE' });
   }
 
   // --- Slicing ---
