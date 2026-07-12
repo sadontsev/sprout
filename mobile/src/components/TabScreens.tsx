@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, ActivityIndicator, Alert, Modal, Share } from 'react-native';
 import { File, Paths } from 'expo-file-system';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { GcodeViewerOverlay } from './Overlays';
+import { isSliced3mf, isPlayableVideo, isTimelapseFolder, timelapseThumbPath, timelapseLabel } from '@/library/printerFiles';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -146,7 +149,10 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
   useEffect(() => { if (source === 'printer' && !pList) loadPrinter('/'); }, [source, pList, loadPrinter]);
 
   // SD-card file actions: tap -> sheet (preview for 3MFs) with Download/Delete; hold -> delete.
+  // Sliced 3MFs additionally open the shared layer viewer; timelapse .mp4s open the video player.
   const [sheetFile, setSheetFile] = useState<PrinterFile | null>(null);
+  const [viewGcode, setViewGcode] = useState<PrinterFile | null>(null);
+  const [playFile, setPlayFile] = useState<PrinterFile | null>(null);
   const [dlBusy, setDlBusy] = useState(false);
   const confirmDeletePf = (pf: PrinterFile) =>
     Alert.alert('Delete from printer?', `“${pf.name}” will be removed from the printer’s storage. This can’t be undone.`, [
@@ -157,7 +163,7 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
         onPress: () =>
           client
             .deletePrinterFile(printerId, pf.path)
-            .then(() => { setSheetFile(null); loadPrinter(pPath); })
+            .then(() => { setSheetFile(null); setPlayFile(null); loadPrinter(pPath); })
             .catch((e) => Alert.alert('Couldn’t delete', apiErrorDetail(e))),
       },
     ]);
@@ -267,7 +273,37 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
           </View>
           {pLoading && <ActivityIndicator color={c.accent} style={{ marginTop: 30 }} />}
           {!pLoading && pList && pSorted.length === 0 && <Empty icon="hard-drive" title="Empty folder" body="Nothing here on the printer's onboard storage." />}
-          {!pLoading &&
+          {!pLoading && isTimelapseFolder(pPath) ? (
+            // Timelapse folder: newest-first thumbnail grid (the printer keeps a poster JPEG per
+            // video in the `thumbnail` subfolder, which is hidden here). Tap plays, hold deletes.
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+              {pSorted
+                .filter((pf) => !pf.is_directory && isPlayableVideo(pf.name))
+                .sort((a, b) => b.name.localeCompare(a.name))
+                .map((pf) => (
+                  <Tap key={pf.path} onPress={() => setPlayFile(pf)} onLongPress={() => confirmDeletePf(pf)} style={{ width: '47%', flexGrow: 1 }}>
+                    <View style={{ width: '100%', aspectRatio: 16 / 9, borderRadius: 14, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+                      <Image
+                        source={{ uri: client.printerFileDownloadUrl(printerId, timelapseThumbPath(pf.path)), headers: client.authHeaders() }}
+                        style={{ width: '100%', height: '100%' }}
+                        contentFit="cover"
+                        transition={120}
+                        cachePolicy="memory-disk"
+                      />
+                      <View style={{ position: 'absolute', width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+                        <Feather name="play" size={16} color="#fff" style={{ marginLeft: 2 }} />
+                      </View>
+                    </View>
+                    <Text style={{ marginTop: 8, fontWeight: '600', fontSize: 12.5, color: c.t1 }}>{timelapseLabel(pf.name)}</Text>
+                    <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>{fmtBytes(pf.size)}</Text>
+                  </Tap>
+                ))}
+              {pSorted.every((pf) => pf.is_directory || !isPlayableVideo(pf.name)) && (
+                <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3 }}>No timelapse videos yet.</Text>
+              )}
+            </View>
+          ) : (
+            !pLoading &&
             pSorted.map((pf) => (
               <Tap
                 key={pf.path}
@@ -275,12 +311,17 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
                 onLongPress={() => !pf.is_directory && confirmDeletePf(pf)}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 13, borderRadius: 13, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, marginBottom: 9 }}
               >
-                <Feather name={pf.is_directory ? 'folder' : /\.3mf$/i.test(pf.name) ? 'box' : 'file'} size={18} color={pf.is_directory ? c.accent : c.t3} />
+                <Feather
+                  name={pf.is_directory ? (isTimelapseFolder(pf.path) ? 'film' : 'folder') : isSliced3mf(pf.name) ? 'box' : isPlayableVideo(pf.name) ? 'film' : 'file'}
+                  size={18}
+                  color={pf.is_directory ? c.accent : c.t3}
+                />
                 <Text numberOfLines={1} style={{ flex: 1, fontWeight: '600', fontSize: 13.5, color: c.t1 }}>{pf.name}</Text>
                 {pf.is_directory ? <Feather name="chevron-right" size={16} color={c.t3} /> : <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{fmtBytes(pf.size)}</Text>}
               </Tap>
-            ))}
-          {!pLoading && pSorted.some((pf) => !pf.is_directory) && (
+            ))
+          )}
+          {!pLoading && !isTimelapseFolder(pPath) && pSorted.some((pf) => !pf.is_directory) && (
             <Text style={{ textAlign: 'center', marginTop: 8, fontWeight: '500', fontSize: 11, color: c.t3 }}>Tap a file for preview & actions · hold to delete</Text>
           )}
         </View>
@@ -294,18 +335,98 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
           onShare={() => void downloadAndShare(sheetFile)}
           onDelete={() => confirmDeletePf(sheetFile)}
           onClose={() => setSheetFile(null)}
+          onLayers={isSliced3mf(sheetFile.name) ? () => { setSheetFile(null); setViewGcode(sheetFile); } : undefined}
+          onPlay={isPlayableVideo(sheetFile.name) ? () => { setSheetFile(null); setPlayFile(sheetFile); } : undefined}
         />
+      )}
+      {viewGcode && (
+        <Modal visible animationType="slide" onRequestClose={() => setViewGcode(null)}>
+          <GcodeViewerOverlay key={viewGcode.path} load={() => client.getPrinterFileGcode(printerId, viewGcode.path)} title={viewGcode.name} onClose={() => setViewGcode(null)} />
+        </Modal>
+      )}
+      {playFile && (
+        <TimelapsePlayer key={playFile.path} client={client} printerId={printerId} file={playFile} onDelete={() => confirmDeletePf(playFile)} onClose={() => setPlayFile(null)} />
       )}
     </Page>
   );
+}
+
+// ---------------- TIMELAPSE PLAYER ----------------
+// Downloads the mp4 to cache WITH the auth header (a bare <video src> can't send X-API-Key), then
+// plays it natively via expo-video. Timelapses are immutable, so a cached copy is reused as-is.
+function TimelapsePlayer({ client, printerId, file, onDelete, onClose }: { client: BambuddyClient; printerId: number; file: PrinterFile; onDelete: () => void; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [localUri, setLocalUri] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const dest = new File(Paths.cache, file.name);
+        if (!dest.exists) await File.downloadFileAsync(client.printerFileDownloadUrl(printerId, file.path), dest, { headers: client.authHeaders() });
+        if (alive) setLocalUri(dest.uri);
+      } catch (e) {
+        if (alive) setErr(apiErrorDetail(e));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // Mounted per-file (key=path) — download exactly once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const btn = { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' as const, justifyContent: 'center' as const };
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: '#0A0B0C', paddingTop: insets.top }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: '700', fontSize: 15, color: '#fff' }}>{timelapseLabel(file.name)}</Text>
+            <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: '#8E9398', fontFamily: mono }}>{fmtBytes(file.size)} · timelapse</Text>
+          </View>
+          <Tap onPress={() => localUri && Share.share({ url: localUri })} hitSlop={8} style={{ ...btn, opacity: localUri ? 1 : 0.4 }}>
+            <Feather name="share" size={15} color="#fff" />
+          </Tap>
+          <Tap onPress={onDelete} hitSlop={8} style={btn}>
+            <Feather name="trash-2" size={15} color="#FF6B6B" />
+          </Tap>
+          <Tap onPress={onClose} hitSlop={8} style={btn}>
+            <Feather name="x" size={17} color="#fff" />
+          </Tap>
+        </View>
+        {localUri ? (
+          <VideoBody uri={localUri} />
+        ) : (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+            {err ? (
+              <Text style={{ color: '#8E9398', fontSize: 13.5, textAlign: 'center', lineHeight: 19 }}>{err}</Text>
+            ) : (
+              <ActivityIndicator color="#30D158" />
+            )}
+          </View>
+        )}
+        <View style={{ height: insets.bottom }} />
+      </View>
+    </Modal>
+  );
+}
+
+// Separate component so useVideoPlayer is only called once a local URI exists (hooks can't be
+// conditional) — and so the player is created/destroyed with the modal.
+function VideoBody({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.play();
+  });
+  return <VideoView player={player} style={{ flex: 1 }} contentFit="contain" nativeControls />;
 }
 
 // ---------------- PRINTER FILE SHEET ----------------
 // Tap an SD-card file: sliced 3MFs get a real plate preview (plate-thumbnail served straight off
 // the printer; X-API-Key goes via image headers) + print time/filament from /files/plates.
 // Download saves to cache and opens the iOS share sheet; Delete removes the file from the printer.
-function PrinterFileSheet({ client, printerId, file, busy, onShare, onDelete, onClose }: { client: BambuddyClient; printerId: number; file: PrinterFile; busy: boolean; onShare: () => void; onDelete: () => void; onClose: () => void }) {
-  const sliced = /\.3mf$/i.test(file.name);
+function PrinterFileSheet({ client, printerId, file, busy, onShare, onDelete, onClose, onLayers, onPlay }: { client: BambuddyClient; printerId: number; file: PrinterFile; busy: boolean; onShare: () => void; onDelete: () => void; onClose: () => void; onLayers?: () => void; onPlay?: () => void }) {
+  const sliced = isSliced3mf(file.name);
   const [plates, setPlates] = useState<PrinterFilePlates | null>(null);
   useEffect(() => {
     if (!sliced) return;
@@ -339,9 +460,21 @@ function PrinterFileSheet({ client, printerId, file, busy, onShare, onDelete, on
             {plate?.filament_used_grams ? `  ·  ${Math.round(plate.filament_used_grams)}g` : ''}
           </Text>
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-            <Tap onPress={onShare} disabled={busy} style={{ flex: 1, height: 46, borderRadius: 13, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, opacity: busy ? 0.5 : 1 }}>
-              {busy ? <ActivityIndicator color={c.accentInk} size="small" /> : <Feather name="download" size={15} color={c.accentInk} />}
-              <Text style={{ fontWeight: '700', fontSize: 14, color: c.accentInk }}>{busy ? 'Downloading…' : 'Download'}</Text>
+            {onPlay && (
+              <Tap onPress={onPlay} disabled={busy} style={{ flex: 1, height: 46, borderRadius: 13, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, opacity: busy ? 0.5 : 1 }}>
+                <Feather name="play" size={15} color={c.accentInk} />
+                <Text style={{ fontWeight: '700', fontSize: 14, color: c.accentInk }}>Play</Text>
+              </Tap>
+            )}
+            {onLayers && (
+              <Tap onPress={onLayers} disabled={busy} style={{ flex: 1, height: 46, borderRadius: 13, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, opacity: busy ? 0.5 : 1 }}>
+                <Feather name="layers" size={15} color={c.t1} />
+                <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>Layers</Text>
+              </Tap>
+            )}
+            <Tap onPress={onShare} disabled={busy} style={{ flex: 1, height: 46, borderRadius: 13, backgroundColor: onPlay ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, opacity: busy ? 0.5 : 1 }}>
+              {busy ? <ActivityIndicator color={onPlay ? c.t1 : c.accentInk} size="small" /> : <Feather name="download" size={15} color={onPlay ? c.t1 : c.accentInk} />}
+              <Text style={{ fontWeight: '700', fontSize: 14, color: onPlay ? c.t1 : c.accentInk }}>{busy ? 'Downloading…' : 'Download'}</Text>
             </Tap>
             <Tap onPress={onDelete} disabled={busy} style={{ width: 52, height: 46, borderRadius: 13, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.5 : 1 }}>
               <Feather name="trash-2" size={16} color={c.error} />
