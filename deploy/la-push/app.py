@@ -161,25 +161,29 @@ _device_tokens: list[str] = []
 # _last_kind: printerId -> last-seen kind, for edge-triggered notifications. Persisted (in REG_FILE) so a
 # restart/crash mid-print doesn't lose the live->complete/error edge and silently drop the alert.
 _last_kind: dict[int, str] = {}
+# _last_dry: "printerId:amsId" -> {"t": minutes remaining, "fil": filament} last seen — drives the
+# drying-finished banner (dry_time falling to 0). Persisted for the same restart-survival reason.
+_last_dry: dict[str, dict] = {}
 # _printers_cache: printerId -> name, refreshed from Bambuddy.
 _printers_cache: dict[int, str] = {}
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind
+    global _regs, _device_tokens, _last_kind, _last_dry
     try:
         data = json.loads(REG_FILE.read_text())
         _regs = data.get("regs", {})
         _device_tokens = data.get("devices", [])
         # JSON object keys are strings; _last_kind is keyed by int printer id, so coerce back.
         _last_kind = {int(k): v for k, v in data.get("last_kind", {}).items()}
+        _last_dry = data.get("last_dry", {})
     except (FileNotFoundError, json.JSONDecodeError):
-        _regs, _device_tokens, _last_kind = {}, [], {}
+        _regs, _device_tokens, _last_kind, _last_dry = {}, [], {}, {}
 
 
 def _save() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind}))
+    REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind, "last_dry": _last_dry}))
 
 
 # ---- APNs ----
@@ -317,6 +321,22 @@ async def _tick(client: httpx.AsyncClient) -> None:
             if prev != kind:
                 _last_kind[pid] = kind
                 _save()
+
+        # 3) AMS drying finished (edge-triggered per unit): dry_time (minutes remaining) falling to 0
+        # from a SMALL value is a natural run-out -> banner. Falling from a big value is a manual
+        # stop — the user did that themselves, stay silent. First observation is silent; filament is
+        # captured while the cycle runs (the unit may clear dry_filament once it ends). Persisted.
+        if _device_tokens:
+            for unit in status.get("ams") or []:
+                dkey = f"{pid}:{unit.get('id', 0)}"
+                cur = _rnd(unit.get("dry_time"))
+                prev_dry = _last_dry.get(dkey)
+                if prev_dry is not None and prev_dry.get("t", 0) > 0 and cur <= 0 and prev_dry.get("t", 0) <= 15:
+                    fil = prev_dry.get("fil") or "Filament"
+                    await _notify(client, f"💨 {name} — drying finished", f"{fil} is dry.")
+                if prev_dry is None or prev_dry.get("t") != cur:
+                    _last_dry[dkey] = {"t": cur, "fil": (unit.get("dry_filament") or (prev_dry or {}).get("fil") or "")}
+                    _save()
 
 
 # ---- HTTP API ----
