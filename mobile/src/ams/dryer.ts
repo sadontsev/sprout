@@ -124,6 +124,10 @@ export function presentDryer(status: PrinterStatus | null): DryerVM[] {
 
     const filament = unit.dry_filament ?? '';
     let targetTemp = asNum(unit.dry_target_temp);
+    // "Unknown target" arrives as null over REST but as 0 over the WS (different Bambuddy
+    // serializers — verified live). A real drying target is 45-85°C, so anything <= 0 is unknown;
+    // without this the active card renders "holding 0°".
+    if (targetTemp != null && targetTemp <= 0) targetTemp = null;
     if (active && targetTemp == null && filament) {
       // Cycle started outside Bambuddy — best estimate is the recommendation for what it's drying.
       targetTemp = options.find((o) => o.type === filament)?.temp ?? null;
