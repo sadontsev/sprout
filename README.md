@@ -106,4 +106,4 @@ sharp edges outside the tested paths — issues and PRs welcome if this becomes 
 Built on the excellent [Bambuddy](https://github.com/maziggy/bambuddy) (AGPL-3.0) by
 maziggy — Sprout is an independent API client and ships none of Bambuddy's code.
 
-**License: not yet chosen** — until one is added, all rights reserved.
+**License: [MIT](LICENSE).**
