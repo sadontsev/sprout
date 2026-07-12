@@ -174,6 +174,14 @@ export interface PlatesResponse {
   embedded_process?: string | null;
 }
 
+/** Plate metadata for a sliced 3MF on the printer's SD card (GET /printers/{id}/files/plates). */
+export interface PrinterFilePlates {
+  printer_id: number;
+  path: string;
+  filename: string;
+  plates: PlateInfo[];
+}
+
 /** The slicer-baked metadata block on a sliced file's detail (GET /library/files/{id}).metadata. */
 export interface FileMetadata {
   total_layers?: number | null;
