@@ -1,4 +1,4 @@
-import { parseGcodeLayers } from '../gcodeLayers';
+import { parseGcodeLayers, gcodeViewerHtml } from '../gcodeLayers';
 
 describe('parseGcodeLayers', () => {
   it('splits layers at extrusion Z changes and records segments', () => {
@@ -110,4 +110,51 @@ describe('parseGcodeLayers — supports', () => {
     expect(supportEnabled).toBe(false);
     expect(supportLayers[0]).toEqual([]);
   });
+});
+
+describe('gcodeViewerHtml (viewer contract)', () => {
+  const tiny = parseGcodeLayers('G90\nG1 X10 Y10 Z0.2 E1\nG1 X20 Y10 E2\n');
+
+  test('embeds the machine plate footprint; defaults to 256x256', () => {
+    expect(gcodeViewerHtml(tiny, { w: 350, d: 320 })).toContain('{"w":350,"d":320}');
+    expect(gcodeViewerHtml(tiny)).toContain('{"w":256,"d":256}');
+  });
+
+  test('ships the usability affordances: plate grid, reset, pan hint, axis gizmo, Z in the label', () => {
+    const html = gcodeViewerHtml(tiny);
+    expect(html).toContain('drawPlate');           // build plate + grid
+    expect(html).toContain('resetView');           // double-tap / home button
+    expect(html).toContain('2-finger pan');        // hint documents pan
+    expect(html).toContain('drawGizmo');           // XYZ triad
+    expect(html).toContain('mm');                  // layer label carries Z height
+    expect(html).not.toContain('#0A0B0C;overflow'); // old flat-black body background is gone
+  });
+});
+
+test('elevated leading purge layer (H2C) is excluded from bounds but still rendered', () => {
+  // Purge at Z5.8 far right (X280->290), then the real model at Z0.2/0.4 around X10-20.
+  const g = [
+    'M83',
+    'G1 X280 Y0 Z5.8 F3000',
+    'G1 X290 Y0 E5', // purge line, elevated
+    'G1 X10 Y10 Z0.2 F3000',
+    'G1 X20 Y10 E1',
+    'G1 X20 Y20 E1',
+    'G1 X10 Y10 Z0.4 F3000',
+    'G1 X20 Y10 E1',
+  ].join('\n');
+  const p = parseGcodeLayers(g);
+  expect(p.layers).toHaveLength(3); // purge + 2 real layers — all kept for rendering
+  expect(p.bounds.minZ).toBe(0.2); // NOT 5.8 (that made models look like they float)
+  expect(p.bounds.maxZ).toBe(0.4);
+  expect(p.bounds.maxX).toBe(20); // purge line no longer skews pivot/fit
+  expect(p.bounds.minY).toBe(10);
+});
+
+test('no purge: normal ascending files keep full bounds', () => {
+  const g = ['G1 X10 Y10 Z0.2 E1', 'G1 X30 Y10 E2', 'G1 X30 Y10 Z0.4 E3', 'G1 X10 Y10 E4'].join('\n');
+  const p = parseGcodeLayers(g);
+  expect(p.bounds.minZ).toBe(0.2);
+  expect(p.bounds.maxZ).toBe(0.4);
+  expect(p.bounds.maxX).toBe(30);
 });

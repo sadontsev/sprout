@@ -167,14 +167,48 @@ export function parseGcodeLayers(gcode: string): GcodeLayers {
   }
   pushLayer();
 
+  // Leading PRIME/PURGE layers: the H2C purges at an ELEVATED Z (observed: 5.8 mm, X≈290) before
+  // the first real 0.2 mm layer. A leading layer followed by a >0.5 mm DROP in Z is priming, not
+  // model — exclude those from the bounds so fit/pivot/shadow/height-ramp track the actual print
+  // (they still render). Without this the viewer centers between model and purge line and reports
+  // minZ as the purge height, which made the model look like it floats above the plate.
+  let firstReal = 0;
+  while (firstReal < zs.length - 1 && zs[firstReal] > zs[firstReal + 1] + 0.5) firstReal++;
+  if (firstReal > 0) {
+    minX = Infinity;
+    minY = Infinity;
+    maxX = -Infinity;
+    maxY = -Infinity;
+    for (let k = firstReal; k < layers.length; k++) {
+      for (const L of [layers[k], supportLayers[k]]) {
+        for (let i = 0; i < L.length; i += 2) {
+          const vx = L[i],
+            vy = L[i + 1];
+          if (vx < minX) minX = vx;
+          if (vx > maxX) maxX = vx;
+          if (vy < minY) minY = vy;
+          if (vy > maxY) maxY = vy;
+        }
+      }
+    }
+  }
   if (!isFinite(minX)) {
     minX = 0;
     minY = 0;
     maxX = 256;
     maxY = 256;
   }
-  const minZ = zs.length ? zs[0] : 0;
-  const maxZ = zs.length ? zs[zs.length - 1] : 1;
+  // True extremes over the REAL layers — never assume zs is sorted (the purge layer isn't).
+  let minZ = Infinity,
+    maxZ = -Infinity;
+  for (let k = firstReal; k < zs.length; k++) {
+    if (zs[k] < minZ) minZ = zs[k];
+    if (zs[k] > maxZ) maxZ = zs[k];
+  }
+  if (!isFinite(minZ)) {
+    minZ = 0;
+    maxZ = 1;
+  }
   return { layers, supportLayers, layerZ: zs, supportEnabled, hasSupport, bounds: { minX, minY, maxX, maxY, minZ, maxZ } };
 }
 
@@ -183,94 +217,204 @@ export const MAX_GCODE_BYTES = 14_000_000;
 
 /**
  * Build the self-contained HTML for the WebView layer viewer. Parsing already happened in
- * parseGcodeLayers; this only embeds the geometry as JSON and renders it as a ROTATABLE 3D model on a
- * 2D Canvas (orthographic orbit projection — drag to rotate, pinch/wheel to zoom). The layer slider
- * peels the model down by showing only layers 0..N (cumulative), like Bambu Studio. NO external/CDN
- * module import (that's what failed before with "importing layer script failed"), so it works fully
- * offline in WKWebView. Pure (no RN deps) → unit-testable and exercisable headlessly.
+ * parseGcodeLayers; this only embeds the geometry as JSON and renders it as a ROTATABLE 3D scene on
+ * a 2D Canvas (orthographic orbit projection). Usability essentials (all user-reported gaps):
+ * - a real BUILD PLATE (10 mm grid, bolder 50 mm lines, X/Y edge accents, origin dot) so the model
+ *   has a ground reference and never floats in a black void;
+ * - a soft ground shadow under the model + a subtle background gradient (not flat black);
+ * - a neutral steel height ramp (bottom dim -> top bright) with the CURRENT layer in white and
+ *   supports in amber — no more all-green;
+ * - navigation: 1-finger rotate (with inertia), 2-finger pinch zoom + PAN, double-tap to reset,
+ *   pitch clamped above the horizon (also keeps painter's-order z sorting correct);
+ * - an XYZ axis gizmo and a layer label that includes the real Z height.
+ * The `plate` argument is the machine's physical bed footprint in mm (from printerProfile). NO
+ * external/CDN imports — fully offline in WKWebView. Pure (no RN deps) → unit-testable.
  */
-export function gcodeViewerHtml(data: GcodeLayers): string {
+export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number } = { w: 256, d: 256 }): string {
   const lit = JSON.stringify(data).replace(/</g, '\\u003c');
+  // Bambu gcode is plate-origin (0,0 = front-left corner); grow the drawn plate to a 50 mm multiple
+  // if the toolpath somehow exceeds the declared footprint (never draw the model off the plate).
+  const plateLit = JSON.stringify({ w: plate.w, d: plate.d });
   return `<!doctype html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <style>
-  html,body{margin:0;height:100%;background:#0A0B0C;overflow:hidden;font-family:-apple-system,system-ui}
+  html,body{margin:0;height:100%;background:#101216;overflow:hidden;font-family:-apple-system,system-ui}
   #c{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;display:block;touch-action:none}
   #bar{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 40px);padding:0 22px;z-index:10}
-  #card{background:rgba(22,24,27,0.80);border-radius:16px;padding:13px 16px 16px}
+  #card{background:rgba(22,24,27,0.82);border-radius:16px;padding:13px 16px 16px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
   #top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px}
   #lbl{color:#fff;font:600 12px ui-monospace,Menlo,monospace;letter-spacing:0.5px}
-  #hint{color:#7b8187;font:500 10px ui-monospace,Menlo,monospace;letter-spacing:0.3px}
+  #hint{color:#7b8187;font:500 9.5px ui-monospace,Menlo,monospace;letter-spacing:0.3px}
+  #reset{position:absolute;right:16px;top:calc(env(safe-area-inset-top) + 60px);width:40px;height:40px;border-radius:20px;background:rgba(22,24,27,0.82);border:1px solid rgba(255,255,255,0.08);color:#c8cdd4;font:600 16px -apple-system;display:flex;align-items:center;justify-content:center;z-index:10}
   input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:12px;border-radius:6px;background:#2A2E33;outline:none}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:#2BD4C0;box-shadow:0 1px 6px rgba(0,0,0,0.5)}
   #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:#6b7177;font-size:14px;padding:36px;text-align:center;line-height:1.5}
 </style></head>
 <body>
 <canvas id="c"></canvas>
-<div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint">drag to rotate · pinch to zoom</span></div><input id="s" type="range" min="1" max="1" value="1"></div></div>
+<div id="reset">⌂</div>
+<div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint">drag rotate · pinch zoom · 2-finger pan · double-tap reset</span></div><input id="s" type="range" min="1" max="1" value="1"></div></div>
 <div id="err"></div>
 <script>
   var post=function(o){window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(o));};
   function fail(m){var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t render the preview. '+m;post({type:'error',message:String(m)});}
   window.addEventListener('error',function(e){fail(e.message||'error');});
   try{
-    var DATA=${lit}, layers=DATA.layers, sup=DATA.supportLayers||[], zs=DATA.layerZ, b=DATA.bounds;
+    var DATA=${lit}, PLATE=${plateLit}, layers=DATA.layers, sup=DATA.supportLayers||[], zs=DATA.layerZ, b=DATA.bounds;
     var total=layers.length||1;
-    var cx=(b.minX+b.maxX)/2, cy=(b.minY+b.maxY)/2, cz=(b.minZ+b.maxZ)/2;
+    // Grow the plate to cover stray toolpaths, in 50 mm steps.
+    var pw=Math.max(PLATE.w, Math.ceil(Math.max(b.maxX,1)/50)*50), pd=Math.max(PLATE.d, Math.ceil(Math.max(b.maxY,1)/50)*50);
+    // Orbit pivot: the MODEL's footprint centre, ~40% up its height — rotation pivots around the
+    // print (not the plate middle), and tall prints stay vertically centred instead of running off
+    // the top of the screen.
+    var cx=(b.minX+b.maxX)/2, cy=(b.minY+b.maxY)/2, cz=(b.minZ+b.maxZ)*0.4;
     var bw=(b.maxX-b.minX)||1, bh=(b.maxY-b.minY)||1, bd=(b.maxZ-b.minZ)||1;
     var radius=0.5*Math.sqrt(bw*bw+bh*bh+bd*bd)||1, zspan=(b.maxZ-b.minZ)||1;
     var segTotal=0; for(var k0=0;k0<layers.length;k0++) segTotal+=layers[k0].length>>2;
     var RESERVE=150; // px kept clear at the bottom for the control card
 
     var cv=document.getElementById('c'), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||2, W=0,Hh=0;
-    var yaw=-0.62, pitch=1.02, zoom=1, cur=total, baseScale=1, ox=0, oy=0, interacting=false;
-    function fit(){ baseScale=(Math.min(W,Hh-RESERVE)*0.40)/radius; ox=W/2; oy=(Hh-RESERVE)/2; }
-    // teal that brightens with height -> a depth cue that reads as 3D under rotation
-    function heightColor(t,top){ if(top) return '#A7FBEF';
-      return 'rgb('+Math.round(24+98*t)+','+Math.round(120+125*t)+','+Math.round(108+122*t)+')'; }
-    // stroke one layer's flat [x0,y0,x1,y1,...] segments at height z, projected through the orbit camera
-    function strokeLayer(L,z,step,cyaw,syaw,cpit,spit,s){
+    var DEF={yaw:-0.62,pitch:1.02,zoom:1};
+    var yaw=DEF.yaw, pitch=DEF.pitch, zoom=DEF.zoom, cur=total, baseScale=1, ox=0, oy=0, px=0, py=0, interacting=false;
+    var vyaw=0, vpitch=0, inertiaOn=false; // rotate inertia
+    // Clamp positive: a zero-size canvas on the first layout pass would give a NEGATIVE scale and
+    // crash createRadialGradient ("r1 < 0" — caught rendering a real file headlessly).
+    function fit(){ baseScale=Math.max((Math.min(W,Hh-RESERVE)*0.33)/radius, 1e-6); ox=W/2; oy=(Hh-RESERVE)/2; }
+    function resetView(){ yaw=DEF.yaw; pitch=DEF.pitch; zoom=DEF.zoom; px=0; py=0; vyaw=0; vpitch=0; schedule(); }
+
+    // Project world (x,y,z in mm, plate-origin) -> screen px through the orbit camera.
+    var cyaw=1,syaw=0,cpit=0,spit=1,S=1;
+    function cam(){ cyaw=Math.cos(yaw); syaw=Math.sin(yaw); cpit=Math.cos(pitch); spit=Math.sin(pitch); S=baseScale*zoom; }
+    function prX(x,y){ return ox+px+((x-cx)*cyaw-(y-cy)*syaw)*S; }
+    function prY(x,y,z){ return oy+py-((((x-cx)*syaw+(y-cy)*cyaw)*cpit)+(z-cz)*spit)*S; }
+
+    // Neutral steel ramp (bottom #55617A -> top #DEE4F0); current layer white; supports amber.
+    function heightColor(t,top){ if(top) return '#FFFFFF';
+      return 'rgb('+Math.round(85+137*t)+','+Math.round(97+131*t)+','+Math.round(122+118*t)+')'; }
+
+    function drawPlate(){
+      // Surface: subtly lit quad with 10 mm grid, 50 mm majors, edge accents, origin dot.
+      var corners=[[0,0],[pw,0],[pw,pd],[0,pd]];
+      ctx.beginPath();
+      ctx.moveTo(prX(corners[0][0],corners[0][1]),prY(corners[0][0],corners[0][1],0));
+      for(var i=1;i<4;i++) ctx.lineTo(prX(corners[i][0],corners[i][1]),prY(corners[i][0],corners[i][1],0));
+      ctx.closePath();
+      ctx.fillStyle='rgba(32,36,43,0.92)'; ctx.fill();
+      ctx.strokeStyle='rgba(120,128,140,0.55)'; ctx.lineWidth=1.2; ctx.stroke();
+      // grid
+      function gridLines(step,style,width){
+        ctx.beginPath();
+        for(var gx=0;gx<=pw+0.01;gx+=step){ ctx.moveTo(prX(gx,0),prY(gx,0,0)); ctx.lineTo(prX(gx,pd),prY(gx,pd,0)); }
+        for(var gy=0;gy<=pd+0.01;gy+=step){ ctx.moveTo(prX(0,gy),prY(0,gy,0)); ctx.lineTo(prX(pw,gy),prY(pw,gy,0)); }
+        ctx.strokeStyle=style; ctx.lineWidth=width; ctx.stroke();
+      }
+      if(S*10>4) gridLines(10,'rgba(255,255,255,0.045)',0.7); // hide the fine grid when zoomed way out
+      gridLines(50,'rgba(255,255,255,0.10)',1.0);
+      // X (red-ish) / Y (green-ish) edge accents along the front/left edges + origin dot, like slicers
+      ctx.beginPath(); ctx.moveTo(prX(0,0),prY(0,0,0)); ctx.lineTo(prX(pw,0),prY(pw,0,0));
+      ctx.strokeStyle='rgba(240,90,90,0.55)'; ctx.lineWidth=2; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(prX(0,0),prY(0,0,0)); ctx.lineTo(prX(0,pd),prY(0,pd,0));
+      ctx.strokeStyle='rgba(90,200,120,0.55)'; ctx.lineWidth=2; ctx.stroke();
+      ctx.beginPath(); ctx.arc(prX(0,0),prY(0,0,0),3.5,0,6.283); ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.fill();
+      // soft ground shadow under the model footprint (radius clamped — gradients reject r < 0)
+      var sx=prX(cx,cy), sy=prY(cx,cy,0), rx=Math.max(4,Math.max(bw,bh)*0.62*S), ry=rx*Math.abs(cpit)*0.9+4;
+      var grad=ctx.createRadialGradient(sx,sy,0,sx,sy,rx);
+      grad.addColorStop(0,'rgba(0,0,0,0.42)'); grad.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.save(); ctx.translate(sx,sy); ctx.scale(1,Math.max(ry/rx,0.12)); ctx.translate(-sx,-sy);
+      ctx.beginPath(); ctx.arc(sx,sy,rx,0,6.283); ctx.fillStyle=grad; ctx.fill(); ctx.restore();
+    }
+
+    function drawGizmo(){
+      // Small XYZ triad, top-left — orientation at a glance.
+      var gx=26, gy=(window.safeTop||44)+30, L=17;
+      function axis(dx,dy,dz,color,label){
+        var ex=gx+((dx)*cyaw-(dy)*syaw)*L, ey=gy-((((dx)*syaw+(dy)*cyaw)*cpit)+(dz)*spit)*L;
+        ctx.beginPath(); ctx.moveTo(gx,gy); ctx.lineTo(ex,ey); ctx.strokeStyle=color; ctx.lineWidth=2; ctx.stroke();
+        ctx.fillStyle=color; ctx.font='600 9px -apple-system'; ctx.fillText(label,ex+2,ey+3);
+      }
+      axis(1,0,0,'#F05A5A','X'); axis(0,1,0,'#5AC878','Y'); axis(0,0,1,'#5A9CF0','Z');
+    }
+
+    function strokeLayer(L,z,step){
       ctx.beginPath();
       for(var i=0;i<L.length;i+=4*step){
-        var ax=L[i]-cx, ay=L[i+1]-cy, bx2=L[i+2]-cx, by2=L[i+3]-cy;
-        // orbit: yaw about Z, then tilt — +z must raise the point on screen (was subtracted -> model rendered upside-down/mirrored)
-        var x1=ax*cyaw-ay*syaw, y1=(ax*syaw+ay*cyaw)*cpit + z*spit;
-        var x2=bx2*cyaw-by2*syaw, y2=(bx2*syaw+by2*cyaw)*cpit + z*spit;
-        ctx.moveTo(ox+x1*s, oy-y1*s); ctx.lineTo(ox+x2*s, oy-y2*s);
+        ctx.moveTo(prX(L[i],L[i+1]),prY(L[i],L[i+1],z));
+        ctx.lineTo(prX(L[i+2],L[i+3]),prY(L[i+2],L[i+3],z));
       }
       ctx.stroke();
     }
     function draw(){
-      var s=baseScale*zoom, cyaw=Math.cos(yaw), syaw=Math.sin(yaw), cpit=Math.cos(pitch), spit=Math.sin(pitch);
-      var step=(interacting && segTotal>30000)?2:1; // while dragging a dense model, draw every other segment for a smooth framerate; full detail on release
-      ctx.clearRect(0,0,W,Hh); ctx.lineWidth=1.0; ctx.lineCap='round';
+      if(W<2||Hh<2) return; // layout not settled yet — nothing sane to draw
+      cam();
+      var step=(interacting && segTotal>30000)?2:1; // half detail while dragging dense models
+      // background gradient — never a flat black void
+      var bg=ctx.createLinearGradient(0,0,0,Hh);
+      bg.addColorStop(0,'#181B21'); bg.addColorStop(1,'#0C0E11');
+      ctx.fillStyle=bg; ctx.fillRect(0,0,W,Hh);
+      drawPlate();
+      // extrusion lines read as plastic when they thicken with zoom
+      ctx.lineWidth=Math.max(0.8,Math.min(2.6,S*0.5)); ctx.lineCap='round';
       for(var k=0;k<cur;k++){
-        var z=zs[k]-cz, t=(zs[k]-b.minZ)/zspan, L=layers[k], SL=sup[k];
-        if(L&&L.length){ ctx.strokeStyle=heightColor(t,k===cur-1); strokeLayer(L,z,step,cyaw,syaw,cpit,spit,s); }
-        if(SL&&SL.length){ ctx.strokeStyle='#E8A23D'; strokeLayer(SL,z,step,cyaw,syaw,cpit,spit,s); } // supports in amber
+        // clamp t: the elevated purge layer sits outside the model's z-range by design
+        var z=zs[k], t=Math.max(0,Math.min(1,(zs[k]-b.minZ)/zspan)), L=layers[k], SL=sup[k];
+        if(L&&L.length){ ctx.strokeStyle=heightColor(t,k===cur-1); strokeLayer(L,z,step); }
+        if(SL&&SL.length){ ctx.strokeStyle=k===cur-1?'#FFD08A':'#B9832F'; strokeLayer(SL,z,step); }
       }
+      drawGizmo();
     }
     var pending=false; function schedule(){ if(pending)return; pending=true; requestAnimationFrame(function(){pending=false;draw();}); }
     function resize(){ W=cv.clientWidth;Hh=cv.clientHeight; cv.width=W*dpr;cv.height=Hh*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); fit(); draw(); }
 
-    function rotate(dx,dy){ yaw+=dx*0.01; pitch=Math.max(0.05,Math.min(Math.PI-0.05,pitch+dy*0.01)); schedule(); }
+    var PMIN=0.12, PMAX=1.45; // stay above the horizon: keeps orientation obvious AND painter's z-order valid
+    function rotate(dx,dy){ yaw+=dx*0.01; pitch=Math.max(PMIN,Math.min(PMAX,pitch+dy*0.01)); schedule(); }
+    function inertia(){ if(interacting){inertiaOn=false;return;}
+      vyaw*=0.90; vpitch*=0.90;
+      if(Math.abs(vyaw)<0.06&&Math.abs(vpitch)<0.06){inertiaOn=false;return;}
+      rotate(vyaw,vpitch); requestAnimationFrame(inertia); }
     function dist(t){ var a=t[0],b2=t[1],dx=a.clientX-b2.clientX,dy=a.clientY-b2.clientY; return Math.sqrt(dx*dx+dy*dy); }
-    var g=null; // gesture state
-    cv.addEventListener('touchstart',function(e){ if(e.touches.length===2){g={m:'z',d:dist(e.touches),z0:zoom};} else {g={m:'r',x:e.touches[0].clientX,y:e.touches[0].clientY};} interacting=true; },{passive:true});
+    function mid(t){ return {x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2}; }
+    var g=null, lastTap=0;
+    cv.addEventListener('touchstart',function(e){
+      if(e.touches.length===2){ g={m:'zp',d:dist(e.touches),z0:zoom,c:mid(e.touches),px0:px,py0:py}; }
+      else {
+        var now=Date.now();
+        if(now-lastTap<280){ resetView(); lastTap=0; g=null; return; }
+        lastTap=now;
+        g={m:'r',x:e.touches[0].clientX,y:e.touches[0].clientY}; vyaw=0; vpitch=0;
+      }
+      interacting=true; inertiaOn=false;
+    },{passive:true});
     cv.addEventListener('touchmove',function(e){ if(!g)return; e.preventDefault();
-      if(e.touches.length===2){ if(g.m!=='z')g={m:'z',d:dist(e.touches),z0:zoom}; zoom=Math.max(0.3,Math.min(7,g.z0*(dist(e.touches)/g.d))); schedule(); }
-      else if(g.m==='r'){ var nx=e.touches[0].clientX,ny=e.touches[0].clientY; rotate(nx-g.x,ny-g.y); g.x=nx; g.y=ny; } },{passive:false});
-    cv.addEventListener('touchend',function(e){ if(e.touches.length===0){g=null;interacting=false;schedule();} else {g={m:'r',x:e.touches[0].clientX,y:e.touches[0].clientY};} },{passive:true});
+      if(e.touches.length===2){
+        if(g.m!=='zp')g={m:'zp',d:dist(e.touches),z0:zoom,c:mid(e.touches),px0:px,py0:py};
+        var m2=mid(e.touches);
+        zoom=Math.max(0.15,Math.min(14,g.z0*(dist(e.touches)/g.d)));
+        px=g.px0+(m2.x-g.c.x); py=g.py0+(m2.y-g.c.y); // two-finger PAN rides along with the pinch
+        schedule();
+      } else if(g.m==='r'){
+        var nx=e.touches[0].clientX,ny=e.touches[0].clientY, dx=nx-g.x, dy=ny-g.y;
+        vyaw=dx; vpitch=dy; rotate(dx,dy); g.x=nx; g.y=ny;
+      } },{passive:false});
+    cv.addEventListener('touchend',function(e){
+      if(e.touches.length===0){
+        g=null; interacting=false;
+        if(Math.abs(vyaw)>1.5||Math.abs(vpitch)>1.5){ inertiaOn=true; requestAnimationFrame(inertia); }
+        schedule();
+      } else { g={m:'r',x:e.touches[0].clientX,y:e.touches[0].clientY}; }
+    },{passive:true});
     // mouse + wheel: trackpad use AND headless testing
     cv.addEventListener('mousedown',function(e){ g={m:'r',x:e.clientX,y:e.clientY}; interacting=true; });
     window.addEventListener('mousemove',function(e){ if(!g||g.m!=='r')return; rotate(e.clientX-g.x,e.clientY-g.y); g.x=e.clientX; g.y=e.clientY; });
     window.addEventListener('mouseup',function(){ if(g&&g.m==='r'){g=null;interacting=false;schedule();} });
-    cv.addEventListener('wheel',function(e){ e.preventDefault(); zoom=Math.max(0.3,Math.min(7,zoom*(e.deltaY<0?1.1:0.9))); schedule(); },{passive:false});
+    cv.addEventListener('dblclick',resetView);
+    cv.addEventListener('wheel',function(e){ e.preventDefault(); zoom=Math.max(0.15,Math.min(14,zoom*(e.deltaY<0?1.1:0.9))); schedule(); },{passive:false});
+    document.getElementById('reset').addEventListener('click',resetView);
 
     var s2=document.getElementById('s'), lbl=document.getElementById('lbl');
-    s2.max=String(total); s2.value=String(total); lbl.textContent='Layer '+total+' / '+total;
-    s2.addEventListener('input',function(){ cur=+s2.value; lbl.textContent='Layer '+cur+' / '+total; schedule(); });
+    function setLbl(){ var zmm=zs[Math.max(0,cur-1)]; lbl.textContent='Layer '+cur+' / '+total+' · '+(zmm!=null?zmm.toFixed(1):'0')+' mm'; }
+    s2.max=String(total); s2.value=String(total); setLbl();
+    s2.addEventListener('input',function(){ cur=+s2.value; setLbl(); schedule(); });
     window.addEventListener('resize',resize);
     resize();
     post({type:'ready',total:total});
