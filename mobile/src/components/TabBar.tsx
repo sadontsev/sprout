@@ -6,15 +6,14 @@ import { c } from '@/theme';
 import { NozzleIcon } from './NozzleIcon';
 import { Tap } from './anim';
 
-export type TabKey = 'printer' | 'library' | 'queue' | 'ams' | 'power' | 'history';
+export type TabKey = 'printer' | 'library' | 'jobs' | 'ams' | 'power';
 
 const TABS: [TabKey, string, keyof typeof Feather.glyphMap][] = [
   ['printer', 'Printer', 'cpu'],
   ['library', 'Files', 'folder'],
-  ['queue', 'Queue', 'list'],
+  ['jobs', 'Jobs', 'list'], // queue + history merged into one print timeline
   ['ams', 'Hardware', 'box'],
   ['power', 'Power', 'power'],
-  ['history', 'History', 'clock'],
 ];
 
 export function TabBar({ active, onTab }: { active: TabKey; onTab: (t: TabKey) => void }) {

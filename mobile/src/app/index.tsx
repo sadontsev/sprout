@@ -13,7 +13,7 @@ import { presentDashboard, type DashVM } from '@/dashboard/present';
 import { printerProfile } from '@/printers/profile';
 import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
-import { LibraryView, QueueView, AmsView, PowerView, HistoryView } from '@/components/TabScreens';
+import { LibraryView, JobsView, AmsView, PowerView } from '@/components/TabScreens';
 import { CameraOverlay, UploadSheet, WizardOverlay } from '@/components/Overlays';
 import { FadeRise } from '@/components/anim';
 import type { LibraryFile, Printer } from '@/api/types';
@@ -271,7 +271,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
         {
           text: 'Print again',
           onPress: () =>
-            client.reprint(archiveId, printerId).then(() => setTab('queue')).catch((e) => Alert.alert('Couldn’t reprint', String(e))),
+            client.reprint(archiveId, printerId).then(() => setTab('jobs')).catch((e) => Alert.alert('Couldn’t reprint', String(e))),
         },
       ]);
     },
@@ -288,17 +288,16 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       {tab !== 'printer' && (
         <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
           {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={printerId} plate={profile.plate} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
-          {tab === 'queue' && <QueueView client={client} status={status} printerId={printerId} printers={printers ?? []} onBrowse={() => setTab('library')} />}
+          {tab === 'jobs' && <JobsView client={client} status={status} printerId={printerId} printers={printers ?? []} camToken={camToken} onBrowse={() => setTab('library')} />}
           {tab === 'ams' && <AmsView client={client} status={status} printerId={printerId} amsLabel={profile.amsLabel} />}
           {tab === 'power' && <PowerView client={client} printerId={printerId} status={status} />}
-          {tab === 'history' && <HistoryView client={client} camToken={camToken} printerId={printerId} />}
         </FadeRise>
       )}
 
       <TabBar active={tab} onTab={setTab} />
 
       {overlay === 'camera' && (
-        <CameraOverlay streamUrl={streamUrl} status={status} cameraHint={profile.cameraHint} onClose={() => setOverlay(null)} onRefresh={remint} />
+        <CameraOverlay streamUrl={streamUrl} snapshotUrl={camToken ? client.snapshotUrl(printerId, camToken) : null} status={status} cameraHint={profile.cameraHint} onClose={() => setOverlay(null)} onRefresh={remint} />
       )}
       {overlay === 'upload' && (
         <UploadSheet client={client} onClose={() => setOverlay(null)} onUploaded={() => setLibKey((k) => k + 1)} />

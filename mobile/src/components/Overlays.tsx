@@ -19,7 +19,7 @@ import { mjpegHtml } from './mjpegHtml';
 import { Tap, RollingNumber, HeatBar, FadeRise } from './anim';
 
 // ---------------- CAMERA FULLSCREEN ----------------
-export function CameraOverlay({ streamUrl, status, cameraHint, onClose, onRefresh }: { streamUrl: string | null; status: PrinterStatus | null; cameraHint?: string; onClose: () => void; onRefresh: () => void }) {
+export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onClose, onRefresh }: { streamUrl: string | null; snapshotUrl?: string | null; status: PrinterStatus | null; cameraHint?: string; onClose: () => void; onRefresh: () => void }) {
   const insets = useSafeAreaInsets();
   const vm = presentDashboard(status, Date.now());
   // connecting = minting token / camera warming up; live = ≥1 frame decoded; failed = gave up (warm-up
@@ -37,6 +37,25 @@ export function CameraOverlay({ streamUrl, status, cameraHint, onClose, onRefres
     const id = setTimeout(() => setPhase((p) => (p === 'connecting' ? 'failed' : p)), 8000);
     return () => clearTimeout(id);
   }, [streamUrl, reloadKey]);
+
+  // Fast-fail probe: a disabled H2C camera rejects the SNAPSHOT endpoint deterministically
+  // (HTTP 503 in ~60 ms) while its /stream returns HTTP 200 whose only multipart part is a
+  // text/plain error — the <img> never decodes a frame, so without this the overlay sits on
+  // "waking…" for the full 40 s watchdog deadline (read: forever, nobody waits that long).
+  // Only a clean HTTP error short-circuits; a probe NETWORK failure proves nothing about the
+  // stream path and is ignored. Re-probes on retry (reloadKey) and token refresh.
+  useEffect(() => {
+    if (!snapshotUrl) return;
+    let alive = true;
+    fetch(snapshotUrl)
+      .then((r) => {
+        if (alive && !r.ok) setPhase((p) => (p === 'live' ? p : 'failed'));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [snapshotUrl, reloadKey]);
 
   // reloadKey re-arms the effects above (so a retry that yields the same/no token still shows feedback)
   // but is intentionally NOT in the WebView key — keying the WebView on streamUrl alone means a fresh
