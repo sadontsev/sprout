@@ -4,7 +4,8 @@ import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1 } from '@/theme';
-import type { BambuddyClient } from '@/api/bambuddyClient';
+import { apiErrorDetail, type BambuddyClient } from '@/api/bambuddyClient';
+import { presentDryer, DRY_MIN_TEMP, DRY_MAX_HOURS, type DryerVM } from '@/ams/dryer';
 import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFileList } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
 import { presentDashboard, presentNozzles, fmtDuration, normColor, asNum } from '@/dashboard/present';
@@ -336,11 +337,9 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
   const unit = status?.ams?.[0];
   const trays = unit?.tray ?? [];
   const amsId = unit?.id ?? 0;
-  const drying = (unit?.dry_status ?? 0) !== 0;
   // The WS delivers AMS temp (and sometimes humidity) as STRINGS — coerce before any number method.
   const amsHumidity = asNum(unit?.humidity);
   const amsTemp = asNum(unit?.temp);
-  const [dryBusy, setDryBusy] = useState(false);
 
   const [assigns, setAssigns] = useState<SlotAssignment[] | null>(null);
   const loadInv = useCallback(() => {
@@ -355,19 +354,6 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
     const byUuid = uuid ? assigns.find((a) => a.spool?.tray_uuid === uuid) : undefined;
     const hit = byUuid ?? assigns.find((a) => a.ams_id === amsId && a.tray_id === i);
     return hit?.spool ?? null;
-  };
-
-  const toggleDrying = () => {
-    setDryBusy(true);
-    const done = () => setDryBusy(false);
-    if (drying) {
-      client.dryingStop(printerId, amsId).then(done).catch((e) => { done(); Alert.alert('Couldn’t stop drying', String(e)); });
-    } else {
-      Alert.alert('Dry filament?', 'Runs the AMS heater to dry the loaded spools (uses the filament’s default temperature and time).', [
-        { text: 'Cancel', style: 'cancel', onPress: done },
-        { text: 'Start drying', onPress: () => client.dryingStart(printerId, amsId).then(done).catch((e) => { done(); Alert.alert('Couldn’t start drying', String(e)); }) },
-      ]);
-    }
   };
 
   return (
@@ -390,20 +376,9 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
           </View>
         )}
       </View>
-      {status?.supports_drying && (
-        <View style={{ marginHorizontal: 20, marginTop: 14, padding: 14, borderRadius: 16, backgroundColor: drying ? c.heatingDim : c.s1, borderWidth: 1, borderColor: drying ? c.heating : c.line, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <Feather name="wind" size={17} color={drying ? c.heating : c.t2} />
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{drying ? 'Drying filament…' : 'Filament drying'}</Text>
-            <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>
-              {drying ? 'The AMS heater is running.' : 'Dry damp spools right in the AMS.'}
-            </Text>
-          </View>
-          <Tap onPress={toggleDrying} disabled={dryBusy} style={{ paddingHorizontal: 15, paddingVertical: 9, borderRadius: 11, backgroundColor: drying ? c.s3 : c.accent, opacity: dryBusy ? 0.5 : 1 }}>
-            <Text style={{ fontWeight: '600', fontSize: 13, color: drying ? c.t1 : c.accentInk }}>{drying ? 'Stop' : 'Dry'}</Text>
-          </Tap>
-        </View>
-      )}
+      {presentDryer(status).map((d) => (
+        <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} />
+      ))}
       <View style={{ paddingHorizontal: 20, paddingTop: 18, gap: 12 }}>
         {vm.ams.map((t, i) => {
           const spool = spoolForSlot(i);
@@ -458,6 +433,165 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
       <NozzlesSection status={status} />
       <MaintenanceSection client={client} printerId={printerId} />
     </Page>
+  );
+}
+
+// ---------------- AMS DRYER ----------------
+// Handy-style drying: pick a loaded filament -> its recommended temp/time (from the RFID/preset,
+// with per-type fallbacks), adjust, optional spool rotation; live cycle detail + Stop while running.
+function DryerCard({ d, client, printerId }: { d: DryerVM; client: BambuddyClient; printerId: number }) {
+  const [open, setOpen] = useState(false);
+  const [selType, setSelType] = useState<string | null>(null);
+  const [temp, setTemp] = useState<number | null>(null); // null = follow the recommendation
+  const [hours, setHours] = useState<number | null>(null);
+  const [rotate, setRotate] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const opt = d.options.find((o) => o.type === selType) ?? d.options[0] ?? null;
+  const effTemp = temp ?? opt?.temp ?? 55;
+  const effHours = hours ?? opt?.hours ?? 8;
+  const pick = (type: string) => {
+    // Selecting a filament re-follows its recommendation; manual tweaks apply on top of it.
+    setSelType(type);
+    setTemp(null);
+    setHours(null);
+  };
+
+  const start = () => {
+    setBusy(true);
+    client
+      .dryingStart(printerId, d.amsId, { temp: effTemp, hours: effHours, filament: opt?.type, rotate })
+      .then(() => setOpen(false))
+      .catch((e) => Alert.alert('Couldn’t start drying', apiErrorDetail(e)))
+      .finally(() => setBusy(false));
+  };
+  const stop = () =>
+    Alert.alert('Stop drying?', 'Ends the current drying cycle.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Stop',
+        style: 'destructive',
+        onPress: () => {
+          setBusy(true);
+          client
+            .dryingStop(printerId, d.amsId)
+            .catch((e) => Alert.alert('Couldn’t stop drying', apiErrorDetail(e)))
+            .finally(() => setBusy(false));
+        },
+      },
+    ]);
+
+  // ---- Active cycle: what's drying, time left, heating vs holding, Stop. ----
+  if (d.active) {
+    return (
+      <View style={{ marginHorizontal: 20, marginTop: 14, padding: 16, borderRadius: 16, backgroundColor: c.heatingDim, borderWidth: 1, borderColor: c.heating }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <PulseDot color={c.heating} size={9} />
+          <Text style={{ flex: 1, fontWeight: '700', fontSize: 15, color: c.t1 }}>Drying {d.filament || 'filament'}</Text>
+          <Tap onPress={stop} disabled={busy} style={{ paddingHorizontal: 15, paddingVertical: 8, borderRadius: 11, backgroundColor: c.s3, opacity: busy ? 0.5 : 1 }}>
+            <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Stop</Text>
+          </Tap>
+        </View>
+        <Text style={{ marginTop: 12, fontWeight: '700', fontSize: 26, color: c.t1, fontFamily: mono }}>
+          {d.remainingText}
+          <Text style={{ fontSize: 13, fontWeight: '600', color: c.t3 }}>  left</Text>
+        </Text>
+        <View style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {d.stage != null && d.targetTemp != null && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, backgroundColor: c.s2 }}>
+              <Feather name="thermometer" size={11} color={c.heating} />
+              <Text style={{ fontWeight: '600', fontSize: 11.5, color: c.t2, fontFamily: mono }}>
+                {d.stage === 'heating' ? `heating to ${d.targetTemp}°` : `holding ${d.targetTemp}°`}
+              </Text>
+            </View>
+          )}
+          {d.humidityPct != null && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, backgroundColor: c.s2 }}>
+              <Feather name="droplet" size={11} color={c.t3} />
+              <Text style={{ fontWeight: '600', fontSize: 11.5, color: c.t2, fontFamily: mono }}>{d.humidityPct}%</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  }
+
+  // ---- Idle: collapsed row that expands into the full configuration. ----
+  return (
+    <View style={{ marginHorizontal: 20, marginTop: 14, borderRadius: 16, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
+      <Tap onPress={() => setOpen(!open)} style={{ padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Feather name="wind" size={17} color={c.t2} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>Filament drying</Text>
+          <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>
+            {open ? `This AMS dries up to ${d.maxTemp}°C.` : 'Dry damp spools right in the AMS.'}
+          </Text>
+        </View>
+        <Feather name={open ? 'chevron-up' : 'chevron-down'} size={16} color={c.t3} />
+      </Tap>
+      {open && (
+        <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 12 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {d.options.map((o) => {
+              const on = o.type === opt?.type;
+              return (
+                <Tap key={o.type} onPress={() => pick(o.type)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: on ? c.accentDim : c.s2, borderWidth: 1, borderColor: on ? c.accent : c.line }}>
+                  {o.color != null && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: o.color }} />}
+                  <Text style={{ fontWeight: '600', fontSize: 12, color: on ? c.accent : c.t2 }}>{o.type}</Text>
+                  <Text style={{ fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>
+                    {o.temp}° · {o.hours}h
+                  </Text>
+                </Tap>
+              );
+            })}
+            {!d.options.length && <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3 }}>No filament loaded.</Text>}
+          </View>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Stepper label="Temperature" value={`${effTemp}°`} onMinus={() => setTemp(Math.max(DRY_MIN_TEMP, effTemp - 5))} onPlus={() => setTemp(Math.min(d.maxTemp, effTemp + 5))} />
+            <Stepper label="Duration" value={`${effHours}h`} onMinus={() => setHours(Math.max(1, effHours - 1))} onPlus={() => setHours(Math.min(DRY_MAX_HOURS, effHours + 1))} />
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Rotate spool</Text>
+              <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11, color: c.t3 }}>Turns the spool during drying for even heat.</Text>
+            </View>
+            <Toggle value={rotate} onChange={setRotate} />
+          </View>
+          {d.blockers.map((b) => (
+            <View key={b} style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+              <Feather name="alert-triangle" size={13} color={c.heating} />
+              <Text style={{ flex: 1, fontWeight: '500', fontSize: 12, color: c.heating }}>{b}</Text>
+            </View>
+          ))}
+          <Tap
+            onPress={start}
+            disabled={busy || d.blockers.length > 0 || !d.options.length}
+            style={{ height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: c.accent, opacity: busy || d.blockers.length > 0 || !d.options.length ? 0.45 : 1 }}
+          >
+            <Text style={{ fontWeight: '700', fontSize: 14, color: c.accentInk }}>
+              Start drying — {effTemp}° for {effHours}h
+            </Text>
+          </Tap>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function Stepper({ label, value, onMinus, onPlus }: { label: string; value: string; onMinus: () => void; onPlus: () => void }) {
+  return (
+    <View style={{ flex: 1, padding: 10, borderRadius: 12, backgroundColor: c.s2, borderWidth: 1, borderColor: c.line }}>
+      <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.6, color: c.t3, textTransform: 'uppercase' }}>{label}</Text>
+      <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Tap onPress={onMinus} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name="minus" size={14} color={c.t1} />
+        </Tap>
+        <Text style={{ fontWeight: '700', fontSize: 16, color: c.t1, fontFamily: mono }}>{value}</Text>
+        <Tap onPress={onPlus} style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name="plus" size={14} color={c.t1} />
+        </Tap>
+      </View>
+    </View>
   );
 }
 

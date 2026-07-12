@@ -55,10 +55,29 @@ export interface PrinterStatus {
     // asNum() (src/dashboard/present.ts) before any number method — a raw .toFixed() crashes.
     humidity?: number | string; // %
     temp?: number | string; // °C inside the AMS
-    is_ams_ht?: boolean;
+    is_ams_ht?: boolean; // AMS-HT dries to 85°C; the AMS 2 Pro tops out at 65°C
     module_type?: string; // e.g. "n3f" (AMS 2 Pro)
-    dry_status?: number; // non-zero while drying
-    tray: Array<{ id: number; tray_type?: string; tray_color?: string; remain?: number; tray_uuid?: string | null }>;
+    /** Minutes REMAINING in the drying cycle. `> 0` is THE "actively drying" signal — verified live:
+     *  dry_status stayed 0 mid-cycle, so it must NOT be used as the active flag. */
+    dry_time?: number | string;
+    dry_status?: number; // decoded info bits — informational only, NOT a reliable active flag
+    dry_sub_status?: number;
+    /** Target °C — cached by Bambuddy only for cycles it started itself; null when the cycle was
+     *  started elsewhere (printer screen / Bambu Handy). */
+    dry_target_temp?: number | string | null;
+    dry_filament?: string | null; // filament profile the current cycle was started with, e.g. "PLA"
+    /** Why the AMS refuses to dry (codes 0-8) — decode via DRY_BLOCKERS in src/ams/dryer.ts. */
+    dry_sf_reason?: Array<number | string>;
+    tray: Array<{
+      id: number;
+      tray_type?: string;
+      tray_color?: string;
+      remain?: number;
+      tray_uuid?: string | null;
+      /** Recommended drying temp (°C) / time (hours) from the filament's RFID/preset; 0 = no data. */
+      drying_temp?: number | string;
+      drying_time?: number | string;
+    }>;
   }>;
   /** Active tray index across the AMS (Bambu `tray_now`; 255 = none/external). */
   tray_now?: number;
@@ -74,6 +93,7 @@ export interface PrinterStatus {
   wifi_signal?: number; // dBm
   active_extruder?: number;
   supports_drying?: boolean;
+  supports_drying_while_printing?: boolean;
   supports_chamber_heater?: boolean;
   /** Archive of the current/most recent print — reprint target. */
   current_archive_id?: number | null;
