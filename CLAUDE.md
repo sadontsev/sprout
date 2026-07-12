@@ -4,11 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-> **Note for anyone who isn't the owner:** some concrete values in this file — device UDID
-> `<YOUR_DEVICE_UDID>`, Apple team `<YOUR_TEAM_ID>`, `*.example.com` domains — are the
-> owner's, and `homeserver`/`homeserver.local` stands in for whatever box runs the backend.
-> Substitute your own device/team/host; the commands and gotchas transfer as-is. Start with
-> [README.md](README.md) for the general setup.
+> **Note for anyone who isn't the owner:** the device UDID `<YOUR_DEVICE_UDID>` and
+> Apple team `<YOUR_TEAM_ID>` are the owner's; `homeserver`/`homeserver.local` and `*.example.com`
+> stand in for whatever box/domains run your backend. Substitute your own device/team/hosts;
+> the commands and gotchas transfer as-is. Start with [README.md](README.md) for setup.
 
 A **personal iOS app** to control + monitor a Chinese-market **Bambu Lab A1** 3D printer (the official Bambu Handy app can't drive that unit). It's an **Expo SDK 56 / React Native 0.85** app (`mobile/`) that is a polished client of a **self-hosted Bambuddy backend** (FastAPI, ~505 endpoints). Distribution is **local/TestFlight for one user** — there is no CI, and the app is **built locally with Xcode**, not EAS.
 
