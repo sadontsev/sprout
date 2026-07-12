@@ -3,7 +3,7 @@ import { View, Text, ScrollView, RefreshControl, ActivityIndicator, Alert, Modal
 import { File, Paths } from 'expo-file-system';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { GcodeViewerOverlay } from './Overlays';
-import { isSliced3mf, isPlayableVideo, isTimelapseFolder, timelapseThumbPath, timelapseLabel } from '@/library/printerFiles';
+import { isSliced3mf, isPlayableVideo, isMediaFolder, mediaThumbPath, mediaLabel } from '@/library/printerFiles';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -273,7 +273,7 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
           </View>
           {pLoading && <ActivityIndicator color={c.accent} style={{ marginTop: 30 }} />}
           {!pLoading && pList && pSorted.length === 0 && <Empty icon="hard-drive" title="Empty folder" body="Nothing here on the printer's onboard storage." />}
-          {!pLoading && isTimelapseFolder(pPath) ? (
+          {!pLoading && isMediaFolder(pPath) ? (
             // Timelapse folder: newest-first thumbnail grid (the printer keeps a poster JPEG per
             // video in the `thumbnail` subfolder, which is hidden here). Tap plays, hold deletes.
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
@@ -284,7 +284,7 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
                   <Tap key={pf.path} onPress={() => setPlayFile(pf)} onLongPress={() => confirmDeletePf(pf)} style={{ width: '47%', flexGrow: 1 }}>
                     <View style={{ width: '100%', aspectRatio: 16 / 9, borderRadius: 14, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
                       <Image
-                        source={{ uri: client.printerFileDownloadUrl(printerId, timelapseThumbPath(pf.path)), headers: client.authHeaders() }}
+                        source={{ uri: client.printerFileDownloadUrl(printerId, mediaThumbPath(pf.path)), headers: client.authHeaders() }}
                         style={{ width: '100%', height: '100%' }}
                         contentFit="cover"
                         transition={120}
@@ -294,12 +294,12 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
                         <Feather name="play" size={16} color="#fff" style={{ marginLeft: 2 }} />
                       </View>
                     </View>
-                    <Text style={{ marginTop: 8, fontWeight: '600', fontSize: 12.5, color: c.t1 }}>{timelapseLabel(pf.name)}</Text>
+                    <Text style={{ marginTop: 8, fontWeight: '600', fontSize: 12.5, color: c.t1 }}>{mediaLabel(pf.name)}</Text>
                     <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>{fmtBytes(pf.size)}</Text>
                   </Tap>
                 ))}
               {pSorted.every((pf) => pf.is_directory || !isPlayableVideo(pf.name)) && (
-                <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3 }}>No timelapse videos yet.</Text>
+                <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3 }}>No videos here yet.</Text>
               )}
             </View>
           ) : (
@@ -312,7 +312,7 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, paddingHorizontal: 13, borderRadius: 13, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, marginBottom: 9 }}
               >
                 <Feather
-                  name={pf.is_directory ? (isTimelapseFolder(pf.path) ? 'film' : 'folder') : isSliced3mf(pf.name) ? 'box' : isPlayableVideo(pf.name) ? 'film' : 'file'}
+                  name={pf.is_directory ? (isMediaFolder(pf.path) ? 'film' : 'folder') : isSliced3mf(pf.name) ? 'box' : isPlayableVideo(pf.name) ? 'film' : 'file'}
                   size={18}
                   color={pf.is_directory ? c.accent : c.t3}
                 />
@@ -321,7 +321,7 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
               </Tap>
             ))
           )}
-          {!pLoading && !isTimelapseFolder(pPath) && pSorted.some((pf) => !pf.is_directory) && (
+          {!pLoading && !isMediaFolder(pPath) && pSorted.some((pf) => !pf.is_directory) && (
             <Text style={{ textAlign: 'center', marginTop: 8, fontWeight: '500', fontSize: 11, color: c.t3 }}>Tap a file for preview & actions · hold to delete</Text>
           )}
         </View>
@@ -345,25 +345,36 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
         </Modal>
       )}
       {playFile && (
-        <TimelapsePlayer key={playFile.path} client={client} printerId={printerId} file={playFile} onDelete={() => confirmDeletePf(playFile)} onClose={() => setPlayFile(null)} />
+        <SdVideoPlayer key={playFile.path} client={client} printerId={printerId} file={playFile} onDelete={() => confirmDeletePf(playFile)} onClose={() => setPlayFile(null)} />
       )}
     </Page>
   );
 }
 
-// ---------------- TIMELAPSE PLAYER ----------------
+// ---------------- SD VIDEO PLAYER (timelapse + ipcam recordings) ----------------
 // Downloads the mp4 to cache WITH the auth header (a bare <video src> can't send X-API-Key), then
-// plays it natively via expo-video. Timelapses are immutable, so a cached copy is reused as-is.
-function TimelapsePlayer({ client, printerId, file, onDelete, onClose }: { client: BambuddyClient; printerId: number; file: PrinterFile; onDelete: () => void; onClose: () => void }) {
+// plays it natively via expo-video. The download endpoint does NOT honor Range requests (verified:
+// 200 + full body), so AVPlayer can't stream off the URL — download-then-play is the reliable path.
+// ipcam chunks are ~250 MB, hence the real progress bar; SD videos are immutable, so cached copies
+// are reused as-is.
+function SdVideoPlayer({ client, printerId, file, onDelete, onClose }: { client: BambuddyClient; printerId: number; file: PrinterFile; onDelete: () => void; onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [prog, setProg] = useState<{ written: number; total: number } | null>(null);
+  const kind = file.path.toLowerCase().startsWith('/ipcam') ? 'camera recording' : 'timelapse';
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const dest = new File(Paths.cache, file.name);
-        if (!dest.exists) await File.downloadFileAsync(client.printerFileDownloadUrl(printerId, file.path), dest, { headers: client.authHeaders() });
+        if (!dest.exists) {
+          await File.downloadFileAsync(client.printerFileDownloadUrl(printerId, file.path), dest, {
+            headers: client.authHeaders(),
+            // totalBytes is -1 when the server omits Content-Length — fall back to the listed size.
+            onProgress: ({ bytesWritten, totalBytes }) => alive && setProg({ written: bytesWritten, total: totalBytes > 0 ? totalBytes : file.size }),
+          });
+        }
         if (alive) setLocalUri(dest.uri);
       } catch (e) {
         if (alive) setErr(apiErrorDetail(e));
@@ -376,13 +387,14 @@ function TimelapsePlayer({ client, printerId, file, onDelete, onClose }: { clien
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const btn = { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' as const, justifyContent: 'center' as const };
+  const pct = prog && prog.total > 0 ? Math.min(100, Math.round((prog.written / prog.total) * 100)) : null;
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#0A0B0C', paddingTop: insets.top }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10, gap: 10 }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontWeight: '700', fontSize: 15, color: '#fff' }}>{timelapseLabel(file.name)}</Text>
-            <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: '#8E9398', fontFamily: mono }}>{fmtBytes(file.size)} · timelapse</Text>
+            <Text style={{ fontWeight: '700', fontSize: 15, color: '#fff' }}>{mediaLabel(file.name)}</Text>
+            <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: '#8E9398', fontFamily: mono }}>{fmtBytes(file.size)} · {kind}</Text>
           </View>
           <Tap onPress={() => localUri && Share.share({ url: localUri })} hitSlop={8} style={{ ...btn, opacity: localUri ? 1 : 0.4 }}>
             <Feather name="share" size={15} color="#fff" />
@@ -397,11 +409,23 @@ function TimelapsePlayer({ client, printerId, file, onDelete, onClose }: { clien
         {localUri ? (
           <VideoBody uri={localUri} />
         ) : (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 44 }}>
             {err ? (
               <Text style={{ color: '#8E9398', fontSize: 13.5, textAlign: 'center', lineHeight: 19 }}>{err}</Text>
             ) : (
-              <ActivityIndicator color="#30D158" />
+              <>
+                <ActivityIndicator color="#30D158" />
+                {pct != null && prog && (
+                  <>
+                    <Text style={{ marginTop: 16, fontWeight: '600', fontSize: 13, color: '#fff', fontFamily: mono }}>
+                      {pct}% · {fmtBytes(prog.written)} / {fmtBytes(prog.total)}
+                    </Text>
+                    <View style={{ marginTop: 10, alignSelf: 'stretch', height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden' }}>
+                      <View style={{ width: `${pct}%`, height: '100%', borderRadius: 2, backgroundColor: '#30D158' }} />
+                    </View>
+                  </>
+                )}
+              </>
             )}
           </View>
         )}
