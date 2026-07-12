@@ -412,7 +412,7 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     document.getElementById('reset').addEventListener('click',resetView);
 
     var s2=document.getElementById('s'), lbl=document.getElementById('lbl');
-    function setLbl(){ var zmm=zs[Math.max(0,cur-1)]; lbl.textContent='Layer '+cur+' / '+total+' · '+(zmm!=null?zmm.toFixed(1):'0')+' mm'; }
+    function setLbl(){ var zmm=zs[Math.max(0,cur-1)]; lbl.textContent='Layer '+cur+' / '+total; }
     s2.max=String(total); s2.value=String(total); setLbl();
     s2.addEventListener('input',function(){ cur=+s2.value; setLbl(); schedule(); });
     window.addEventListener('resize',resize);
