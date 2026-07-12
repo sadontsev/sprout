@@ -69,3 +69,22 @@ describe('mjpegHtml', () => {
     expect(html).toContain('<=40000'); // ~40s total budget
   });
 });
+
+describe('fps counter + streamOrigin', () => {
+  const { streamOrigin } = require('../mjpegHtml');
+  const URL2 = 'https://bambuddy.example/api/v1/printers/1/camera/stream?token=abc&fps=10';
+
+  it('ships the delivered-fps counter with taint self-disable', () => {
+    const html = mjpegHtml(URL2);
+    expect(html).toContain("P('fps:'+fcount)"); // 1s samples posted to RN
+    expect(html).toContain('fpsDead=true'); // tainted canvas disables silently, never spams
+    expect(html).toContain('willReadFrequently'); // sampling canvas
+  });
+
+  it('streamOrigin extracts the origin (WebView baseUrl) and rejects garbage', () => {
+    expect(streamOrigin(URL2)).toBe('https://bambuddy.example');
+    expect(streamOrigin('http://192.168.1.10:8910/api/v1/x?y=1')).toBe('http://192.168.1.10:8910');
+    expect(streamOrigin('not a url')).toBeNull();
+    expect(streamOrigin(null)).toBeNull();
+  });
+});

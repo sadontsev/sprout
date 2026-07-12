@@ -15,7 +15,7 @@ import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
 import { parseGcodeLayers, gcodeViewerHtml, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
 import { selectProcess, pickDefaultQuality, type Preset } from '@/library/presetSelect';
 import { printerProfile, slicedForMatchesPrinter } from '@/printers/profile';
-import { mjpegHtml } from './mjpegHtml';
+import { mjpegHtml, streamOrigin } from './mjpegHtml';
 import { Tap, RollingNumber, HeatBar, FadeRise } from './anim';
 
 // ---------------- CAMERA FULLSCREEN ----------------
@@ -60,8 +60,16 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
   // reloadKey re-arms the effects above (so a retry that yields the same/no token still shows feedback)
   // but is intentionally NOT in the WebView key — keying the WebView on streamUrl alone means a fresh
   // token triggers exactly one remount/warm-up instead of two (sync reloadKey bump + async new URL).
-  const retry = () => { onRefresh(); setReloadKey((k) => k + 1); };
+  const retry = () => { onRefresh(); setReloadKey((k) => k + 1); setFps(null); };
+  // Delivered frame rate, measured in-page (see mjpegHtml) — the honest "is it actually smooth"
+  // number, shown next to the LIVE badge. Null until the first 1s sample (or if measuring failed).
+  const [fps, setFps] = useState<number | null>(null);
   const onMessage = (data: string) => {
+    if (data.startsWith('fps:')) {
+      const n = Number(data.slice(4));
+      if (Number.isFinite(n)) setFps(n);
+      return;
+    }
     if (data === 'frame') setPhase('live');
     else if (data === 'failed') setPhase('failed');
     else setPhase((p) => (p === 'live' ? p : 'connecting')); // 'connecting' | 'retry'
@@ -76,7 +84,9 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
       {streamUrl && (
         <WebView
           key={streamUrl}
-          source={{ html: mjpegHtml(streamUrl) }}
+          // baseUrl makes the document SAME-ORIGIN with the stream so the in-page fps counter can
+          // read the <img> pixels (Bambuddy sends no CORS headers — see streamOrigin).
+          source={{ html: mjpegHtml(streamUrl), baseUrl: streamOrigin(streamUrl) ?? undefined }}
           originWhitelist={['*']}
           style={{ flex: 1, backgroundColor: '#060708' }}
           scrollEnabled={false}
@@ -130,6 +140,9 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: 'rgba(22,24,27,0.55)' }}>
             <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.running }} />
             <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: '#fff' }}>LIVE</Text>
+            {fps != null && (
+              <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: 'rgba(255,255,255,0.55)', fontFamily: mono }}>· {fps} fps</Text>
+            )}
           </View>
         </View>
       )}
