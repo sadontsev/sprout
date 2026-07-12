@@ -511,7 +511,8 @@ function PrinterFileSheet({ client, printerId, file, busy, onShare, onDelete, on
 }
 
 // ---------------- QUEUE ----------------
-export function QueueView({ client, status, printerId, printers, onBrowse }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; printers: Printer[]; onBrowse: () => void }) {
+// The queue half of the Jobs tab — "what's coming". Owns its own polling; no Page wrapper.
+function QueueSection({ client, status, printerId, printers, onBrowse }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; printers: Printer[]; onBrowse: () => void }) {
   const [items, setItems] = useState<QueueItem[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const load = useCallback(
@@ -532,10 +533,19 @@ export function QueueView({ client, status, printerId, printers, onBrowse }: { c
   const printing = vm.kind === 'live';
 
   return (
-    <Page title="Queue">
+    <>
       {items === null && !loadFailed && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
       {loadFailed && <LoadFailed onRetry={() => void load()} />}
-      {items?.length === 0 && !printing && !loadFailed && <Empty icon="list" title="Queue is empty" body="Files you send to print line up here. Start one from your library." cta="Browse files" onCta={onBrowse} />}
+      {items?.length === 0 && !printing && !loadFailed && (
+        // Compact inline empty state — history renders right below, so no full-screen Empty here.
+        <View style={{ marginHorizontal: 20, marginTop: 16, padding: 14, borderRadius: 14, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Feather name="list" size={16} color={c.t3} />
+          <Text style={{ flex: 1, fontWeight: '500', fontSize: 12.5, color: c.t3 }}>Nothing queued. Files you send to print line up here.</Text>
+          <Tap onPress={onBrowse} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3 }}>
+            <Text style={{ fontWeight: '600', fontSize: 12, color: c.accent }}>Browse</Text>
+          </Tap>
+        </View>
+      )}
       {printing && (
         <>
           <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 11 }}>NOW PRINTING</Text>
@@ -588,7 +598,7 @@ export function QueueView({ client, status, printerId, printers, onBrowse }: { c
           {elsewhere} more {elsewhere === 1 ? 'job' : 'jobs'} queued for {otherNames.join(', ')}.
         </Text>
       )}
-    </Page>
+    </>
   );
 }
 
@@ -1254,7 +1264,8 @@ function HistoryRow({ entry, client, camToken, sym, onReprint }: { entry: PrintL
   );
 }
 
-export function HistoryView({ client, camToken, printerId }: { client: BambuddyClient; camToken: string | null; printerId: number }) {
+// The history half of the Jobs tab — "what happened". Owns its own polling; no Page wrapper.
+function HistorySection({ client, camToken, printerId }: { client: BambuddyClient; camToken: string | null; printerId: number }) {
   const [entries, setEntries] = useState<PrintLogEntry[] | null>(null);
   const [stats, setStats] = useState<ArchiveStats | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -1285,7 +1296,8 @@ export function HistoryView({ client, camToken, printerId }: { client: BambuddyC
   };
 
   return (
-    <Page title="History">
+    <>
+      <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono, paddingHorizontal: 20, paddingTop: 24, paddingBottom: 2 }}>HISTORY</Text>
       {entries === null && !loadFailed && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
       {loadFailed && <LoadFailed onRetry={load} />}
       {entries !== null && stats && stats.total_prints > 0 && <StatsBanner stats={stats} sym={sym} />}
@@ -1302,6 +1314,26 @@ export function HistoryView({ client, camToken, printerId }: { client: BambuddyC
           </View>
         </>
       )}
+    </>
+  );
+}
+
+// ---------------- JOBS (queue + history merged — one print timeline) ----------------
+// One tab that reads top-to-bottom as the printer's job timeline: what's printing NOW, what's UP
+// NEXT (with queue actions), then the HISTORY archive (stats + reprint). Frees a tab slot.
+export function JobsView({ client, status, printerId, printers, camToken, onBrowse }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; printers: Printer[]; camToken: string | null; onBrowse: () => void }) {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = () => {
+    // Sections own their data (and poll on their own intervals) — remounting re-fetches both.
+    setRefreshing(true);
+    setRefreshKey((k) => k + 1);
+    setTimeout(() => setRefreshing(false), 600);
+  };
+  return (
+    <Page title="Jobs" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}>
+      <QueueSection key={`q${refreshKey}`} client={client} status={status} printerId={printerId} printers={printers} onBrowse={onBrowse} />
+      <HistorySection key={`h${refreshKey}`} client={client} camToken={camToken} printerId={printerId} />
     </Page>
   );
 }
