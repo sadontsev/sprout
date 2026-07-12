@@ -126,10 +126,6 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
     return client.listFiles().then((f) => { setFiles(f); setLoadFailed(false); }).catch(() => { setFiles((prev) => prev ?? []); setLoadFailed(true); });
   }, [client]);
   useEffect(() => { void load(); }, [load]);
-  const refresh = useCallback(() => {
-    setRefreshing(true);
-    void load().finally(() => setRefreshing(false));
-  }, [load]);
 
   // Printer onboard storage (SD card) browser.
   const [pList, setPList] = useState<PrinterFileList | null>(null);
@@ -147,6 +143,13 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
     [client, printerId],
   );
   useEffect(() => { if (source === 'printer' && !pList) loadPrinter('/'); }, [source, pList, loadPrinter]);
+
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    // Also re-list the printer SD folder when that segment is showing (it has its own spinner).
+    if (source === 'printer') loadPrinter(pPath);
+    void load().finally(() => setRefreshing(false));
+  }, [load, source, pPath, loadPrinter]);
 
   // SD-card file actions: tap -> sheet (preview for 3MFs) with Download/Delete; hold -> delete.
   // Sliced 3MFs additionally open the shared layer viewer; timelapse .mp4s open the video player.
@@ -619,6 +622,17 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
   }, [client, printerId]);
   useEffect(loadInv, [loadInv]);
 
+  // Pull-to-refresh: re-fetch the fetched data (assignments + maintenance, remounted via key).
+  // Trays/temps/dryer are live WS state and need no refetch.
+  const [refreshing, setRefreshing] = useState(false);
+  const [maintKey, setMaintKey] = useState(0);
+  const refresh = () => {
+    setRefreshing(true);
+    loadInv();
+    setMaintKey((k) => k + 1);
+    setTimeout(() => setRefreshing(false), 600);
+  };
+
   // Resolve the spool assigned to AMS slot `i`. Prefer tray_uuid (RFID), fall back to (ams_id,tray_id).
   const spoolForSlot = (i: number): SlotAssignment['spool'] | null => {
     if (!assigns?.length) return null;
@@ -629,7 +643,7 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
   };
 
   return (
-    <Page title="Hardware">
+    <Page title="Hardware" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}>
       <SectionHead label="FILAMENT" right={amsLabel} first />
       <View style={{ paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <Text style={{ fontWeight: '500', fontSize: 13, color: c.t3 }}>
@@ -703,7 +717,7 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
         })}
       </View>
       <NozzlesSection status={status} />
-      <MaintenanceSection client={client} printerId={printerId} />
+      <MaintenanceSection key={maintKey} client={client} printerId={printerId} />
     </Page>
   );
 }
@@ -956,10 +970,19 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
   const [autoOff, setAutoOff] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
-  useEffect(() => {
+  const loadBase = useCallback(() => {
     client.getPlug(printerId).then((p) => setPlug(p ?? null)).catch(() => setPlug(null));
     client.getSettings().then(setSettings).catch(() => setSettings(null));
   }, [client, printerId]);
+  useEffect(loadBase, [loadBase]);
+  // Pull-to-refresh: re-resolve the plug + settings; a fresh plug object re-arms the 5s status
+  // poll (its effect keys on `plug`), which fires immediately — live watts/kWh refresh too.
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = () => {
+    setRefreshing(true);
+    loadBase();
+    setTimeout(() => setRefreshing(false), 600);
+  };
   // While a toggle command is settling, ignore poll results — HA takes a few seconds to reflect
   // the new state and the stale poll would visibly bounce the switch back.
   const pendingUntil = useRef(0);
@@ -1021,13 +1044,13 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
 
   if (plug === null) {
     return (
-      <Page title="Power">
+      <Page title="Power" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}>
         <Empty icon="power" title="No smart plug linked" body="Link the printer's plug in Bambuddy (Settings → Smart Plugs) to control power here." />
       </Page>
     );
   }
   return (
-    <Page title="Power">
+    <Page title="Power" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}>
       <Text style={{ paddingHorizontal: 20, marginTop: 7, fontWeight: '500', fontSize: 13, color: c.t3 }}>{plug?.name ?? 'Printer smart plug'}</Text>
       <View style={{ marginHorizontal: 20, marginTop: 20, paddingVertical: 30, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, alignItems: 'center' }}>
         <Breathe active={on && reachable} color={c.accent} grow={0.18} maxOpacity={0.5} style={{ borderRadius: 65 }}>
