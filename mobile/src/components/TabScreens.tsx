@@ -115,7 +115,7 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
   );
 }
 
-export function LibraryView({ client, camToken, printerId, onUpload, onPick }: { client: BambuddyClient; camToken: string | null; printerId: number; onUpload: () => void; onPick: (f: LibraryFile) => void }) {
+export function LibraryView({ client, camToken, printerId, plate, onUpload, onPick }: { client: BambuddyClient; camToken: string | null; printerId: number; plate?: { w: number; d: number }; onUpload: () => void; onPick: (f: LibraryFile) => void }) {
   const [source, setSource] = useState<LibSource>('library');
   const [files, setFiles] = useState<LibraryFile[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -341,7 +341,7 @@ export function LibraryView({ client, camToken, printerId, onUpload, onPick }: {
       )}
       {viewGcode && (
         <Modal visible animationType="slide" onRequestClose={() => setViewGcode(null)}>
-          <GcodeViewerOverlay key={viewGcode.path} load={() => client.getPrinterFileGcode(printerId, viewGcode.path)} title={viewGcode.name} onClose={() => setViewGcode(null)} />
+          <GcodeViewerOverlay key={viewGcode.path} load={() => client.getPrinterFileGcode(printerId, viewGcode.path)} title={viewGcode.name} plate={plate} onClose={() => setViewGcode(null)} />
         </Modal>
       )}
       {playFile && (

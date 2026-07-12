@@ -378,7 +378,7 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
 // Pure parser + HTML builder live in @/library/gcodeLayers (unit-tested, headless-renderable).
 // `load` fetches the raw gcode — library files pass () => client.getGcode(id), the SD-card browser
 // passes () => client.getPrinterFileGcode(printerId, path). Same viewer either way.
-export function GcodeViewerOverlay({ load, title, onClose }: { load: () => Promise<string>; title: string; onClose: () => void }) {
+export function GcodeViewerOverlay({ load, title, onClose, plate }: { load: () => Promise<string>; title: string; onClose: () => void; plate?: { w: number; d: number } }) {
   const insets = useSafeAreaInsets();
   const [html, setHtml] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -399,7 +399,7 @@ export function GcodeViewerOverlay({ load, title, onClose }: { load: () => Promi
           return;
         }
         setHasSupport(parsed.hasSupport);
-        setHtml(gcodeViewerHtml(parsed));
+        setHtml(gcodeViewerHtml(parsed, plate));
       })
       .catch((e) => alive && setErr(String(e)));
     return () => {
@@ -992,7 +992,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
           </View>
         )}
       </Animated.View>
-      {viewLayers && <GcodeViewerOverlay key={viewLayers.fileId} load={() => client.getGcode(viewLayers.fileId)} title={viewLayers.title} onClose={() => setViewLayers(null)} />}
+      {viewLayers && <GcodeViewerOverlay key={viewLayers.fileId} load={() => client.getGcode(viewLayers.fileId)} title={viewLayers.title} plate={profile.plate} onClose={() => setViewLayers(null)} />}
     </View>
   );
 }

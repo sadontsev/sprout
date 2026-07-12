@@ -18,6 +18,8 @@ export interface PrinterProfile {
   dualNozzle: boolean;
   /** Build plates this machine accepts (first = default). */
   bedTypes: BedType[];
+  /** Physical build-plate footprint in mm (X width × Y depth) — drives the layer viewer's plate. */
+  plate: { w: number; d: number };
   /** Camera behavior copy — the A1's camera is on-demand/slow; H2-series streams need
    *  LAN Mode Liveview enabled on the printer screen. */
   cameraHint: string;
@@ -36,6 +38,7 @@ const PROFILES: Record<string, PrinterProfile> = {
     amsLabel: 'AMS Lite',
     dualNozzle: false,
     bedTypes: [TEXTURED, SMOOTH, COOL, ENGINEERING],
+    plate: { w: 256, d: 256 },
     cameraHint: 'The A1’s camera is on-demand and can be slow — give it a moment and tap Retry.',
   },
   H2C: {
@@ -44,6 +47,7 @@ const PROFILES: Record<string, PrinterProfile> = {
     amsLabel: 'AMS 2 Pro',
     dualNozzle: true,
     bedTypes: [TEXTURED, SMOOTH, HIGH_TEMP, ENGINEERING],
+    plate: { w: 350, d: 320 },
     cameraHint: 'If this persists, enable LAN Mode Liveview in the printer’s settings screen (Settings → General).',
   },
 };
@@ -60,6 +64,7 @@ export function printerProfile(printer: Pick<Printer, 'model' | 'nozzle_count'> 
     amsLabel: 'AMS',
     dualNozzle: (printer?.nozzle_count ?? 1) > 1,
     bedTypes: [TEXTURED, SMOOTH, COOL, ENGINEERING],
+    plate: { w: 256, d: 256 },
     cameraHint: 'Give the camera a moment and tap Retry. Make sure the printer is powered on.',
   };
 }
