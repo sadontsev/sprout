@@ -89,6 +89,26 @@ test('WS string form: numeric fields arrive as strings and still work', () => {
   expect(d.stage).toBe('heating'); // 44.7 < 60-3
 });
 
+// The exact live WS frame (2026-07-12) — the WS serializer differs from REST for the same status:
+// dry_target_temp arrives as 0 (REST: null), temp as a string, dry_sf_reason [6]. The 0 target must
+// be treated as UNKNOWN, not rendered ("holding 0°" bug, user-reported).
+test('WS frame: dry_target_temp=0 means unknown -> recommendation fallback, never 0°', () => {
+  const s = {
+    ...liveDrying,
+    ams: [{
+      ...liveDrying.ams![0],
+      humidity: 25, temp: '44.7', dry_time: 312,
+      dry_status: 2, dry_sub_status: 2, dry_sf_reason: [6],
+      dry_target_temp: 0,
+    }],
+  } as PrinterStatus;
+  const [d] = presentDryer(s);
+  expect(d.active).toBe(true);
+  expect(d.targetTemp).toBe(55); // PLA fallback, NOT 0
+  expect(d.stage).toBe('heating'); // 44.7 < 55-3
+  expect(d.blockers).toEqual([]); // code 6 (already drying) stays omitted
+});
+
 test('holding stage once at temperature', () => {
   const s = {
     ...liveDrying,
