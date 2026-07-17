@@ -19,9 +19,13 @@ import type { AppConfig } from './secureConfig';
 export function resolvePushUrl(cfg: Pick<AppConfig, 'baseUrl' | 'pushUrl' | 'serverPush'>): string | null {
   if (cfg.serverPush === false) return null;
   const trim = (s: string) => s.trim().replace(/\/+$/, '');
+  // Only ever hand a push token to a well-formed http(s) URL. The push URL is user-entered config
+  // (never injected from observed content), but this rejects typos / garbage / non-http schemes so a
+  // malformed entry silently disables push rather than POSTing the token somewhere unexpected.
+  const httpUrl = (s: string): string | null => (/^https?:\/\/[^\s]+$/i.test(s) ? s : null);
   const explicit = cfg.pushUrl?.trim();
-  if (explicit) return trim(explicit);
+  if (explicit) return httpUrl(trim(explicit));
   const base = cfg.baseUrl ?? '';
-  if (base.includes('bambuddy.')) return trim(base.replace('bambuddy.', 'lapush.'));
+  if (base.includes('bambuddy.')) return httpUrl(trim(base.replace('bambuddy.', 'lapush.')));
   return null;
 }
