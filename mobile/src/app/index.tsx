@@ -4,6 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { File, Paths } from 'expo-file-system';
 import { getConfig, patchConfig, type AppConfig } from '@/config/secureConfig';
+import { resolvePushUrl } from '@/config/pushConfig';
 import { BambuddyClient } from '@/api/bambuddyClient';
 import { usePrinterStatus } from '@/realtime/usePrinterStatus';
 import { useCameraStream } from '@/realtime/useCameraStream';
@@ -146,11 +147,9 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       })),
     [printers, statuses, printerId, vm],
   );
-  // la-push endpoint: explicit config override, else derive from the bambuddy host (bambuddy.* -> lapush.*).
-  const pushUrl = useMemo(
-    () => config.pushUrl ?? (config.baseUrl.includes('bambuddy.') ? config.baseUrl.replace('bambuddy.', 'lapush.') : null),
-    [config.pushUrl, config.baseUrl],
-  );
+  // la-push endpoint (null ⇒ LOCAL Live-Activity mode, no server). Explicit URL, else derived from
+  // the bambuddy host, gated by the serverPush toggle. See config/pushConfig.ts.
+  const pushUrl = useMemo(() => resolvePushUrl(config), [config.pushUrl, config.baseUrl, config.serverPush]);
   usePrinterActivities(activityEntries, pushUrl);
   useStatusNotifications(pushUrl); // print-done / error banners via la-push
 
