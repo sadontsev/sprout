@@ -14,8 +14,13 @@ export type AppConfig = {
   /** Last-selected printer (restored on launch). */
   printerId?: number;
   printerName?: string;
-  /** la-push base URL for Live-Activity APNs push (defaults to the bambuddy host as lapush.*). */
+  /** la-push base URL for Live-Activity APNs push. Blank ⇒ derived from the bambuddy host as
+   *  lapush.* (owner convenience); anyone self-hosting with a different host sets it explicitly. */
   pushUrl?: string;
+  /** Live-Activity mode. true/undefined ⇒ register with la-push so cards persist after the app is
+   *  suspended + status banners fire (needs a reachable la-push). false ⇒ LOCAL only: cards update
+   *  while the app runs, no banners, no server. See resolvePushUrl() in config/pushConfig.ts. */
+  serverPush?: boolean;
 };
 
 const KEY = 'bambu.config';

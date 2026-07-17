@@ -22,6 +22,22 @@ provider, no Expo push service.
    - The same key signs pushes for **all** apps on the team; no per-app key needed.
 2. No push *certificate* is needed — `la-push` uses token-based auth (ES256 JWT from the `.p8`).
 
+## 1b. Each person runs their OWN la-push
+
+`la-push` polls **your** Bambuddy with **your** API key and signs pushes with **your** APNs `.p8`,
+so you can't share someone else's instance — everyone self-hosts one next to their own Bambuddy.
+The app is pointed at yours in **Settings → Background push**:
+
+- **Background push toggle** — ON = the app registers each Live-Activity card's push token with
+  la-push (cards keep updating after iOS suspends the app + you get print-done/error banners). OFF =
+  **local mode**: Live Activities update only while the app is open, no banners, no server required.
+- **Push server (la-push)** field — your la-push base URL. Leave blank to derive it from your
+  Bambuddy host (`bambuddy.` → `lapush.`); set it explicitly if la-push runs somewhere else (a LAN
+  IP:8911, a different subdomain, etc.). The resolver lives in `mobile/src/config/pushConfig.ts`.
+
+If you don't want to run la-push at all, just leave **Background push** off — everything else in the
+app works; you only lose closed-app Live-Activity updates and the status banners.
+
 ## 2. App-side prerequisites (already wired in this repo)
 
 - `app.json` → `expo-widgets` plugin with `enablePushNotifications: true` — this adds the

@@ -6,8 +6,9 @@ import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { getConfig, setConfig, clearConfig, patchConfig } from '@/config/secureConfig';
 import { c, mono, useTheme, setTheme, getThemeName, type ThemeName } from '@/theme';
-import { Tap } from '@/components/anim';
+import { Tap, Toggle } from '@/components/anim';
 import { sanitizeBaseUrl, sanitizeApiKey } from '@/config/sanitize';
+import { resolvePushUrl } from '@/config/pushConfig';
 
 const DEFAULT_URL = 'https://bambuddy.example.com';
 
@@ -44,6 +45,8 @@ export default function Settings() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [printerName, setPrinterName] = useState<string | null>(null);
+  const [pushUrl, setPushUrl] = useState('');
+  const [serverPush, setServerPush] = useState(true);
 
   useEffect(() => {
     getConfig().then((cfg) => {
@@ -51,6 +54,8 @@ export default function Settings() {
         setBaseUrl(cfg.baseUrl);
         setApiKey(cfg.apiKey);
         setPrinterName(cfg.printerName ?? null);
+        setPushUrl(cfg.pushUrl ?? '');
+        setServerPush(cfg.serverPush ?? true);
         setHasConfig(true);
       } else {
         setEditing(true); // first run — go straight to the form
@@ -59,13 +64,23 @@ export default function Settings() {
   }, []);
 
   const canSave = sanitizeBaseUrl(baseUrl).length > 0 && /^bb_[A-Za-z0-9]{6,}$/.test(sanitizeApiKey(apiKey));
+  const effPush = resolvePushUrl({ baseUrl, pushUrl, serverPush });
+  const pushLabel = !serverPush ? 'Local only' : effPush ? `Server · ${hostOf(effPush)}` : 'Server (set a URL)';
   const theme = getThemeName();
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';
 
   const save = async () => {
     setSaving(true);
     const cur = await getConfig();
-    await setConfig({ baseUrl: sanitizeBaseUrl(baseUrl), apiKey: sanitizeApiKey(apiKey), cameraToken: cur?.cameraToken, theme: cur?.theme ?? theme });
+    // Spread `cur` so editing connection doesn't wipe the selected printer / camera token.
+    await setConfig({
+      ...cur,
+      baseUrl: sanitizeBaseUrl(baseUrl),
+      apiKey: sanitizeApiKey(apiKey),
+      pushUrl: pushUrl.trim() || undefined,
+      serverPush,
+      theme: cur?.theme ?? theme,
+    });
     setSaving(false);
     if (hasConfig) setEditing(false);
     else router.replace('/');
@@ -114,6 +129,37 @@ export default function Settings() {
         placeholderTextColor={c.t3}
         style={field}
       />
+      {/* PUSH & LIVE ACTIVITIES — each person runs their own la-push next to their own Bambuddy. */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 24 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>Background push</Text>
+          <Text style={{ marginTop: 4, fontWeight: '500', fontSize: 11.5, color: c.t3, lineHeight: 16 }}>
+            {serverPush
+              ? 'Lock-screen Live Activities keep updating after the app closes, plus print-done / error alerts. Needs a la-push server.'
+              : 'Live Activities update only while the app is open — no lock-screen alerts, no server needed.'}
+          </Text>
+        </View>
+        <Toggle value={serverPush} onChange={setServerPush} />
+      </View>
+      {serverPush && (
+        <>
+          <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 18, marginBottom: 9 }}>PUSH SERVER (la-push)</Text>
+          <TextInput
+            value={pushUrl}
+            onChangeText={setPushUrl}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="off"
+            keyboardType="url"
+            placeholder={resolvePushUrl({ baseUrl: sanitizeBaseUrl(baseUrl) }) ?? 'https://lapush.your-host…'}
+            placeholderTextColor={c.t3}
+            style={field}
+          />
+          <Text style={{ marginTop: 7, fontSize: 11, color: c.t3, lineHeight: 15 }}>
+            Your own la-push URL. Leave blank to derive it from the Bambuddy host (bambuddy.→lapush.); set it if la-push runs elsewhere.
+          </Text>
+        </>
+      )}
       <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
         {hasConfig && (
           <Tap onPress={() => setEditing(false)} style={{ paddingHorizontal: 22, height: 54, borderRadius: 16, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }}>
@@ -155,7 +201,8 @@ export default function Settings() {
                   </Tap>
                 </View>
                 <Row label="Server" value={hostOf(baseUrl)} />
-                <Row label="API key" value={maskKey(apiKey)} valueColor={c.t3} last />
+                <Row label="API key" value={maskKey(apiKey)} valueColor={c.t3} />
+                <Row label="Live Activities" value={pushLabel} valueColor={c.t3} last />
               </Section>
 
               {/* APPEARANCE */}
