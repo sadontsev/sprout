@@ -17,9 +17,9 @@ Notifications.setNotificationHandler({
  * so the server can send print-done / error banners (separate from the per-card Live-Activity tokens).
  * No-op without a pushUrl or on non-iOS; failures are swallowed — the app works regardless.
  */
-export function useStatusNotifications(pushUrl?: string | null): void {
+export function useStatusNotifications(pushUrl?: string | null, apiKey?: string): void {
   useEffect(() => {
-    if (Platform.OS !== 'ios' || !pushUrl) return;
+    if (Platform.OS !== 'ios' || !pushUrl || !apiKey) return;
     let cancelled = false;
     (async () => {
       try {
@@ -28,9 +28,11 @@ export function useStatusNotifications(pushUrl?: string | null): void {
         if (!granted || cancelled) return;
         const token = await Notifications.getDevicePushTokenAsync(); // iOS -> { type: 'ios', data: '<hex>' }
         if (cancelled || token.type !== 'ios' || typeof token.data !== 'string') return;
+        // X-API-Key gates la-push registration (see useLiveActivity) — without it a stranger who knows
+        // the URL could register their device and receive this printer's status banners.
         await fetch(`${pushUrl.replace(/\/+$/, '')}/register-device`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'X-API-Key': apiKey },
           body: JSON.stringify({ device_token: token.data }),
         }).catch(() => {});
       } catch {
@@ -40,5 +42,5 @@ export function useStatusNotifications(pushUrl?: string | null): void {
     return () => {
       cancelled = true;
     };
-  }, [pushUrl]);
+  }, [pushUrl, apiKey]);
 }

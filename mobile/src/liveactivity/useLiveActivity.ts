@@ -23,11 +23,13 @@ export type ActivityEntry = {
 
 /** Register a card's APNs push token with the la-push service (keyed by printer) so it keeps updating
  *  when the app is closed. Fire-and-forget — push is a bonus; foreground updates work regardless. */
-function registerPushToken(pushUrl: string, printerId: number, printerName: string, pushToken: string): void {
+function registerPushToken(pushUrl: string, apiKey: string, printerId: number, printerName: string, pushToken: string): void {
   if (!pushToken) return;
+  // X-API-Key gates la-push registration to holders of the Bambuddy key, so a stranger who knows the
+  // URL can't register their token and receive this printer's notifications.
   fetch(`${pushUrl.replace(/\/+$/, '')}/register`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'X-API-Key': apiKey },
     body: JSON.stringify({ printer_id: printerId, push_token: pushToken, printer_name: printerName, icon_uri: nozzleIconUri() }),
   }).catch(() => {});
 }
@@ -40,7 +42,7 @@ function registerPushToken(pushUrl: string, printerId: number, printerName: stri
  * offline/connecting are deliberately no-ops so a WS blip doesn't kill a card mid-print; only
  * complete/error/idle end it.
  */
-export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string | null) {
+export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string | null, apiKey?: string) {
   const instances = useRef(new Map<number, LiveActivity<PrintActivityProps>>());
   const lastPush = useRef(new Map<number, number>());
   const lastState = useRef(new Map<number, PrintActivityProps>());
@@ -49,10 +51,10 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
 
   // Grab the card's APNs push token (now + on rotation) and register it with la-push.
   const wirePush = (printerId: number, printerName: string, inst: LiveActivity<PrintActivityProps>) => {
-    if (!pushUrl || subs.current.has(printerId)) return;
+    if (!pushUrl || !apiKey || subs.current.has(printerId)) return;
     try {
-      inst.getPushToken().then((tok) => tok && registerPushToken(pushUrl, printerId, printerName, tok)).catch(() => {});
-      const sub = inst.addPushTokenListener((ev) => registerPushToken(pushUrl, printerId, printerName, ev.pushToken));
+      inst.getPushToken().then((tok) => tok && registerPushToken(pushUrl, apiKey, printerId, printerName, tok)).catch(() => {});
+      const sub = inst.addPushTokenListener((ev) => registerPushToken(pushUrl, apiKey, printerId, printerName, ev.pushToken));
       subs.current.set(printerId, sub);
     } catch {
       /* older expo-widgets / push disabled — foreground updates still work */
@@ -126,5 +128,5 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, pushUrl]);
+  }, [entries, pushUrl, apiKey]);
 }

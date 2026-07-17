@@ -20,7 +20,7 @@ from typing import Any
 
 import httpx
 import jwt  # PyJWT
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 # ---- config (env) ----
@@ -343,6 +343,16 @@ async def _tick(client: httpx.AsyncClient) -> None:
 app = FastAPI(title="la-push")
 
 
+def _require_key(x_api_key: str | None = Header(default=None)) -> None:
+    """Gate the register endpoints on the owner's Bambuddy API key (the app already sends it as
+    X-API-Key). Without this, ANYONE who knows the public la-push URL could POST their token and
+    receive the owner's print notifications (name, progress, finish/error) — an info leak. The key
+    never grants control and isn't exposed by la-push; it's the same credential the app uses for
+    Bambuddy, so requiring it limits registration to holders of the owner's key."""
+    if not x_api_key or x_api_key != BAMBUDDY_API_KEY:
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+
 class Register(BaseModel):
     printer_id: int  # one card per printer -> registrations are keyed by printer_id
     push_token: str
@@ -369,7 +379,7 @@ async def health() -> dict:
 
 
 @app.post("/register-device")
-async def register_device(r: DeviceReg) -> dict:
+async def register_device(r: DeviceReg, _: None = Depends(_require_key)) -> dict:
     if r.device_token not in _device_tokens:
         _device_tokens.append(r.device_token)
         _save()
@@ -378,7 +388,7 @@ async def register_device(r: DeviceReg) -> dict:
 
 
 @app.post("/register")
-async def register(r: Register) -> dict:
+async def register(r: Register, _: None = Depends(_require_key)) -> dict:
     _regs[str(r.printer_id)] = {
         "printerId": r.printer_id, "pushToken": r.push_token, "printerName": r.printer_name,
         "iconUri": r.icon_uri, "lastPush": 0, "lastState": None,
@@ -389,7 +399,7 @@ async def register(r: Register) -> dict:
 
 
 @app.post("/unregister")
-async def unregister(printer_id: int) -> dict:
+async def unregister(printer_id: int, _: None = Depends(_require_key)) -> dict:
     _regs.pop(str(printer_id), None)
     _save()
     return {"ok": True}
