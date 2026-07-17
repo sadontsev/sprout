@@ -98,7 +98,22 @@ export default function Settings() {
       <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginBottom: 9 }}>BAMBUDDY URL</Text>
       <TextInput value={baseUrl} onChangeText={setBaseUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder={DEFAULT_URL} placeholderTextColor={c.t3} style={field} />
       <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 18, marginBottom: 9 }}>API KEY</Text>
-      <TextInput value={apiKey} onChangeText={setApiKey} autoCapitalize="none" autoCorrect={false} secureTextEntry placeholder="bb_…" placeholderTextColor={c.t3} style={field} />
+      {/* textContentType="oneTimeCode" + autoComplete="off" disable iOS Password AutoFill / Strong
+          Password on this secure field. Without it, iOS treats it as a new-password field and
+          INTERCEPTS PASTE — the field shows dots but onChangeText never fires, so `apiKey` stays
+          empty and Connect never enables (the reported bug). oneTimeCode keeps the paste working. */}
+      <TextInput
+        value={apiKey}
+        onChangeText={setApiKey}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="off"
+        textContentType="oneTimeCode"
+        secureTextEntry
+        placeholder="bb_…"
+        placeholderTextColor={c.t3}
+        style={field}
+      />
       <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
         {hasConfig && (
           <Tap onPress={() => setEditing(false)} style={{ paddingHorizontal: 22, height: 54, borderRadius: 16, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }}>
