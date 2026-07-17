@@ -12,6 +12,7 @@ import { usePrinterActivities, type ActivityEntry } from '@/liveactivity/useLive
 import { useStatusNotifications } from '@/notifications/useStatusNotifications';
 import { presentDashboard, type DashVM } from '@/dashboard/present';
 import { printerProfile } from '@/printers/profile';
+import { reconcileSelection, initialSelectionState, type SelectionState } from '@/printers/selection';
 import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
 import { LibraryView, JobsView, AmsView, PowerView } from '@/components/TabScreens';
@@ -72,25 +73,21 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       clearInterval(id);
     };
   }, [client]);
-  const missedPolls = useRef(0);
+  const selState = useRef<SelectionState>(initialSelectionState);
   useEffect(() => {
-    // If the persisted selection vanished from the backend (printer sold/removed), fall back to the
-    // first printer AND persist it — otherwise every cold launch re-lives the ghost id until the
-    // fleet list loads. Heal only on the SECOND consecutive fleet response missing it: a single
-    // absence can be transient (is_active toggled during maintenance, a flaky list response), and
-    // persisting on a blip would permanently rewrite the stored selection. Until then the selected
-    // printer just shows offline — which is true. Add/remove is picked up by the 30s refresh above.
-    if (!printers?.length) return;
-    if (printers.some((p) => p.id === printerId)) {
-      missedPolls.current = 0;
-      return;
+    // Keep the selected printer honest against the loaded fleet. A fresh connect (or a stale guessed
+    // default like id 1 when the real printer is id 2) is adopted to the first printer IMMEDIATELY, so
+    // onboarding lands on the live machine instead of sitting on "Connecting". A selection that was
+    // confirmed and later vanished (printer sold/removed) heals on the 2nd consecutive miss — a single
+    // absence can be a transient list blip and shouldn't rewrite a good persisted selection. See
+    // reconcileSelection() for the full rule; the 30s fleet refresh above drives re-checks.
+    if (!printers) return;
+    const { state, action } = reconcileSelection(printers, printerId, selState.current);
+    selState.current = state;
+    if (action.type === 'select') {
+      setPrinterId(action.id);
+      void patchConfig({ printerId: action.id, printerName: action.name });
     }
-    missedPolls.current += 1;
-    if (missedPolls.current < 2) return;
-    missedPolls.current = 0;
-    const next = printers[0];
-    setPrinterId(next.id);
-    void patchConfig({ printerId: next.id, printerName: next.name });
   }, [printers, printerId]);
   const printer = printers?.find((p) => p.id === printerId) ?? null;
   const profile = printerProfile(printer);

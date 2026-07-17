@@ -9,6 +9,7 @@ import { c, mono, useTheme, setTheme, getThemeName, type ThemeName } from '@/the
 import { Tap, Toggle } from '@/components/anim';
 import { sanitizeBaseUrl, sanitizeApiKey, isValidApiKey } from '@/config/sanitize';
 import { resolvePushUrl } from '@/config/pushConfig';
+import { BambuddyClient, classifyConnectError } from '@/api/bambuddyClient';
 
 const DEFAULT_URL = 'https://bambuddy.example.com';
 
@@ -47,6 +48,7 @@ export default function Settings() {
   const [printerName, setPrinterName] = useState<string | null>(null);
   const [pushUrl, setPushUrl] = useState('');
   const [serverPush, setServerPush] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     getConfig().then((cfg) => {
@@ -70,20 +72,37 @@ export default function Settings() {
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';
 
   const save = async () => {
+    setError(null);
     setSaving(true);
-    const cur = await getConfig();
-    // Spread `cur` so editing connection doesn't wipe the selected printer / camera token.
-    await setConfig({
-      ...cur,
-      baseUrl: sanitizeBaseUrl(baseUrl),
-      apiKey: sanitizeApiKey(apiKey),
-      pushUrl: pushUrl.trim() || undefined,
-      serverPush,
-      theme: cur?.theme ?? theme,
-    });
-    setSaving(false);
-    if (hasConfig) setEditing(false);
-    else router.replace('/');
+    const url = sanitizeBaseUrl(baseUrl);
+    const key = sanitizeApiKey(apiKey);
+    try {
+      // Pre-flight: actually reach the server with the entered URL+key before persisting, so a wrong
+      // host or a rejected key surfaces here instead of as a silent, eternal "Connecting" dashboard.
+      const fleet = await new BambuddyClient({ baseUrl: url, apiKey: key }).probe();
+      const cur = await getConfig();
+      // Auto-select a real printer from the fleet (keep the current one if it still exists), so the
+      // dashboard never defaults to a guessed id that doesn't exist on this backend. Spread `cur` so
+      // editing the connection doesn't wipe the camera token.
+      const keepId = cur?.printerId != null && fleet.some((p) => p.id === cur.printerId) ? cur.printerId : fleet[0]?.id;
+      const keepName = fleet.find((p) => p.id === keepId)?.name ?? cur?.printerName;
+      await setConfig({
+        ...cur,
+        baseUrl: url,
+        apiKey: key,
+        pushUrl: pushUrl.trim() || undefined,
+        serverPush,
+        theme: cur?.theme ?? theme,
+        printerId: keepId ?? cur?.printerId,
+        printerName: keepName,
+      });
+      setSaving(false);
+      if (hasConfig) setEditing(false);
+      else router.replace('/');
+    } catch (e) {
+      setSaving(false);
+      setError(classifyConnectError(e).message);
+    }
   };
 
   const pickTheme = (name: ThemeName) => {
@@ -162,6 +181,11 @@ export default function Settings() {
           </Text>
         </>
       )}
+      {error && (
+        <View style={{ marginTop: 20, padding: 13, borderRadius: 12, backgroundColor: c.s2, borderWidth: 1, borderColor: c.error }}>
+          <Text style={{ color: c.error, fontSize: 13, lineHeight: 18, fontWeight: '500' }}>{error}</Text>
+        </View>
+      )}
       <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
         {hasConfig && (
           <Tap onPress={() => setEditing(false)} style={{ paddingHorizontal: 22, height: 54, borderRadius: 16, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center' }}>
@@ -169,7 +193,7 @@ export default function Settings() {
           </Tap>
         )}
         <Tap onPress={save} disabled={!canSave || saving} style={{ flex: 1, height: 54, borderRadius: 16, backgroundColor: canSave ? c.accent : c.s3, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ fontWeight: '700', fontSize: 16, color: canSave ? c.accentInk : c.t3 }}>{saving ? 'Saving…' : hasConfig ? 'Save' : 'Connect'}</Text>
+          <Text style={{ fontWeight: '700', fontSize: 16, color: canSave ? c.accentInk : c.t3 }}>{saving ? 'Connecting…' : hasConfig ? 'Save' : 'Connect'}</Text>
         </Tap>
       </View>
     </>
