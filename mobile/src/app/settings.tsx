@@ -7,7 +7,7 @@ import Constants from 'expo-constants';
 import { getConfig, setConfig, clearConfig, patchConfig } from '@/config/secureConfig';
 import { c, mono, useTheme, setTheme, getThemeName, type ThemeName } from '@/theme';
 import { Tap, Toggle } from '@/components/anim';
-import { sanitizeBaseUrl, sanitizeApiKey } from '@/config/sanitize';
+import { sanitizeBaseUrl, sanitizeApiKey, isValidApiKey } from '@/config/sanitize';
 import { resolvePushUrl } from '@/config/pushConfig';
 
 const DEFAULT_URL = 'https://bambuddy.example.com';
@@ -63,7 +63,7 @@ export default function Settings() {
     });
   }, []);
 
-  const canSave = sanitizeBaseUrl(baseUrl).length > 0 && /^bb_[A-Za-z0-9]{6,}$/.test(sanitizeApiKey(apiKey));
+  const canSave = sanitizeBaseUrl(baseUrl).length > 0 && isValidApiKey(apiKey);
   const effPush = resolvePushUrl({ baseUrl, pushUrl, serverPush });
   const pushLabel = !serverPush ? 'Local only' : effPush ? `Server · ${hostOf(effPush)}` : 'Server (set a URL)';
   const theme = getThemeName();
