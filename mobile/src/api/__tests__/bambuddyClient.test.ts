@@ -1,4 +1,4 @@
-import { BambuddyClient, apiErrorDetail } from '../bambuddyClient';
+import { BambuddyClient, apiErrorDetail, classifyConnectError, type ConnectErrorKind } from '../bambuddyClient';
 
 const fetchMock = jest.fn();
 global.fetch = fetchMock as unknown as typeof fetch;
@@ -61,6 +61,41 @@ test('fileThumbUrl embeds the camera token, and returns "" without a token or a 
 test('throws with status on non-ok', async () => {
   fetchMock.mockResolvedValueOnce({ ok: false, status: 401, text: async () => 'no' });
   await expect(client.getStatus(1)).rejects.toThrow(/401/);
+});
+
+test('probe hits /printers/ and returns the fleet on 200', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => [{ id: 2, name: 'H2C', is_active: true }] });
+  const fleet = await client.probe();
+  expect(fleet).toEqual([{ id: 2, name: 'H2C', is_active: true }]);
+  const [url, opts] = fetchMock.mock.calls.at(-1)!;
+  expect(url).toBe('https://x/api/v1/printers/');
+  expect(opts.headers['X-API-Key']).toBe('bb_k');
+  expect(opts.signal).toBeDefined(); // abortable so a dead host fails fast
+});
+
+test('probe throws with the status on non-ok (so it can be classified)', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: false, status: 401, text: async () => 'unauthorized' });
+  await expect(client.probe()).rejects.toThrow(/401/);
+});
+
+describe('classifyConnectError', () => {
+  const cases: [string, unknown, ConnectErrorKind][] = [
+    ['abort/timeout', Object.assign(new Error('Aborted'), { name: 'AbortError' }), 'timeout'],
+    ['401 key rejected', new Error('Bambuddy GET /api/v1/printers/ -> HTTP 401 unauthorized'), 'auth'],
+    ['403 forbidden', new Error('Bambuddy GET /api/v1/printers/ -> HTTP 403 forbidden'), 'auth'],
+    ['404 not bambuddy', new Error('Bambuddy GET /api/v1/printers/ -> HTTP 404 Not Found'), 'notFound'],
+    ['502 server down', new Error('Bambuddy GET /api/v1/printers/ -> HTTP 502 Bad Gateway'), 'server'],
+    ['network failed', new Error('Network request failed'), 'network'],
+    ['TypeError (fetch reject)', Object.assign(new Error('boom'), { name: 'TypeError' }), 'network'],
+    ['untrusted TLS cert', new Error('The certificate for this server is invalid (SSL)'), 'network'],
+    ['unknown', new Error('something totally unexpected'), 'unknown'],
+  ];
+  it.each(cases)('classifies %s as %s', (_label, err, kind) => {
+    expect(classifyConnectError(err).kind).toBe(kind);
+  });
+  it('always returns a non-empty, human message', () => {
+    for (const [, err] of cases) expect(classifyConnectError(err).message.length).toBeGreaterThan(0);
+  });
 });
 
 test('extra headers (e.g. CF Access) are sent', async () => {

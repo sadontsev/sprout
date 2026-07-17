@@ -18,6 +18,35 @@ export function apiErrorDetail(e: unknown): string {
   return m ? m[1] : s;
 }
 
+export type ConnectErrorKind = 'timeout' | 'auth' | 'notFound' | 'server' | 'network' | 'unknown';
+
+/**
+ * Classify a failure from {@link BambuddyClient.probe} into a user-facing onboarding message. The
+ * whole point is to split the two failures that otherwise look identical — server-unreachable vs.
+ * key-rejected — so a silent "Connecting" forever becomes an actionable error at the moment of entry.
+ */
+export function classifyConnectError(e: unknown): { kind: ConnectErrorKind; message: string } {
+  const err = e instanceof Error ? e : new Error(String(e));
+  const s = err.message;
+  if (err.name === 'AbortError' || /\babort/i.test(s)) {
+    return { kind: 'timeout', message: 'Timed out reaching the server. Check the URL, and that your phone can actually reach that host (same Wi‑Fi / VPN).' };
+  }
+  const http = s.match(/HTTP (\d{3})/);
+  if (http) {
+    const code = Number(http[1]);
+    if (code === 401 || code === 403) return { kind: 'auth', message: `Server reached, but the API key was rejected (HTTP ${code}). Double-check the key.` };
+    if (code === 404) return { kind: 'notFound', message: "Reached that host, but it doesn't respond like a Bambuddy server (HTTP 404). Check the URL." };
+    if (code >= 500) return { kind: 'server', message: `The Bambuddy server returned an error (HTTP ${code}). It may be down or restarting.` };
+    return { kind: 'unknown', message: `Unexpected response from the server (HTTP ${code}).` };
+  }
+  // WinterCG / RN network-layer failures: DNS, refused, or an untrusted TLS cert (all surface as a
+  // TypeError / "Network request failed" with no HTTP status).
+  if (err.name === 'TypeError' || /network request failed|failed to fetch|econnrefused|enotfound|getaddrinfo|certificate|ssl|tls|handshake/i.test(s)) {
+    return { kind: 'network', message: "Can't reach that URL. Check the scheme (https), host/port, your network, and that the server's TLS certificate is trusted by the phone." };
+  }
+  return { kind: 'unknown', message: s };
+}
+
 /** Thin typed wrapper over the Bambuddy endpoints the app uses. No React. */
 export class BambuddyClient {
   readonly baseUrl: string;
@@ -54,6 +83,22 @@ export class BambuddyClient {
   /** All registered printers (A1, H2C, …). */
   listPrinters(): Promise<Printer[]> {
     return this.req('/api/v1/printers/').then((r) => r.json());
+  }
+  /**
+   * Onboarding pre-flight: confirm baseUrl + apiKey actually reach a Bambuddy server, returning its
+   * printer fleet so the caller can auto-select a real printer instead of guessing an id. Aborts
+   * after `timeoutMs` so a wrong/dead host fails fast instead of hanging the Connect button. Throws
+   * on any failure — classify it with {@link classifyConnectError}.
+   */
+  async probe(timeoutMs = 8000): Promise<Printer[]> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await this.req('/api/v1/printers/', { signal: ctrl.signal });
+      return (await res.json()) as Printer[];
+    } finally {
+      clearTimeout(timer);
+    }
   }
   getStatus(printerId: number): Promise<PrinterStatus> {
     return this.req(`/api/v1/printers/${printerId}/status`).then((r) => r.json());
