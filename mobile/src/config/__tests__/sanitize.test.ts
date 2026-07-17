@@ -27,3 +27,26 @@ describe('sanitizeBaseUrl', () => {
     expect(sanitizeBaseUrl('https://host .com')).toBe('https://host.com');
   });
 });
+
+describe('isValidApiKey (drives Connect enabled state)', () => {
+  const { isValidApiKey } = require('@/config/sanitize');
+  it('accepts alphanumeric keys', () => {
+    expect(isValidApiKey('bb_A1b2C3d4E5f6G7h8')).toBe(true);
+  });
+  it('accepts base64url keys with _ and - (the bug: these were rejected)', () => {
+    expect(isValidApiKey('bb_ab_cd-ef_GH-12')).toBe(true);
+    expect(isValidApiKey('bb_has_underscores')).toBe(true);
+    expect(isValidApiKey('bb_has-dashes-2')).toBe(true);
+  });
+  it('tolerates paste artifacts (trailing %, whitespace, newline)', () => {
+    expect(isValidApiKey('  bb_ab_cd-ef_GH\n')).toBe(true);
+    expect(isValidApiKey('bb_abc123def%')).toBe(true);
+  });
+  it('rejects empty / too-short / wrong-prefix / spaced', () => {
+    expect(isValidApiKey('')).toBe(false);
+    expect(isValidApiKey('bb_')).toBe(false);
+    expect(isValidApiKey('bb_ab12')).toBe(false); // < 6 body chars
+    expect(isValidApiKey('xx_abcdefgh')).toBe(false);
+    expect(isValidApiKey('bb_abc def')).toBe(false); // interior space
+  });
+});
