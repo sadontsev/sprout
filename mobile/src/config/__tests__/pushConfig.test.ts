@@ -31,3 +31,11 @@ test('a LAN IP base needs an explicit pushUrl', () => {
 test('blank/whitespace pushUrl falls through to the heuristic', () => {
   expect(resolvePushUrl({ ...base, pushUrl: '   ' })).toBe('https://lapush.example.com');
 });
+
+test('rejects non-http(s) / malformed explicit push URLs (guard against typos & bad schemes)', () => {
+  expect(resolvePushUrl({ ...base, pushUrl: 'ftp://evil.example' })).toBeNull();
+  expect(resolvePushUrl({ ...base, pushUrl: 'lapush.example.com' })).toBeNull(); // no scheme
+  expect(resolvePushUrl({ ...base, pushUrl: 'javascript:alert(1)' })).toBeNull();
+  expect(resolvePushUrl({ ...base, pushUrl: 'not a url' })).toBeNull();
+  expect(resolvePushUrl({ ...base, pushUrl: 'https://ok.example.com' })).toBe('https://ok.example.com');
+});

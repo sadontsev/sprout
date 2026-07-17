@@ -113,18 +113,20 @@ export default function Settings() {
       <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginBottom: 9 }}>BAMBUDDY URL</Text>
       <TextInput value={baseUrl} onChangeText={setBaseUrl} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder={DEFAULT_URL} placeholderTextColor={c.t3} style={field} />
       <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 18, marginBottom: 9 }}>API KEY</Text>
-      {/* textContentType="oneTimeCode" + autoComplete="off" disable iOS Password AutoFill / Strong
-          Password on this secure field. Without it, iOS treats it as a new-password field and
-          INTERCEPTS PASTE — the field shows dots but onChangeText never fires, so `apiKey` stays
-          empty and Connect never enables (the reported bug). oneTimeCode keeps the paste working. */}
+      {/* Plain (NON-secure) field on purpose. secureTextEntry made iOS treat this as a password/OTP
+          field and hijack it with AutoFill: pasted text didn't fire onChangeText (Connect stayed
+          grey) and delete wiped the whole value as one autofilled chunk. textContentType="none" +
+          autoComplete="off" + no secureTextEntry disables all of that so paste/edit behave normally.
+          The key is visible while typing (you're pasting your own key on your own device); it's
+          stored in the Keychain. */}
       <TextInput
         value={apiKey}
         onChangeText={setApiKey}
         autoCapitalize="none"
         autoCorrect={false}
+        spellCheck={false}
         autoComplete="off"
-        textContentType="oneTimeCode"
-        secureTextEntry
+        textContentType="none"
         placeholder="bb_…"
         placeholderTextColor={c.t3}
         style={field}
