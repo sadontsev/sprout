@@ -10,11 +10,12 @@
     "ios": {
       "bundleIdentifier": "com.mvks5.bambu",
       "appleTeamId": "<YOUR_TEAM_ID>",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "icon": "./assets/Bambu.icon",
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
+        "LSSupportsOpeningDocumentsInPlace": false,
         "CFBundleDisplayName": "Sprout",
         "CFBundleDocumentTypes": [
           {
