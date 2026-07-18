@@ -85,3 +85,37 @@ test('meaningfulChange fires when the active head switches (tool change)', () =>
 test('GENERIC_END is a complete, terminal ContentState', () => {
   expect(GENERIC_END).toMatchObject({ finished: true, hasNozzle2: false, activeNozzle: 0, nozzle2: 0 });
 });
+
+describe('toDryContentState (AMS drying card)', () => {
+  const { toDryContentState } = require('../contentState');
+  const base = (ams: object | undefined) => ({ connected: true, state: 'RUNNING', ams: ams ? [ams] : undefined }) as never;
+
+  it('null when no AMS or no active cycle (dry_time 0)', () => {
+    expect(toDryContentState(base(undefined), 0)).toBeNull();
+    expect(toDryContentState(base({ id: 0, dry_time: 0 }), 0)).toBeNull();
+  });
+
+  it('builds a drying card from an active cycle (verified live shape: H2C, Studio-started)', () => {
+    const cs = toDryContentState(base({ id: 0, dry_time: 59, dry_target_temp: 50, dry_filament: 'PLA', temp: 38.0, humidity: 31 }), 1_000_000, 'file://icon', 'H2C');
+    expect(cs).toMatchObject({
+      dry: true, stateLabel: 'Drying', name: 'PLA @ 50°', printerName: 'H2C',
+      amsTemp: 38, amsTarget: 50, humidity: 31, finished: false,
+    });
+    expect(cs!.etaEpochMs).toBe(1_000_000 + 59 * 60000);
+  });
+
+  it('tolerates WS string numbers and a missing target (external starts may omit it)', () => {
+    const cs = toDryContentState(base({ id: 0, dry_time: '30', dry_target_temp: null, dry_filament: null, temp: '41.2', humidity: '28' }), 0);
+    expect(cs).toMatchObject({ name: 'Filament', amsTemp: 41, amsTarget: 0, humidity: 28 });
+    expect(cs!.etaEpochMs).toBe(30 * 60000);
+  });
+
+  it('dry-field deltas count as meaningful changes; countdown drift alone within a minute does not', () => {
+    const { meaningfulChange } = require('../contentState');
+    const a = toDryContentState(base({ id: 0, dry_time: 59, dry_target_temp: 50, dry_filament: 'PLA', temp: 38, humidity: 31 }), 0)!;
+    const hotter = toDryContentState(base({ id: 0, dry_time: 59, dry_target_temp: 50, dry_filament: 'PLA', temp: 41, humidity: 31 }), 0)!;
+    const sameSoon = toDryContentState(base({ id: 0, dry_time: 59, dry_target_temp: 50, dry_filament: 'PLA', temp: 38, humidity: 31 }), 30_000)!;
+    expect(meaningfulChange(a, hotter)).toBe(true);
+    expect(meaningfulChange(a, sameSoon)).toBe(false);
+  });
+});

@@ -151,6 +151,11 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
         or a.get("activeNozzle", 0) != b["activeNozzle"]
         or a["bedTarget"] != b["bedTarget"]
         or abs(a["etaEpochMs"] - b["etaEpochMs"]) >= 60_000
+        # Drying cards: temp climb + humidity fall are the whole story (countdown ticks client-side).
+        or a.get("dry", False) != b.get("dry", False)
+        or abs(a.get("amsTemp", 0) - b.get("amsTemp", 0)) >= 1
+        or a.get("amsTarget", 0) != b.get("amsTarget", 0)
+        or abs(a.get("humidity", 0) - b.get("humidity", 0)) >= 2
     )
 
 
@@ -259,6 +264,38 @@ async def _notify(client: httpx.AsyncClient, title: str, body: str) -> None:
             print(f"[notify] error: {e}", flush=True)
 
 
+def dry_state(status: dict) -> dict | None:
+    """AMS drying card ContentState, or None when no cycle is active. Mirrors the app's
+    toDryContentState: dry_time (minutes remaining) > 0 is THE active signal; the countdown itself
+    renders client-side from etaEpochMs, so pushes only carry temp/humidity drift and the end."""
+    ams_list = status.get("ams") or []
+    ams = ams_list[0] if ams_list else None
+    if not ams:
+        return None
+    def _f(v) -> float:
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    mins = _f(ams.get("dry_time"))
+    if mins <= 0:
+        return None
+    target = int(_f(ams.get("dry_target_temp")))
+    fil = ams.get("dry_filament") or "Filament"
+    now_ms = int(time.time() * 1000)
+    return {
+        "dry": True, "stateLabel": "Drying",
+        "name": f"{fil} @ {target}°" if target > 0 else fil,
+        "tint": "#FFB86C", "symbol": "humidity.fill",
+        "progress": 0, "layer": 0, "totalLayers": 0,
+        "etaEpochMs": now_ms + int(mins * 60000), "finished": False,
+        "amsTemp": int(_f(ams.get("temp"))), "amsTarget": target, "humidity": int(_f(ams.get("humidity"))),
+        "nozzle": 0, "nozzleTarget": 0, "nozzle2": 0, "nozzle2Target": 0,
+        "hasNozzle2": False, "activeNozzle": 0, "bed": 0, "bedTarget": 0,
+        "modelUri": "", "queueCount": 0, "nextName": "",
+    }
+
+
 # ---- poll loop ----
 async def _poll_loop() -> None:
     async with httpx.AsyncClient(http2=True, timeout=15) as client:
@@ -273,7 +310,7 @@ async def _poll_loop() -> None:
 async def _tick(client: httpx.AsyncClient) -> None:
     # Poll every printer with a Live-Activity card; also the whole fleet when a device token is
     # registered (so print-done/error alerts fire even with no card up).
-    ids: set[int] = {int(k) for k in _regs}
+    ids: set[int] = {int(r["printerId"]) for r in _regs.values()}
     if _device_tokens:
         names = await _list_printers(client)
         if names:
@@ -290,6 +327,30 @@ async def _tick(client: httpx.AsyncClient) -> None:
         fields, kind = classify(status)
         reg = _regs.get(str(pid))
         name = (reg or {}).get("printerName") or _printers_cache.get(pid) or f"Printer {pid}"
+
+        # 1b) Drying card: independent lifecycle driven by ams.dry_time.
+        dreg = _regs.get(f"dry:{pid}")
+        if dreg:
+            dname = dreg.get("printerName") or name
+            ds = dry_state(status)
+            if ds is None:
+                end_cs = {**(dreg.get("lastState") or {}), "printerName": dname, "iconUri": dreg.get("iconUri", ""),
+                          "dry": True, "stateLabel": "Done", "finished": True, "etaEpochMs": 0}
+                code = await _push_end(client, dreg, end_cs)
+                print(f"[end] dry printer {pid} -> {code}", flush=True)
+                _regs.pop(f"dry:{pid}", None)
+                _save()
+            else:
+                dcs = {"printerName": dname, "iconUri": dreg.get("iconUri", ""), **ds}
+                if meaningful_change(dreg.get("lastState"), dcs) and (now - dreg.get("lastPush", 0) >= MIN_UPDATE_S):
+                    code = await _push_update(client, dreg, dcs)
+                    if code in (400, 410):
+                        print(f"[drop] dry printer {pid} -> {code}", flush=True)
+                        _regs.pop(f"dry:{pid}", None)
+                        _save()
+                    else:
+                        dreg["lastState"], dreg["lastPush"] = dcs, now
+                        _save()
 
         # 1) Live-Activity card: throttled update, or end on a terminal state.
         if reg:
@@ -378,10 +439,11 @@ async def _require_key(x_api_key: str | None = Header(default=None)) -> None:
 
 
 class Register(BaseModel):
-    printer_id: int  # one card per printer -> registrations are keyed by printer_id
+    printer_id: int  # one card per printer PER KIND -> keyed printer_id ("print") / "dry:<id>"
     push_token: str
     printer_name: str = ""
     icon_uri: str = ""
+    kind: str = "print"  # "print" | "dry" (AMS drying card)
 
 
 class DeviceReg(BaseModel):
@@ -413,12 +475,13 @@ async def register_device(r: DeviceReg, _: None = Depends(_require_key)) -> dict
 
 @app.post("/register")
 async def register(r: Register, _: None = Depends(_require_key)) -> dict:
-    _regs[str(r.printer_id)] = {
+    key = str(r.printer_id) if r.kind != "dry" else f"dry:{r.printer_id}"
+    _regs[key] = {
         "printerId": r.printer_id, "pushToken": r.push_token, "printerName": r.printer_name,
-        "iconUri": r.icon_uri, "lastPush": 0, "lastState": None,
+        "iconUri": r.icon_uri, "kind": r.kind, "lastPush": 0, "lastState": None,
     }
     _save()
-    print(f"[register] printer {r.printer_id} ({r.printer_name}) token {r.push_token[:8]}…", flush=True)
+    print(f"[register] {r.kind} printer {r.printer_id} ({r.printer_name}) token {r.push_token[:8]}…", flush=True)
     return {"ok": True}
 
 

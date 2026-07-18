@@ -52,6 +52,84 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
     ? (p.nextName ? `Up next: ${p.nextName}${p.queueCount > 1 ? `  ·  +${p.queueCount - 1} more` : ''}` : `${p.queueCount} queued`)
     : '';
 
+  // ---- AMS DRYING card — same activity type, different face. Countdown renders client-side from
+  // etaEpochMs (dateStyle timer), so the card stays live between pushes. ----
+  if (p.dry) {
+    const dryIcon = (s: number) => <Image systemName={'humidity.fill' as never} color={p.tint} size={s} />;
+    const dryStats = (
+      <HStack spacing={8}>
+        {dim('AMS')}
+        <Text modifiers={[font({ size: 11, weight: 'semibold' }), foregroundStyle(T1)]}>
+          {(p.amsTarget ?? 0) > 0 ? `${p.amsTemp ?? 0}/${p.amsTarget}°` : `${p.amsTemp ?? 0}°`}
+        </Text>
+        {dim('·')}
+        {dim(`Humidity ${p.humidity ?? 0}%`)}
+      </HStack>
+    );
+    return {
+      banner: (
+        <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 14 })]}>
+          <HStack spacing={12}>
+            {dryIcon(34)}
+            <VStack alignment="leading" spacing={2}>
+              <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundStyle(T1)]}>{p.printerName || 'AMS'} · Drying</Text>
+              <Text modifiers={[font({ size: 12 }), foregroundStyle(T2)]}>{p.name}</Text>
+            </VStack>
+            <Spacer />
+            <VStack alignment="trailing" spacing={1}>
+              {eta ? (
+                <Text modifiers={[font({ size: 20, weight: 'bold', design: 'rounded' }), foregroundStyle(p.tint)]} date={endDate} dateStyle="timer" />
+              ) : (
+                <Text modifiers={[font({ size: 20, weight: 'bold', design: 'rounded' }), foregroundStyle(p.tint)]}>—</Text>
+              )}
+              {eta ? (
+                <HStack spacing={3}>
+                  <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>ends</Text>
+                  <Text modifiers={[font({ size: 11, weight: 'medium' }), foregroundStyle(T1)]} date={endDate} dateStyle="time" />
+                </HStack>
+              ) : null}
+            </VStack>
+          </HStack>
+          {dryStats}
+        </VStack>
+      ),
+      compactLeading: dryIcon(16),
+      compactTrailing: eta ? (
+        <Text modifiers={[font({ size: 13, weight: 'semibold', design: 'rounded' }), foregroundStyle(p.tint)]} date={endDate} dateStyle="timer" />
+      ) : (
+        <Text modifiers={[font({ size: 13, weight: 'semibold', design: 'rounded' }), foregroundStyle(p.tint)]}>dry</Text>
+      ),
+      minimal: dryIcon(14),
+      expandedLeading: (
+        <VStack alignment="leading" spacing={1} modifiers={[padding({ leading: 6 })]}>
+          <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundStyle(T1)]}>{p.printerName || 'AMS'} · Drying</Text>
+          <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{p.name}</Text>
+        </VStack>
+      ),
+      expandedTrailing: (
+        <VStack alignment="trailing" spacing={1} modifiers={[padding({ trailing: 6 })]}>
+          {eta ? (
+            <Text modifiers={[font({ size: 17, weight: 'bold', design: 'rounded' }), foregroundStyle(p.tint)]} date={endDate} dateStyle="timer" />
+          ) : null}
+        </VStack>
+      ),
+      expandedBottom: (
+        <VStack spacing={6} modifiers={[padding({ horizontal: 6, top: 4 })]}>
+          <HStack spacing={8}>
+            {dryStats}
+            <Spacer />
+            {eta ? (
+              <HStack spacing={3}>
+                <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>ends</Text>
+                <Text modifiers={[font({ size: 11, weight: 'medium' }), foregroundStyle(T1)]} date={endDate} dateStyle="time" />
+              </HStack>
+            ) : null}
+          </HStack>
+        </VStack>
+      ),
+    };
+  }
+
   return {
     // Lock-screen / Notification Center banner
     banner: (
