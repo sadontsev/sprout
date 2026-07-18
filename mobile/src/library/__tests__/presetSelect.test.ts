@@ -1,4 +1,4 @@
-import { selectProcess, selectA1Process, pickDefaultQuality, isA1, supportTwinName, type PresetsResponse, type Preset } from '../presetSelect';
+import { selectProcess, selectA1Process, pickDefaultQuality, isA1, supportTwinName, mountedNozzles, defaultNozzle, printerPresetNameFor, type PresetsResponse, type Preset } from '../presetSelect';
 
 // Realistic slice of a /slicer/presets response (names verified against the live backend).
 const RESP: PresetsResponse = {
@@ -105,6 +105,42 @@ describe('pickDefaultQuality', () => {
     expect(pickDefaultQuality([q('0.08mm Fine @BBL A1'), q('0.20mm Strength @BBL A1')])?.name).toBe('0.20mm Strength @BBL A1');
     expect(pickDefaultQuality([q('0.08mm Fine @BBL A1')])?.name).toBe('0.08mm Fine @BBL A1');
     expect(pickDefaultQuality([])).toBeNull();
+  });
+});
+
+describe('nozzle variants', () => {
+  const H2: PresetsResponse = {
+    standard: {
+      process: [
+        { id: '1', name: '0.20mm Standard @BBL H2C' },
+        { id: '2', name: '0.08mm High Quality @BBL H2C' },
+        { id: '3', name: '0.30mm Standard @BBL H2C 0.6 nozzle' },
+        { id: '4', name: '0.36mm Standard @BBL H2C 0.6 nozzle' },
+        { id: '5', name: '0.10mm Standard @BBL H2C 0.2 nozzle' },
+        { id: '6', name: '0.30mm Standard @BBL H2D 0.6 nozzle' }, // other machine, same suffix
+      ],
+    },
+  };
+  it('nozzle 0.6 selects ONLY that variant family (not 0.4 bases, not other machines)', () => {
+    const { qualities } = selectProcess(H2, '@BBL H2C', '0.6');
+    expect(qualities.map((q) => q.name)).toEqual(['0.30mm Standard @BBL H2C 0.6 nozzle', '0.36mm Standard @BBL H2C 0.6 nozzle']);
+  });
+  it('default 0.4 keeps the old behavior (unsuffixed only)', () => {
+    const { qualities } = selectProcess(H2, '@BBL H2C');
+    expect(qualities.map((q) => q.name)).toEqual(['0.20mm Standard @BBL H2C', '0.08mm High Quality @BBL H2C']);
+  });
+  it('printerPresetNameFor builds the stock variant name', () => {
+    expect(printerPresetNameFor('Bambu Lab H2C', '0.6')).toBe('Bambu Lab H2C 0.6 nozzle');
+  });
+  it('mountedNozzles reads live status (H2C: 0.6 left + 0.4 right), deduped, garbage dropped', () => {
+    expect(mountedNozzles({ nozzles: [{ nozzle_diameter: '0.6' }, { nozzle_diameter: '0.4' }] })).toEqual(['0.6', '0.4']);
+    expect(mountedNozzles({ nozzles: [{ nozzle_diameter: 0.4 }, { nozzle_diameter: '0.4' }, { nozzle_diameter: 'x' }] })).toEqual(['0.4']);
+    expect(mountedNozzles(null)).toEqual([]);
+  });
+  it('defaultNozzle prefers 0.4 when mounted, else first mounted, else 0.4', () => {
+    expect(defaultNozzle(['0.6', '0.4'])).toBe('0.4');
+    expect(defaultNozzle(['0.6', '0.2'])).toBe('0.6');
+    expect(defaultNozzle([])).toBe('0.4');
   });
 });
 

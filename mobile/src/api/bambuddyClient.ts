@@ -347,6 +347,36 @@ export class BambuddyClient {
   getPresets(): Promise<any> {
     return this.req('/api/v1/slicer/presets').then((r) => r.json());
   }
+  /** Local (user) presets grouped by type — used to find our reusable override preset row. */
+  listLocalPresets(): Promise<{ process?: { id: number; name: string }[]; filament?: { id: number; name: string }[]; printer?: { id: number; name: string }[] }> {
+    return this.req('/api/v1/local-presets/').then((r) => r.json());
+  }
+  /**
+   * Upsert the app's reusable override preset (ADMIN-gated — preset writes 403 on scoped keys).
+   * `setting` is a delta JSON with `inherits` (see library/sliceOverrides.ts); Bambuddy resolves the
+   * base at slice time. One row per (name), updated in place so rows don't accumulate per slice.
+   * Returns the row id to reference as {source:'local', id} in slice().
+   */
+  async upsertLocalPreset(name: string, presetType: 'process' | 'filament', setting: Record<string, unknown>): Promise<number> {
+    const existing = ((await this.listLocalPresets())[presetType] ?? []).find((p) => p.name === name);
+    if (existing) {
+      await this.adminReq(`/api/v1/local-presets/${existing.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ setting }),
+      });
+      return existing.id;
+    }
+    const created = await (
+      await this.adminReq('/api/v1/local-presets/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, preset_type: presetType, setting }),
+      })
+    ).json();
+    if (created?.id == null) throw new Error('local-preset create returned no id');
+    return created.id;
+  }
   async slice(fileId: number, body: Record<string, unknown>): Promise<{ job_id: number }> {
     return (
       await this.req(`/api/v1/library/files/${fileId}/slice`, {

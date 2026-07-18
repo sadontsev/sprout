@@ -16,7 +16,8 @@ import { displayName } from '@/library/libraryBrowse';
 import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
 import { parseGcodeLayers, gcodeViewerHtml, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
 import { stlViewerHtml } from '@/library/stlViewerHtml';
-import { selectProcess, pickDefaultQuality, type Preset } from '@/library/presetSelect';
+import { selectProcess, pickDefaultQuality, mountedNozzles, defaultNozzle, printerPresetNameFor, type Preset, type NozzleSize } from '@/library/presetSelect';
+import { buildProcessDelta, buildFilamentDelta, hasProcessOverrides, hasFilamentOverrides, overrideCount, INFILL_PATTERNS, TOP_PATTERNS, SUPPORT_STYLES, type SliceOverrides } from '@/library/sliceOverrides';
 import { printerProfile, slicedForMatchesPrinter } from '@/printers/profile';
 import { mjpegHtml, streamOrigin } from './mjpegHtml';
 import { Tap, RollingNumber, HeatBar, FadeRise } from './anim';
@@ -921,6 +922,18 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
   const [selectedPlate, setSelectedPlate] = useState(1);
   const [bedType, setBedType] = useState(profile.bedTypes[0].id);
   const [supports, setSupports] = useState(false);
+  // Nozzle variant drives BOTH the machine preset and the process family. Defaults to what's
+  // physically mounted (live nozzle_rack via status.nozzles) once status arrives, until touched.
+  const [nozzle, setNozzle] = useState<NozzleSize>('0.4');
+  const nozzleTouchedRef = useRef(false);
+  const mounted = mountedNozzles(status);
+  useEffect(() => {
+    if (!nozzleTouchedRef.current && mounted.length) setNozzle(defaultNozzle(mounted));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted.join(',')]);
+  // Advanced per-slice overrides (admin-only feature — preset writes are admin-gated server-side).
+  const [adv, setAdv] = useState<SliceOverrides>({});
+  const [advOpen, setAdvOpen] = useState(false);
   const [viewLayers, setViewLayers] = useState<{ fileId: number; title: string } | null>(null);
   const [starting, setStarting] = useState(false);
   // Which machine a pre-sliced file was sliced FOR (from the 3MF) — mismatched G-code is blocked.
@@ -932,14 +945,15 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
       .then(([p, a]) => {
         if (!alive) return;
         const std = p.standard ?? {};
-        // This machine's stock printer preset: the default-nozzle variant ("Bambu Lab H2C 0.4 nozzle").
+        // This machine's stock printer preset for the SELECTED nozzle variant.
         const printerPresets: Preset[] = std.printer ?? [];
         const printerPreset =
+          printerPresets.find((x) => x.name === printerPresetNameFor(profile.printerPresetBase, nozzle)) ??
           printerPresets.find((x) => x.name === `${profile.printerPresetBase} 0.4 nozzle`) ??
           printerPresets.find((x) => x.name === profile.printerPresetBase);
-        // Quality profiles for this machine's 0.4 nozzle, merged across all preset groups (incl. the
-        // user's custom profiles), non-0.4-nozzle variants excluded. Pure + unit-tested in presetSelect.
-        const { qualities, hasSupportProfile, supportByBase } = selectProcess(p, token);
+        // Quality profiles for this machine + nozzle, merged across all preset groups (incl. the
+        // user's custom profiles), other nozzle variants excluded. Pure + unit-tested in presetSelect.
+        const { qualities, hasSupportProfile, supportByBase } = selectProcess(p, token, nozzle);
         const allFilaments: Preset[] = std.filament ?? [];
         // Curated "Other filament" catalog (common materials) shown when the AMS choice isn't enough.
         const catalogRe = new RegExp(
@@ -954,7 +968,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
     return () => {
       alive = false;
     };
-  }, [client, printerId, token, profile.printerPresetBase]);
+  }, [client, printerId, token, profile.printerPresetBase, nozzle]);
 
   // Pre-sliced files carry the target machine in the 3MF — read it to catch wrong-printer G-code.
   useEffect(() => {
@@ -982,10 +996,25 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
     const processPreset = (supports && quality && presets?.supportByBase?.[quality.name]) || quality;
     (async () => {
       try {
+        // Advanced overrides ride an ephemeral LOCAL preset inheriting the chosen profile (delta
+        // keys only — see library/sliceOverrides.ts). Upserted per slice; admin-gated server-side.
+        let processRef: unknown = processPreset;
+        let filamentRef: unknown = filament;
+        if (client.hasAdminLogin && processPreset && hasProcessOverrides(adv)) {
+          const setting = buildProcessDelta(processPreset.name, adv, `Sprout Custom ${token}`)!;
+          const id = await client.upsertLocalPreset(`Sprout Custom ${token}`, 'process', setting);
+          processRef = { source: 'local', id: String(id) };
+        }
+        if (client.hasAdminLogin && filament && hasFilamentOverrides(adv)) {
+          const variants = (printer?.nozzle_count ?? 1) > 1 ? 3 : 1;
+          const setting = buildFilamentDelta(filament.name, adv, `Sprout Custom Filament ${token}`, variants)!;
+          const id = await client.upsertLocalPreset(`Sprout Custom Filament ${token}`, 'filament', setting);
+          filamentRef = { source: 'local', id: String(id) };
+        }
         const { job_id } = await client.slice(file.id, {
           printer_preset: presets?.printer,
-          process_preset: processPreset,
-          filament_preset: filament,
+          process_preset: processRef,
+          filament_preset: filamentRef,
           plate: selectedPlate,
           bed_type: bedType,
           export_3mf: true,
@@ -1045,7 +1074,13 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
   const steps = alreadySliced ? [1, 2, 6, 7] : [1, 2, 3, 4, 5, 6, 7];
   const idx = steps.indexOf(step);
   const next = () => setStep(steps[Math.min(idx + 1, steps.length - 1)]);
-  const back = () => setStep(steps[Math.max(idx - 1, 0)]);
+  const back = () => {
+    // Review's natural "back" is Material: step 4 is a transient progress screen, and landing on it
+    // re-runs the slice with unchanged settings. Skipping it lets the user actually change settings
+    // (Continue from Material re-slices with the new ones).
+    if (step === 5 && !alreadySliced) return setStep(3);
+    setStep(steps[Math.max(idx - 1, 0)]);
+  };
   const titles: Record<number, string> = { 1: 'File', 2: 'Printer', 3: 'Material', 4: 'Slicing', 5: 'Review', 6: 'Map filament', 7: 'Start print' };
   const captions: Record<number, string> = {
     1: 'The model you picked',
@@ -1202,6 +1237,38 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
 
           {step === 3 && (
             <>
+              {(
+                <>
+                  <L>NOZZLE</L>
+                  <View style={{ flexDirection: 'row', gap: 9, marginBottom: 6 }}>
+                    {(['0.2', '0.4', '0.6', '0.8'] as NozzleSize[]).map((n) => {
+                      const on = nozzle === n;
+                      const isMounted = mounted.includes(n);
+                      return (
+                        <Tap
+                          key={n}
+                          onPress={() => {
+                            nozzleTouchedRef.current = true;
+                            setNozzle(n);
+                          }}
+                          style={{ flexGrow: 1, paddingVertical: 12, borderRadius: 13, backgroundColor: c.s2, borderWidth: on ? 1.5 : 0, borderColor: c.accent, alignItems: 'center' }}>
+                          <Text style={{ fontWeight: '700', fontSize: 15, color: on ? c.accent : c.t1, fontVariant: ['tabular-nums'] }}>{n}</Text>
+                          <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 9.5, color: isMounted ? c.running : c.t3 }}>{isMounted ? 'mounted' : 'mm'}</Text>
+                        </Tap>
+                      );
+                    })}
+                  </View>
+                  {mounted.length > 0 && !mounted.includes(nozzle) && (
+                    <View style={{ flexDirection: 'row', gap: 9, padding: 12, borderRadius: 12, backgroundColor: c.heatingDim, marginBottom: 6 }}>
+                      <Feather name="alert-triangle" size={15} color={c.heating} style={{ marginTop: 1 }} />
+                      <Text style={{ flex: 1, fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t2 }}>
+                        A {nozzle} mm nozzle isn’t mounted right now ({mounted.join(' / ')} mm installed). Slicing works, but swap the nozzle before printing.
+                      </Text>
+                    </View>
+                  )}
+                  <View style={{ height: 16 }} />
+                </>
+              )}
               <L>{loaded.length > 0 ? 'LOADED IN THE PRINTER' : 'MATERIAL'}</L>
               {loaded.length > 0 && (
                 <View style={{ gap: 9 }}>
@@ -1284,6 +1351,85 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
                   </Text>
                 </View>
               ) : null}
+
+              {/* ADVANCED — per-slice overrides via an ephemeral local preset (admin-gated writes;
+                  hidden entirely without admin creds so the feature never dead-ends on a 403). */}
+              {client.hasAdminLogin && (
+                <>
+                  <View style={{ height: 22 }} />
+                  <Tap onPress={() => setAdvOpen((v) => !v)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Feather name={advOpen ? 'chevron-down' : 'chevron-right'} size={15} color={c.t3} />
+                    <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono }}>ADVANCED</Text>
+                    {overrideCount(adv) > 0 && (
+                      <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: c.accentDim }}>
+                        <Text style={{ fontWeight: '700', fontSize: 10.5, color: c.accent }}>{overrideCount(adv)} changed</Text>
+                      </View>
+                    )}
+                    {overrideCount(adv) > 0 && (
+                      <Tap onPress={() => setAdv({})} hitSlop={8} style={{ marginLeft: 'auto' }}>
+                        <Text style={{ fontWeight: '600', fontSize: 11.5, color: c.accent }}>Reset</Text>
+                      </Tap>
+                    )}
+                  </Tap>
+                  {advOpen && (
+                    <View style={{ marginTop: 12, gap: 16 }}>
+                      <View>
+                        <SheetLabel first>WALL LOOPS</SheetLabel>
+                        <Chips<number | undefined> value={adv.wallLoops} onChange={(v) => setAdv({ ...adv, wallLoops: v })} options={[[undefined, 'Preset'], [2, '2'], [3, '3'], [4, '4'], [6, '6']]} />
+                      </View>
+                      <View>
+                        <SheetLabel first>INFILL DENSITY</SheetLabel>
+                        <Chips<number | undefined> value={adv.infillDensity} onChange={(v) => setAdv({ ...adv, infillDensity: v })} options={[[undefined, 'Preset'], [10, '10%'], [15, '15%'], [25, '25%'], [40, '40%'], [100, '100%']]} />
+                      </View>
+                      <View>
+                        <SheetLabel first>INFILL PATTERN</SheetLabel>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                          {[undefined, ...INFILL_PATTERNS].map((p) => {
+                            const on = adv.infillPattern === p;
+                            return (
+                              <Tap key={p ?? 'preset'} onPress={() => setAdv({ ...adv, infillPattern: p })} style={{ paddingHorizontal: 12, height: 32, borderRadius: 10, backgroundColor: on ? c.accentDim : c.s2, alignItems: 'center', justifyContent: 'center' }}>
+                                <Text style={{ fontWeight: '600', fontSize: 12, color: on ? c.accent : c.t2 }}>{p ?? 'Preset'}</Text>
+                              </Tap>
+                            );
+                          })}
+                        </View>
+                      </View>
+                      <View>
+                        <SheetLabel first>TOP SURFACE</SheetLabel>
+                        <Chips<string | undefined> value={adv.topPattern} onChange={(v) => setAdv({ ...adv, topPattern: v })} options={[[undefined, 'Preset'], ...TOP_PATTERNS.slice(0, 3).map((p): [string, string] => [p, p])]} />
+                      </View>
+                      <View>
+                        <SheetLabel first>PRIME TOWER</SheetLabel>
+                        <Chips<boolean | undefined> value={adv.primeTower} onChange={(v) => setAdv({ ...adv, primeTower: v })} options={[[undefined, 'Preset'], [true, 'On'], [false, 'Off']]} />
+                      </View>
+                      <View>
+                        <SheetLabel first>SUPPORT STYLE</SheetLabel>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                          {[undefined, ...SUPPORT_STYLES].map((p) => {
+                            const on = adv.supportStyle === p;
+                            return (
+                              <Tap key={p ?? 'preset'} onPress={() => setAdv({ ...adv, supportStyle: p })} style={{ paddingHorizontal: 12, height: 32, borderRadius: 10, backgroundColor: on ? c.accentDim : c.s2, alignItems: 'center', justifyContent: 'center' }}>
+                                <Text style={{ fontWeight: '600', fontSize: 12, color: on ? c.accent : c.t2 }}>{p ?? 'Preset'}</Text>
+                              </Tap>
+                            );
+                          })}
+                        </View>
+                      </View>
+                      <View>
+                        <SheetLabel first>SUPPORT ANGLE</SheetLabel>
+                        <Chips<number | undefined> value={adv.supportAngle} onChange={(v) => setAdv({ ...adv, supportAngle: v })} options={[[undefined, 'Preset'], [25, '25°'], [30, '30°'], [40, '40°'], [55, '55°']]} />
+                      </View>
+                      <View>
+                        <SheetLabel first>FLOW RATIO</SheetLabel>
+                        <Chips<number | undefined> value={adv.flowRatio} onChange={(v) => setAdv({ ...adv, flowRatio: v })} options={[[undefined, 'Preset'], [0.95, '0.95'], [0.98, '0.98'], [1.02, '1.02'], [1.05, '1.05']]} />
+                      </View>
+                      <Text style={{ fontSize: 10.5, lineHeight: 15, color: c.t3 }}>
+                        “Preset” keeps the profile’s value. Changes apply to this slice via a reusable “Sprout Custom” profile on your server — stock presets are never modified.
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
             </>
           )}
 

@@ -69,3 +69,19 @@ test('an expired preview surfaces the 410 so the sheet can explain it', async ()
   fetchMock.mockResolvedValueOnce({ ok: false, status: 410, text: async () => '{"error":"preview expired"}' });
   await expect(client.commit('old')).rejects.toThrow(/410/);
 });
+
+describe('healthy() — gates the whole optional feature', () => {
+  test('true when /health answers 200 (no auth header needed)', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true });
+    expect(await client.healthy()).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://t/health');
+  });
+  test('false on a non-ok response', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 502 });
+    expect(await client.healthy()).toBe(false);
+  });
+  test('false when the host is unreachable (no sidecar deployed) — never throws', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('Network request failed'));
+    await expect(client.healthy()).resolves.toBe(false);
+  });
+});
