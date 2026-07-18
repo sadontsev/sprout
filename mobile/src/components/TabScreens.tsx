@@ -5,7 +5,7 @@ import { File, Paths } from 'expo-file-system';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { GcodeViewerOverlay } from './Overlays';
 import { isSliced3mf, isPlayableVideo, isMediaFolder, mediaThumbPath, mediaLabel } from '@/library/printerFiles';
-import { isSlicedFile, filterFiles, toggleSelection, displayName, type TypeFilter } from '@/library/libraryBrowse';
+import { isSlicedFile, filterFiles, toggleSelection, displayName, safeShareName, type TypeFilter } from '@/library/libraryBrowse';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -195,6 +195,22 @@ export function LibraryView({ client, texClient, camToken, printerId, plate, onU
     }
   };
 
+  const shareFile = async (f: LibraryFile) => {
+    setDlBusy(true);
+    try {
+      // Single-use tokenized URL (token IS the auth) -> cache -> native share sheet.
+      const url = await client.mintFileDownloadUrl(f.id, f.filename);
+      const dest = new File(Paths.cache, safeShareName(displayName(f)));
+      if (dest.exists) dest.delete();
+      const file = await File.downloadFileAsync(url, dest);
+      await Share.share({ url: file.uri });
+    } catch (e) {
+      Alert.alert('Couldn’t download', apiErrorDetail(e));
+    } finally {
+      setDlBusy(false);
+    }
+  };
+
   const confirmDelete = (f: LibraryFile) =>
     Alert.alert('Delete file?', `“${displayName(f)}” will be removed from the library. This can’t be undone.`, [
       { text: 'Cancel', style: 'cancel' },
@@ -208,6 +224,7 @@ export function LibraryView({ client, texClient, camToken, printerId, plate, onU
       { text: 'Print…', onPress: () => onPick(f) },
       ...(onView3D && isStl ? [{ text: 'View in 3D', onPress: () => onView3D(f) }] : []),
       ...(onTexturize && isStl ? [{ text: 'Texturize…', onPress: () => onTexturize(f) }] : []),
+      { text: 'Share…', onPress: () => void shareFile(f) },
       { text: 'Delete', style: 'destructive' as const, onPress: () => confirmDelete(f) },
       { text: 'Cancel', style: 'cancel' as const },
     ]);
@@ -481,6 +498,13 @@ export function LibraryView({ client, texClient, camToken, printerId, plate, onU
           {!pLoading && !isMediaFolder(pPath) && pSorted.some((pf) => !pf.is_directory) && (
             <Text style={{ textAlign: 'center', marginTop: 8, fontWeight: '500', fontSize: 11, color: c.t3 }}>Tap a file for preview & actions · hold to delete</Text>
           )}
+        </View>
+      )}
+      {/* Menu-driven share downloads have no sheet to host a spinner — float a pill instead. */}
+      {dlBusy && !sheetFile && (
+        <View style={{ position: 'absolute', bottom: 24, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 16, height: 42, borderRadius: 21, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, ...shadow1 }}>
+          <ActivityIndicator color={c.accent} />
+          <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Preparing to share…</Text>
         </View>
       )}
       {sheetFile && (
