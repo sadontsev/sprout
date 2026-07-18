@@ -329,7 +329,7 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
       'void main(){float t=clamp((vZ-uMinZ)/uSpanZ,0.0,1.0);'+
       'vec3 col=uIsSup>0.5?vec3(0.73,0.51,0.18):mix(uColBot,uColTop,t);'+
       'col=mix(col,vec3(1.0),step(abs(vZ-uCurZ),uEps)*0.8);'+
-      'float shade=(0.52+0.48*vDir)*(0.80+0.20*(1.0-vSide*vSide));'+ // lambert wall x round cross-section
+      'float shade=(0.68+0.32*vDir)*(0.90+0.10*(1.0-vSide*vSide));'+ // lambert wall x round cross-section
       'gl_FragColor=vec4(col*shade,1.0);}';
     var prog=gl.createProgram();
     gl.attachShader(prog,mkShader(gl.VERTEX_SHADER,vsrc));
@@ -346,13 +346,16 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     var SEG_BUDGET=800000, skip=segTotal>SEG_BUDGET?2:1;
     function buildGeo(perLayer){
       var segs=0,k,Lr;
-      for(k=0;k<perLayer.length;k++){ Lr=perLayer[k]; if(Lr) segs+=Math.ceil((Lr.length>>2)/skip); }
+      for(k=0;k<perLayer.length;k++){ Lr=perLayer[k]; if(!Lr) continue;
+        for(var q0=0;q0<Lr.length;q0+=4*skip){ if(Math.abs(Lr[q0+2]-Lr[q0])>=0.05||Math.abs(Lr[q0+3]-Lr[q0+1])>=0.05) segs++; } }
       var vb=new Float32Array(segs*4*8), ib=new Uint32Array(segs*6), idxEnd=new Uint32Array(perLayer.length);
       var v=0,i2=0,seg=0;
       for(k=0;k<perLayer.length;k++){
         Lr=perLayer[k]||[]; var z=zs[k];
         for(var q=0;q<Lr.length;q+=4*skip){
           var ax=Lr[q],ay=Lr[q+1],bx2=Lr[q+2],by2=Lr[q+3];
+          // degenerate segments become uHalf-sized DOTS via the cap extension — drop them
+          if(Math.abs(bx2-ax)<0.05&&Math.abs(by2-ay)<0.05) continue;
           for(var e2=0;e2<4;e2++){ // (end,side): (0,-1)(0,1)(1,-1)(1,1)
             vb[v++]=ax;vb[v++]=ay;vb[v++]=z; vb[v++]=bx2;vb[v++]=by2;vb[v++]=z;
             vb[v++]=e2>>1; vb[v++]=(e2&1)?1:-1;
@@ -436,7 +439,7 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
       if(!cur) return;
       gl.uniform3f(U.uCtr,cx,cy,cz); gl.uniform2f(U.uRot,cyaw,syaw); gl.uniform2f(U.uPit,cpit,spit);
       gl.uniform1f(U.uS,S); gl.uniform2f(U.uOff,ox+px,oy+py); gl.uniform2f(U.uVP,W,Hh);
-      gl.uniform1f(U.uHalf,Math.max(1.1,0.21*S)); // half of 0.42mm extrusion width, min ~2px total
+      gl.uniform1f(U.uHalf,Math.max(1.2,0.23*S)); // ~10% over half of 0.42mm: adjacent lines overlap, no hairline gaps
       gl.uniform1f(U.uMinZ,b.minZ); gl.uniform1f(U.uSpanZ,zspan);
       gl.uniform1f(U.uCurZ,zs[cur-1]||0); gl.uniform1f(U.uEps,minGap*0.45);
       var T=TINTS[tint]||TINTS.steel;
@@ -514,6 +517,14 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     cv.addEventListener('dblclick',resetView);
     cv.addEventListener('wheel',function(e){ e.preventDefault(); zoom=Math.max(0.15,Math.min(14,zoom*(e.deltaY<0?1.1:0.9))); schedule(); },{passive:false});
     document.getElementById('reset').addEventListener('click',resetView);
+
+    // Shading/background chips — tint switches the GL palette, bg reflows the whole 2D scene.
+    document.querySelectorAll('.chip').forEach(function(ch){ ch.addEventListener('click',function(){
+      var m3=ch.getAttribute('data-m');
+      if(m3==='bg'){ lightBg=!lightBg; ch.classList.toggle('on',lightBg); }
+      else { tint=m3; document.querySelectorAll('.chip').forEach(function(o){ if(o.getAttribute('data-m')!=='bg') o.classList.toggle('on',o===ch); }); }
+      schedule();
+    }); });
 
     var s2=document.getElementById('s'), lbl=document.getElementById('lbl');
     function setLbl(){ var zmm=zs[Math.max(0,cur-1)]||0; lbl.textContent='Layer '+cur+' / '+total+' · '+zmm.toFixed(1)+'mm'; }

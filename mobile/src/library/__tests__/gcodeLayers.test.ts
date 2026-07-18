@@ -134,7 +134,7 @@ describe('gcodeViewerHtml (viewer contract)', () => {
     const html = gcodeViewerHtml(tiny);
     expect(html).toContain("getContext('webgl'");
     expect(html).toContain('OES_element_index_uint'); // uint indices for >65k-vert prints
-    expect(html).toContain('0.21*S');                 // ribbon half-width = half of 0.42mm extrusion
+    expect(html).toContain('0.23*S');                 // ribbon half-width: 10% over half of 0.42mm (overlap)
     expect(html).not.toContain('strokeLayer');        // the old line renderer is gone
   });
 
@@ -142,6 +142,7 @@ describe('gcodeViewerHtml (viewer contract)', () => {
     const html = gcodeViewerHtml(tiny);
     for (const chip of ['Steel', 'Ivory', 'Light bg']) expect(html).toContain(chip);
     expect(html).toContain('vDir'); // lambert wall-normal shading — form is visible, not just a ramp
+    expect(html).toMatch(/querySelectorAll\('\.chip'\)[\s\S]*addEventListener\('click'/); // chips are WIRED (v1 rendered dead buttons)
   });
 
   test('embedded page script is syntactically valid JS', () => {

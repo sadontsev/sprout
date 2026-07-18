@@ -7,7 +7,9 @@ import { readdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
+import sharp from 'sharp';
 import { Bambuddy, texturedName } from './bambuddy.mjs';
+import { recolorGreenToNeutral } from './thumbs.mjs';
 import { normalizeParams, preflight } from './params.mjs';
 import { parseSTL, surfaceArea, boundsOf } from './stl.mjs';
 import { texturize } from './pipeline.mjs';
@@ -145,6 +147,31 @@ async function isValidKey(key) {
   }
 }
 
+// ---- neutral STL thumbnails (Bambuddy's green-on-dark restyled for the app) ----
+let _camTok = { token: null, at: 0 };
+async function cameraToken() {
+  if (_camTok.token && Date.now() - _camTok.at < 45 * 60_000) return _camTok.token;
+  const r = await fetch(`${BAMBUDDY_URL}/api/v1/printers/camera/stream-token`, { method: 'POST', headers: { 'X-API-Key': API_KEY } });
+  if (!r.ok) throw new Error(`stream-token -> HTTP ${r.status}`);
+  _camTok = { token: (await r.json()).token, at: Date.now() };
+  return _camTok.token;
+}
+const _thumbCache = new Map(); // fileId -> { bytes, at }
+async function neutralThumb(fileId) {
+  const hit = _thumbCache.get(fileId);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.bytes;
+  const tok = await cameraToken();
+  const r = await fetch(`${BAMBUDDY_URL}/api/v1/library/files/${fileId}/thumbnail?token=${encodeURIComponent(tok)}`);
+  if (!r.ok) throw new Error(`thumbnail -> HTTP ${r.status}`);
+  const src = Buffer.from(await r.arrayBuffer());
+  const { data, info } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  recolorGreenToNeutral(data);
+  const out = await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+  if (_thumbCache.size > 64) _thumbCache.clear(); // tiny bound; repopulates on demand
+  _thumbCache.set(fileId, { bytes: out, at: Date.now() });
+  return out;
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
@@ -157,6 +184,14 @@ const server = http.createServer(async (req, res) => {
     if (!(await isValidKey(req.headers['x-api-key']))) return send(res, 401, { error: 'unauthorized' });
 
     if (req.method === 'GET' && url.pathname === '/textures') return send(res, 200, await listTextures());
+
+    if (req.method === 'GET' && parts[0] === 'file-thumb' && parts[1]) {
+      try {
+        return send(res, 200, await neutralThumb(parts[1]), { 'Content-Type': 'image/png', 'Cache-Control': 'max-age=600' });
+      } catch (e) {
+        return send(res, 404, { error: String(e?.message ?? e) });
+      }
+    }
 
     if (req.method === 'GET' && parts[0] === 'textures' && parts[2] === 'thumb') {
       const all = await listTextures();

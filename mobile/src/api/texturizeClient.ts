@@ -77,6 +77,12 @@ export class TexturizeClient {
     return `${this.baseUrl}/textures/${encodeURIComponent(id)}/thumb`;
   }
 
+  /** Neutral (restyled) STL thumbnail — Bambuddy's green-on-dark, recolored server-side.
+   *  Use with authHeaders(). */
+  fileThumbUrl(fileId: number): string {
+    return `${this.baseUrl}/file-thumb/${fileId}`;
+  }
+
   /** Headers for image requests (RN <Image source={{ uri, headers }}>). */
   authHeaders(): Record<string, string> {
     return { 'X-API-Key': this.apiKey };

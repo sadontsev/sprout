@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1 } from '@/theme';
 import { apiErrorDetail, type BambuddyClient } from '@/api/bambuddyClient';
+import type { TexturizeClient } from '@/api/texturizeClient';
 import { presentDryer, DRY_MIN_TEMP, DRY_MAX_HOURS, type DryerVM } from '@/ams/dryer';
 import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFile, PrinterFileList, PrinterFilePlates } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
@@ -115,7 +116,7 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
   );
 }
 
-export function LibraryView({ client, camToken, printerId, plate, onUpload, onPick, onTexturize, onView3D }: { client: BambuddyClient; camToken: string | null; printerId: number; plate?: { w: number; d: number }; onUpload: () => void; onPick: (f: LibraryFile) => void; onTexturize?: (f: LibraryFile) => void; onView3D?: (f: LibraryFile) => void }) {
+export function LibraryView({ client, texClient, camToken, printerId, plate, onUpload, onPick, onTexturize, onView3D }: { client: BambuddyClient; texClient?: TexturizeClient | null; camToken: string | null; printerId: number; plate?: { w: number; d: number }; onUpload: () => void; onPick: (f: LibraryFile) => void; onTexturize?: (f: LibraryFile) => void; onView3D?: (f: LibraryFile) => void }) {
   const [source, setSource] = useState<LibSource>('library');
   const [files, setFiles] = useState<LibraryFile[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -325,7 +326,13 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
                       style={{ width: '47%', flexGrow: 1, opacity: selecting && !sel ? 0.55 : 1 }}>
                       <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: selecting && sel ? 2 : 1, borderColor: selecting && sel ? c.accent : c.line, alignItems: 'center', justifyContent: 'center' }}>
                         {f.thumbnail_path ? (
-                          <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                          texClient && (f.file_type || '').toLowerCase() === 'stl' ? (
+                            /* STL previews come back from Bambuddy as green-on-dark; the sidecar
+                               restyles them into neutral gray on transparency. */
+                            <Image source={{ uri: texClient.fileThumbUrl(f.id), headers: texClient.authHeaders() }} style={{ width: '84%', height: '84%' }} contentFit="contain" transition={120} cachePolicy="memory-disk" />
+                          ) : (
+                            <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
+                          )
                         ) : (
                           <Feather name={(f.file_type || '').includes('gcode') ? 'box' : 'file'} size={26} color={c.t3} />
                         )}
