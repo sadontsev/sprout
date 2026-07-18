@@ -911,12 +911,13 @@ function Stepper({ label, value, onMinus, onPlus }: { label: string; value: stri
 
 // ---------------- NOZZLES / HOTENDS ----------------
 // Inventory grouped by toolhead. No temperatures here (those are on the dashboard, labelled
-// Left/Right) so nothing is shown twice. The H2-series has a fixed Left nozzle and a Right "vortex"
-// it swaps between — each toolhead gets its own labelled group so it's clear which is which.
+// Left/Right) so nothing is shown twice. On the live H2C the RIGHT head is the fixed nozzle and the
+// LEFT is the 5-slot "vortex" (Bambu extruder id 0 = right — see presentNozzles) — each toolhead
+// gets its own labelled group so it's clear which is which.
 type NozzleCardVM = ReturnType<typeof presentNozzles>['toolheads'][number]['nozzles'][number];
 
 function NozzleCard({ n, showMounted }: { n: NozzleCardVM; showMounted: boolean }) {
-  const highlight = showMounted && n.mounted; // only spotlight the mounted one within a vortex
+  const highlight = showMounted && n.mounted; // spotlight nozzles with filament loaded
   return (
     <View style={{ width: '47%', flexGrow: 1, padding: 13, borderRadius: 15, backgroundColor: c.s1, borderWidth: highlight ? 1.5 : 1, borderColor: highlight ? c.accent : c.line, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
       <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: n.colorHex ?? c.s3, borderWidth: n.colorHex ? 0 : 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
@@ -925,9 +926,12 @@ function NozzleCard({ n, showMounted }: { n: NozzleCardVM; showMounted: boolean 
       <View style={{ flex: 1 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>{n.diameter || 'Nozzle'}</Text>
+          {/* "LOADED" = filament threaded in this nozzle. Deliberately NOT "mounted"/"engaged": on a
+              vortex several docked nozzles keep their filament (quick-swap design), and the payload
+              carries no per-slot engaged flag — claiming MOUNTED on two at once confused the owner. */}
           {showMounted && n.mounted && (
             <View style={{ paddingHorizontal: 5, paddingVertical: 1.5, borderRadius: 5, backgroundColor: c.accentDim }}>
-              <Text style={{ fontWeight: '600', fontSize: 7.5, letterSpacing: 0.4, color: c.accent, fontFamily: mono }}>MOUNTED</Text>
+              <Text style={{ fontWeight: '600', fontSize: 7.5, letterSpacing: 0.4, color: c.accent, fontFamily: mono }}>LOADED</Text>
             </View>
           )}
         </View>
@@ -964,7 +968,7 @@ function NozzlesSection({ status }: { status: PrinterStatus | null }) {
           </View>
           {th.swappable && (
             <Text style={{ paddingHorizontal: 20, paddingBottom: 10, fontWeight: '500', fontSize: 11.5, lineHeight: 15, color: c.t3 }}>
-              Swaps between these — “mounted” is loaded now.
+              Swaps between these — a colored chip means filament is loaded in that nozzle.
             </Text>
           )}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10 }}>

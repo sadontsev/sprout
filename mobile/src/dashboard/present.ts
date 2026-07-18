@@ -125,9 +125,16 @@ const nozzleDia = (d?: string | number): string => {
 
 /**
  * Pure: nozzles grouped by toolhead. On the H2-series the nozzle_rack `id` encodes the extruder in
- * its high nibble — `id >> 4` is 0 for the LEFT toolhead (a single fixed nozzle) and 1 for the RIGHT
- * (a vortex it swaps between). Verified against active_extruder + ams_extruder_map. Machines with no
- * rack (A1) fall back to their mounted `nozzles` spec. Empty rack slots (serial "N/A") are dropped.
+ * its high nibble — `id >> 4` gives Bambu's extruder id, where **0 = RIGHT toolhead, 1 = LEFT**.
+ * Ground-truthed live on the H2C (2026-07-18, printing on the right with the 0.6): the 0.6 sits at
+ * rack id 0 (high nibble 0) holding the ACTIVE tray's filament (tray_now -> GFL99), so high-nibble 0
+ * is the right/printing side; the 5-slot vortex (ids 16-21) is the LEFT head. The previous mapping
+ * (0=left) had the sides mirrored. Machines with no rack (A1) fall back to their mounted `nozzles`
+ * spec. Empty rack slots (serial "N/A" / max_temp 0) are dropped.
+ *
+ * `mounted` = filament loaded in that nozzle (filament_color set). On a vortex SEVERAL docked
+ * nozzles legitimately keep filament loaded (that's the quick-swap design), so this is NOT "the one
+ * engaged in the head" — label it as loaded, not engaged.
  */
 export function presentNozzles(status: PrinterStatus | null): { toolheads: ToolheadVM[]; hasVortex: boolean } {
   if (!status) return { toolheads: [], hasVortex: false };
@@ -148,16 +155,17 @@ export function presentNozzles(status: PrinterStatus | null): { toolheads: Toolh
     };
     const byExtruder = new Map<number, RackNozzleVM[]>();
     for (const r of rack) {
-      const ext = Math.max(0, r.id) >> 4; // 0 = left, 1 = right
+      const ext = Math.max(0, r.id) >> 4; // Bambu extruder id: 0 = right, 1 = left
       byExtruder.set(ext, [...(byExtruder.get(ext) ?? []), toNozzle(r)]);
     }
-    const exts = [...byExtruder.keys()].sort((a, b) => a - b);
+    // Display order: LEFT head first (reads like the machine, left to right) = ext id DESCENDING.
+    const exts = [...byExtruder.keys()].sort((a, b) => b - a);
     const dual = exts.length > 1;
     const toolheads: ToolheadVM[] = exts.map((ext) => {
       const nozzles = byExtruder.get(ext)!;
       return {
-        side: dual ? (ext === 0 ? 'left' : 'right') : 'single',
-        label: dual ? (ext === 0 ? 'Left' : 'Right') : 'Nozzle',
+        side: dual ? (ext === 0 ? 'right' : 'left') : 'single',
+        label: dual ? (ext === 0 ? 'Right' : 'Left') : 'Nozzle',
         active: ae === ext,
         swappable: nozzles.length > 1,
         nozzles,
@@ -167,13 +175,16 @@ export function presentNozzles(status: PrinterStatus | null): { toolheads: Toolh
   }
 
   // No rack (A1 etc.): one non-swappable toolhead per mounted nozzle, spec from status.nozzles.
+  // vm.nozzles is TEMPERATURE-ordered (idx 0 = `nozzle` = LEFT); the `nozzles` spec array is
+  // EXTRUDER-ordered (idx 0 = extruder 0 = RIGHT) — cross-map on duals or diameters swap sides.
   const vm = presentDashboard(status);
   const info = status.nozzles ?? [];
   const dual = vm.nozzles.length > 1;
   const toolheads: ToolheadVM[] = vm.nozzles
     .map((n, i): ToolheadVM => {
-      const diameter = nozzleDia(info[i]?.nozzle_diameter);
-      const type = nozzleType(info[i]?.nozzle_type);
+      const spec = dual ? info[1 - i] : info[i];
+      const diameter = nozzleDia(spec?.nozzle_diameter);
+      const type = nozzleType(spec?.nozzle_type);
       return {
         side: dual ? (i === 0 ? 'left' : 'right') : 'single',
         label: dual ? (i === 0 ? 'Left' : 'Right') : 'Nozzle',
@@ -262,18 +273,24 @@ export function presentDashboard(status: PrinterStatus | null, nowMs = 0): DashV
       active: false,
     });
   }
-  // Which extruder is doing the work (0=left, 1=right). The reliable signal is the DRIVEN nozzle —
-  // exactly one has a target set; the idle one reads 0. (A just-deactivated head can still be hotter
-  // than a just-activated one, so a temperature compare alone picks the wrong head mid tool-change.)
-  // Fall back to the hotter one only when both or neither is driven. status.active_extruder is
-  // deliberately NOT used: on the live H2C it reports the wrong index (observed 1 while the driven
-  // head was nozzle idx 0 at 245/245 and active_extruder disagreed with ams_extruder_map too), so
-  // trusting it re-introduces the "shows the idle nozzle" bug this exists to fix.
+  // Which head is doing the work. TWO different numbering schemes meet here and MUST NOT be compared
+  // index-to-index (that mismatch caused every past "wrong nozzle" bug):
+  //  - temperature keys are POSITION-ordered: `nozzle` = LEFT head, `nozzle_2` = RIGHT;
+  //  - `active_extruder` uses Bambu's extruder ids: 0 = RIGHT, 1 = LEFT.
+  // Verified live on the H2C (2026-07-18, print running on the right 0.6): active_extruder=0 with
+  // nozzle_2 driven at 220/220 and nozzle idle at 44 — and re-reading the 2026-07-07 capture
+  // (active_extruder=1 while `nozzle` was driven at 245/245) it agrees too; the field was never
+  // unreliable, it was being read in the wrong coordinate system. Order of trust: the DRIVEN head
+  // (exactly one target set — self-evident), then the mapped active_extruder (breaks the tie when
+  // both/neither are driven, e.g. mid tool-change), then the hotter head.
   let activeIdx = 0;
   if (nozzles.length > 1) {
     const driven0 = nozzles[0].target > 0;
     const driven1 = nozzles[1].target > 0;
-    activeIdx = driven0 !== driven1 ? (driven1 ? 1 : 0) : nozzles[1].now > nozzles[0].now ? 1 : 0;
+    const ae = asNum(status.active_extruder);
+    if (driven0 !== driven1) activeIdx = driven1 ? 1 : 0;
+    else if (ae === 0 || ae === 1) activeIdx = ae === 0 ? 1 : 0; // 0=right -> nozzle_2 (idx 1)
+    else activeIdx = nozzles[1].now > nozzles[0].now ? 1 : 0;
   }
   nozzles.forEach((n, i) => (n.active = i === activeIdx));
   const active = nozzles[activeIdx] ?? n1;
