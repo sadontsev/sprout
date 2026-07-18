@@ -36,7 +36,11 @@ APNS_BUNDLE_ID = os.environ.get("APNS_BUNDLE_ID", APNS_TOPIC.replace(".push-type
 # Dev/Xcode builds use the SANDBOX gateway; TestFlight/App Store use production. Flip via env.
 APNS_HOST = os.environ.get("APNS_HOST", "api.sandbox.push.apple.com")
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
-MIN_UPDATE_S = float(os.environ.get("MIN_UPDATE_S", "4"))
+# 30s: Live-Activity pushes draw from a per-device budget (even WITH the frequent-updates plist
+# key). Priority-10 every 4s exhausted it within minutes — iOS then silently stops applying updates
+# while APNs keeps answering 200 (observed: card froze shortly after each app open). The countdown
+# and "ends" clock tick CLIENT-side from etaEpochMs, so a 30s data cadence loses nothing visible.
+MIN_UPDATE_S = float(os.environ.get("MIN_UPDATE_S", "30"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 REG_FILE = DATA_DIR / "registrations.json"
 
@@ -141,21 +145,21 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
         or a["layer"] != b["layer"]
         or a["stateLabel"] != b["stateLabel"]
         or a["name"] != b["name"]
-        or abs(a["nozzle"] - b["nozzle"]) >= 2
+        or abs(a["nozzle"] - b["nozzle"]) >= 3
         # New keys use .get(): a card's lastState persists across deploys, so an old-schema stored
         # state (pre-dual-nozzle) may lack these — treat missing as 0 rather than KeyError-ing the tick.
-        or abs(a.get("nozzle2", 0) - b["nozzle2"]) >= 2
-        or abs(a["bed"] - b["bed"]) >= 2
+        or abs(a.get("nozzle2", 0) - b["nozzle2"]) >= 3
+        or abs(a["bed"] - b["bed"]) >= 3
         or a["nozzleTarget"] != b["nozzleTarget"]
         or a.get("nozzle2Target", 0) != b["nozzle2Target"]
         or a.get("activeNozzle", 0) != b["activeNozzle"]
         or a["bedTarget"] != b["bedTarget"]
-        or abs(a["etaEpochMs"] - b["etaEpochMs"]) >= 60_000
+        or abs(a["etaEpochMs"] - b["etaEpochMs"]) >= 120_000
         # Drying cards: temp climb + humidity fall are the whole story (countdown ticks client-side).
         or a.get("dry", False) != b.get("dry", False)
-        or abs(a.get("amsTemp", 0) - b.get("amsTemp", 0)) >= 1
+        or abs(a.get("amsTemp", 0) - b.get("amsTemp", 0)) >= 2
         or a.get("amsTarget", 0) != b.get("amsTarget", 0)
-        or abs(a.get("humidity", 0) - b.get("humidity", 0)) >= 2
+        or abs(a.get("humidity", 0) - b.get("humidity", 0)) >= 3
     )
 
 
@@ -207,22 +211,32 @@ def _apns_token() -> str:
     return tok
 
 
-async def _apns_send(client: httpx.AsyncClient, push_token: str, aps: dict) -> int:
+async def _apns_send(client: httpx.AsyncClient, push_token: str, aps: dict, priority: str = "10") -> int:
     r = await client.post(
         f"https://{APNS_HOST}/3/device/{push_token}",
         headers={
             "authorization": f"bearer {_apns_token()}",
             "apns-topic": APNS_TOPIC,
             "apns-push-type": "liveactivity",
-            "apns-priority": "10",
+            # Priority 10 spends the device's Live-Activity budget; 5 is delivered opportunistically
+            # and conserves it. Routine drift goes at 5, real state changes at 10.
+            "apns-priority": priority,
         },
         json={"aps": aps},
     )
     return r.status_code
 
 
-async def _push_update(client: httpx.AsyncClient, reg: dict, cs: dict) -> int:
-    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "update", "content-state": cs})
+def _urgent(last: dict | None, cs: dict) -> bool:
+    """Deserves priority 10: first push for a card, a state-label flip (Printing->Paused, Heating->
+    Printing, Drying->Done…), or the finished flag. Temp/progress/ETA drift is priority 5."""
+    if last is None:
+        return True
+    return last.get("stateLabel") != cs.get("stateLabel") or bool(last.get("finished")) != bool(cs.get("finished"))
+
+
+async def _push_update(client: httpx.AsyncClient, reg: dict, cs: dict, priority: str = "5") -> int:
+    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "update", "content-state": cs}, priority)
 
 
 async def _push_end(client: httpx.AsyncClient, reg: dict, cs: dict) -> int:
@@ -343,7 +357,9 @@ async def _tick(client: httpx.AsyncClient) -> None:
             else:
                 dcs = {"printerName": dname, "iconUri": dreg.get("iconUri", ""), **ds}
                 if meaningful_change(dreg.get("lastState"), dcs) and (now - dreg.get("lastPush", 0) >= MIN_UPDATE_S):
-                    code = await _push_update(client, dreg, dcs)
+                    prio = "10" if _urgent(dreg.get("lastState"), dcs) else "5"
+                    code = await _push_update(client, dreg, dcs, prio)
+                    print(f"[update] dry printer {pid} prio {prio} -> {code}", flush=True)
                     if code in (400, 410):
                         print(f"[drop] dry printer {pid} -> {code}", flush=True)
                         _regs.pop(f"dry:{pid}", None)
@@ -361,7 +377,9 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 _regs.pop(str(pid), None)
                 _save()
             elif meaningful_change(reg.get("lastState"), cs) and (now - reg.get("lastPush", 0) >= MIN_UPDATE_S):
-                code = await _push_update(client, reg, cs)
+                prio = "10" if _urgent(reg.get("lastState"), cs) else "5"
+                code = await _push_update(client, reg, cs, prio)
+                print(f"[update] printer {pid} prio {prio} -> {code}", flush=True)
                 if code in (400, 410):
                     print(f"[drop] printer {pid} -> {code}", flush=True)
                     _regs.pop(str(pid), None)
