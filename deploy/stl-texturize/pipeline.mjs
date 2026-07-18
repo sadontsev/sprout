@@ -18,7 +18,9 @@ export async function decodeTexture(buffer) {
 // Faces whose normal points near-straight down (or up) within the limit are excluded from
 // displacement so the bed-contact surface stays flat and the print still adheres.
 function buildCombinedFaceWeights(geometry, settings) {
-  const weights = buildFaceWeights(geometry, /* excludedFaces */ null, /* invert */ false);
+  // excludedFaces must be an ITERABLE of face indices (empty Set = "no painted exclusions"); the
+  // vendored buildFaceWeights iterates it unconditionally, so null throws. Caught by smoke.mjs.
+  const weights = buildFaceWeights(geometry, new Set(), /* invert */ false);
   if (settings.bottomAngleLimit <= 0 && settings.topAngleLimit <= 0) return weights;
   const posAttr = geometry.attributes.position;
   const triCount = posAttr.count / 3;

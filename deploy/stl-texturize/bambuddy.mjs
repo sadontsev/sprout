@@ -52,8 +52,11 @@ export class Bambuddy {
   }
 }
 
-/** Pick a friendly output name: strip any extension off the source name, append "-textured.stl". */
+/** Pick a friendly output name: decode any %20-style residue from an URL-encoded upload, strip the
+ *  extension, append "-textured.stl". */
 export function texturedName(sourceName, fileId) {
-  const base = (sourceName || `model-${fileId}`).replace(/\.(stl|3mf|obj|gcode(\.3mf)?)$/i, '');
+  let name = sourceName || `model-${fileId}`;
+  try { name = decodeURIComponent(name); } catch { /* keep raw if malformed */ }
+  const base = name.replace(/\.(stl|3mf|obj|gcode(\.3mf)?)$/i, '');
   return `${base}-textured.stl`;
 }
