@@ -161,11 +161,27 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   const [wizardFile, setWizardFile] = useState<LibraryFile | null>(null);
   const [libKey, setLibKey] = useState(0);
 
-  // stl-texturize sidecar (optional): derived texturize.* URL — null hides the library action.
-  const texClient = useMemo(() => {
-    const url = resolveTexturizeUrl(config);
-    return url ? new TexturizeClient({ baseUrl: url, apiKey: config.apiKey }) : null;
-  }, [config]);
+  // stl-texturize sidecar (STRICTLY optional): derive the texturize.* URL, then enable the feature
+  // only after /health actually answers. A bambuddy.* instance WITHOUT the sidecar must keep a fully
+  // working app — no texturize UI, original thumbnails — rather than dead buttons and a library of
+  // broken images (every thumbnail routes through the sidecar when it's enabled).
+  const texUrl = useMemo(() => resolveTexturizeUrl(config), [config]);
+  const [texReady, setTexReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setTexReady(false);
+    if (!texUrl) return;
+    new TexturizeClient({ baseUrl: texUrl, apiKey: config.apiKey })
+      .healthy()
+      .then((ok) => alive && setTexReady(ok));
+    return () => {
+      alive = false;
+    };
+  }, [texUrl, config.apiKey]);
+  const texClient = useMemo(
+    () => (texUrl && texReady ? new TexturizeClient({ baseUrl: texUrl, apiKey: config.apiKey }) : null),
+    [texUrl, texReady, config.apiKey],
+  );
   const [texturizeFile, setTexturizeFile] = useState<LibraryFile | null>(null);
   // Fullscreen interactive STL viewer (renders ABOVE the texturize sheet so "View in 3D" from the
   // done state returns to the sheet on close, keeping the tweak → re-run loop intact).

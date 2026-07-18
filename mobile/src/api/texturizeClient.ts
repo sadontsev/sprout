@@ -67,6 +67,22 @@ export class TexturizeClient {
     return res;
   }
 
+  /** True iff the sidecar answers /health quickly. Gates the WHOLE feature (texturize UI +
+   *  thumbnail routing): instances without the sidecar keep a fully working app instead of dead
+   *  buttons and broken thumbnails. Health is unauthenticated by design. */
+  async healthy(timeoutMs = 4000): Promise<boolean> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${this.baseUrl}/health`, { signal: ctrl.signal });
+      return res.ok;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /** Built-in texture set for the picker. */
   listTextures(): Promise<TexturizeTexture[]> {
     return this.req('/textures').then((r) => r.json());

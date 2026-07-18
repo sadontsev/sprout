@@ -24,19 +24,28 @@ export const supportTwinName = (baseName: string, token = '@BBL A1'): string =>
 
 const isSupportPreset = (name: string): boolean => /\+ supports|support|tree/i.test(name);
 
+/** Stock nozzle sizes BambuStudio ships preset families for. */
+export type NozzleSize = '0.2' | '0.4' | '0.6' | '0.8';
+
+/** The stock printer-preset name for a nozzle variant ("Bambu Lab H2C 0.6 nozzle"). */
+export const printerPresetNameFor = (base: string, nozzle: NozzleSize): string => `${base} ${nozzle} nozzle`;
+
 /**
- * The selectable quality profiles for a printer's default (0.4 mm) nozzle, merged across every
- * preset group the server returns (standard + the user's own local/cloud/orca_cloud profiles),
- * deduped by id. `token` is the "@BBL <model>" suffix BambuStudio stamps on its presets.
+ * The selectable quality profiles for a printer + NOZZLE variant, merged across every preset group
+ * the server returns (standard + the user's own local/cloud/orca_cloud profiles), deduped by id.
+ * `token` is the "@BBL <model>" suffix BambuStudio stamps on its presets.
  *
- * Stock 0.4-nozzle presets carry NO nozzle suffix; 0.2/0.6/0.8-nozzle variants (wrong hardware)
- * are suffixed and excluded. Support-enabled twins are kept OUT of the main quality list and
- * instead paired to their base in `supportByBase`, so the wizard can offer a clean "Supports"
- * toggle (base quality stays selected; the toggle swaps in the twin at slice time).
+ * Naming convention (verified against the live preset list): 0.4-nozzle presets carry NO nozzle
+ * suffix; 0.2/0.6/0.8 variants are suffixed "@BBL <model> <d> nozzle". So for 0.4 we exclude all
+ * suffixed names; for other sizes we require exactly that suffix. Support-enabled twins are kept
+ * OUT of the main quality list and instead paired to their base in `supportByBase`, so the wizard
+ * can offer a clean "Supports" toggle (base quality stays selected; the toggle swaps in the twin
+ * at slice time). Twins are provisioned for 0.4 only (ensure-support-profiles.py).
  */
 export function selectProcess(
   p: PresetsResponse | null | undefined,
   token: string,
+  nozzle: NozzleSize = '0.4',
 ): {
   qualities: Preset[];
   supportByBase: Record<string, Preset>;
@@ -45,9 +54,10 @@ export function selectProcess(
   const groups = [p?.standard?.process, p?.local?.process, p?.cloud?.process, p?.orca_cloud?.process];
   const seen = new Set<string>();
   const tokenRe = new RegExp(`0\\.\\d+mm .*${escapeRe(token)}(?!\\S)`);
+  const suffixRe = new RegExp(`${escapeRe(token)} ${escapeRe(nozzle)} nozzle$`);
   const proc = groups
     .flatMap((g) => g ?? [])
-    .filter((x) => tokenRe.test(x.name) && !/0\.[268] nozzle/.test(x.name))
+    .filter((x) => (nozzle === '0.4' ? tokenRe.test(x.name) && !/0\.[268] nozzle/.test(x.name) : suffixRe.test(x.name)))
     .filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
 
   const qualities = proc.filter((x) => !isSupportPreset(x.name));
@@ -58,6 +68,26 @@ export function selectProcess(
     if (twin) supportByBase[base.name] = twin;
   }
   return { qualities, supportByBase, hasSupportProfile: twins.length > 0 };
+}
+
+/** Nozzle diameters physically mounted right now, from the live status (e.g. H2C: left 0.6 +
+ *  right-vortex 0.4). Order preserved (extruder order); unknown/garbage entries dropped. */
+export function mountedNozzles(status: { nozzles?: { nozzle_diameter?: string | number }[] } | null): NozzleSize[] {
+  const out: NozzleSize[] = [];
+  for (const n of status?.nozzles ?? []) {
+    const d = String(n.nozzle_diameter ?? '');
+    if (d === '0.2' || d === '0.4' || d === '0.6' || d === '0.8') {
+      if (!out.includes(d)) out.push(d);
+    }
+  }
+  return out;
+}
+
+/** Default nozzle selection: prefer 0.4 when mounted (richest preset family incl. support twins),
+ *  else the first mounted size, else 0.4. */
+export function defaultNozzle(mounted: NozzleSize[]): NozzleSize {
+  if (mounted.includes('0.4')) return '0.4';
+  return mounted[0] ?? '0.4';
 }
 
 /** Back-compat wrapper: the A1's process presets. */
