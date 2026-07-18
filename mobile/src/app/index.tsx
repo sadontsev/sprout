@@ -16,7 +16,9 @@ import { reconcileSelection, initialSelectionState, type SelectionState } from '
 import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
 import { LibraryView, JobsView, AmsView, PowerView } from '@/components/TabScreens';
-import { CameraOverlay, UploadSheet, WizardOverlay } from '@/components/Overlays';
+import { CameraOverlay, UploadSheet, WizardOverlay, TexturizeSheet } from '@/components/Overlays';
+import { TexturizeClient } from '@/api/texturizeClient';
+import { resolveTexturizeUrl } from '@/config/texturizeConfig';
 import { FadeRise } from '@/components/anim';
 import type { LibraryFile, Printer } from '@/api/types';
 import { c, setTheme, useTheme } from '@/theme';
@@ -155,6 +157,13 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   const [wizardFile, setWizardFile] = useState<LibraryFile | null>(null);
   const [libKey, setLibKey] = useState(0);
 
+  // stl-texturize sidecar (optional): derived texturize.* URL — null hides the library action.
+  const texClient = useMemo(() => {
+    const url = resolveTexturizeUrl(config);
+    return url ? new TexturizeClient({ baseUrl: url, apiKey: config.apiKey }) : null;
+  }, [config]);
+  const [texturizeFile, setTexturizeFile] = useState<LibraryFile | null>(null);
+
   // Speed: the printer's real speed_level drives the UI; a short-lived optimistic override bridges
   // the gap between tapping a mode and the next status frame reflecting it.
   const [speedOverride, setSpeedOverride] = useState<number | null>(null);
@@ -283,7 +292,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       </View>
       {tab !== 'printer' && (
         <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
-          {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={printerId} plate={profile.plate} onUpload={() => setOverlay('upload')} onPick={setWizardFile} />}
+          {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={printerId} plate={profile.plate} onUpload={() => setOverlay('upload')} onPick={setWizardFile} onTexturize={texClient ? setTexturizeFile : undefined} />}
           {tab === 'jobs' && <JobsView client={client} status={status} printerId={printerId} printers={printers ?? []} camToken={camToken} onBrowse={() => setTab('library')} />}
           {tab === 'ams' && <AmsView client={client} status={status} printerId={printerId} amsLabel={profile.amsLabel} />}
           {tab === 'power' && <PowerView client={client} printerId={printerId} status={status} />}
@@ -297,6 +306,9 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       )}
       {overlay === 'upload' && (
         <UploadSheet client={client} onClose={() => setOverlay(null)} onUploaded={() => setLibKey((k) => k + 1)} />
+      )}
+      {texturizeFile && texClient && (
+        <TexturizeSheet texClient={texClient} file={texturizeFile} onClose={() => setTexturizeFile(null)} onDone={() => setLibKey((k) => k + 1)} />
       )}
       {wizardFile && (
         <WizardOverlay

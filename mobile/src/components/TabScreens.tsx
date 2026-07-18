@@ -115,7 +115,7 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
   );
 }
 
-export function LibraryView({ client, camToken, printerId, plate, onUpload, onPick }: { client: BambuddyClient; camToken: string | null; printerId: number; plate?: { w: number; d: number }; onUpload: () => void; onPick: (f: LibraryFile) => void }) {
+export function LibraryView({ client, camToken, printerId, plate, onUpload, onPick, onTexturize }: { client: BambuddyClient; camToken: string | null; printerId: number; plate?: { w: number; d: number }; onUpload: () => void; onPick: (f: LibraryFile) => void; onTexturize?: (f: LibraryFile) => void }) {
   const [source, setSource] = useState<LibSource>('library');
   const [files, setFiles] = useState<LibraryFile[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -252,6 +252,12 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
                           <View style={{ position: 'absolute', top: 7, right: 7, width: 18, height: 18, borderRadius: 9, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
                             <Feather name="check" size={11} color={c.accentInk} />
                           </View>
+                        )}
+                        {/* Texturize — STL models only (the sidecar takes raw meshes, not sliced gcode). */}
+                        {onTexturize && (f.file_type || '').toLowerCase() === 'stl' && (
+                          <Tap onPress={() => onTexturize(f)} hitSlop={6} style={{ position: 'absolute', bottom: 7, right: 7, width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
+                            <Feather name="droplet" size={13} color="#fff" />
+                          </Tap>
                         )}
                       </View>
                       <Text numberOfLines={1} style={{ marginTop: 9, fontWeight: '600', fontSize: 13, color: c.t1 }}>{f.print_name || f.filename}</Text>
