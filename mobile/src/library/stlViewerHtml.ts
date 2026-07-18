@@ -142,7 +142,14 @@ export function stlViewerHtml(opts: { url: string; name: string }): string {
 
     var ct=[(g.min[0]+g.max[0])/2,(g.min[1]+g.max[1])/2,(g.min[2]+g.max[2])/2];
     var span=Math.max(g.max[0]-g.min[0],g.max[1]-g.min[1],g.max[2]-g.min[2])||1;
-    var DEF={yaw:-0.62,pitch:0.5,dist:span*1.9};
+    // Initial distance fits the model's bounding SPHERE through the NARROWER screen axis — 0.9 rad
+    // is the VERTICAL fov, and on a portrait phone the horizontal fov is ~1/3 of that, so a
+    // height-only fit clips wide models at the sides (caught numerically before shipping).
+    var dx2=g.max[0]-g.min[0],dy2=g.max[1]-g.min[1],dz2=g.max[2]-g.min[2];
+    var rad=0.5*Math.sqrt(dx2*dx2+dy2*dy2+dz2*dz2)||1;
+    var asp0=Math.max(0.3,window.innerWidth/Math.max(window.innerHeight,1));
+    var vHalf=0.45, hHalf=Math.atan(Math.tan(vHalf)*asp0);
+    var DEF={yaw:-0.62,pitch:0.5,dist:rad/Math.tan(Math.min(vHalf,hHalf))*1.15};
     var yaw=DEF.yaw,pitch=DEF.pitch,dist=DEF.dist,panX=0,panY=0,vyaw=0,vpitch=0;
     var MATS={steel:[0.62,0.67,0.76],ivory:[0.91,0.89,0.84],teal:[0.17,0.83,0.75]};
     var mode='steel', lightBg=false, dpr=Math.min(window.devicePixelRatio||2,2.5);
