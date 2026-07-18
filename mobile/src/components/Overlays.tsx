@@ -256,13 +256,22 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
   const [keeping, setKeeping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Mirror for the unmount cleanup: a held preview is server memory — free it if the sheet dies
+  // with one open (commit clears this first, so a kept file is never discarded).
+  const previewRef = useRef<string | null>(null);
+  useEffect(() => {
+    previewRef.current = preview?.jobId ?? null;
+  }, [preview]);
 
   useEffect(() => {
     texClient.listTextures().then((t) => {
       setTextures(t);
       if (t.length && !texId) setTexId(t[0].id);
     }).catch((e) => setError(`Couldn't reach the texturize server: ${String(e?.message ?? e)}`));
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (previewRef.current) void texClient.discard(previewRef.current).catch(() => {});
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [texClient]);
 
@@ -308,6 +317,7 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
     setKeeping(true);
     try {
       await texClient.commit(preview.jobId);
+      previewRef.current = null; // committed — the unmount cleanup must not discard it
       onDone(); // library refresh — the kept file is now real
       onClose();
     } catch (e) {
@@ -322,7 +332,7 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
 
   const busy = job !== null;
   return (
-    <Pressable onPress={busy ? undefined : onClose} style={{ position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 72 } as any}>
+    <Pressable onPress={busy || preview ? undefined : onClose} style={{ position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 72 } as any}>
       <Animated.View entering={FadeIn.duration(220)} pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)' } as any} />
       <Animated.View entering={SlideInDown.duration(320)}>
         <Pressable onPress={() => {}} style={{ backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingTop: 10, paddingBottom: insets.bottom + 16, ...shadow1 }}>
@@ -387,9 +397,12 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
       </Animated.View>
 
       {/* Fullscreen result review — opens automatically when the job finishes. Keep commits the
-          held preview into the library; Adjust discards it and returns to the settings above. */}
+          held preview into the library; Adjust discards it and returns to the settings above.
+          MUST be a tap-swallowing Pressable: it sits inside the backdrop Pressable, and once the
+          job ends (busy=false) an unhandled tap here would bubble up and dismiss the whole sheet
+          (reported: 'drawer closed once I pressed Texturize'). */}
       {preview && (
-        <View style={{ position: 'absolute', inset: 0, backgroundColor: '#0A0B0C' } as any}>
+        <Pressable onPress={() => {}} style={{ position: 'absolute', inset: 0, backgroundColor: '#0A0B0C' } as any}>
           <StlWebView
             name={texturedDisplayName(file)}
             direct={{ origin: texClient.baseUrl, path: texClient.resultPath(preview.jobId), headers: texClient.authHeaders() }}
@@ -409,7 +422,7 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
               {keeping ? <ActivityIndicator color={c.accentInk} /> : <Text style={{ fontWeight: '700', fontSize: 14, color: c.accentInk }}>Keep</Text>}
             </Tap>
           </View>
-        </View>
+        </Pressable>
       )}
     </Pressable>
   );
