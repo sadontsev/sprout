@@ -256,11 +256,16 @@ async def _push_update(client: httpx.AsyncClient, reg: dict, cs: dict, priority:
 async def _push_start(client: httpx.AsyncClient, push_token: str, cs: dict) -> int:
     """ActivityKit push-to-start (iOS 17.2+): starts the Live Activity with the app closed. The
     per-activity UPDATE token reaches us when iOS wakes the app (or on next open via adoption);
-    until then the card still shows live countdowns — etaEpochMs timers tick client-side."""
+    until then the card still shows live countdowns — etaEpochMs timers tick client-side.
+    NOTE: the `alert` block is part of Apple's start-payload spec — starts WITHOUT it were observed
+    accepted by APNs (200) but silently discarded on-device (no card, no app wake)."""
+    title = (cs.get("printerName") or "Printer").strip() or "Printer"
+    body = cs.get("name") or cs.get("stateLabel") or "Started"
     return await _apns_send(client, push_token, {
         "timestamp": int(time.time()), "event": "start",
         "attributes-type": "LiveActivityAttributes", "attributes": {},
         "content-state": _envelope(cs),
+        "alert": {"title": f"{title} — {cs.get('stateLabel', 'Started')}", "body": body},
     }, "10")
 
 
