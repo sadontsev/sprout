@@ -191,6 +191,17 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
       { text: 'Delete', style: 'destructive', onPress: () => client.deleteFile(f.id).then(load).catch((e) => Alert.alert('Couldn’t delete', String(e))) },
     ]);
 
+  // Long-press action menu (was delete-only — Texturize was undiscoverable as just a corner badge).
+  const fileMenu = (f: LibraryFile) => {
+    const canTexturize = !!onTexturize && (f.file_type || '').toLowerCase() === 'stl';
+    Alert.alert(f.print_name || f.filename, undefined, [
+      { text: 'Print…', onPress: () => onPick(f) },
+      ...(canTexturize ? [{ text: 'Texturize…', onPress: () => onTexturize!(f) }] : []),
+      { text: 'Delete', style: 'destructive' as const, onPress: () => confirmDelete(f) },
+      { text: 'Cancel', style: 'cancel' as const },
+    ]);
+  };
+
   const counts: Record<TypeFilter, number> = {
     all: files?.length ?? 0,
     models: (files ?? []).filter((f) => !isSlicedFile(f)).length,
@@ -238,7 +249,7 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
                 {shown.map((f) => {
                   const sliced = isSlicedFile(f);
                   return (
-                    <Tap key={f.id} onPress={() => onPick(f)} onLongPress={() => confirmDelete(f)} style={{ width: '47%', flexGrow: 1 }}>
+                    <Tap key={f.id} onPress={() => onPick(f)} onLongPress={() => fileMenu(f)} style={{ width: '47%', flexGrow: 1 }}>
                       <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
                         {f.thumbnail_path ? (
                           <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
@@ -266,7 +277,7 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
                   );
                 })}
               </View>
-              <Text style={{ textAlign: 'center', marginTop: 16, fontWeight: '500', fontSize: 11, color: c.t3 }}>Tap to print · hold to delete</Text>
+              <Text style={{ textAlign: 'center', marginTop: 16, fontWeight: '500', fontSize: 11, color: c.t3 }}>Tap to print · hold for options</Text>
             </>
           )}
         </>

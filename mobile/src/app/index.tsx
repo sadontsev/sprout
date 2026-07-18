@@ -323,6 +323,14 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
             setWizardFile(null);
             setTab('printer');
           }}
+          onTexturize={
+            texClient
+              ? (f) => {
+                  setWizardFile(null);
+                  setTexturizeFile(f);
+                }
+              : undefined
+          }
         />
       )}
     </View>
