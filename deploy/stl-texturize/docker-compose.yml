@@ -1,0 +1,26 @@
+services:
+  stl-texturize:
+    build: .
+    container_name: bambu-stl-texturize
+    restart: unless-stopped
+    # Host network so it reaches Bambuddy at localhost:8910 and exposes its own :8912 on the host,
+    # matching la-push and the slicer sidecars.
+    network_mode: host
+    environment:
+      BAMBUDDY_URL: http://localhost:8910
+      BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY}          # from ./.env (never committed) — gates this
+                                                     # service AND authenticates its calls to Bambuddy
+      PORT: "8912"
+      # RAM guardrail. ~145 bytes/intermediate-triangle at peak; 12M ≈ 1.7 GB. Container capped at 4g.
+      TEXTURIZE_MAX_TRIANGLES: "12000000"
+      TEXTURIZE_MIN_REFINE_LENGTH: "0.15"
+    mem_limit: 4g
+    volumes:
+      # Built-in texture set (seeded at build); drop your own PNG/JPG/WebP here without a rebuild.
+      - ./textures:/app/textures:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8912/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
