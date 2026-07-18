@@ -129,6 +129,20 @@ describe('gcodeViewerHtml (viewer contract)', () => {
     expect(html).toContain('mm');                  // layer label carries Z height
     expect(html).not.toContain('#0A0B0C;overflow'); // old flat-black body background is gone
   });
+
+  test('renders extrusions via WebGL ribbons (solid-plastic look), not 1px canvas strokes', () => {
+    const html = gcodeViewerHtml(tiny);
+    expect(html).toContain("getContext('webgl'");
+    expect(html).toContain('OES_element_index_uint'); // uint indices for >65k-vert prints
+    expect(html).toContain('0.21*S');                 // ribbon half-width = half of 0.42mm extrusion
+    expect(html).not.toContain('strokeLayer');        // the old line renderer is gone
+  });
+
+  test('embedded page script is syntactically valid JS', () => {
+    const html = gcodeViewerHtml(tiny);
+    const script = html.split('<script>')[1].split('</script>')[0];
+    expect(() => new Function(script)).not.toThrow(); // compile-only — no DOM at parse time
+  });
 });
 
 test('elevated leading purge layer (H2C) is excluded from bounds but still rendered', () => {
