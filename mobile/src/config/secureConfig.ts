@@ -21,6 +21,10 @@ export type AppConfig = {
    *  suspended + status banners fire (needs a reachable la-push). false ⇒ LOCAL only: cards update
    *  while the app runs, no banners, no server. See resolvePushUrl() in config/pushConfig.ts. */
   serverPush?: boolean;
+  /** Optional Bambuddy ADMIN login — unlocks admin-gated actions (e.g. maintenance "mark done"),
+   *  which categorically refuse API keys. Keychain-only, like the API key. */
+  adminUsername?: string;
+  adminPassword?: string;
 };
 
 const KEY = 'bambu.config';

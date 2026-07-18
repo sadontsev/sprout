@@ -7,13 +7,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { c, mono, shadow1 } from '@/theme';
-import type { BambuddyClient } from '@/api/bambuddyClient';
+import { apiErrorDetail, type BambuddyClient } from '@/api/bambuddyClient';
 import type { TexturizeClient, TexturizeTexture, TexturizeMappingMode } from '@/api/texturizeClient';
 import type { LibraryFile, Printer, PrinterStatus, MakerWorldResolved, MWInstance, PlatesResponse, FileMetadata, SlotAssignment } from '@/api/types';
 import { presentDashboard, normColor } from '@/dashboard/present';
 import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
 import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
 import { parseGcodeLayers, gcodeViewerHtml, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
+import { stlViewerHtml } from '@/library/stlViewerHtml';
 import { selectProcess, pickDefaultQuality, type Preset } from '@/library/presetSelect';
 import { printerProfile, slicedForMatchesPrinter } from '@/printers/profile';
 import { mjpegHtml, streamOrigin } from './mjpegHtml';
@@ -233,7 +234,18 @@ function SheetLabel({ children, first }: { children: React.ReactNode; first?: bo
   return <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: first ? 0 : 18, marginBottom: 9 }}>{children}</Text>;
 }
 
-export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient: TexturizeClient; file: LibraryFile; onClose: () => void; onDone: () => void }) {
+/** "-textured.stl" name for a texturize result, mirroring the sidecar's texturedName(). */
+function texturedDisplayName(f: LibraryFile): string {
+  let name = f.print_name || f.filename || `model-${f.id}`;
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    /* keep raw */
+  }
+  return `${name.replace(/\.(stl|3mf|obj|gcode(\.3mf)?)$/i, '')}-textured.stl`;
+}
+
+export function TexturizeSheet({ texClient, file, onClose, onDone, onView }: { texClient: TexturizeClient; file: LibraryFile; onClose: () => void; onDone: () => void; onView?: (fileId: number, name: string) => void }) {
   const insets = useSafeAreaInsets();
   const [textures, setTextures] = useState<TexturizeTexture[] | null>(null);
   const [texId, setTexId] = useState<string | null>(null);
@@ -242,6 +254,7 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
   const [mapping, setMapping] = useState<TexturizeMappingMode>('triplanar');
   const [detail, setDetail] = useState(0.4);
   const [job, setJob] = useState<{ id: string; stage: string; progress: number } | null>(null);
+  const [done, setDone] = useState<{ fileId: number; tris?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -257,6 +270,7 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
   const start = async () => {
     if (!texId) return;
     setError(null);
+    setDone(null);
     try {
       const { job_id } = await texClient.start({
         file_id: file.id,
@@ -274,8 +288,10 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
           setJob({ id: job_id, stage: j.stage, progress: j.progress });
           if (j.status === 'done') {
             if (pollRef.current) clearInterval(pollRef.current);
-            onDone();
-            onClose();
+            setJob(null);
+            onDone(); // refresh the library grid behind the sheet
+            // Stay open: the user inspects the result (3D) and can tweak params + re-run from here.
+            setDone({ fileId: j.result_file_id!, tris: j.out_triangles });
           } else if (j.status === 'error') {
             if (pollRef.current) clearInterval(pollRef.current);
             setJob(null);
@@ -338,15 +354,30 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
                 <Text style={{ marginTop: 7, fontWeight: '500', fontSize: 11.5, color: c.t3, textAlign: 'center', fontFamily: mono }}>{job.stage} · {Math.round(job.progress * 100)}%</Text>
               </View>
             )}
+            {done && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16, padding: 13, borderRadius: 12, backgroundColor: c.accentDim }}>
+                <Feather name="check-circle" size={17} color={c.accent} />
+                <Text style={{ flex: 1, fontWeight: '600', fontSize: 13, color: c.t1 }}>
+                  Done{done.tris ? ` · ${done.tris.toLocaleString()} triangles` : ''} — saved to the library
+                </Text>
+              </View>
+            )}
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
               <Tap onPress={onClose} disabled={busy} style={{ paddingHorizontal: 22, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.5 : 1 }}>
-                <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>Cancel</Text>
+                <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>{done ? 'Done' : 'Cancel'}</Text>
               </Tap>
-              <Tap onPress={start} disabled={busy || !texId} style={{ flex: 1, height: 50, borderRadius: 14, backgroundColor: busy || !texId ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontWeight: '700', fontSize: 15, color: busy || !texId ? c.t3 : c.accentInk }}>{busy ? 'Texturizing…' : 'Texturize'}</Text>
+              {done && onView && (
+                <Tap onPress={() => onView(done.fileId, texturedDisplayName(file))} style={{ flex: 1, height: 50, borderRadius: 14, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontWeight: '700', fontSize: 15, color: c.accentInk }}>View in 3D</Text>
+                </Tap>
+              )}
+              <Tap onPress={start} disabled={busy || !texId} style={{ flex: done && onView ? undefined : 1, paddingHorizontal: done && onView ? 20 : undefined, height: 50, borderRadius: 14, backgroundColor: busy || !texId ? c.s3 : done ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontWeight: '700', fontSize: 15, color: busy || !texId ? c.t3 : done ? c.t1 : c.accentInk }}>{busy ? 'Texturizing…' : done ? 'Re-run' : 'Texturize'}</Text>
               </Tap>
             </View>
-            <Text style={{ marginTop: 10, fontSize: 10.5, lineHeight: 14, color: c.t3, textAlign: 'center' }}>Creates a new file in the library — the original is untouched. The bed face stays flat.</Text>
+            <Text style={{ marginTop: 10, fontSize: 10.5, lineHeight: 14, color: c.t3, textAlign: 'center' }}>
+              {done ? 'Tweak the settings above and Re-run to try another look — each run saves a new file.' : 'Creates a new file in the library — the original is untouched. The bed face stays flat.'}
+            </Text>
           </ScrollView>
         </Pressable>
       </Animated.View>
@@ -639,6 +670,73 @@ export function GcodeViewerOverlay({ load, title, onClose, plate }: { load: () =
   );
 }
 
+// ---------------- STL 3D VIEWER (interactive mesh preview — raw WebGL in a WebView) ----------------
+export function StlViewerOverlay({ client, fileId, name, onClose }: { client: BambuddyClient; fileId: number; name: string; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [html, setHtml] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    // Tokenized download URL: the page fetches the model itself (same-origin via baseUrl below), so
+    // the mesh bytes never cross the RN bridge and no auth headers are needed in-page.
+    client
+      .mintFileDownloadUrl(fileId, name)
+      .then((url) => alive && setHtml(stlViewerHtml({ url, name })))
+      .catch((e) => alive && setErr(apiErrorDetail(e)));
+    return () => {
+      alive = false;
+    };
+    // Mounted per-file — mint exactly once (the token is single-use).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <View style={{ position: 'absolute', inset: 0, backgroundColor: '#0A0B0C', zIndex: 84 } as any}>
+      {html && !err ? (
+        <WebView
+          source={{ html, baseUrl: `${client.baseUrl}/` }}
+          originWhitelist={['*']}
+          style={{ flex: 1, backgroundColor: '#0A0B0C' }}
+          scrollEnabled={false}
+          javaScriptEnabled
+          domStorageEnabled
+          onMessage={(e) => {
+            try {
+              const m = JSON.parse(e.nativeEvent.data);
+              if (m.type === 'error') setErr(m.message || 'render error');
+            } catch {
+              /* ignore */
+            }
+          }}
+        />
+      ) : (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 }}>
+          {err ? (
+            <>
+              <Feather name="box" size={30} color="#3a4046" />
+              <Text style={{ marginTop: 14, color: '#6b7177', fontSize: 14, textAlign: 'center', lineHeight: 20 }}>{err}</Text>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator color={c.accent} />
+              <Text style={{ marginTop: 14, fontFamily: mono, color: '#3a4046', letterSpacing: 2, fontSize: 11 }}>LOADING MODEL…</Text>
+            </>
+          )}
+        </View>
+      )}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+        <Tap onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name="chevron-down" size={22} color="#fff" />
+        </Tap>
+        <View style={{ flex: 1, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 13, backgroundColor: 'rgba(22,24,27,0.55)' }}>
+          <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 13, color: '#fff' }}>{name}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 // ---------------- PLATE REVIEW (sliced model: plates · time · layers · filament) ----------------
 function PStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -743,7 +841,7 @@ export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlat
   );
 }
 
-export function WizardOverlay({ client, file, camToken, status, printerId, printer, onClose, onStarted, onTexturize }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; printer: Printer | null; onClose: () => void; onStarted: () => void; onTexturize?: (f: LibraryFile) => void }) {
+export function WizardOverlay({ client, file, camToken, status, printerId, printer, onClose, onStarted, onTexturize, onView3D }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; printer: Printer | null; onClose: () => void; onStarted: () => void; onTexturize?: (f: LibraryFile) => void; onView3D?: (f: LibraryFile) => void }) {
   const insets = useSafeAreaInsets();
   const profile = printerProfile(printer);
   const token = profile.presetToken; // "@BBL A1" / "@BBL H2C" — preset-name suffix for this machine
@@ -980,17 +1078,33 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
                   <Text style={{ marginTop: 5, marginBottom: 16, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · will be sliced</Text>
                   {/* Multi-plate files (e.g. a 6-plate project) expose all plates here — pick which one to slice. */}
                   <PlateReview client={client} fileId={file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} sliced={false} />
-                  {onTexturize && (file.file_type || '').toLowerCase() === 'stl' && (
-                    <Tap onPress={() => onTexturize(file)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2, marginTop: 14 }}>
-                      <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
-                        <Feather name="droplet" size={18} color={c.accent} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>Texturize first</Text>
-                        <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>Bake a surface pattern onto the model, then print the textured copy</Text>
-                      </View>
-                      <Feather name="chevron-right" size={16} color={c.t3} />
-                    </Tap>
+                  {(file.file_type || '').toLowerCase() === 'stl' && (
+                    <>
+                      {onView3D && (
+                        <Tap onPress={() => onView3D(file)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2, marginTop: 14 }}>
+                          <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
+                            <Feather name="box" size={18} color={c.accent} />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>View in 3D</Text>
+                            <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>Inspect the full-resolution mesh — rotate, zoom, switch shading</Text>
+                          </View>
+                          <Feather name="chevron-right" size={16} color={c.t3} />
+                        </Tap>
+                      )}
+                      {onTexturize && (
+                        <Tap onPress={() => onTexturize(file)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2, marginTop: 10 }}>
+                          <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
+                            <Feather name="droplet" size={18} color={c.accent} />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>Texturize first</Text>
+                            <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>Bake a surface pattern onto the model, then print the textured copy</Text>
+                          </View>
+                          <Feather name="chevron-right" size={16} color={c.t3} />
+                        </Tap>
+                      )}
+                    </>
                   )}
                 </>
               )}

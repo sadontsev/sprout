@@ -8,6 +8,11 @@ export interface BambuddyClientConfig {
   apiKey: string;
   /** Extra headers sent on every request — e.g. CF-Access-Client-Id/Secret if Cloudflare Access is added. */
   extraHeaders?: Record<string, string>;
+  /** Optional admin login. Bambuddy CATEGORICALLY refuses API keys on "administrative" endpoints
+   *  (403 "API keys cannot be used for administrative operations") regardless of key permissions —
+   *  those need a JWT from POST /auth/login. When set, admin-gated calls use that JWT. */
+  adminUsername?: string;
+  adminPassword?: string;
 }
 
 /** Human message from a thrown Bambuddy error — surfaces the API's JSON `detail` (e.g. a drying
@@ -52,11 +57,22 @@ export class BambuddyClient {
   readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly extraHeaders: Record<string, string>;
+  private readonly adminUsername?: string;
+  private readonly adminPassword?: string;
+  private jwt: string | null = null;
+  private jwtMintedAt = 0;
 
   constructor(cfg: BambuddyClientConfig) {
     this.baseUrl = cfg.baseUrl.replace(/\/+$/, '');
     this.apiKey = cfg.apiKey;
     this.extraHeaders = cfg.extraHeaders ?? {};
+    this.adminUsername = cfg.adminUsername?.trim() || undefined;
+    this.adminPassword = cfg.adminPassword || undefined;
+  }
+
+  /** Whether admin credentials are configured (drives Settings UI + error wording). */
+  get hasAdminLogin(): boolean {
+    return !!(this.adminUsername && this.adminPassword);
   }
 
   /** ws(s):// origin derived from baseUrl, for the realtime hook. */
@@ -73,6 +89,68 @@ export class BambuddyClient {
       ...init,
       headers: { ...this.headers(), ...(init?.headers ?? {}) },
     });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Bambuddy ${init?.method ?? 'GET'} ${path} -> HTTP ${res.status} ${body}`.trim());
+    }
+    return res;
+  }
+
+  // JWTs live 24h with no refresh — re-login proactively at 23h so a long-running app doesn't hit
+  // mid-action expiry as the norm (the 401-retry below still covers server-side invalidation).
+  private static readonly JWT_MAX_AGE_MS = 23 * 60 * 60 * 1000;
+
+  /** Mint (and cache) an admin JWT. Throws a human message on bad credentials / 2FA accounts. */
+  private async adminLogin(): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.extraHeaders },
+      body: JSON.stringify({ username: this.adminUsername, password: this.adminPassword }),
+    });
+    const body = await res.json().catch(() => ({}) as Record<string, unknown>);
+    if (body?.requires_2fa) throw new Error('Admin login failed: this account has 2FA enabled, which the app can’t complete. Use a non-2FA admin account.');
+    const token = body?.access_token as string | undefined;
+    if (!res.ok || !token) throw new Error(`Admin login failed (HTTP ${res.status}) — check the admin username/password in Settings.`);
+    this.jwt = token;
+    this.jwtMintedAt = Date.now();
+    return token;
+  }
+
+  /** Settings pre-flight: verify the configured admin credentials actually log in. */
+  async verifyAdminLogin(): Promise<void> {
+    await this.adminLogin();
+  }
+
+  /**
+   * Request against an ADMIN-gated endpoint. With admin credentials configured this authenticates
+   * via Bearer JWT (cached; re-login on age-out, one retry on 401/403 for server-side invalidation).
+   * Without them it falls through to the API key so the server stays the source of truth — but the
+   * categorical "API keys cannot be used for administrative operations" 403 is rewritten into an
+   * actionable message pointing at Settings.
+   */
+  private async adminReq(path: string, init?: RequestInit): Promise<Response> {
+    if (!this.hasAdminLogin) {
+      try {
+        return await this.req(path, init);
+      } catch (e) {
+        if (String(e instanceof Error ? e.message : e).includes('administrative operations')) {
+          throw new Error('This action needs the Bambuddy admin login. Add the admin username + password in Settings → Edit, then retry.');
+        }
+        throw e;
+      }
+    }
+    const stale = !this.jwt || Date.now() - this.jwtMintedAt > BambuddyClient.JWT_MAX_AGE_MS;
+    let token = stale ? await this.adminLogin() : this.jwt!;
+    const attempt = (tok: string) =>
+      fetch(this.baseUrl + path, {
+        ...init,
+        headers: { Authorization: `Bearer ${tok}`, ...this.extraHeaders, ...(init?.headers ?? {}) },
+      });
+    let res = await attempt(token);
+    if (res.status === 401 || res.status === 403) {
+      token = await this.adminLogin(); // invalidated server-side (restart, password change) — once
+      res = await attempt(token);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(`Bambuddy ${init?.method ?? 'GET'} ${path} -> HTTP ${res.status} ${body}`.trim());
@@ -169,6 +247,15 @@ export class BambuddyClient {
   /** Read-only staged camera diagnostics — explains *why* the stream is unavailable (e.g. port 6000 timeout). */
   diagnoseCamera(printerId: number): Promise<{ protocol: string; port: number; overall_status: string; summary_code: string; stages: { name: string; status: string; code: string | null }[] }> {
     return this.req(`/api/v1/printers/${printerId}/camera/diagnose`, { method: 'POST' }).then((r) => r.json());
+  }
+
+  /** Tokenized library-file download URL (the slicer-token path — token IS the auth, so the URL
+   *  works from a WebView fetch with no headers). Single-use, short-lived; mint per view. */
+  async mintFileDownloadUrl(fileId: number, filename?: string): Promise<string> {
+    const data = await (await this.req(`/api/v1/library/files/${fileId}/slicer-token`, { method: 'POST' })).json();
+    const token = data.token ?? data.slicer_token ?? data.download_token ?? data.value;
+    if (!token) throw new Error('slicer-token response had no recognizable token field');
+    return `${this.baseUrl}/api/v1/library/files/${fileId}/dl/${encodeURIComponent(token)}/${encodeURIComponent(filename || `model-${fileId}.stl`)}`;
   }
 
   /** Library thumbnails are gated by a camera *stream* token (?token=), NOT X-API-Key — the same
@@ -353,9 +440,11 @@ export class BambuddyClient {
   getMaintenanceSummary(): Promise<MaintenanceSummary> {
     return this.req('/api/v1/maintenance/summary').then((r) => r.json());
   }
-  /** MUTATES — resets an item's counter ("mark done"). Body is REQUIRED (bodyless POST 422s). */
+  /** MUTATES — resets an item's counter ("mark done"). Body is REQUIRED (bodyless POST 422s).
+   *  ADMIN-gated: Bambuddy refuses API keys here regardless of permissions (verified live: key →
+   *  403, JWT → past auth), so this routes through adminReq. */
   async performMaintenance(itemId: number, notes?: string): Promise<void> {
-    await this.req(`/api/v1/maintenance/items/${itemId}/perform`, {
+    await this.adminReq(`/api/v1/maintenance/items/${itemId}/perform`, {
       method: 'POST',
       body: JSON.stringify(notes ? { notes } : {}),
       headers: { 'Content-Type': 'application/json' },

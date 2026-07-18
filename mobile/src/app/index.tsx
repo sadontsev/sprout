@@ -16,7 +16,7 @@ import { reconcileSelection, initialSelectionState, type SelectionState } from '
 import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
 import { LibraryView, JobsView, AmsView, PowerView } from '@/components/TabScreens';
-import { CameraOverlay, UploadSheet, WizardOverlay, TexturizeSheet } from '@/components/Overlays';
+import { CameraOverlay, UploadSheet, WizardOverlay, TexturizeSheet, StlViewerOverlay } from '@/components/Overlays';
 import { TexturizeClient } from '@/api/texturizeClient';
 import { resolveTexturizeUrl } from '@/config/texturizeConfig';
 import { FadeRise } from '@/components/anim';
@@ -54,7 +54,10 @@ export default function AppScreen() {
 }
 
 function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) {
-  const client = useMemo(() => new BambuddyClient({ baseUrl: config.baseUrl, apiKey: config.apiKey }), [config]);
+  const client = useMemo(
+    () => new BambuddyClient({ baseUrl: config.baseUrl, apiKey: config.apiKey, adminUsername: config.adminUsername, adminPassword: config.adminPassword }),
+    [config],
+  );
 
   // ---- Printer fleet + selection (persisted) ----
   const [printers, setPrinters] = useState<Printer[] | null>(null);
@@ -163,6 +166,10 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
     return url ? new TexturizeClient({ baseUrl: url, apiKey: config.apiKey }) : null;
   }, [config]);
   const [texturizeFile, setTexturizeFile] = useState<LibraryFile | null>(null);
+  // Fullscreen interactive STL viewer (renders ABOVE the texturize sheet so "View in 3D" from the
+  // done state returns to the sheet on close, keeping the tweak → re-run loop intact).
+  const [viewStl, setViewStl] = useState<{ fileId: number; name: string } | null>(null);
+  const openStl = (f: LibraryFile) => setViewStl({ fileId: f.id, name: f.print_name || f.filename });
 
   // Speed: the printer's real speed_level drives the UI; a short-lived optimistic override bridges
   // the gap between tapping a mode and the next status frame reflecting it.
@@ -292,7 +299,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       </View>
       {tab !== 'printer' && (
         <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
-          {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={printerId} plate={profile.plate} onUpload={() => setOverlay('upload')} onPick={setWizardFile} onTexturize={texClient ? setTexturizeFile : undefined} />}
+          {tab === 'library' && <LibraryView key={libKey} client={client} camToken={camToken} printerId={printerId} plate={profile.plate} onUpload={() => setOverlay('upload')} onPick={setWizardFile} onTexturize={texClient ? setTexturizeFile : undefined} onView3D={openStl} />}
           {tab === 'jobs' && <JobsView client={client} status={status} printerId={printerId} printers={printers ?? []} camToken={camToken} onBrowse={() => setTab('library')} />}
           {tab === 'ams' && <AmsView client={client} status={status} printerId={printerId} amsLabel={profile.amsLabel} />}
           {tab === 'power' && <PowerView client={client} printerId={printerId} status={status} />}
@@ -308,8 +315,15 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
         <UploadSheet client={client} onClose={() => setOverlay(null)} onUploaded={() => setLibKey((k) => k + 1)} />
       )}
       {texturizeFile && texClient && (
-        <TexturizeSheet texClient={texClient} file={texturizeFile} onClose={() => setTexturizeFile(null)} onDone={() => setLibKey((k) => k + 1)} />
+        <TexturizeSheet
+          texClient={texClient}
+          file={texturizeFile}
+          onClose={() => setTexturizeFile(null)}
+          onDone={() => setLibKey((k) => k + 1)}
+          onView={(fileId, name) => setViewStl({ fileId, name })}
+        />
       )}
+      {viewStl && <StlViewerOverlay client={client} fileId={viewStl.fileId} name={viewStl.name} onClose={() => setViewStl(null)} />}
       {wizardFile && (
         <WizardOverlay
           client={client}
@@ -331,6 +345,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
                 }
               : undefined
           }
+          onView3D={openStl}
         />
       )}
     </View>

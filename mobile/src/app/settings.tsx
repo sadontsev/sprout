@@ -49,6 +49,8 @@ export default function Settings() {
   const [printerName, setPrinterName] = useState<string | null>(null);
   const [pushUrl, setPushUrl] = useState('');
   const [serverPush, setServerPush] = useState(true);
+  const [adminUser, setAdminUser] = useState('');
+  const [adminPw, setAdminPw] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,6 +61,8 @@ export default function Settings() {
         setPrinterName(cfg.printerName ?? null);
         setPushUrl(cfg.pushUrl ?? '');
         setServerPush(cfg.serverPush ?? true);
+        setAdminUser(cfg.adminUsername ?? '');
+        setAdminPw(cfg.adminPassword ?? '');
         setHasConfig(true);
       } else {
         setEditing(true); // first run — go straight to the form
@@ -77,10 +81,16 @@ export default function Settings() {
     setSaving(true);
     const url = sanitizeBaseUrl(baseUrl);
     const key = sanitizeApiKey(apiKey);
+    const aUser = adminUser.trim();
+    const aPw = adminPw;
     try {
       // Pre-flight: actually reach the server with the entered URL+key before persisting, so a wrong
       // host or a rejected key surfaces here instead of as a silent, eternal "Connecting" dashboard.
-      const fleet = await new BambuddyClient({ baseUrl: url, apiKey: key }).probe();
+      const probeClient = new BambuddyClient({ baseUrl: url, apiKey: key, adminUsername: aUser || undefined, adminPassword: aPw || undefined });
+      const fleet = await probeClient.probe();
+      // Same pre-flight for the optional admin login — a typo'd password should fail HERE, not later
+      // on the first "mark done".
+      if (aUser && aPw) await probeClient.verifyAdminLogin();
       const cur = await getConfig();
       // Auto-select a real printer from the fleet (keep the current one if it still exists), so the
       // dashboard never defaults to a guessed id that doesn't exist on this backend. Spread `cur` so
@@ -93,6 +103,8 @@ export default function Settings() {
         apiKey: key,
         pushUrl: pushUrl.trim() || undefined,
         serverPush,
+        adminUsername: aUser || undefined,
+        adminPassword: aPw || undefined,
         theme: cur?.theme ?? theme,
         printerId: keepId ?? cur?.printerId,
         printerName: keepName,
@@ -102,7 +114,10 @@ export default function Settings() {
       else router.replace('/');
     } catch (e) {
       setSaving(false);
-      setError(classifyConnectError(e).message);
+      // Admin-login failures carry their own actionable message — classifyConnectError would misread
+      // their HTTP 401 as "API key rejected".
+      const msg = e instanceof Error && e.message.startsWith('Admin login failed') ? e.message : classifyConnectError(e).message;
+      setError(msg);
     }
   };
 
@@ -182,6 +197,14 @@ export default function Settings() {
           </Text>
         </>
       )}
+      {/* ADMIN (optional) — Bambuddy refuses API keys on admin endpoints (maintenance "mark done",
+          settings writes) no matter the key's permissions; those need a JWT from this login. */}
+      <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 24, marginBottom: 4 }}>ADMIN LOGIN (OPTIONAL)</Text>
+      <Text style={{ fontSize: 11.5, lineHeight: 16, color: c.t3, marginBottom: 9 }}>
+        Unlocks admin actions like marking maintenance done — Bambuddy doesn’t allow API keys for those. Stored only in the Keychain.
+      </Text>
+      <TextInput value={adminUser} onChangeText={setAdminUser} autoCapitalize="none" autoCorrect={false} autoComplete="off" textContentType="none" placeholder="admin username" placeholderTextColor={c.t3} style={field} />
+      <TextInput value={adminPw} onChangeText={setAdminPw} autoCapitalize="none" autoCorrect={false} spellCheck={false} autoComplete="off" textContentType="none" placeholder="admin password" placeholderTextColor={c.t3} style={{ ...field, marginTop: 10 }} />
       {error && (
         <View style={{ marginTop: 20, padding: 13, borderRadius: 12, backgroundColor: c.s2, borderWidth: 1, borderColor: c.error }}>
           <Text style={{ color: c.error, fontSize: 13, lineHeight: 18, fontWeight: '500' }}>{error}</Text>
@@ -229,6 +252,7 @@ export default function Settings() {
                 </View>
                 <Row label="Server" value={hostOf(baseUrl)} />
                 <Row label="API key" value={maskKey(apiKey)} valueColor={c.t3} />
+                <Row label="Admin login" value={adminUser && adminPw ? adminUser : 'Off'} valueColor={c.t3} />
                 <Row label="Live Activities" value={pushLabel} valueColor={c.t3} last />
               </Section>
 
