@@ -315,13 +315,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
         <UploadSheet client={client} onClose={() => setOverlay(null)} onUploaded={() => setLibKey((k) => k + 1)} />
       )}
       {texturizeFile && texClient && (
-        <TexturizeSheet
-          texClient={texClient}
-          file={texturizeFile}
-          onClose={() => setTexturizeFile(null)}
-          onDone={() => setLibKey((k) => k + 1)}
-          onView={(fileId, name) => setViewStl({ fileId, name })}
-        />
+        <TexturizeSheet texClient={texClient} file={texturizeFile} onClose={() => setTexturizeFile(null)} onDone={() => setLibKey((k) => k + 1)} />
       )}
       {viewStl && <StlViewerOverlay client={client} fileId={viewStl.fileId} name={viewStl.name} onClose={() => setViewStl(null)} />}
       {wizardFile && (

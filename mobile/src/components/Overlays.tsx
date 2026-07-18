@@ -245,7 +245,7 @@ function texturedDisplayName(f: LibraryFile): string {
   return `${name.replace(/\.(stl|3mf|obj|gcode(\.3mf)?)$/i, '')}-textured.stl`;
 }
 
-export function TexturizeSheet({ texClient, file, onClose, onDone, onView }: { texClient: TexturizeClient; file: LibraryFile; onClose: () => void; onDone: () => void; onView?: (fileId: number, name: string) => void }) {
+export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient: TexturizeClient; file: LibraryFile; onClose: () => void; onDone: () => void }) {
   const insets = useSafeAreaInsets();
   const [textures, setTextures] = useState<TexturizeTexture[] | null>(null);
   const [texId, setTexId] = useState<string | null>(null);
@@ -254,7 +254,10 @@ export function TexturizeSheet({ texClient, file, onClose, onDone, onView }: { t
   const [mapping, setMapping] = useState<TexturizeMappingMode>('triplanar');
   const [detail, setDetail] = useState(0.4);
   const [job, setJob] = useState<{ id: string; stage: string; progress: number } | null>(null);
-  const [done, setDone] = useState<{ fileId: number; tris?: number } | null>(null);
+  // The finished result opens AUTOMATICALLY as a fullscreen preview held on the sidecar — the
+  // library stays untouched until Keep commits it. Adjust discards and returns to the settings.
+  const [preview, setPreview] = useState<{ jobId: string; tris?: number } | null>(null);
+  const [keeping, setKeeping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -270,7 +273,6 @@ export function TexturizeSheet({ texClient, file, onClose, onDone, onView }: { t
   const start = async () => {
     if (!texId) return;
     setError(null);
-    setDone(null);
     try {
       const { job_id } = await texClient.start({
         file_id: file.id,
@@ -280,6 +282,7 @@ export function TexturizeSheet({ texClient, file, onClose, onDone, onView }: { t
         mapping_mode: mapping,
         refine_length: detail,
         protect_bed: true,
+        commit: false, // preview flow — nothing enters the library until Keep
       });
       setJob({ id: job_id, stage: 'queued', progress: 0 });
       pollRef.current = setInterval(async () => {
@@ -289,9 +292,7 @@ export function TexturizeSheet({ texClient, file, onClose, onDone, onView }: { t
           if (j.status === 'done') {
             if (pollRef.current) clearInterval(pollRef.current);
             setJob(null);
-            onDone(); // refresh the library grid behind the sheet
-            // Stay open: the user inspects the result (3D) and can tweak params + re-run from here.
-            setDone({ fileId: j.result_file_id!, tris: j.out_triangles });
+            setPreview({ jobId: job_id, tris: j.out_triangles }); // auto-open the result
           } else if (j.status === 'error') {
             if (pollRef.current) clearInterval(pollRef.current);
             setJob(null);
@@ -304,6 +305,23 @@ export function TexturizeSheet({ texClient, file, onClose, onDone, onView }: { t
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     }
+  };
+
+  const keep = async () => {
+    if (!preview) return;
+    setKeeping(true);
+    try {
+      await texClient.commit(preview.jobId);
+      onDone(); // library refresh — the kept file is now real
+      onClose();
+    } catch (e) {
+      setKeeping(false);
+      Alert.alert('Couldn’t save', apiErrorDetail(e));
+    }
+  };
+  const adjust = () => {
+    if (preview) void texClient.discard(preview.jobId).catch(() => {}); // best-effort; server TTLs anyway
+    setPreview(null); // back to the settings, untouched
   };
 
   const busy = job !== null;
@@ -354,33 +372,46 @@ export function TexturizeSheet({ texClient, file, onClose, onDone, onView }: { t
                 <Text style={{ marginTop: 7, fontWeight: '500', fontSize: 11.5, color: c.t3, textAlign: 'center', fontFamily: mono }}>{job.stage} · {Math.round(job.progress * 100)}%</Text>
               </View>
             )}
-            {done && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16, padding: 13, borderRadius: 12, backgroundColor: c.accentDim }}>
-                <Feather name="check-circle" size={17} color={c.accent} />
-                <Text style={{ flex: 1, fontWeight: '600', fontSize: 13, color: c.t1 }}>
-                  Done{done.tris ? ` · ${done.tris.toLocaleString()} triangles` : ''} — saved to the library
-                </Text>
-              </View>
-            )}
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
               <Tap onPress={onClose} disabled={busy} style={{ paddingHorizontal: 22, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.5 : 1 }}>
-                <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>{done ? 'Done' : 'Cancel'}</Text>
+                <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>Cancel</Text>
               </Tap>
-              {done && onView && (
-                <Tap onPress={() => onView(done.fileId, texturedDisplayName(file))} style={{ flex: 1, height: 50, borderRadius: 14, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ fontWeight: '700', fontSize: 15, color: c.accentInk }}>View in 3D</Text>
-                </Tap>
-              )}
-              <Tap onPress={start} disabled={busy || !texId} style={{ flex: done && onView ? undefined : 1, paddingHorizontal: done && onView ? 20 : undefined, height: 50, borderRadius: 14, backgroundColor: busy || !texId ? c.s3 : done ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontWeight: '700', fontSize: 15, color: busy || !texId ? c.t3 : done ? c.t1 : c.accentInk }}>{busy ? 'Texturizing…' : done ? 'Re-run' : 'Texturize'}</Text>
+              <Tap onPress={start} disabled={busy || !texId} style={{ flex: 1, height: 50, borderRadius: 14, backgroundColor: busy || !texId ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontWeight: '700', fontSize: 15, color: busy || !texId ? c.t3 : c.accentInk }}>{busy ? 'Texturizing…' : 'Texturize'}</Text>
               </Tap>
             </View>
             <Text style={{ marginTop: 10, fontSize: 10.5, lineHeight: 14, color: c.t3, textAlign: 'center' }}>
-              {done ? 'Tweak the settings above and Re-run to try another look — each run saves a new file.' : 'Creates a new file in the library — the original is untouched. The bed face stays flat.'}
+              The result opens for review first — nothing is saved until you Keep it. The bed face stays flat.
             </Text>
           </ScrollView>
         </Pressable>
       </Animated.View>
+
+      {/* Fullscreen result review — opens automatically when the job finishes. Keep commits the
+          held preview into the library; Adjust discards it and returns to the settings above. */}
+      {preview && (
+        <View style={{ position: 'absolute', inset: 0, backgroundColor: '#0A0B0C' } as any}>
+          <StlWebView
+            name={texturedDisplayName(file)}
+            direct={{ origin: texClient.baseUrl, path: texClient.resultPath(preview.jobId), headers: texClient.authHeaders() }}
+          />
+          {/* Actions live in the TOP bar — the bottom belongs to the page's own shading chips
+              (Normals is the best mode for judging texture depth before committing). */}
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flex: 1, paddingHorizontal: 13, height: 44, justifyContent: 'center', borderRadius: 13, backgroundColor: 'rgba(22,24,27,0.55)' }}>
+              <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 13, color: '#fff' }}>
+                Result{preview.tris ? ` · ${preview.tris.toLocaleString()} tris` : ''}
+              </Text>
+            </View>
+            <Tap onPress={adjust} disabled={keeping} style={{ paddingHorizontal: 16, height: 44, borderRadius: 13, backgroundColor: 'rgba(42,46,51,0.92)', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontWeight: '600', fontSize: 14, color: '#E7E9EC' }}>Adjust</Text>
+            </Tap>
+            <Tap onPress={keep} disabled={keeping} style={{ paddingHorizontal: 18, height: 44, borderRadius: 13, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
+              {keeping ? <ActivityIndicator color={c.accentInk} /> : <Text style={{ fontWeight: '700', fontSize: 14, color: c.accentInk }}>Keep</Text>}
+            </Tap>
+          </View>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -671,17 +702,26 @@ export function GcodeViewerOverlay({ load, title, onClose, plate }: { load: () =
 }
 
 // ---------------- STL 3D VIEWER (interactive mesh preview — raw WebGL in a WebView) ----------------
-/** Shared mint-URL → viewer-page WebView. `compact` hides the in-page control card (inline embeds). */
-export function StlWebView({ client, fileId, name, compact, style }: { client: BambuddyClient; fileId: number; name: string; compact?: boolean; style?: object }) {
+/** Shared mint-URL → viewer-page WebView. `compact` hides the in-page control card (inline embeds).
+ *  `direct` skips the library mint and points the page at an arbitrary same-origin path (e.g. a
+ *  texturize preview held on the sidecar) with optional auth headers for the in-page fetch. */
+export function StlWebView({ client, fileId, name, compact, style, direct }: { client?: BambuddyClient; fileId?: number; name: string; compact?: boolean; style?: object; direct?: { origin: string; path: string; headers?: Record<string, string> } }) {
   const [html, setHtml] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const baseUrl = direct ? direct.origin : client!.baseUrl;
 
   useEffect(() => {
     let alive = true;
+    if (direct) {
+      setHtml(stlViewerHtml({ url: direct.path, name, compact, headers: direct.headers }));
+      return () => {
+        alive = false;
+      };
+    }
     // Tokenized download URL: the page fetches the model itself (same-origin via baseUrl below), so
     // the mesh bytes never cross the RN bridge and no auth headers are needed in-page.
-    client
-      .mintFileDownloadUrl(fileId, name)
+    client!
+      .mintFileDownloadUrl(fileId!, name)
       .then((url) => alive && setHtml(stlViewerHtml({ url, name, compact })))
       .catch((e) => alive && setErr(apiErrorDetail(e)));
     return () => {
@@ -710,7 +750,7 @@ export function StlWebView({ client, fileId, name, compact, style }: { client: B
   }
   return (
     <WebView
-      source={{ html, baseUrl: `${client.baseUrl}/` }}
+      source={{ html, baseUrl: `${baseUrl}/` }}
       originWhitelist={['*']}
       style={[{ flex: 1, backgroundColor: '#0A0B0C' }, style]}
       scrollEnabled={false}

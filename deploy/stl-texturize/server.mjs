@@ -25,11 +25,23 @@ if (!API_KEY) { console.error('FATAL: BAMBUDDY_API_KEY is required (gates this s
 const bambuddy = new Bambuddy({ baseUrl: BAMBUDDY_URL, apiKey: API_KEY });
 
 // ---- in-memory job store + single-slot queue ----
-const jobs = new Map(); // id -> { status, stage, progress, result_file_id, warnings, error, createdAt }
+// A job with commit:false finishes as a PREVIEW: the textured STL stays in `bytes` here (never
+// touching the library) until the user POSTs /commit (upload) or the job is discarded/expired.
+const jobs = new Map(); // id -> { status, stage, progress, result_file_id, warnings, error, createdAt, bytes?, name? }
 const queue = [];
 let running = false;
+const PREVIEW_TTL_MS = 30 * 60_000;
+const PREVIEW_MAX_STORED = 4; // bound RAM: a preview can be tens of MB
 
 function setJob(id, patch) { jobs.set(id, { ...jobs.get(id), ...patch }); }
+function dropPreview(id) { setJob(id, { bytes: undefined, name: undefined, expired: true }); }
+function evictPreviews() {
+  const stored = [...jobs.entries()].filter(([, j]) => j.bytes).sort((a, b) => a[1].createdAt - b[1].createdAt);
+  for (const [id, j] of stored) if (Date.now() - j.createdAt > PREVIEW_TTL_MS) dropPreview(id);
+  const alive = stored.filter(([, j]) => j.bytes);
+  while (alive.length > PREVIEW_MAX_STORED) dropPreview(alive.shift()[0]);
+}
+setInterval(evictPreviews, 60_000).unref();
 
 async function runJob(id, req) {
   setJob(id, { status: 'running', stage: 'fetch', progress: 0.02 });
@@ -59,8 +71,15 @@ async function runJob(id, req) {
   });
   if (out.safetyCapHit) warnings.push('safety_triangle_cap_hit');
 
+  const outName = texturedName(sourceName, req.file_id);
+  if (req.commit === false) {
+    // PREVIEW: hold the bytes for /result.stl + /commit — nothing enters the library uninvited.
+    evictPreviews();
+    setJob(id, { status: 'done', stage: 'done', progress: 1, preview: true, bytes: out.stlBytes, name: outName, warnings, out_triangles: out.outTriangles });
+    return;
+  }
   setJob(id, { stage: 'upload', progress: 0.92 });
-  const uploaded = await bambuddy.uploadModel(out.stlBytes, texturedName(sourceName, req.file_id));
+  const uploaded = await bambuddy.uploadModel(out.stlBytes, outName);
   setJob(id, { status: 'done', stage: 'done', progress: 1, result_file_id: uploaded.id, warnings, out_triangles: out.outTriangles });
 }
 
@@ -157,10 +176,28 @@ const server = http.createServer(async (req, res) => {
       return send(res, 202, { job_id: id });
     }
 
-    if (req.method === 'GET' && parts[0] === 'texturize-jobs' && parts[1]) {
+    if (parts[0] === 'texturize-jobs' && parts[1]) {
       const job = jobs.get(parts[1]);
       if (!job) return send(res, 404, { error: 'no such job' });
-      return send(res, 200, job);
+
+      if (req.method === 'GET' && parts.length === 2) {
+        const { bytes, ...pub } = job; // never serialize the STL buffer into the status JSON
+        return send(res, 200, pub);
+      }
+      if (req.method === 'GET' && parts[2] === 'result.stl') {
+        if (!job.bytes) return send(res, job.expired ? 410 : 404, { error: job.expired ? 'preview expired' : 'no preview bytes for this job' });
+        return send(res, 200, job.bytes, { 'Content-Type': 'model/stl', 'Content-Length': String(job.bytes.length) });
+      }
+      if (req.method === 'POST' && parts[2] === 'commit') {
+        if (!job.bytes) return send(res, job.expired ? 410 : 404, { error: job.expired ? 'preview expired' : 'nothing to commit' });
+        const uploaded = await bambuddy.uploadModel(job.bytes, job.name || 'textured.stl');
+        setJob(parts[1], { bytes: undefined, preview: false, result_file_id: uploaded.id });
+        return send(res, 200, { file_id: uploaded.id });
+      }
+      if (req.method === 'DELETE' && parts.length === 2) {
+        jobs.delete(parts[1]);
+        return send(res, 200, { ok: true });
+      }
     }
 
     return send(res, 404, { error: 'not found' });

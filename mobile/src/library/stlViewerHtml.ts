@@ -11,9 +11,10 @@
 
 export const MAX_STL_BYTES = 120 * 1024 * 1024; // ~2.4M tris binary — beyond phone-GPU comfort
 
-export function stlViewerHtml(opts: { url: string; name: string; compact?: boolean }): string {
+export function stlViewerHtml(opts: { url: string; name: string; compact?: boolean; headers?: Record<string, string> }): string {
   const urlLit = JSON.stringify(opts.url).replace(/</g, '\\u003c');
   const nameLit = JSON.stringify(opts.name).replace(/</g, '\\u003c');
+  const hdrsLit = JSON.stringify(opts.headers ?? {}).replace(/</g, '\\u003c');
   // compact: inline embed (e.g. the wizard's step-1 preview) — hide the control card / reset button
   // and pin a minimal label; interaction (orbit/pinch/double-tap) still works.
   const compactCss = opts.compact ? '<style>#bar,#reset{display:none}</style>' : '';
@@ -54,7 +55,7 @@ export function stlViewerHtml(opts: { url: string; name: string; compact?: boole
   var post=function(o){window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(o));};
   function fail(m){document.getElementById('load').style.display='none';var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t show the model. '+m;post({type:'error',message:String(m)});}
   window.addEventListener('error',function(e){fail(e.message||'error');});
-  var URL_=${urlLit}, NAME=${nameLit}, MAXB=${MAX_STL_BYTES};
+  var URL_=${urlLit}, NAME=${nameLit}, HDRS=${hdrsLit}, MAXB=${MAX_STL_BYTES};
   document.getElementById('lbl').textContent=NAME;
 
   // ---- STL parse (binary + ASCII), face normals recomputed from geometry ----
@@ -105,7 +106,7 @@ export function stlViewerHtml(opts: { url: string; name: string; compact?: boole
     return [xx,yx,zx,0, xy,yy,zy,0, xz,yz,zz,0,
       -(xx*eye[0]+xy*eye[1]+xz*eye[2]), -(yx*eye[0]+yy*eye[1]+yz*eye[2]), -(zx*eye[0]+zy*eye[1]+zz*eye[2]), 1]; }
 
-  fetch(URL_).then(function(r){
+  fetch(URL_,{headers:HDRS}).then(function(r){
     if(!r.ok) throw new Error('download failed (HTTP '+r.status+')');
     return r.arrayBuffer();
   }).then(function(buf){
