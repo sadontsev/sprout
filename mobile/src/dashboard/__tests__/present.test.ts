@@ -140,10 +140,10 @@ test('dual nozzle: matches the live H2C payload — right active, left idle', ()
   expect(vm.nozzleTarget).toBe(220);
 });
 
-// Regression (live H2C, 2026-07-07): active_extruder is UNRELIABLE — it read 1 (right) while the LEFT
-// nozzle (idx 0) was the driven/hot one at 245/245 and the right sat idle at 46/0 (and ams_extruder_map
-// pointed at extruder 0). Trusting active_extruder would show the idle nozzle; the driven target wins.
-test('dual nozzle: a contradictory active_extruder is ignored — the driven head wins', () => {
+// Live H2C capture, 2026-07-07 — originally logged as "active_extruder is unreliable", actually the
+// two numbering schemes: temps are position-ordered (`nozzle` = LEFT) while extruder ids are 0=RIGHT.
+// ae=1 means LEFT — which IS the driven idx-0 head here. Both signals agree; driven still decides.
+test('dual nozzle: the driven head wins (and the mapped active_extruder agrees)', () => {
   const vm = presentDashboard({
     ...h2cRunning,
     active_extruder: 1,
@@ -219,43 +219,44 @@ test('presentDashboard tolerates string temps in the temperatures block', () => 
   expect(vm.bedNow).toBe(60);
 });
 
-// Mirrors the real live H2C nozzle payload (dual toolhead + swappable rack, 2026-07-05).
+// Mirrors the real live H2C rack payload (2026-07-18, mid-print, owner-verified sides): high-nibble
+// 0 (ids 0,1) = the RIGHT fixed head — id 0 is the 0.6 holding the ACTIVE tray's black PLA — and
+// high-nibble 1 (ids 16-21) = the LEFT 5-slot vortex, where several docked nozzles keep filament.
 const h2cNozzles: PrinterStatus = {
   ...h2cRunning,
-  temperatures: { ...h2cRunning.temperatures, nozzle: 250, nozzle_target: 250, nozzle_2: 47, nozzle_2_target: 25 },
-  nozzles: [{ nozzle_type: 'HS01', nozzle_diameter: '0.4' }, { nozzle_type: 'HS01', nozzle_diameter: '0.4' }],
-  // id >> 4 encodes the extruder: 0/1 = LEFT toolhead, 17-21 = RIGHT vortex.
+  temperatures: { ...h2cRunning.temperatures, nozzle: 44, nozzle_target: 0, nozzle_2: 220, nozzle_2_target: 220 },
+  nozzles: [{ nozzle_type: 'HS01', nozzle_diameter: '0.6' }, { nozzle_type: 'HS01', nozzle_diameter: '0.4' }],
   nozzle_rack: [
-    { id: 0, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2413139', filament_color: 'C9A38180' }, // LEFT, mounted (has filament)
-    { id: 1, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 0, max_temp: 0, serial_number: 'N/A', filament_color: '00000000' }, // LEFT empty slot -> dropped
-    { id: 17, nozzle_type: 'HS00', nozzle_diameter: '0.2', wear: 128, max_temp: 350, serial_number: '20D06A5A2411698', filament_color: '00000000' }, // RIGHT vortex
-    { id: 18, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2416569', filament_color: 'C12E1FFF' }, // RIGHT vortex, mounted
-    { id: 19, nozzle_type: 'HS01', nozzle_diameter: '0.6', wear: 128, max_temp: 350, serial_number: '20D06A5A1504039', filament_color: '00000000' }, // RIGHT vortex
+    { id: 0, nozzle_type: 'HS01', nozzle_diameter: '0.6', wear: 128, max_temp: 350, serial_number: '20D06A5A1504039', filament_color: '161616FF' }, // RIGHT fixed, black PLA loaded
+    { id: 1, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 0, max_temp: 0, serial_number: 'N/A', filament_color: '00000000' }, // RIGHT empty slot -> dropped
+    { id: 16, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2413139', filament_color: 'F330F9FF' }, // LEFT vortex, PETG loaded
+    { id: 17, nozzle_type: 'HS00', nozzle_diameter: '0.2', wear: 128, max_temp: 350, serial_number: '20D06A5A2411698', filament_color: '00000000' }, // LEFT vortex
+    { id: 18, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2416569', filament_color: 'C12E1FFF' }, // LEFT vortex, loaded too
   ],
 };
 
 describe('presentNozzles', () => {
-  it('groups by toolhead: Left is the fixed single nozzle, Right is the vortex (id >> 4)', () => {
+  it('groups by toolhead: LEFT is the vortex (high-nibble 1), RIGHT the fixed head (high-nibble 0), Left listed first', () => {
     const { toolheads, hasVortex } = presentNozzles({ ...h2cNozzles, active_extruder: 0 });
     expect(hasVortex).toBe(true);
     expect(toolheads.map((t) => t.label)).toEqual(['Left', 'Right']);
 
     const left = toolheads[0];
-    expect(left).toMatchObject({ side: 'left', swappable: false, active: true }); // active_extruder 0
-    expect(left.nozzles.map((n) => n.key)).toEqual(['0']); // id 1 (empty) dropped
-    expect(left.nozzles[0]).toMatchObject({ diameter: '0.4 mm', type: 'Hardened', mounted: true, colorHex: '#C9A381' });
+    expect(left).toMatchObject({ side: 'left', swappable: true, active: false }); // ae=0 -> RIGHT is active
+    expect(left.nozzles.map((n) => n.diameter)).toEqual(['0.4 mm', '0.2 mm', '0.4 mm']); // ids 16,17,18
+    // TWO vortex nozzles keep filament loaded at once — real quick-swap behavior, both flagged.
+    expect(left.nozzles.filter((n) => n.mounted).map((n) => n.key)).toEqual(['16', '18']);
 
     const right = toolheads[1];
-    expect(right).toMatchObject({ side: 'right', swappable: true, active: false });
-    expect(right.nozzles.map((n) => n.diameter)).toEqual(['0.2 mm', '0.4 mm', '0.6 mm']); // ids 17,18,19
-    expect(right.nozzles.find((n) => n.key === '18')).toMatchObject({ mounted: true }); // has filament
-    expect(right.nozzles.find((n) => n.key === '17')).toMatchObject({ mounted: false });
+    expect(right).toMatchObject({ side: 'right', swappable: false, active: true });
+    expect(right.nozzles.map((n) => n.key)).toEqual(['0']); // id 1 (empty) dropped
+    expect(right.nozzles[0]).toMatchObject({ diameter: '0.6 mm', type: 'Hardened', mounted: true, colorHex: '#161616' });
   });
 
-  it('active toolhead follows active_extruder', () => {
+  it('active toolhead follows active_extruder with Bambu ids (1 = left)', () => {
     const { toolheads } = presentNozzles({ ...h2cNozzles, active_extruder: 1 });
-    expect(toolheads[0].active).toBe(false); // left
-    expect(toolheads[1].active).toBe(true); // right
+    expect(toolheads[0].active).toBe(true); // left (ext 1)
+    expect(toolheads[1].active).toBe(false); // right (ext 0)
   });
 
   it('single-nozzle A1: one non-swappable toolhead, no vortex', () => {
@@ -273,15 +274,31 @@ describe('presentNozzles', () => {
   });
 });
 
-test('active nozzle ignores active_extruder (unreliable) — driven, else hotter, wins', () => {
-  // Both nozzles driven (250/250 vs 220/225) and the printer claims the RIGHT (1) is active — but
-  // active_extruder is unreliable on the live H2C, so the hotter of the two driven heads (left) wins.
+test('both nozzles driven: the mapped active_extruder breaks the tie; hotter is the last resort', () => {
+  // Both heads driven (250/250 vs 220/225): the driven signal can't decide, so the mapped
+  // active_extruder does — ae=1 means LEFT (Bambu ids: 0=right), i.e. temps idx 0.
   const vm = presentDashboard({ ...h2cRunning, active_extruder: 1, temperatures: { nozzle: 250, nozzle_target: 250, nozzle_2: 220, nozzle_2_target: 225 } });
   expect(vm.nozzles[0].active).toBe(true);
   expect(vm.nozzles[1].active).toBe(false);
-  // Same result with active_extruder absent — the field never drives the choice either way.
+  // ae=0 means RIGHT -> temps idx 1, even though the left is hotter.
+  const vmR = presentDashboard({ ...h2cRunning, active_extruder: 0, temperatures: { nozzle: 250, nozzle_target: 250, nozzle_2: 220, nozzle_2_target: 225 } });
+  expect(vmR.nozzles[1].active).toBe(true);
+  // With active_extruder absent, the hotter head is the fallback.
   const vm2 = presentDashboard({ ...h2cRunning, active_extruder: undefined, temperatures: { nozzle: 250, nozzle_target: 250, nozzle_2: 220, nozzle_2_target: 225 } });
   expect(vm2.nozzles[0].active).toBe(true);
+});
+
+// The definitive live capture (2026-07-18, mid-print, owner ground truth: "printing on the 0.6 on the
+// RIGHT, left 0.4 idle"): nozzle_2 driven 220/220 + active_extruder 0 + tray_now's filament sitting in
+// rack id 0 — all three agree that temps.nozzle_2 IS the right head and extruder id 0 IS right.
+test('live H2C ground truth: right head (nozzle_2) active while printing right', () => {
+  const vm = presentDashboard({
+    ...h2cRunning,
+    active_extruder: 0,
+    temperatures: { bed: 55, bed_target: 55, nozzle: 44, nozzle_target: 0, nozzle_2: 220, nozzle_2_target: 220 },
+  });
+  expect(vm.nozzles[1].active).toBe(true); // idx 1 = nozzle_2 = RIGHT
+  expect(vm.nozzleNow).toBe(220);
 });
 
 test('fmtDuration + normColor + fmtHmsCode helpers', () => {
