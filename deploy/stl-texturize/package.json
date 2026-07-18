@@ -1,0 +1,19 @@
+{
+  "name": "stl-texturize",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sprout sidecar: bake image displacement textures onto library STLs (wraps CNCKitchen/stlTexturizer, AGPL, vendored at build).",
+  "scripts": {
+    "start": "node --max-old-space-size=4096 server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "three": "0.170.0",
+    "fflate": "0.8.2",
+    "sharp": "^0.33.5"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

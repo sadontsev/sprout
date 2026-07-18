@@ -1,0 +1,7 @@
+# Vendored AGPL texturizer — fetched at Docker build from the pinned SHA, never committed here.
+vendor/
+node_modules/
+# Runtime-seeded / user-dropped texture images (except the .gitkeep so the mount dir exists).
+textures/*
+!textures/.gitkeep
+.env
