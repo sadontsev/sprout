@@ -115,7 +115,7 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
   );
 }
 
-export function LibraryView({ client, camToken, printerId, plate, onUpload, onPick, onTexturize }: { client: BambuddyClient; camToken: string | null; printerId: number; plate?: { w: number; d: number }; onUpload: () => void; onPick: (f: LibraryFile) => void; onTexturize?: (f: LibraryFile) => void }) {
+export function LibraryView({ client, camToken, printerId, plate, onUpload, onPick, onTexturize, onView3D }: { client: BambuddyClient; camToken: string | null; printerId: number; plate?: { w: number; d: number }; onUpload: () => void; onPick: (f: LibraryFile) => void; onTexturize?: (f: LibraryFile) => void; onView3D?: (f: LibraryFile) => void }) {
   const [source, setSource] = useState<LibSource>('library');
   const [files, setFiles] = useState<LibraryFile[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -193,10 +193,11 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
 
   // Long-press action menu (was delete-only — Texturize was undiscoverable as just a corner badge).
   const fileMenu = (f: LibraryFile) => {
-    const canTexturize = !!onTexturize && (f.file_type || '').toLowerCase() === 'stl';
+    const isStl = (f.file_type || '').toLowerCase() === 'stl';
     Alert.alert(f.print_name || f.filename, undefined, [
       { text: 'Print…', onPress: () => onPick(f) },
-      ...(canTexturize ? [{ text: 'Texturize…', onPress: () => onTexturize!(f) }] : []),
+      ...(onView3D && isStl ? [{ text: 'View in 3D', onPress: () => onView3D(f) }] : []),
+      ...(onTexturize && isStl ? [{ text: 'Texturize…', onPress: () => onTexturize(f) }] : []),
       { text: 'Delete', style: 'destructive' as const, onPress: () => confirmDelete(f) },
       { text: 'Cancel', style: 'cancel' as const },
     ]);

@@ -78,6 +78,75 @@ test('probe throws with the status on non-ok (so it can be classified)', async (
   await expect(client.probe()).rejects.toThrow(/401/);
 });
 
+test('mintFileDownloadUrl mints a slicer token and builds the tokenized (header-free) URL', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ token: 't0k' }) });
+  const url = await client.mintFileDownloadUrl(22, 'my model.stl');
+  expect(fetchMock.mock.calls[0][0]).toBe('https://x/api/v1/library/files/22/slicer-token');
+  expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+  expect(url).toBe('https://x/api/v1/library/files/22/dl/t0k/my%20model.stl');
+});
+
+test('mintFileDownloadUrl accepts alternate token field names and rejects tokenless responses', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ download_token: 'alt' }) });
+  expect(await client.mintFileDownloadUrl(5)).toContain('/dl/alt/model-5.stl');
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ nope: 1 }) });
+  await expect(client.mintFileDownloadUrl(5)).rejects.toThrow(/token/);
+});
+
+describe('admin-gated calls (performMaintenance)', () => {
+  const admin = () => new BambuddyClient({ baseUrl: 'https://x', apiKey: 'bb_k', adminUsername: 'max', adminPassword: 'pw' });
+
+  it('without admin creds: falls through to the API key, and rewrites the categorical 403 into an actionable message', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 403, text: async () => '{"detail":"API keys cannot be used for administrative operations"}' });
+    await expect(client.performMaintenance(11)).rejects.toThrow(/admin login.*Settings/i);
+    expect(fetchMock.mock.calls[0][1].headers['X-API-Key']).toBe('bb_k');
+  });
+
+  it('without admin creds: other errors pass through untouched', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'boom' });
+    await expect(client.performMaintenance(11)).rejects.toThrow(/HTTP 500/);
+  });
+
+  it('with admin creds: logs in once, then sends Bearer (no X-API-Key) and caches the JWT across calls', async () => {
+    const a = admin();
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ access_token: 'jwt1' }) }) // login
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' }) // perform #1
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' }); // perform #2 (no re-login)
+    await a.performMaintenance(11, 'lubed');
+    await a.performMaintenance(12);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [loginUrl, loginOpts] = fetchMock.mock.calls[0];
+    expect(loginUrl).toBe('https://x/api/v1/auth/login');
+    expect(JSON.parse(loginOpts.body)).toEqual({ username: 'max', password: 'pw' });
+    const [url, opts] = fetchMock.mock.calls[1];
+    expect(url).toBe('https://x/api/v1/maintenance/items/11/perform');
+    expect(opts.headers.Authorization).toBe('Bearer jwt1');
+    expect(opts.headers['X-API-Key']).toBeUndefined();
+    expect(JSON.parse(opts.body)).toEqual({ notes: 'lubed' });
+  });
+
+  it('re-logins once and retries when the cached JWT is rejected (server restart)', async () => {
+    const a = admin();
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ access_token: 'old' }) }) // login
+      .mockResolvedValueOnce({ ok: false, status: 401, text: async () => 'expired' }) // perform → 401
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ access_token: 'new' }) }) // re-login
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' }); // retry OK
+    await a.performMaintenance(11);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[3][1].headers.Authorization).toBe('Bearer new');
+  });
+
+  it('surfaces bad credentials and 2FA accounts with human messages', async () => {
+    const a = admin();
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ detail: 'bad' }) });
+    await expect(a.verifyAdminLogin()).rejects.toThrow(/Admin login failed \(HTTP 401\)/);
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ requires_2fa: true }) });
+    await expect(a.verifyAdminLogin()).rejects.toThrow(/2FA/);
+  });
+});
+
 describe('classifyConnectError', () => {
   const cases: [string, unknown, ConnectErrorKind][] = [
     ['abort/timeout', Object.assign(new Error('Aborted'), { name: 'AbortError' }), 'timeout'],
