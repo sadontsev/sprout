@@ -241,6 +241,7 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
 <style>
   html,body{margin:0;height:100%;background:#101216;overflow:hidden;font-family:-apple-system,system-ui}
   #c{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;display:block;touch-action:none}
+  #cg{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%;display:block;pointer-events:none}
   #bar{position:absolute;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 40px);padding:0 22px;z-index:10}
   #card{background:rgba(22,24,27,0.82);border-radius:16px;padding:13px 16px 16px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
   #top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px}
@@ -253,6 +254,7 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
 </style></head>
 <body>
 <canvas id="c"></canvas>
+<canvas id="cg"></canvas>
 <div id="reset">⌂</div>
 <div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint">drag rotate · pinch zoom · 2-finger pan · double-tap reset</span></div><input id="s" type="range" min="1" max="1" value="1"></div></div>
 <div id="err"></div>
@@ -289,9 +291,80 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     function prX(x,y){ return ox+px+((x-cx)*cyaw-(y-cy)*syaw)*S; }
     function prY(x,y,z){ return oy+py-((((x-cx)*syaw+(y-cy)*cyaw)*cpit)+(z-cz)*spit)*S; }
 
-    // Neutral steel ramp (bottom #55617A -> top #DEE4F0); current layer white; supports amber.
-    function heightColor(t,top){ if(top) return '#FFFFFF';
-      return 'rgb('+Math.round(85+137*t)+','+Math.round(97+131*t)+','+Math.round(122+118*t)+')'; }
+    // ---- WebGL extrusion renderer (the model itself) ----
+    // Toolpaths render as camera-facing ribbons at TRUE extrusion width (0.42mm * zoom): adjacent
+    // perimeter lines touch, so surfaces read as solid plastic instead of a wool of 1px strokes
+    // (the old Canvas2D look). Ribbon cross-section shading (bright centre, dark edges) gives the
+    // printed-lines look; height ramp (steel, in-shader) + white current layer + amber supports kept.
+    var cvg=document.getElementById('cg');
+    var gl=cvg.getContext('webgl',{antialias:true,alpha:true,premultipliedAlpha:true});
+    if(!gl) throw new Error('WebGL unavailable');
+    if(!gl.getExtension('OES_element_index_uint')) throw new Error('WebGL uint indices unavailable');
+    function mkShader(ty,src){ var s=gl.createShader(ty); gl.shaderSource(s,src); gl.compileShader(s);
+      if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+    var vsrc=
+      'attribute vec3 aA;attribute vec3 aB;attribute vec2 aES;'+ // aES.x: 0=at A / 1=at B, aES.y: side ±1
+      'uniform vec3 uCtr;uniform vec2 uRot;uniform vec2 uPit;uniform float uS;uniform vec2 uOff;'+
+      'uniform vec2 uVP;uniform float uHalf;uniform float uDepthR;varying float vZ;varying float vSide;'+
+      'vec3 scr(vec3 p){float xr=(p.x-uCtr.x)*uRot.x-(p.y-uCtr.y)*uRot.y;'+
+      'float yr=(p.x-uCtr.x)*uRot.y+(p.y-uCtr.y)*uRot.x;'+
+      'return vec3(uOff.x+xr*uS, uOff.y-((yr*uPit.x)+(p.z-uCtr.z)*uPit.y)*uS, (yr*uPit.y-(p.z-uCtr.z)*uPit.x)/uDepthR);}'+
+      'void main(){vec3 sA=scr(aA);vec3 sB=scr(aB);vec2 d=sB.xy-sA.xy;float L=max(length(d),0.0001);'+
+      'vec2 perp=vec2(-d.y,d.x)/L;vec3 s=mix(sA,sB,aES.x);vec2 xy=s.xy+perp*aES.y*uHalf;'+
+      'gl_Position=vec4(xy.x/uVP.x*2.0-1.0, 1.0-xy.y/uVP.y*2.0, s.z, 1.0);vZ=aA.z;vSide=aES.y;}';
+    var fsrc=
+      'precision mediump float;varying float vZ;varying float vSide;'+
+      'uniform float uMinZ;uniform float uSpanZ;uniform float uCurZ;uniform float uEps;uniform float uIsSup;'+
+      'void main(){float t=clamp((vZ-uMinZ)/uSpanZ,0.0,1.0);'+
+      'vec3 col=uIsSup>0.5?vec3(0.73,0.51,0.18):mix(vec3(0.33,0.38,0.48),vec3(0.87,0.89,0.94),t);'+
+      'col=mix(col,vec3(1.0),step(abs(vZ-uCurZ),uEps)*0.85);'+
+      'float shade=0.58+0.42*(1.0-vSide*vSide);'+ // round-line cross-section: bright centre, dark edges
+      'gl_FragColor=vec4(col*shade,1.0);}';
+    var prog=gl.createProgram();
+    gl.attachShader(prog,mkShader(gl.VERTEX_SHADER,vsrc));
+    gl.attachShader(prog,mkShader(gl.FRAGMENT_SHADER,fsrc));
+    gl.linkProgram(prog);
+    if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+    var U={}; ['uCtr','uRot','uPit','uS','uOff','uVP','uHalf','uDepthR','uMinZ','uSpanZ','uCurZ','uEps','uIsSup'].forEach(function(n){U[n]=gl.getUniformLocation(prog,n);});
+    var locA=gl.getAttribLocation(prog,'aA'), locB=gl.getAttribLocation(prog,'aB'), locES=gl.getAttribLocation(prog,'aES');
+
+    // Geometry: 4 verts/segment (A-1,A+1,B-1,B+1), 8 floats each [ax,ay,az, bx,by,bz, end,side];
+    // 6 uint32 indices/segment. Ordered by layer, so "draw up to layer N" is one prefix drawElements
+    // per buffer. Dense models decimate every 2nd segment (visual density is unaffected at phone size).
+    var SEG_BUDGET=800000, skip=segTotal>SEG_BUDGET?2:1;
+    function buildGeo(perLayer){
+      var segs=0,k,Lr;
+      for(k=0;k<perLayer.length;k++){ Lr=perLayer[k]; if(Lr) segs+=Math.ceil((Lr.length>>2)/skip); }
+      var vb=new Float32Array(segs*4*8), ib=new Uint32Array(segs*6), idxEnd=new Uint32Array(perLayer.length);
+      var v=0,i2=0,seg=0;
+      for(k=0;k<perLayer.length;k++){
+        Lr=perLayer[k]||[]; var z=zs[k];
+        for(var q=0;q<Lr.length;q+=4*skip){
+          var ax=Lr[q],ay=Lr[q+1],bx2=Lr[q+2],by2=Lr[q+3];
+          for(var e2=0;e2<4;e2++){ // (end,side): (0,-1)(0,1)(1,-1)(1,1)
+            vb[v++]=ax;vb[v++]=ay;vb[v++]=z; vb[v++]=bx2;vb[v++]=by2;vb[v++]=z;
+            vb[v++]=e2>>1; vb[v++]=(e2&1)?1:-1;
+          }
+          var b0=seg*4;
+          ib[i2++]=b0;ib[i2++]=b0+1;ib[i2++]=b0+2; ib[i2++]=b0+2;ib[i2++]=b0+1;ib[i2++]=b0+3;
+          seg++;
+        }
+        idxEnd[k]=i2;
+      }
+      var vbo=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,vb,gl.STATIC_DRAW);
+      var ibo=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,ib,gl.STATIC_DRAW);
+      return {vbo:vbo,ibo:ibo,idxEnd:idxEnd};
+    }
+    var geoModel=buildGeo(layers), geoSup=buildGeo(sup);
+    var diag=Math.sqrt(bw*bw+bh*bh+bd*bd)||1;
+    function bindGeo(gm){
+      gl.bindBuffer(gl.ARRAY_BUFFER,gm.vbo); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,gm.ibo);
+      gl.enableVertexAttribArray(locA); gl.vertexAttribPointer(locA,3,gl.FLOAT,false,32,0);
+      gl.enableVertexAttribArray(locB); gl.vertexAttribPointer(locB,3,gl.FLOAT,false,32,12);
+      gl.enableVertexAttribArray(locES); gl.vertexAttribPointer(locES,2,gl.FLOAT,false,32,24);
+    }
+    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
 
     function drawPlate(){
       // Surface: subtly lit quad with 10 mm grid, 50 mm majors, edge accents, origin dot.
@@ -336,35 +409,36 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
       axis(1,0,0,'#F05A5A','X'); axis(0,1,0,'#5AC878','Y'); axis(0,0,1,'#5A9CF0','Z');
     }
 
-    function strokeLayer(L,z,step){
-      ctx.beginPath();
-      for(var i=0;i<L.length;i+=4*step){
-        ctx.moveTo(prX(L[i],L[i+1]),prY(L[i],L[i+1],z));
-        ctx.lineTo(prX(L[i+2],L[i+3]),prY(L[i+2],L[i+3],z));
-      }
-      ctx.stroke();
+    // Smallest layer step drives the current-layer highlight tolerance (layer heights vary per print).
+    var minGap=0.2; for(var gi=1;gi<zs.length;gi++){ var dg=zs[gi]-zs[gi-1]; if(dg>1e-4&&dg<minGap) minGap=dg; }
+    function drawGL(){
+      gl.viewport(0,0,cvg.width,cvg.height);
+      gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+      if(!cur) return;
+      gl.uniform3f(U.uCtr,cx,cy,cz); gl.uniform2f(U.uRot,cyaw,syaw); gl.uniform2f(U.uPit,cpit,spit);
+      gl.uniform1f(U.uS,S); gl.uniform2f(U.uOff,ox+px,oy+py); gl.uniform2f(U.uVP,W,Hh);
+      gl.uniform1f(U.uHalf,Math.max(0.75,0.21*S)); // half of 0.42mm extrusion width, min 1.5px total
+      gl.uniform1f(U.uDepthR,diag*1.5);
+      gl.uniform1f(U.uMinZ,b.minZ); gl.uniform1f(U.uSpanZ,zspan);
+      gl.uniform1f(U.uCurZ,zs[cur-1]||0); gl.uniform1f(U.uEps,minGap*0.45);
+      var n1=geoModel.idxEnd[cur-1]||0;
+      if(n1){ gl.uniform1f(U.uIsSup,0); bindGeo(geoModel); gl.drawElements(gl.TRIANGLES,n1,gl.UNSIGNED_INT,0); }
+      var n2=geoSup.idxEnd[cur-1]||0;
+      if(n2){ gl.uniform1f(U.uIsSup,1); bindGeo(geoSup); gl.drawElements(gl.TRIANGLES,n2,gl.UNSIGNED_INT,0); }
     }
     function draw(){
       if(W<2||Hh<2) return; // layout not settled yet — nothing sane to draw
       cam();
-      var step=(interacting && segTotal>30000)?2:1; // half detail while dragging dense models
       // background gradient — never a flat black void
       var bg=ctx.createLinearGradient(0,0,0,Hh);
       bg.addColorStop(0,'#181B21'); bg.addColorStop(1,'#0C0E11');
       ctx.fillStyle=bg; ctx.fillRect(0,0,W,Hh);
       drawPlate();
-      // extrusion lines read as plastic when they thicken with zoom
-      ctx.lineWidth=Math.max(0.8,Math.min(2.6,S*0.5)); ctx.lineCap='round';
-      for(var k=0;k<cur;k++){
-        // clamp t: the elevated purge layer sits outside the model's z-range by design
-        var z=zs[k], t=Math.max(0,Math.min(1,(zs[k]-b.minZ)/zspan)), L=layers[k], SL=sup[k];
-        if(L&&L.length){ ctx.strokeStyle=heightColor(t,k===cur-1); strokeLayer(L,z,step); }
-        if(SL&&SL.length){ ctx.strokeStyle=k===cur-1?'#FFD08A':'#B9832F'; strokeLayer(SL,z,step); }
-      }
       drawGizmo();
+      drawGL();
     }
     var pending=false; function schedule(){ if(pending)return; pending=true; requestAnimationFrame(function(){pending=false;draw();}); }
-    function resize(){ W=cv.clientWidth;Hh=cv.clientHeight; cv.width=W*dpr;cv.height=Hh*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); fit(); draw(); }
+    function resize(){ W=cv.clientWidth;Hh=cv.clientHeight; cv.width=W*dpr;cv.height=Hh*dpr; cvg.width=W*dpr;cvg.height=Hh*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); fit(); draw(); }
 
     var PMIN=0.12, PMAX=1.45; // stay above the horizon: keeps orientation obvious AND painter's z-order valid
     function rotate(dx,dy){ yaw+=dx*0.01; pitch=Math.max(PMIN,Math.min(PMAX,pitch+dy*0.01)); schedule(); }
@@ -412,7 +486,7 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     document.getElementById('reset').addEventListener('click',resetView);
 
     var s2=document.getElementById('s'), lbl=document.getElementById('lbl');
-    function setLbl(){ var zmm=zs[Math.max(0,cur-1)]; lbl.textContent='Layer '+cur+' / '+total; }
+    function setLbl(){ var zmm=zs[Math.max(0,cur-1)]||0; lbl.textContent='Layer '+cur+' / '+total+' · '+zmm.toFixed(1)+'mm'; }
     s2.max=String(total); s2.value=String(total); setLbl();
     s2.addEventListener('input',function(){ cur=+s2.value; setLbl(); schedule(); });
     window.addEventListener('resize',resize);

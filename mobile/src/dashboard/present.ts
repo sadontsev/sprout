@@ -99,9 +99,11 @@ export interface RackNozzleVM {
   key: string;
   diameter: string; // "0.4 mm"
   type: string; // "Hardened" | "Stainless"
-  colorHex: string | null; // filament currently threaded (=> mounted)
-  serial: string; // short tail of the serial, '' if none
-  mounted: boolean; // has filament -> currently mounted on the toolhead
+  colorHex: string | null; // per-nozzle filament MEMORY (last filament run through it), not "threaded now"
+  serial: string; // short tail of the RFID serial, '' for chipless nozzles (sn "N/A")
+  mounted: boolean; // has filament memory — a docked vortex nozzle keeps its color chip
+  /** Physically in the toolhead right now (rack id < 16 = installed on extruder `id`). */
+  engaged: boolean;
 }
 export interface ToolheadVM {
   side: 'left' | 'right' | 'single';
@@ -124,50 +126,51 @@ const nozzleDia = (d?: string | number): string => {
 };
 
 /**
- * Pure: nozzles grouped by toolhead. On the H2-series the nozzle_rack `id` encodes the extruder in
- * its high nibble — `id >> 4` gives Bambu's extruder id, where **0 = RIGHT toolhead, 1 = LEFT**.
- * Ground-truthed live on the H2C (2026-07-18, printing on the right with the 0.6): the 0.6 sits at
- * rack id 0 (high nibble 0) holding the ACTIVE tray's filament (tray_now -> GFL99), so high-nibble 0
- * is the right/printing side; the 5-slot vortex (ids 16-21) is the LEFT head. The previous mapping
- * (0=left) had the sides mirrored. Machines with no rack (A1) fall back to their mounted `nozzles`
- * spec. Empty rack slots (serial "N/A" / max_temp 0) are dropped.
- *
- * `mounted` = filament loaded in that nozzle (filament_color set). On a vortex SEVERAL docked
- * nozzles legitimately keep filament loaded (that's the quick-swap design), so this is NOT "the one
- * engaged in the head" — label it as loaded, not engaged.
+ * Pure: nozzles grouped by toolhead, following Bambu Studio's own parser (DevNozzleSystemParser::
+ * ParseV2_0, verified against the live H2C + owner ground truth 2026-07-18):
+ *  - rack `id` < 16  ⇒ the nozzle CURRENTLY INSTALLED on extruder `id` (0 = RIGHT/main, 1 = LEFT);
+ *  - rack `id` >= 16 ⇒ a nozzle DOCKED in the changer ("vortex"), slot = id - 16. The changer
+ *    belongs to the MAIN (right, ext 0) extruder — Studio attaches rack nozzles only there.
+ *  - An engaged nozzle's home dock simply DISAPPEARS from the list (its dock is empty); the raw
+ *    `src_id`/`tar_id`/`exist` fields that would name the dock are dropped by Bambuddy.
+ *  - `filament_color` is per-nozzle filament MEMORY (last filament run through it) — several docked
+ *    nozzles legitimately carry one. `stat` is health bits, `wear` is opaque; neither marks
+ *    engagement. Chipless nozzles report serial "N/A" (and max_temp 0) but are REAL — the H2C's
+ *    left fixed 0.4 is exactly that, so "N/A" must not be filtered as an empty slot.
+ * Machines with no rack (A1) fall back to their mounted `nozzles` spec.
  */
 export function presentNozzles(status: PrinterStatus | null): { toolheads: ToolheadVM[]; hasVortex: boolean } {
   if (!status) return { toolheads: [], hasVortex: false };
   const ae = asNum(status.active_extruder);
-  const rack = (status.nozzle_rack ?? []).filter((r) => r.serial_number && r.serial_number !== 'N/A' && (asNum(r.max_temp) ?? 0) > 0);
+  const rack = status.nozzle_rack ?? [];
 
   if (rack.length > 0) {
-    const toNozzle = (r: NonNullable<PrinterStatus['nozzle_rack']>[number]): RackNozzleVM => {
+    const toNozzle = (r: NonNullable<PrinterStatus['nozzle_rack']>[number], engaged: boolean): RackNozzleVM => {
       const mounted = !!(r.filament_color && r.filament_color !== '00000000');
+      const chipless = !r.serial_number || r.serial_number === 'N/A';
       return {
         key: String(r.id),
         diameter: nozzleDia(r.nozzle_diameter),
         type: nozzleType(r.nozzle_type),
         colorHex: mounted ? normColor(r.filament_color) : null,
-        serial: r.serial_number ? r.serial_number.slice(-4) : '',
+        serial: chipless ? '' : r.serial_number!.slice(-4),
         mounted,
+        engaged,
       };
     };
-    const byExtruder = new Map<number, RackNozzleVM[]>();
-    for (const r of rack) {
-      const ext = Math.max(0, r.id) >> 4; // Bambu extruder id: 0 = right, 1 = left
-      byExtruder.set(ext, [...(byExtruder.get(ext) ?? []), toNozzle(r)]);
-    }
-    // Display order: LEFT head first (reads like the machine, left to right) = ext id DESCENDING.
-    const exts = [...byExtruder.keys()].sort((a, b) => b - a);
+    const installed = rack.filter((r) => r.id < 16); // on-extruder: id IS the extruder id
+    const docked = rack.filter((r) => r.id >= 16).map((r) => toNozzle(r, false));
+    const exts = [...new Set(installed.map((r) => r.id))].sort((a, b) => b - a); // left (1) first
     const dual = exts.length > 1;
     const toolheads: ToolheadVM[] = exts.map((ext) => {
-      const nozzles = byExtruder.get(ext)!;
+      const engagedNozzles = installed.filter((r) => r.id === ext).map((r) => toNozzle(r, true));
+      // The changer's docked nozzles live with the MAIN (right, ext 0) extruder.
+      const nozzles = ext === 0 ? [...engagedNozzles, ...docked] : engagedNozzles;
       return {
         side: dual ? (ext === 0 ? 'right' : 'left') : 'single',
         label: dual ? (ext === 0 ? 'Right' : 'Left') : 'Nozzle',
         active: ae === ext,
-        swappable: nozzles.length > 1,
+        swappable: ext === 0 && docked.length > 0,
         nozzles,
       };
     });
@@ -190,7 +193,7 @@ export function presentNozzles(status: PrinterStatus | null): { toolheads: Toolh
         label: dual ? (i === 0 ? 'Left' : 'Right') : 'Nozzle',
         active: n.active,
         swappable: false,
-        nozzles: diameter || type ? [{ key: `m${i}`, diameter, type, colorHex: null, serial: '', mounted: n.active }] : [],
+        nozzles: diameter || type ? [{ key: `m${i}`, diameter, type, colorHex: null, serial: '', mounted: n.active, engaged: n.active }] : [],
       };
     })
     .filter((t) => t.nozzles.length > 0);
