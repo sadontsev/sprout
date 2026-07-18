@@ -1,11 +1,12 @@
 // stl-texturize sidecar HTTP service. OUR code. Plain node:http (zero HTTP deps). One job at a time
 // (texturizing is single-threaded + memory-hungry); the app POSTs a job and polls for the result,
-// which lands as a NEW library file. Auth mirrors la-push: X-API-Key must equal BAMBUDDY_API_KEY.
+// which lands as a NEW library file. Auth mirrors la-push: X-API-Key must be a key Bambuddy accepts
+// (equality with BAMBUDDY_API_KEY fast-paths; scoped keys are validated against Bambuddy itself).
 import http from 'node:http';
 import { readdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { Bambuddy, texturedName } from './bambuddy.mjs';
 import { normalizeParams, preflight } from './params.mjs';
 import { parseSTL, surfaceArea, boundsOf } from './stl.mjs';
@@ -105,6 +106,26 @@ function readBody(req) {
   });
 }
 
+// Accepted-key cache: sha256(key) -> expiry ms. Only keys Bambuddy ACCEPTED are cached (a garbage
+// scan can't grow it), and raw keys are never stored. Equality with our configured key fast-paths.
+const _keyCache = new Map();
+const KEY_CACHE_TTL_MS = 5 * 60_000;
+async function isValidKey(key) {
+  if (!key || typeof key !== 'string') return false;
+  if (key === API_KEY) return true;
+  const h = createHash('sha256').update(key).digest('hex');
+  const exp = _keyCache.get(h);
+  if (exp && exp > Date.now()) return true;
+  try {
+    const r = await fetch(`${BAMBUDDY_URL}/api/v1/printers/`, { headers: { 'X-API-Key': key }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return false;
+    _keyCache.set(h, Date.now() + KEY_CACHE_TTL_MS);
+    return true;
+  } catch {
+    return false; // Bambuddy unreachable -> fail closed
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
@@ -112,8 +133,9 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, queued: queue.length, running });
 
-    // Everything else requires the shared key.
-    if (req.headers['x-api-key'] !== API_KEY) return send(res, 401, { error: 'unauthorized' });
+    // Everything else requires a VALID Bambuddy key (not necessarily OUR configured one — the app
+    // may hold a scoped key; Bambuddy is the authority on what's valid).
+    if (!(await isValidKey(req.headers['x-api-key']))) return send(res, 401, { error: 'unauthorized' });
 
     if (req.method === 'GET' && url.pathname === '/textures') return send(res, 200, await listTextures());
 
