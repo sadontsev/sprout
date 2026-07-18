@@ -22,6 +22,13 @@ export function displayName(f: LibraryFile): string {
  * the raw filename (so "hexagon" finds "Adapter%20hexagon%20…" either way). Empty/whitespace query
  * matches everything.
  */
+/** Cache-safe filename for the share sheet: the display name is user-derived (decoded upload
+ *  names) and may contain path separators a File() constructor would misread. */
+export function safeShareName(name: string): string {
+  const n = name.replace(/[/\\:]+/g, '-').trim();
+  return n || 'file';
+}
+
 export function filterFiles(files: readonly LibraryFile[], filter: TypeFilter, query: string): LibraryFile[] {
   const q = query.trim().toLowerCase();
   return files.filter((f) => {

@@ -59,3 +59,17 @@ test('isSlicedFile treats gcode types and sliced_for_model as sliced', () => {
   expect(isSlicedFile(f(5, 'x.3mf', { sliced_for_model: 'H2C' }))).toBe(true);
   expect(isSlicedFile(FILES[0])).toBe(false);
 });
+
+describe('safeShareName', () => {
+  const { safeShareName } = require('../libraryBrowse');
+  it('passes normal filenames through', () => {
+    expect(safeShareName('benchy v2.stl')).toBe('benchy v2.stl');
+  });
+  it('flattens path separators and colons (File() would misread them)', () => {
+    expect(safeShareName('a/b\\c:d.stl')).toBe('a-b-c-d.stl');
+  });
+  it('never returns an empty name', () => {
+    expect(safeShareName('  ')).toBe('file');
+    expect(safeShareName('///')).toBe('-');
+  });
+});
