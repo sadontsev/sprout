@@ -32,6 +32,11 @@ test('has the shading chips and posts loaded/error messages to RN', () => {
   expect(html).toContain("post({type:'error'");
 });
 
+test('embedded page script is syntactically valid JS', () => {
+  const script = html.split('<script>')[1].split('</script>')[0];
+  expect(() => new Function(script)).not.toThrow(); // compile-only — no DOM at parse time
+});
+
 test('compact mode hides the control card + reset (inline embeds) but keeps the renderer', () => {
   const compact = stlViewerHtml({ url: 'https://x/dl', name: 'm.stl', compact: true });
   expect(compact).toContain('#bar,#reset{display:none}');
