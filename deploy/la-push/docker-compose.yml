@@ -13,7 +13,10 @@ services:
       APNS_TEAM_ID: <YOUR_TEAM_ID>
       APNS_TOPIC: com.mvks5.bambu.push-type.liveactivity
       # SANDBOX for local Xcode/dev builds; switch to api.push.apple.com for TestFlight/App Store.
-      APNS_HOST: ${APNS_HOST:-api.sandbox.push.apple.com}
+      # Production APNs by default — the app ships via TestFlight, whose Live-Activity tokens are
+      # PRODUCTION-environment; pushing them to sandbox gets 400 BadDeviceToken and the registration
+      # dropped (observed live: every card died silently). Export APNS_HOST for sandbox dev builds.
+      APNS_HOST: ${APNS_HOST:-api.push.apple.com}
       DATA_DIR: /data
     volumes:
       - /home/max/.config/bambu-phase0/apns_key.p8:/keys/apns_key.p8:ro
