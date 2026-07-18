@@ -31,3 +31,10 @@ test('has the shading chips and posts loaded/error messages to RN', () => {
   expect(html).toContain("post({type:'loaded'");
   expect(html).toContain("post({type:'error'");
 });
+
+test('compact mode hides the control card + reset (inline embeds) but keeps the renderer', () => {
+  const compact = stlViewerHtml({ url: 'https://x/dl', name: 'm.stl', compact: true });
+  expect(compact).toContain('#bar,#reset{display:none}');
+  expect(compact).toContain("getContext('webgl'");
+  expect(html).not.toContain('#bar,#reset{display:none}'); // fullscreen keeps its controls
+});

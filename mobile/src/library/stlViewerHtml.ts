@@ -11,9 +11,12 @@
 
 export const MAX_STL_BYTES = 120 * 1024 * 1024; // ~2.4M tris binary — beyond phone-GPU comfort
 
-export function stlViewerHtml(opts: { url: string; name: string }): string {
+export function stlViewerHtml(opts: { url: string; name: string; compact?: boolean }): string {
   const urlLit = JSON.stringify(opts.url).replace(/</g, '\\u003c');
   const nameLit = JSON.stringify(opts.name).replace(/</g, '\\u003c');
+  // compact: inline embed (e.g. the wizard's step-1 preview) — hide the control card / reset button
+  // and pin a minimal label; interaction (orbit/pinch/double-tap) still works.
+  const compactCss = opts.compact ? '<style>#bar,#reset{display:none}</style>' : '';
   return `<!doctype html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
@@ -32,7 +35,7 @@ export function stlViewerHtml(opts: { url: string; name: string }): string {
   #reset{position:absolute;right:16px;top:calc(env(safe-area-inset-top) + 60px);width:40px;height:40px;border-radius:20px;background:rgba(22,24,27,0.82);border:1px solid rgba(255,255,255,0.08);color:#c8cdd4;font:600 16px -apple-system;display:flex;align-items:center;justify-content:center;z-index:10}
   #load{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7b8187;font:500 13px ui-monospace,Menlo,monospace}
   #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:#6b7177;font-size:14px;padding:36px;text-align:center;line-height:1.5}
-</style></head>
+</style>${compactCss}</head>
 <body>
 <canvas id="c"></canvas>
 <div id="reset">⌂</div>
