@@ -21,6 +21,12 @@ export type AppConfig = {
    *  suspended + status banners fire (needs a reachable la-push). false ⇒ LOCAL only: cards update
    *  while the app runs, no banners, no server. See resolvePushUrl() in config/pushConfig.ts. */
   serverPush?: boolean;
+  /** stl-texturize sidecar URL. Blank ⇒ derived from the bambuddy host as texturize.*; set it if the
+   *  sidecar runs elsewhere. Only used when `texturize` isn't false AND /health answers. */
+  texturizeUrl?: string;
+  /** Model-texturizer feature toggle. true/undefined ⇒ enabled (URL derived or explicit, then
+   *  health-probed). false ⇒ fully off: no texturize UI, thumbnails stay on the Bambuddy path. */
+  texturize?: boolean;
   /** Optional Bambuddy ADMIN login — unlocks admin-gated actions (e.g. maintenance "mark done"),
    *  which categorically refuse API keys. Keychain-only, like the API key. */
   adminUsername?: string;

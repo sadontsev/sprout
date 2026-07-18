@@ -10,6 +10,7 @@ import { c, mono, useTheme, setTheme, getThemeName, type ThemeName } from '@/the
 import { Tap, Toggle } from '@/components/anim';
 import { sanitizeBaseUrl, sanitizeApiKey, isValidApiKey } from '@/config/sanitize';
 import { resolvePushUrl } from '@/config/pushConfig';
+import { resolveTexturizeUrl } from '@/config/texturizeConfig';
 import { BambuddyClient, classifyConnectError } from '@/api/bambuddyClient';
 
 const DEFAULT_URL = 'https://bambuddy.example.com';
@@ -49,6 +50,8 @@ export default function Settings() {
   const [printerName, setPrinterName] = useState<string | null>(null);
   const [pushUrl, setPushUrl] = useState('');
   const [serverPush, setServerPush] = useState(true);
+  const [texturizeUrl, setTexturizeUrl] = useState('');
+  const [texturize, setTexturize] = useState(true);
   const [adminUser, setAdminUser] = useState('');
   const [adminPw, setAdminPw] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +64,8 @@ export default function Settings() {
         setPrinterName(cfg.printerName ?? null);
         setPushUrl(cfg.pushUrl ?? '');
         setServerPush(cfg.serverPush ?? true);
+        setTexturizeUrl(cfg.texturizeUrl ?? '');
+        setTexturize(cfg.texturize ?? true);
         setAdminUser(cfg.adminUsername ?? '');
         setAdminPw(cfg.adminPassword ?? '');
         setHasConfig(true);
@@ -73,6 +78,8 @@ export default function Settings() {
   const canSave = sanitizeBaseUrl(baseUrl).length > 0 && isValidApiKey(apiKey);
   const effPush = resolvePushUrl({ baseUrl, pushUrl, serverPush });
   const pushLabel = !serverPush ? 'Local only' : effPush ? `Server · ${hostOf(effPush)}` : 'Server (set a URL)';
+  const effTex = resolveTexturizeUrl({ baseUrl, texturizeUrl, texturize });
+  const texLabel = !texturize ? 'Off' : effTex ? `${hostOf(effTex)}` : 'Off (no URL)';
   const theme = getThemeName();
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';
 
@@ -103,6 +110,8 @@ export default function Settings() {
         apiKey: key,
         pushUrl: pushUrl.trim() || undefined,
         serverPush,
+        texturizeUrl: texturizeUrl.trim() || undefined,
+        texturize,
         adminUsername: aUser || undefined,
         adminPassword: aPw || undefined,
         theme: cur?.theme ?? theme,
@@ -197,6 +206,38 @@ export default function Settings() {
           </Text>
         </>
       )}
+      {/* TEXTURIZER (optional sidecar) — same pattern as push: toggle + optional URL; the Shell
+          additionally health-probes before enabling, so a missing sidecar never breaks the app. */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 24 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>Model texturizer</Text>
+          <Text style={{ marginTop: 4, fontWeight: '500', fontSize: 11.5, color: c.t3, lineHeight: 16 }}>
+            {texturize
+              ? 'Bake surface patterns onto STLs and restyle library previews. Needs the stl-texturize sidecar.'
+              : 'Off — no texturize actions; library previews come straight from Bambuddy.'}
+          </Text>
+        </View>
+        <Toggle value={texturize} onChange={setTexturize} />
+      </View>
+      {texturize && (
+        <>
+          <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 18, marginBottom: 9 }}>TEXTURIZE SERVER</Text>
+          <TextInput
+            value={texturizeUrl}
+            onChangeText={setTexturizeUrl}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="off"
+            keyboardType="url"
+            placeholder={resolveTexturizeUrl({ baseUrl: sanitizeBaseUrl(baseUrl) }) ?? 'https://texturize.your-host…'}
+            placeholderTextColor={c.t3}
+            style={field}
+          />
+          <Text style={{ marginTop: 7, fontSize: 11, color: c.t3, lineHeight: 15 }}>
+            Your stl-texturize URL. Leave blank to derive it from the Bambuddy host (bambuddy.→texturize.); the app checks its health before enabling.
+          </Text>
+        </>
+      )}
       {/* ADMIN (optional) — Bambuddy refuses API keys on admin endpoints (maintenance "mark done",
           settings writes) no matter the key's permissions; those need a JWT from this login. */}
       <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 24, marginBottom: 4 }}>ADMIN LOGIN (OPTIONAL)</Text>
@@ -253,7 +294,8 @@ export default function Settings() {
                 <Row label="Server" value={hostOf(baseUrl)} />
                 <Row label="API key" value={maskKey(apiKey)} valueColor={c.t3} />
                 <Row label="Admin login" value={adminUser && adminPw ? adminUser : 'Off'} valueColor={c.t3} />
-                <Row label="Live Activities" value={pushLabel} valueColor={c.t3} last />
+                <Row label="Live Activities" value={pushLabel} valueColor={c.t3} />
+                <Row label="Texturizer" value={texLabel} valueColor={c.t3} last />
               </Section>
 
               {/* APPEARANCE */}

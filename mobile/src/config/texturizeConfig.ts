@@ -1,16 +1,19 @@
 import type { AppConfig } from './secureConfig';
 
 /**
- * The stl-texturize sidecar base URL — or null when it can't be derived (feature hidden).
- *
- * Mirrors resolvePushUrl's convention: the sidecar runs next to Bambuddy (deploy/stl-texturize/),
- * exposed as `texturize.` on the same host that serves `bambuddy.`. No explicit-override field yet —
- * unlike push (which anyone self-hosting needs), texturize is optional polish; the derivation covers
- * the deploy pattern, and a null simply hides the Texturize action in the library.
+ * The stl-texturize sidecar base URL — or null when the feature is off / nothing resolves.
+ * Mirrors resolvePushUrl exactly: `texturize === false` forces OFF; an explicit `texturizeUrl`
+ * wins; else derive `texturize.` from a `bambuddy.` host. The Shell additionally health-probes the
+ * resolved URL before enabling anything, so a configured-but-absent sidecar degrades to plain mode
+ * instead of dead buttons and broken thumbnails.
  */
-export function resolveTexturizeUrl(cfg: Pick<AppConfig, 'baseUrl'>): string | null {
+export function resolveTexturizeUrl(cfg: Pick<AppConfig, 'baseUrl' | 'texturizeUrl' | 'texturize'>): string | null {
+  if (cfg.texturize === false) return null;
+  const trim = (s: string) => s.trim().replace(/\/+$/, '');
+  const httpUrl = (s: string): string | null => (/^https?:\/\/[^\s]+$/i.test(s) ? s : null);
+  const explicit = cfg.texturizeUrl?.trim();
+  if (explicit) return httpUrl(trim(explicit));
   const base = (cfg.baseUrl ?? '').trim().replace(/\/+$/, '');
-  if (!base.includes('bambuddy.')) return null;
-  const url = base.replace('bambuddy.', 'texturize.');
-  return /^https?:\/\/[^\s]+$/i.test(url) ? url : null;
+  if (base.includes('bambuddy.')) return httpUrl(base.replace('bambuddy.', 'texturize.'));
+  return null;
 }
