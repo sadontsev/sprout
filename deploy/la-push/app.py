@@ -168,6 +168,10 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
 _regs: dict[str, dict] = {}
 # _device_tokens: raw APNs device tokens for regular alert notifications (print done / error).
 _device_tokens: list[str] = []
+# _p2s_tokens: ActivityKit push-to-start tokens (one per device) — start cards with the app closed.
+_p2s_tokens: list[str] = []
+# _p2s_dry_sent: pid -> True once we remote-started a dry card for the CURRENT cycle (reset when idle).
+_p2s_dry_sent: dict[str, bool] = {}
 # _last_kind: printerId -> last-seen kind, for edge-triggered notifications. Persisted (in REG_FILE) so a
 # restart/crash mid-print doesn't lose the live->complete/error edge and silently drop the alert.
 _last_kind: dict[int, str] = {}
@@ -179,7 +183,7 @@ _printers_cache: dict[int, str] = {}
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent
     try:
         data = json.loads(REG_FILE.read_text())
         _regs = data.get("regs", {})
@@ -187,13 +191,16 @@ def _load() -> None:
         # JSON object keys are strings; _last_kind is keyed by int printer id, so coerce back.
         _last_kind = {int(k): v for k, v in data.get("last_kind", {}).items()}
         _last_dry = data.get("last_dry", {})
+        _p2s_tokens = data.get("p2s", [])
+        _p2s_dry_sent = data.get("p2s_dry_sent", {})
     except (FileNotFoundError, json.JSONDecodeError):
-        _regs, _device_tokens, _last_kind, _last_dry = {}, [], {}, {}
+        _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
 
 
 def _save() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind, "last_dry": _last_dry}))
+    REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind,
+                                    "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent}))
 
 
 # ---- APNs ----
@@ -235,12 +242,30 @@ def _urgent(last: dict | None, cs: dict) -> bool:
     return last.get("stateLabel") != cs.get("stateLabel") or bool(last.get("finished")) != bool(cs.get("finished"))
 
 
+def _envelope(cs: dict) -> dict:
+    """The widget's native ContentState is Codable{name: String, props: String} — `props` is the
+    JSON-SERIALIZED props string and `name` is the registered component. A flat props dict fails
+    decoding ON-DEVICE while APNs still answers 200 — pushed updates silently never applied."""
+    return {"name": "PrintActivity", "props": json.dumps(cs, separators=(",", ":"))}
+
+
 async def _push_update(client: httpx.AsyncClient, reg: dict, cs: dict, priority: str = "5") -> int:
-    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "update", "content-state": cs}, priority)
+    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "update", "content-state": _envelope(cs)}, priority)
+
+
+async def _push_start(client: httpx.AsyncClient, push_token: str, cs: dict) -> int:
+    """ActivityKit push-to-start (iOS 17.2+): starts the Live Activity with the app closed. The
+    per-activity UPDATE token reaches us when iOS wakes the app (or on next open via adoption);
+    until then the card still shows live countdowns — etaEpochMs timers tick client-side."""
+    return await _apns_send(client, push_token, {
+        "timestamp": int(time.time()), "event": "start",
+        "attributes-type": "LiveActivityAttributes", "attributes": {},
+        "content-state": _envelope(cs),
+    }, "10")
 
 
 async def _push_end(client: httpx.AsyncClient, reg: dict, cs: dict) -> int:
-    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "end", "content-state": cs, "dismissal-date": int(time.time()) + 1800})
+    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "end", "content-state": _envelope(cs), "dismissal-date": int(time.time()) + 1800})
 
 
 # ---- Bambuddy ----
@@ -388,6 +413,32 @@ async def _tick(client: httpx.AsyncClient) -> None:
                     reg["lastState"], reg["lastPush"] = cs, now
                     _save()
 
+        # 1c) Push-to-start: a print/dry began while NO card is registered (app closed) -> start the
+        # Live Activity remotely. Edge-triggered exactly like the banners so it fires once per event.
+        if _p2s_tokens:
+            prev_kind = _last_kind.get(pid)
+            if kind == "live" and prev_kind is not None and prev_kind != "live" and str(pid) not in _regs:
+                cs0 = {"printerName": name, "iconUri": "", **fields}
+                for tok in list(_p2s_tokens):
+                    code = await _push_start(client, tok, cs0)
+                    print(f"[p2s] start print {pid} -> {code}", flush=True)
+                    if code in (400, 410):
+                        _p2s_tokens.remove(tok)
+                        _save()
+            ds0 = dry_state(status)
+            if ds0 is not None and not _p2s_dry_sent.get(str(pid)) and f"dry:{pid}" not in _regs:
+                dcs0 = {"printerName": name, "iconUri": "", **ds0}
+                for tok in list(_p2s_tokens):
+                    code = await _push_start(client, tok, dcs0)
+                    print(f"[p2s] start dry {pid} -> {code}", flush=True)
+                    if code in (400, 410):
+                        _p2s_tokens.remove(tok)
+                _p2s_dry_sent[str(pid)] = True
+                _save()
+            elif ds0 is None and _p2s_dry_sent.get(str(pid)):
+                _p2s_dry_sent.pop(str(pid), None)
+                _save()
+
         # 2) Alert on a state transition (edge-triggered; the first observation is silent). _last_kind is
         # persisted, so a restart/crash mid-print still fires the finish/error edge on the next poll.
         if _device_tokens:
@@ -480,6 +531,19 @@ async def _startup() -> None:
 @app.get("/health")
 async def health() -> dict:
     return {"ok": True, "registrations": len(_regs), "devices": len(_device_tokens), "apns_host": APNS_HOST}
+
+
+class StartReg(BaseModel):
+    push_token: str  # ActivityKit push-to-start token (per device, per attributes type)
+
+
+@app.post("/register-start")
+async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
+    if r.push_token and r.push_token not in _p2s_tokens:
+        _p2s_tokens.append(r.push_token)
+        _save()
+        print(f"[p2s] registered start token {r.push_token[:8]}… ({len(_p2s_tokens)} total)", flush=True)
+    return {"ok": True}
 
 
 @app.post("/register-device")

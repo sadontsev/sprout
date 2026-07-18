@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { addPushToStartTokenListener } from 'expo-widgets';
 import { Platform } from 'react-native';
 import { printActivity } from './PrintActivity';
 import { toContentState, toDryContentState, meaningfulChange, GENERIC_END, type PrintActivityProps, type LiveActivityExtras } from './contentState';
@@ -66,6 +67,29 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
       /* older expo-widgets / push disabled — foreground updates still work */
     }
   };
+
+  // Push-to-start: register the DEVICE's start token so la-push can CREATE cards with the app
+  // closed — a print or drying cycle started from Studio / the printer screen / the queue raises a
+  // lock-screen card without the app ever being opened (iOS 17.2+). The native module emits the
+  // current token as soon as the listener attaches, then again on rotation.
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !pushUrl || !apiKey) return;
+    let sub: { remove: () => void } | undefined;
+    try {
+      sub = addPushToStartTokenListener((ev) => {
+        const tok = ev.activityPushToStartToken;
+        if (!tok) return;
+        fetch(`${pushUrl.replace(/\/+$/, '')}/register-start`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'X-API-Key': apiKey },
+          body: JSON.stringify({ push_token: tok }),
+        }).catch(() => {});
+      });
+    } catch {
+      /* older native module — remote start unavailable; everything else still works */
+    }
+    return () => sub?.remove();
+  }, [pushUrl, apiKey]);
 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
