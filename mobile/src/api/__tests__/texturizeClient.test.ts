@@ -46,3 +46,26 @@ test('non-ok responses throw with the status and body (e.g. pre-flight rejection
   fetchMock.mockResolvedValueOnce({ ok: false, status: 413, text: async () => '{"error":"too many triangles"}' });
   await expect(client.start({ file_id: 1, texture: { builtin: 'dots' } })).rejects.toThrow(/413/);
 });
+
+test('preview flow: commit:false is sent; resultPath / commit / discard target the job', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ job_id: 'j9' }) });
+  await client.start({ file_id: 18, texture: { builtin: 'dots' }, commit: false });
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).commit).toBe(false);
+
+  expect(client.resultPath('j9')).toBe('/texturize-jobs/j9/result.stl');
+
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ file_id: 30 }) });
+  expect(await client.commit('j9')).toEqual({ file_id: 30 });
+  expect(fetchMock.mock.calls.at(-1)![0]).toBe('https://t/texturize-jobs/j9/commit');
+  expect(fetchMock.mock.calls.at(-1)![1].method).toBe('POST');
+
+  fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) });
+  await client.discard('j9');
+  expect(fetchMock.mock.calls.at(-1)![0]).toBe('https://t/texturize-jobs/j9');
+  expect(fetchMock.mock.calls.at(-1)![1].method).toBe('DELETE');
+});
+
+test('an expired preview surfaces the 410 so the sheet can explain it', async () => {
+  fetchMock.mockResolvedValueOnce({ ok: false, status: 410, text: async () => '{"error":"preview expired"}' });
+  await expect(client.commit('old')).rejects.toThrow(/410/);
+});

@@ -17,6 +17,8 @@ export interface TexturizeJob {
   status: TexturizeJobStatus;
   stage: string;
   progress: number; // 0..1
+  /** Present when the job ran with commit:false — the result is held server-side for preview. */
+  preview?: boolean;
   result_file_id?: number;
   out_triangles?: number;
   warnings?: string[];
@@ -39,6 +41,9 @@ export interface TexturizeRequest {
   protect_bed?: boolean;
   /** Detail in mm — smaller = finer = quadratically more server time/RAM (server floors at 0.15). */
   refine_length?: number;
+  /** false ⇒ PREVIEW: the result is held server-side (view via resultPath, then commit/discard) and
+   *  nothing enters the library until commit. Omitted/true ⇒ upload straight to the library. */
+  commit?: boolean;
 }
 
 export class TexturizeClient {
@@ -89,5 +94,21 @@ export class TexturizeClient {
 
   getJob(jobId: string): Promise<TexturizeJob> {
     return this.req(`/texturize-jobs/${encodeURIComponent(jobId)}`).then((r) => r.json());
+  }
+
+  /** Same-origin path to a preview job's STL — fetch from a page whose baseUrl is this.baseUrl,
+   *  sending authHeaders() (the endpoint is key-gated like everything else). */
+  resultPath(jobId: string): string {
+    return `/texturize-jobs/${encodeURIComponent(jobId)}/result.stl`;
+  }
+
+  /** Promote a preview into the library. Returns the new library file id. */
+  async commit(jobId: string): Promise<{ file_id: number }> {
+    return (await this.req(`/texturize-jobs/${encodeURIComponent(jobId)}/commit`, { method: 'POST' })).json();
+  }
+
+  /** Drop a preview (user chose Adjust/Cancel). Fire-and-forget safe — previews also expire server-side. */
+  async discard(jobId: string): Promise<void> {
+    await this.req(`/texturize-jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
   }
 }
