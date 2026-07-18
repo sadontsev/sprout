@@ -9,7 +9,7 @@ import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { Bambuddy, texturedName } from './bambuddy.mjs';
-import { recolorGreenToNeutral } from './thumbs.mjs';
+import { recolorGreenToNeutral, greenFraction } from './thumbs.mjs';
 import { normalizeParams, preflight } from './params.mjs';
 import { parseSTL, surfaceArea, boundsOf } from './stl.mjs';
 import { texturize } from './pipeline.mjs';
@@ -165,8 +165,15 @@ async function neutralThumb(fileId) {
   if (!r.ok) throw new Error(`thumbnail -> HTTP ${r.status}`);
   const src = Buffer.from(await r.arrayBuffer());
   const { data, info } = await sharp(src).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  recolorGreenToNeutral(data);
-  const out = await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+  // Only Bambuddy's own green renders get remapped (STLs AND gcode.3mf it resliced itself).
+  // Real slicer plate renders (grays) pass through untouched — the remap would blank them.
+  let out;
+  if (greenFraction(data) >= 0.02) {
+    recolorGreenToNeutral(data);
+    out = await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+  } else {
+    out = src;
+  }
   if (_thumbCache.size > 64) _thumbCache.clear(); // tiny bound; repopulates on demand
   _thumbCache.set(fileId, { bytes: out, at: Date.now() });
   return out;

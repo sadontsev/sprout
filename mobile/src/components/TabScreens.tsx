@@ -326,10 +326,10 @@ export function LibraryView({ client, texClient, camToken, printerId, plate, onU
                       style={{ width: '47%', flexGrow: 1, opacity: selecting && !sel ? 0.55 : 1 }}>
                       <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: selecting && sel ? 2 : 1, borderColor: selecting && sel ? c.accent : c.line, alignItems: 'center', justifyContent: 'center' }}>
                         {f.thumbnail_path ? (
-                          texClient && (f.file_type || '').toLowerCase() === 'stl' ? (
-                            /* STL previews come back from Bambuddy as green-on-dark; the sidecar
-                               restyles them into neutral gray on transparency. */
-                            <Image source={{ uri: texClient.fileThumbUrl(f.id), headers: texClient.authHeaders() }} style={{ width: '84%', height: '84%' }} contentFit="contain" transition={120} cachePolicy="memory-disk" />
+                          texClient ? (
+                            /* Sidecar-normalized: Bambuddy's green renders (STL + resliced gcode.3mf)
+                               come back neutral-on-transparent; real slicer renders pass through. */
+                            <Image source={{ uri: texClient.fileThumbUrl(f.id), headers: texClient.authHeaders() }} style={{ width: '92%', height: '92%' }} contentFit="contain" transition={120} cachePolicy="memory-disk" />
                           ) : (
                             <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
                           )
@@ -384,7 +384,11 @@ export function LibraryView({ client, texClient, camToken, printerId, plate, onU
                       style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: i === shown.length - 1 ? 0 : 1, borderBottomColor: c.line, backgroundColor: selecting && sel ? c.accentDim : 'transparent' }}>
                       <View style={{ width: 44, height: 44, borderRadius: 10, overflow: 'hidden', backgroundColor: c.thumb, alignItems: 'center', justifyContent: 'center' }}>
                         {f.thumbnail_path ? (
-                          <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={100} cachePolicy="memory-disk" />
+                          texClient ? (
+                            <Image source={{ uri: texClient.fileThumbUrl(f.id), headers: texClient.authHeaders() }} style={{ width: '100%', height: '100%' }} contentFit="contain" transition={100} cachePolicy="memory-disk" />
+                          ) : (
+                            <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={100} cachePolicy="memory-disk" />
+                          )
                         ) : (
                           <Feather name={(f.file_type || '').includes('gcode') ? 'box' : 'file'} size={18} color={c.t3} />
                         )}

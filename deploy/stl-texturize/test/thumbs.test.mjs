@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { recolorGreenToNeutral } from '../thumbs.mjs';
+import { recolorGreenToNeutral, greenFraction } from '../thumbs.mjs';
 
 const px = (...pixels) => Uint8Array.from(pixels.flat());
 
@@ -24,4 +24,12 @@ test('non-green content (gray text, red accents) is treated as background', () =
   const d = recolorGreenToNeutral(px([200, 200, 200, 255], [180, 40, 40, 255]));
   assert.equal(d[3], 0);
   assert.equal(d[7], 0);
+});
+
+test('greenFraction: high for Bambuddy green renders, ~zero for gray plate renders', () => {
+  const green = px([0, 173, 65, 255], [0, 120, 45, 255], [26, 26, 26, 255]);
+  assert.ok(greenFraction(green) >= 0.6);
+  const gray = px([80, 80, 85, 255], [140, 140, 145, 255], [200, 200, 205, 255]);
+  assert.equal(greenFraction(gray), 0);
+  assert.equal(greenFraction(px([0, 0, 0, 0])), 0); // fully transparent -> no visible pixels
 });

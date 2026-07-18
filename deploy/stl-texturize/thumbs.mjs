@@ -5,6 +5,19 @@
 // greenish pixels -> a neutral light gray that keeps the shading (luminance from the green channel),
 // everything else -> fully transparent, so the card's own background shows through.
 
+/** Fraction of visible pixels that read as "Bambuddy green". Used to decide recolor vs passthrough —
+ *  real slicer plate renders (grays) must NOT be remapped (the remap would blank them). */
+export function greenFraction(data) {
+  let green = 0, visible = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] > 10) {
+      visible++;
+      if (data[i + 1] > data[i] + 18 && data[i + 1] > data[i + 2] + 18) green++;
+    }
+  }
+  return visible ? green / visible : 0;
+}
+
 /** In-place RGBA remap. `data` is a Uint8Array/Buffer of RGBA pixels. Returns the same buffer. */
 export function recolorGreenToNeutral(data) {
   for (let i = 0; i < data.length; i += 4) {
