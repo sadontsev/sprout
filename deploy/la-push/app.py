@@ -12,6 +12,7 @@ The ContentState shape MUST match PrintActivityProps in the app
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -343,14 +344,37 @@ async def _tick(client: httpx.AsyncClient) -> None:
 app = FastAPI(title="la-push")
 
 
-def _require_key(x_api_key: str | None = Header(default=None)) -> None:
-    """Gate the register endpoints on the owner's Bambuddy API key (the app already sends it as
+# Accepted-key cache: sha256(key) -> monotonic expiry. Never stores raw keys. Bounded — a scan of
+# garbage keys can't grow it (only keys Bambuddy ACCEPTED are cached).
+_key_cache: dict[str, float] = {}
+_KEY_CACHE_TTL = 300.0
+
+
+async def _require_key(x_api_key: str | None = Header(default=None)) -> None:
+    """Gate the register endpoints on a VALID Bambuddy API key (the app already sends it as
     X-API-Key). Without this, ANYONE who knows the public la-push URL could POST their token and
-    receive the owner's print notifications (name, progress, finish/error) — an info leak. The key
-    never grants control and isn't exposed by la-push; it's the same credential the app uses for
-    Bambuddy, so requiring it limits registration to holders of the owner's key."""
-    if not x_api_key or x_api_key != BAMBUDDY_API_KEY:
+    receive the owner's print notifications (name, progress, finish/error) — an info leak.
+
+    Validation is delegated to Bambuddy: equality with the configured admin key is a fast path, and
+    any other presented key is accepted iff Bambuddy answers 200 to a read with it. The app may hold
+    a SCOPED key that differs from the admin key on disk — a plain equality check 401'd those and
+    silently broke Live-Activity push registration."""
+    if not x_api_key:
         raise HTTPException(status_code=401, detail="unauthorized")
+    if x_api_key == BAMBUDDY_API_KEY:
+        return
+    h = hashlib.sha256(x_api_key.encode()).hexdigest()
+    if _key_cache.get(h, 0.0) > time.monotonic():
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{BAMBUDDY_URL}/api/v1/printers/", headers={"X-API-Key": x_api_key}, timeout=8)
+        if r.status_code == 200:
+            _key_cache[h] = time.monotonic() + _KEY_CACHE_TTL
+            return
+    except Exception:
+        pass  # Bambuddy unreachable -> fall through to 401 (fail closed)
+    raise HTTPException(status_code=401, detail="unauthorized")
 
 
 class Register(BaseModel):
