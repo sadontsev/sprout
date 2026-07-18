@@ -8,6 +8,7 @@ import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { c, mono, shadow1 } from '@/theme';
 import type { BambuddyClient } from '@/api/bambuddyClient';
+import type { TexturizeClient, TexturizeTexture, TexturizeMappingMode } from '@/api/texturizeClient';
 import type { LibraryFile, Printer, PrinterStatus, MakerWorldResolved, MWInstance, PlatesResponse, FileMetadata, SlotAssignment } from '@/api/types';
 import { presentDashboard, normColor } from '@/dashboard/present';
 import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
@@ -205,6 +206,149 @@ export function UploadSheet({ client, onClose, onUploaded }: { client: BambuddyC
           <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>Cancel</Text>
         </Tap>
       </Pressable>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+// ---------------- TEXTURIZE SHEET ----------------
+// Bakes an image as a displacement texture onto a library STL via the stl-texturize sidecar; the
+// result lands as a NEW library file (the original is untouched). Chips over sliders on purpose —
+// matches the house style and the sidecar's parameter space is forgiving.
+function Chips<T>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
+  return (
+    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+      {options.map(([v, label]) => {
+        const on = value === v;
+        return (
+          <Tap key={String(v)} onPress={() => onChange(v)} style={{ paddingHorizontal: 13, height: 34, borderRadius: 10, backgroundColor: on ? c.accentDim : c.s2, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontWeight: '600', fontSize: 12.5, color: on ? c.accent : c.t2 }}>{label}</Text>
+          </Tap>
+        );
+      })}
+    </View>
+  );
+}
+function SheetLabel({ children, first }: { children: React.ReactNode; first?: boolean }) {
+  return <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: first ? 0 : 18, marginBottom: 9 }}>{children}</Text>;
+}
+
+export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient: TexturizeClient; file: LibraryFile; onClose: () => void; onDone: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [textures, setTextures] = useState<TexturizeTexture[] | null>(null);
+  const [texId, setTexId] = useState<string | null>(null);
+  const [amplitude, setAmplitude] = useState(0.5);
+  const [scale, setScale] = useState(0.5);
+  const [mapping, setMapping] = useState<TexturizeMappingMode>('triplanar');
+  const [detail, setDetail] = useState(0.4);
+  const [job, setJob] = useState<{ id: string; stage: string; progress: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    texClient.listTextures().then((t) => {
+      setTextures(t);
+      if (t.length && !texId) setTexId(t[0].id);
+    }).catch((e) => setError(`Couldn't reach the texturize server: ${String(e?.message ?? e)}`));
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [texClient]);
+
+  const start = async () => {
+    if (!texId) return;
+    setError(null);
+    try {
+      const { job_id } = await texClient.start({
+        file_id: file.id,
+        texture: { builtin: texId },
+        amplitude,
+        scale_u: scale,
+        mapping_mode: mapping,
+        refine_length: detail,
+        protect_bed: true,
+      });
+      setJob({ id: job_id, stage: 'queued', progress: 0 });
+      pollRef.current = setInterval(async () => {
+        try {
+          const j = await texClient.getJob(job_id);
+          setJob({ id: job_id, stage: j.stage, progress: j.progress });
+          if (j.status === 'done') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            onDone();
+            onClose();
+          } else if (j.status === 'error') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setJob(null);
+            setError(j.error ?? 'Texturize failed');
+          }
+        } catch {
+          /* transient poll failure — keep polling */
+        }
+      }, 1000);
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    }
+  };
+
+  const busy = job !== null;
+  return (
+    <Pressable onPress={busy ? undefined : onClose} style={{ position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 72 } as any}>
+      <Animated.View entering={FadeIn.duration(220)} pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)' } as any} />
+      <Animated.View entering={SlideInDown.duration(320)}>
+        <Pressable onPress={() => {}} style={{ backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingTop: 10, paddingBottom: insets.bottom + 20, maxHeight: 640, ...shadow1 }}>
+          <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginBottom: 14 }} />
+          <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1, textAlign: 'center' }}>Texturize</Text>
+          <Text numberOfLines={1} style={{ marginTop: 3, marginBottom: 12, fontWeight: '500', fontSize: 12, color: c.t3, textAlign: 'center', fontFamily: mono }}>{file.print_name || file.filename}</Text>
+          <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+            <SheetLabel first>TEXTURE</SheetLabel>
+            {textures === null && !error && <ActivityIndicator color={c.accent} style={{ marginVertical: 16 }} />}
+            {!!textures?.length && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 9 }}>
+                {textures.map((t) => {
+                  const on = t.id === texId;
+                  return (
+                    <Tap key={t.id} onPress={() => setTexId(t.id)} style={{ width: 74 }}>
+                      <View style={{ width: 74, height: 74, borderRadius: 12, overflow: 'hidden', borderWidth: 2, borderColor: on ? c.accent : c.line, backgroundColor: c.s2 }}>
+                        <Image source={{ uri: texClient.textureThumbUrl(t.id), headers: texClient.authHeaders() }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={100} cachePolicy="memory-disk" />
+                      </View>
+                      <Text numberOfLines={1} style={{ marginTop: 5, fontWeight: '600', fontSize: 10.5, color: on ? c.accent : c.t3, textAlign: 'center' }}>{t.name}</Text>
+                    </Tap>
+                  );
+                })}
+              </ScrollView>
+            )}
+            <SheetLabel>DEPTH</SheetLabel>
+            <Chips value={amplitude} onChange={setAmplitude} options={[[0.25, 'Subtle'], [0.5, 'Medium'], [1, 'Bold']]} />
+            <SheetLabel>PATTERN SIZE</SheetLabel>
+            <Chips value={scale} onChange={setScale} options={[[0.25, 'Fine'], [0.5, 'Medium'], [1, 'Large']]} />
+            <SheetLabel>WRAP</SheetLabel>
+            <Chips<TexturizeMappingMode> value={mapping} onChange={setMapping} options={[['triplanar', 'Auto'], ['cubic', 'Boxy'], ['cylindrical', 'Round']]} />
+            <SheetLabel>DETAIL</SheetLabel>
+            <Chips value={detail} onChange={setDetail} options={[[0.4, 'Standard'], [0.25, 'Fine · slower']]} />
+            {error && (
+              <View style={{ marginTop: 16, padding: 12, borderRadius: 12, backgroundColor: c.s2, borderWidth: 1, borderColor: c.error }}>
+                <Text style={{ color: c.error, fontSize: 12.5, lineHeight: 17, fontWeight: '500' }}>{error}</Text>
+              </View>
+            )}
+            {busy && (
+              <View style={{ marginTop: 16 }}>
+                <View style={{ height: 6, borderRadius: 3, backgroundColor: c.s3, overflow: 'hidden' }}>
+                  <View style={{ width: `${Math.round(job.progress * 100)}%`, height: 6, borderRadius: 3, backgroundColor: c.accent }} />
+                </View>
+                <Text style={{ marginTop: 7, fontWeight: '500', fontSize: 11.5, color: c.t3, textAlign: 'center', fontFamily: mono }}>{job.stage} · {Math.round(job.progress * 100)}%</Text>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
+              <Tap onPress={onClose} disabled={busy} style={{ paddingHorizontal: 22, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.5 : 1 }}>
+                <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>Cancel</Text>
+              </Tap>
+              <Tap onPress={start} disabled={busy || !texId} style={{ flex: 1, height: 50, borderRadius: 14, backgroundColor: busy || !texId ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontWeight: '700', fontSize: 15, color: busy || !texId ? c.t3 : c.accentInk }}>{busy ? 'Texturizing…' : 'Texturize'}</Text>
+              </Tap>
+            </View>
+            <Text style={{ marginTop: 10, fontSize: 10.5, lineHeight: 14, color: c.t3, textAlign: 'center' }}>Creates a new file in the library — the original is untouched. The bed face stays flat.</Text>
+          </ScrollView>
+        </Pressable>
       </Animated.View>
     </Pressable>
   );
