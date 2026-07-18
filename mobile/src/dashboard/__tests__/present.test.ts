@@ -219,38 +219,43 @@ test('presentDashboard tolerates string temps in the temperatures block', () => 
   expect(vm.bedNow).toBe(60);
 });
 
-// Mirrors the real live H2C rack payload (2026-07-18, mid-print, owner-verified sides): high-nibble
-// 0 (ids 0,1) = the RIGHT fixed head — id 0 is the 0.6 holding the ACTIVE tray's black PLA — and
-// high-nibble 1 (ids 16-21) = the LEFT 5-slot vortex, where several docked nozzles keep filament.
+// The real live H2C rack payload (2026-07-18, mid-print, owner-verified + Bambu Studio's parser):
+// id < 16 = the nozzle INSTALLED on extruder `id` (0 = right/main — here the engaged 0.6 holding the
+// active tray's black PLA; 1 = left — a CHIPLESS fixed 0.4, sn "N/A"/max_temp 0 but real). ids 16+ =
+// nozzles DOCKED in the right head's changer; the engaged one's home dock (19) is simply absent.
+// Docked color chips are filament MEMORY — several carry one at once.
 const h2cNozzles: PrinterStatus = {
   ...h2cRunning,
   temperatures: { ...h2cRunning.temperatures, nozzle: 44, nozzle_target: 0, nozzle_2: 220, nozzle_2_target: 220 },
   nozzles: [{ nozzle_type: 'HS01', nozzle_diameter: '0.6' }, { nozzle_type: 'HS01', nozzle_diameter: '0.4' }],
   nozzle_rack: [
-    { id: 0, nozzle_type: 'HS01', nozzle_diameter: '0.6', wear: 128, max_temp: 350, serial_number: '20D06A5A1504039', filament_color: '161616FF' }, // RIGHT fixed, black PLA loaded
-    { id: 1, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 0, max_temp: 0, serial_number: 'N/A', filament_color: '00000000' }, // RIGHT empty slot -> dropped
-    { id: 16, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2413139', filament_color: 'F330F9FF' }, // LEFT vortex, PETG loaded
-    { id: 17, nozzle_type: 'HS00', nozzle_diameter: '0.2', wear: 128, max_temp: 350, serial_number: '20D06A5A2411698', filament_color: '00000000' }, // LEFT vortex
-    { id: 18, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2416569', filament_color: 'C12E1FFF' }, // LEFT vortex, loaded too
+    { id: 0, nozzle_type: 'HS01', nozzle_diameter: '0.6', wear: 128, max_temp: 350, serial_number: '20D06A5A1504039', filament_color: '161616FF' }, // ENGAGED on right (from dock 19)
+    { id: 1, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 0, max_temp: 0, serial_number: 'N/A', filament_color: '00000000' }, // LEFT fixed, chipless — must NOT be dropped
+    { id: 16, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2413139', filament_color: 'F330F9FF' }, // docked, PETG memory
+    { id: 17, nozzle_type: 'HS00', nozzle_diameter: '0.2', wear: 128, max_temp: 350, serial_number: '20D06A5A2411698', filament_color: '00000000' }, // docked
+    { id: 18, nozzle_type: 'HS01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A2416569', filament_color: 'C12E1FFF' }, // docked, PLA memory
   ],
 };
 
 describe('presentNozzles', () => {
-  it('groups by toolhead: LEFT is the vortex (high-nibble 1), RIGHT the fixed head (high-nibble 0), Left listed first', () => {
+  it('LEFT is the chipless fixed nozzle (id 1); RIGHT owns the changer: engaged id 0 first, then docked 16+', () => {
     const { toolheads, hasVortex } = presentNozzles({ ...h2cNozzles, active_extruder: 0 });
     expect(hasVortex).toBe(true);
     expect(toolheads.map((t) => t.label)).toEqual(['Left', 'Right']);
 
     const left = toolheads[0];
-    expect(left).toMatchObject({ side: 'left', swappable: true, active: false }); // ae=0 -> RIGHT is active
-    expect(left.nozzles.map((n) => n.diameter)).toEqual(['0.4 mm', '0.2 mm', '0.4 mm']); // ids 16,17,18
-    // TWO vortex nozzles keep filament loaded at once — real quick-swap behavior, both flagged.
-    expect(left.nozzles.filter((n) => n.mounted).map((n) => n.key)).toEqual(['16', '18']);
+    expect(left).toMatchObject({ side: 'left', swappable: false, active: false });
+    expect(left.nozzles).toHaveLength(1);
+    // Chipless (sn "N/A", max_temp 0) is a REAL nozzle — the old filter hid the whole left head.
+    expect(left.nozzles[0]).toMatchObject({ key: '1', diameter: '0.4 mm', type: 'Hardened', serial: '', engaged: true });
 
     const right = toolheads[1];
-    expect(right).toMatchObject({ side: 'right', swappable: false, active: true });
-    expect(right.nozzles.map((n) => n.key)).toEqual(['0']); // id 1 (empty) dropped
-    expect(right.nozzles[0]).toMatchObject({ diameter: '0.6 mm', type: 'Hardened', mounted: true, colorHex: '#161616' });
+    expect(right).toMatchObject({ side: 'right', swappable: true, active: true }); // ae=0 = right/main
+    expect(right.nozzles.map((n) => n.key)).toEqual(['0', '16', '17', '18']); // engaged first, then docked
+    expect(right.nozzles[0]).toMatchObject({ diameter: '0.6 mm', engaged: true, colorHex: '#161616' });
+    // Exactly ONE engaged; docked nozzles keep filament-memory chips without being engaged.
+    expect(right.nozzles.filter((n) => n.engaged).map((n) => n.key)).toEqual(['0']);
+    expect(right.nozzles.filter((n) => n.mounted).map((n) => n.key)).toEqual(['0', '16', '18']);
   });
 
   it('active toolhead follows active_extruder with Bambu ids (1 = left)', () => {
