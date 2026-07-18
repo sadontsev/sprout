@@ -908,7 +908,29 @@ function DryerCard({ d, client, printerId, unitLabel }: { d: DryerVM; client: Ba
     setBusy(true);
     client
       .dryingStart(printerId, d.amsId, { temp: effTemp, hours: effHours, filament: opt?.type, rotate })
-      .then(() => setOpen(false))
+      .then(() => {
+        setOpen(false);
+        // Bambuddy answers 200 as soon as the MQTT command is SENT — the printer can still refuse
+        // it (observed live: result:'failed', reason:'mqtt message verify failed' when the printer's
+        // LAN Developer Mode is off) and nothing surfaces anywhere. Verify the AMS actually entered
+        // drying; if not, tell the user the real story instead of silently showing "start" again.
+        setTimeout(async () => {
+          try {
+            const s = await client.getStatus(printerId);
+            const unit = (s.ams ?? []).find((a) => a.id === d.amsId);
+            // dry_time (minutes remaining) > 0 is THE active signal; dry_status is unreliable and
+            // WS numbers can arrive as strings.
+            if (unit && !(Number(unit.dry_time ?? 0) > 0)) {
+              Alert.alert(
+                'Drying didn’t start',
+                'The printer rejected the command ("mqtt message verify failed"). Newer Bambu firmware requires LAN Developer Mode for this: on the printer’s screen, enable Settings → Network → Developer Mode, then try again.',
+              );
+            }
+          } catch {
+            /* status fetch failed — can't verify; stay quiet */
+          }
+        }, 9000);
+      })
       .catch((e) => Alert.alert('Couldn’t start drying', apiErrorDetail(e)))
       .finally(() => setBusy(false));
   };
