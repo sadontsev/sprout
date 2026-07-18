@@ -250,13 +250,16 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
   #reset{position:absolute;right:16px;top:calc(env(safe-area-inset-top) + 60px);width:40px;height:40px;border-radius:20px;background:rgba(22,24,27,0.82);border:1px solid rgba(255,255,255,0.08);color:#c8cdd4;font:600 16px -apple-system;display:flex;align-items:center;justify-content:center;z-index:10}
   input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:12px;border-radius:6px;background:#2A2E33;outline:none}
   input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:32px;height:32px;border-radius:50%;background:#2BD4C0;box-shadow:0 1px 6px rgba(0,0,0,0.5)}
+  #chips{display:flex;gap:8px;margin-top:12px}
+  .chip{flex:1;text-align:center;padding:8px 0;border-radius:10px;background:#2A2E33;color:#c8cdd4;font:600 12px -apple-system;border:1px solid transparent}
+  .chip.on{background:rgba(43,212,192,0.16);color:#2BD4C0;border-color:rgba(43,212,192,0.35)}
   #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:#6b7177;font-size:14px;padding:36px;text-align:center;line-height:1.5}
 </style></head>
 <body>
 <canvas id="c"></canvas>
 <canvas id="cg"></canvas>
 <div id="reset">⌂</div>
-<div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint">drag rotate · pinch zoom · 2-finger pan · double-tap reset</span></div><input id="s" type="range" min="1" max="1" value="1"></div></div>
+<div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint">drag rotate · pinch zoom · 2-finger pan · double-tap reset</span></div><input id="s" type="range" min="1" max="1" value="1"><div id="chips"><div class="chip on" data-m="steel">Steel</div><div class="chip" data-m="ivory">Ivory</div><div class="chip" data-m="bg">Light bg</div></div></div></div>
 <div id="err"></div>
 <script>
   var post=function(o){window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(o));};
@@ -305,20 +308,28 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     var vsrc=
       'attribute vec3 aA;attribute vec3 aB;attribute vec2 aES;'+ // aES.x: 0=at A / 1=at B, aES.y: side ±1
       'uniform vec3 uCtr;uniform vec2 uRot;uniform vec2 uPit;uniform float uS;uniform vec2 uOff;'+
-      'uniform vec2 uVP;uniform float uHalf;uniform float uDepthR;varying float vZ;varying float vSide;'+
-      'vec3 scr(vec3 p){float xr=(p.x-uCtr.x)*uRot.x-(p.y-uCtr.y)*uRot.y;'+
+      'uniform vec2 uVP;uniform float uHalf;varying float vZ;varying float vSide;varying float vDir;'+
+      'vec2 scr(vec3 p){float xr=(p.x-uCtr.x)*uRot.x-(p.y-uCtr.y)*uRot.y;'+
       'float yr=(p.x-uCtr.x)*uRot.y+(p.y-uCtr.y)*uRot.x;'+
-      'return vec3(uOff.x+xr*uS, uOff.y-((yr*uPit.x)+(p.z-uCtr.z)*uPit.y)*uS, (yr*uPit.y-(p.z-uCtr.z)*uPit.x)/uDepthR);}'+
-      'void main(){vec3 sA=scr(aA);vec3 sB=scr(aB);vec2 d=sB.xy-sA.xy;float L=max(length(d),0.0001);'+
-      'vec2 perp=vec2(-d.y,d.x)/L;vec3 s=mix(sA,sB,aES.x);vec2 xy=s.xy+perp*aES.y*uHalf;'+
-      'gl_Position=vec4(xy.x/uVP.x*2.0-1.0, 1.0-xy.y/uVP.y*2.0, s.z, 1.0);vZ=aA.z;vSide=aES.y;}';
+      'return vec2(uOff.x+xr*uS, uOff.y-((yr*uPit.x)+(p.z-uCtr.z)*uPit.y)*uS);}'+
+      'void main(){vec2 sA=scr(aA);vec2 sB=scr(aB);vec2 d=sB-sA;float L=max(length(d),0.0001);'+
+      'vec2 dir=d/L;vec2 perp=vec2(-dir.y,dir.x);vec2 xy=mix(sA,sB,aES.x);'+
+      // extend past the endpoint by half a width: joints between consecutive segments overlap
+      // instead of leaving butt-cap notches (the "falling apart" ragged silhouette)
+      'xy+=dir*(aES.x*2.0-1.0)*uHalf+perp*aES.y*uHalf;'+
+      // wall shading: the extrusion's outward normal in WORLD XY vs a fixed light — walls facing
+      // the light read bright, side walls dark, so FORM is visible (height ramp alone is not)
+      'vec2 nw=normalize(vec2(-(aB.y-aA.y),(aB.x-aA.x))+vec2(0.0001));'+
+      'vDir=abs(dot(nw,vec2(0.5547,0.8321)));'+
+      'gl_Position=vec4(xy.x/uVP.x*2.0-1.0, 1.0-xy.y/uVP.y*2.0, 0.0, 1.0);vZ=aA.z;vSide=aES.y;}';
     var fsrc=
-      'precision mediump float;varying float vZ;varying float vSide;'+
+      'precision mediump float;varying float vZ;varying float vSide;varying float vDir;'+
       'uniform float uMinZ;uniform float uSpanZ;uniform float uCurZ;uniform float uEps;uniform float uIsSup;'+
+      'uniform vec3 uColBot;uniform vec3 uColTop;'+
       'void main(){float t=clamp((vZ-uMinZ)/uSpanZ,0.0,1.0);'+
-      'vec3 col=uIsSup>0.5?vec3(0.73,0.51,0.18):mix(vec3(0.33,0.38,0.48),vec3(0.87,0.89,0.94),t);'+
-      'col=mix(col,vec3(1.0),step(abs(vZ-uCurZ),uEps)*0.85);'+
-      'float shade=0.58+0.42*(1.0-vSide*vSide);'+ // round-line cross-section: bright centre, dark edges
+      'vec3 col=uIsSup>0.5?vec3(0.73,0.51,0.18):mix(uColBot,uColTop,t);'+
+      'col=mix(col,vec3(1.0),step(abs(vZ-uCurZ),uEps)*0.8);'+
+      'float shade=(0.52+0.48*vDir)*(0.80+0.20*(1.0-vSide*vSide));'+ // lambert wall x round cross-section
       'gl_FragColor=vec4(col*shade,1.0);}';
     var prog=gl.createProgram();
     gl.attachShader(prog,mkShader(gl.VERTEX_SHADER,vsrc));
@@ -326,7 +337,7 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     gl.linkProgram(prog);
     if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     gl.useProgram(prog);
-    var U={}; ['uCtr','uRot','uPit','uS','uOff','uVP','uHalf','uDepthR','uMinZ','uSpanZ','uCurZ','uEps','uIsSup'].forEach(function(n){U[n]=gl.getUniformLocation(prog,n);});
+    var U={}; ['uCtr','uRot','uPit','uS','uOff','uVP','uHalf','uMinZ','uSpanZ','uCurZ','uEps','uIsSup','uColBot','uColTop'].forEach(function(n){U[n]=gl.getUniformLocation(prog,n);});
     var locA=gl.getAttribLocation(prog,'aA'), locB=gl.getAttribLocation(prog,'aB'), locES=gl.getAttribLocation(prog,'aES');
 
     // Geometry: 4 verts/segment (A-1,A+1,B-1,B+1), 8 floats each [ax,ay,az, bx,by,bz, end,side];
@@ -357,24 +368,32 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
       return {vbo:vbo,ibo:ibo,idxEnd:idxEnd};
     }
     var geoModel=buildGeo(layers), geoSup=buildGeo(sup);
-    var diag=Math.sqrt(bw*bw+bh*bh+bd*bd)||1;
+    var supTotal=geoSup.idxEnd.length?geoSup.idxEnd[geoSup.idxEnd.length-1]:0;
     function bindGeo(gm){
       gl.bindBuffer(gl.ARRAY_BUFFER,gm.vbo); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,gm.ibo);
       gl.enableVertexAttribArray(locA); gl.vertexAttribPointer(locA,3,gl.FLOAT,false,32,0);
       gl.enableVertexAttribArray(locB); gl.vertexAttribPointer(locB,3,gl.FLOAT,false,32,12);
       gl.enableVertexAttribArray(locES); gl.vertexAttribPointer(locES,2,gl.FLOAT,false,32,24);
     }
-    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
+    // Painter's order (bottom layer -> top), NO depth buffer: same-layer crossings just overdraw
+    // (a depth test z-fights them into speckle), and pitch is clamped above the horizon so layer
+    // order IS depth order — the property the old canvas renderer relied on.
+    // Shading palettes (bottom->top height ramp) — chips switch these like the STL viewer's.
+    var TINTS={steel:{bot:[0.33,0.38,0.48],top:[0.78,0.81,0.87]},ivory:{bot:[0.52,0.47,0.40],top:[0.93,0.90,0.83]}};
+    var tint='steel', lightBg=false;
 
     function drawPlate(){
       // Surface: subtly lit quad with 10 mm grid, 50 mm majors, edge accents, origin dot.
+      var PD=lightBg
+        ?{surf:'rgba(255,255,255,0.9)',edge:'rgba(70,78,90,0.45)',g1:'rgba(0,0,0,0.05)',g2:'rgba(0,0,0,0.12)',dot:'rgba(0,0,0,0.45)',sh:0.16}
+        :{surf:'rgba(32,36,43,0.92)',edge:'rgba(120,128,140,0.55)',g1:'rgba(255,255,255,0.045)',g2:'rgba(255,255,255,0.10)',dot:'rgba(255,255,255,0.7)',sh:0.42};
       var corners=[[0,0],[pw,0],[pw,pd],[0,pd]];
       ctx.beginPath();
       ctx.moveTo(prX(corners[0][0],corners[0][1]),prY(corners[0][0],corners[0][1],0));
       for(var i=1;i<4;i++) ctx.lineTo(prX(corners[i][0],corners[i][1]),prY(corners[i][0],corners[i][1],0));
       ctx.closePath();
-      ctx.fillStyle='rgba(32,36,43,0.92)'; ctx.fill();
-      ctx.strokeStyle='rgba(120,128,140,0.55)'; ctx.lineWidth=1.2; ctx.stroke();
+      ctx.fillStyle=PD.surf; ctx.fill();
+      ctx.strokeStyle=PD.edge; ctx.lineWidth=1.2; ctx.stroke();
       // grid
       function gridLines(step,style,width){
         ctx.beginPath();
@@ -382,18 +401,18 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
         for(var gy=0;gy<=pd+0.01;gy+=step){ ctx.moveTo(prX(0,gy),prY(0,gy,0)); ctx.lineTo(prX(pw,gy),prY(pw,gy,0)); }
         ctx.strokeStyle=style; ctx.lineWidth=width; ctx.stroke();
       }
-      if(S*10>4) gridLines(10,'rgba(255,255,255,0.045)',0.7); // hide the fine grid when zoomed way out
-      gridLines(50,'rgba(255,255,255,0.10)',1.0);
+      if(S*10>4) gridLines(10,PD.g1,0.7); // hide the fine grid when zoomed way out
+      gridLines(50,PD.g2,1.0);
       // X (red-ish) / Y (green-ish) edge accents along the front/left edges + origin dot, like slicers
       ctx.beginPath(); ctx.moveTo(prX(0,0),prY(0,0,0)); ctx.lineTo(prX(pw,0),prY(pw,0,0));
       ctx.strokeStyle='rgba(240,90,90,0.55)'; ctx.lineWidth=2; ctx.stroke();
       ctx.beginPath(); ctx.moveTo(prX(0,0),prY(0,0,0)); ctx.lineTo(prX(0,pd),prY(0,pd,0));
       ctx.strokeStyle='rgba(90,200,120,0.55)'; ctx.lineWidth=2; ctx.stroke();
-      ctx.beginPath(); ctx.arc(prX(0,0),prY(0,0,0),3.5,0,6.283); ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.fill();
+      ctx.beginPath(); ctx.arc(prX(0,0),prY(0,0,0),3.5,0,6.283); ctx.fillStyle=PD.dot; ctx.fill();
       // soft ground shadow under the model footprint (radius clamped — gradients reject r < 0)
       var sx=prX(cx,cy), sy=prY(cx,cy,0), rx=Math.max(4,Math.max(bw,bh)*0.62*S), ry=rx*Math.abs(cpit)*0.9+4;
       var grad=ctx.createRadialGradient(sx,sy,0,sx,sy,rx);
-      grad.addColorStop(0,'rgba(0,0,0,0.42)'); grad.addColorStop(1,'rgba(0,0,0,0)');
+      grad.addColorStop(0,'rgba(0,0,0,'+PD.sh+')'); grad.addColorStop(1,'rgba(0,0,0,0)');
       ctx.save(); ctx.translate(sx,sy); ctx.scale(1,Math.max(ry/rx,0.12)); ctx.translate(-sx,-sy);
       ctx.beginPath(); ctx.arc(sx,sy,rx,0,6.283); ctx.fillStyle=grad; ctx.fill(); ctx.restore();
     }
@@ -413,25 +432,36 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     var minGap=0.2; for(var gi=1;gi<zs.length;gi++){ var dg=zs[gi]-zs[gi-1]; if(dg>1e-4&&dg<minGap) minGap=dg; }
     function drawGL(){
       gl.viewport(0,0,cvg.width,cvg.height);
-      gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+      gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
       if(!cur) return;
       gl.uniform3f(U.uCtr,cx,cy,cz); gl.uniform2f(U.uRot,cyaw,syaw); gl.uniform2f(U.uPit,cpit,spit);
       gl.uniform1f(U.uS,S); gl.uniform2f(U.uOff,ox+px,oy+py); gl.uniform2f(U.uVP,W,Hh);
-      gl.uniform1f(U.uHalf,Math.max(0.75,0.21*S)); // half of 0.42mm extrusion width, min 1.5px total
-      gl.uniform1f(U.uDepthR,diag*1.5);
+      gl.uniform1f(U.uHalf,Math.max(1.1,0.21*S)); // half of 0.42mm extrusion width, min ~2px total
       gl.uniform1f(U.uMinZ,b.minZ); gl.uniform1f(U.uSpanZ,zspan);
       gl.uniform1f(U.uCurZ,zs[cur-1]||0); gl.uniform1f(U.uEps,minGap*0.45);
-      var n1=geoModel.idxEnd[cur-1]||0;
-      if(n1){ gl.uniform1f(U.uIsSup,0); bindGeo(geoModel); gl.drawElements(gl.TRIANGLES,n1,gl.UNSIGNED_INT,0); }
-      var n2=geoSup.idxEnd[cur-1]||0;
-      if(n2){ gl.uniform1f(U.uIsSup,1); bindGeo(geoSup); gl.drawElements(gl.TRIANGLES,n2,gl.UNSIGNED_INT,0); }
+      var T=TINTS[tint]||TINTS.steel;
+      gl.uniform3f(U.uColBot,T.bot[0],T.bot[1],T.bot[2]); gl.uniform3f(U.uColTop,T.top[0],T.top[1],T.top[2]);
+      if(!supTotal){
+        var n1=geoModel.idxEnd[cur-1]||0;
+        if(n1){ gl.uniform1f(U.uIsSup,0); bindGeo(geoModel); gl.drawElements(gl.TRIANGLES,n1,gl.UNSIGNED_INT,0); }
+        return;
+      }
+      // Supports exist: interleave per layer so painter's order stays faithful (a lower support
+      // must not paint over a higher model layer).
+      var prevM=0,prevS=0;
+      for(var k=0;k<cur;k++){
+        var em=geoModel.idxEnd[k], es=geoSup.idxEnd[k];
+        if(es>prevS){ gl.uniform1f(U.uIsSup,1); bindGeo(geoSup); gl.drawElements(gl.TRIANGLES,es-prevS,gl.UNSIGNED_INT,prevS*4); }
+        if(em>prevM){ gl.uniform1f(U.uIsSup,0); bindGeo(geoModel); gl.drawElements(gl.TRIANGLES,em-prevM,gl.UNSIGNED_INT,prevM*4); }
+        prevM=em; prevS=es;
+      }
     }
     function draw(){
       if(W<2||Hh<2) return; // layout not settled yet — nothing sane to draw
       cam();
       // background gradient — never a flat black void
       var bg=ctx.createLinearGradient(0,0,0,Hh);
-      bg.addColorStop(0,'#181B21'); bg.addColorStop(1,'#0C0E11');
+      if(lightBg){ bg.addColorStop(0,'#EDEFF3'); bg.addColorStop(1,'#D9DDE3'); } else { bg.addColorStop(0,'#181B21'); bg.addColorStop(1,'#0C0E11'); }
       ctx.fillStyle=bg; ctx.fillRect(0,0,W,Hh);
       drawPlate();
       drawGizmo();

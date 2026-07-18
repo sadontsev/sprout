@@ -138,6 +138,12 @@ describe('gcodeViewerHtml (viewer contract)', () => {
     expect(html).not.toContain('strokeLayer');        // the old line renderer is gone
   });
 
+  test('has shading/background chips (like the STL viewer) and directional wall shading', () => {
+    const html = gcodeViewerHtml(tiny);
+    for (const chip of ['Steel', 'Ivory', 'Light bg']) expect(html).toContain(chip);
+    expect(html).toContain('vDir'); // lambert wall-normal shading — form is visible, not just a ramp
+  });
+
   test('embedded page script is syntactically valid JS', () => {
     const html = gcodeViewerHtml(tiny);
     const script = html.split('<script>')[1].split('</script>')[0];
