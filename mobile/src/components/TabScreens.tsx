@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, ActivityIndicator, Alert, Modal, Share } from 'react-native';
+import { View, Text, TextInput, ScrollView, RefreshControl, ActivityIndicator, Alert, Modal, Share } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 import { File, Paths } from 'expo-file-system';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { GcodeViewerOverlay } from './Overlays';
 import { isSliced3mf, isPlayableVideo, isMediaFolder, mediaThumbPath, mediaLabel } from '@/library/printerFiles';
+import { isSlicedFile, filterFiles, toggleSelection, displayName, type TypeFilter } from '@/library/libraryBrowse';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -97,9 +98,7 @@ function Empty({ icon, title, body, cta, onCta }: { icon: keyof typeof Feather.g
 
 // ---------------- LIBRARY ----------------
 type LibSource = 'library' | 'printer';
-type TypeFilter = 'all' | 'models' | 'sliced';
-/** Sliced = ready-to-print G-code (or a 3MF already sliced for a model); otherwise a raw model. */
-const isSlicedFile = (f: LibraryFile) => (f.file_type || '').includes('gcode') || !!f.sliced_for_model;
+// TypeFilter / isSlicedFile / search live in @/library/libraryBrowse (pure + unit-tested).
 
 function Segmented<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
   return (
@@ -122,6 +121,15 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
   const [loadFailed, setLoadFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<TypeFilter>('all');
+  const [view, setView] = useState<'grid' | 'list'>('grid');
+  const [query, setQuery] = useState('');
+  // Bulk selection: entered via the checklist button; tap toggles membership; Delete acts on the set.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const exitSelect = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
   const load = useCallback(() => {
     // A failed fetch is NOT an empty library — show a retry state instead of "No files yet".
     return client.listFiles().then((f) => { setFiles(f); setLoadFailed(false); }).catch(() => { setFiles((prev) => prev ?? []); setLoadFailed(true); });
@@ -204,12 +212,31 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
     ]);
   };
 
+  const bulkDelete = () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    Alert.alert(`Delete ${ids.length} ${ids.length === 1 ? 'file' : 'files'}?`, 'They will be removed from the library. This can’t be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const results = await Promise.allSettled(ids.map((id) => client.deleteFile(id)));
+          const failed = results.filter((r) => r.status === 'rejected').length;
+          exitSelect();
+          void load();
+          if (failed) Alert.alert('Some deletes failed', `${failed} of ${ids.length} files couldn’t be deleted.`);
+        },
+      },
+    ]);
+  };
+
   const counts: Record<TypeFilter, number> = {
     all: files?.length ?? 0,
     models: (files ?? []).filter((f) => !isSlicedFile(f)).length,
     sliced: (files ?? []).filter(isSlicedFile).length,
   };
-  const shown = (files ?? []).filter((f) => (filter === 'all' ? true : filter === 'sliced' ? isSlicedFile(f) : !isSlicedFile(f)));
+  const shown = filterFiles(files ?? [], filter, query);
   const pSorted = pList ? [...pList.files].sort((a, b) => (a.is_directory === b.is_directory ? a.name.localeCompare(b.name) : a.is_directory ? -1 : 1)) : [];
 
   return (
@@ -230,29 +257,73 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
       {source === 'library' ? (
         <>
           {loadFailed && <LoadFailed onRetry={() => void load()} />}
+          {!!files?.length && !selecting && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingTop: 14 }}>
+              <View style={{ flex: 1, flexDirection: 'row', gap: 8 }}>
+                {(['all', 'models', 'sliced'] as TypeFilter[]).map((k) => {
+                  const on = filter === k;
+                  return (
+                    <Tap key={k} onPress={() => setFilter(k)} style={{ paddingHorizontal: 13, height: 32, borderRadius: 10, backgroundColor: on ? c.accentDim : c.s2, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={{ fontWeight: '600', fontSize: 12, color: on ? c.accent : c.t2 }}>{k === 'all' ? 'All' : k === 'models' ? 'Models' : 'Sliced'}</Text>
+                      <Text style={{ fontWeight: '600', fontSize: 11, color: on ? c.accent : c.t3, fontFamily: mono }}>{counts[k]}</Text>
+                    </Tap>
+                  );
+                })}
+              </View>
+              <Tap onPress={() => setView(view === 'grid' ? 'list' : 'grid')} hitSlop={6} style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: c.s2, alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name={view === 'grid' ? 'list' : 'grid'} size={15} color={c.t2} />
+              </Tap>
+              <Tap onPress={() => setSelecting(true)} hitSlop={6} style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: c.s2, alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="check-square" size={15} color={c.t2} />
+              </Tap>
+            </View>
+          )}
+          {!!files?.length && selecting && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 20, paddingTop: 14 }}>
+              <Tap onPress={exitSelect} style={{ paddingHorizontal: 14, height: 34, borderRadius: 10, backgroundColor: c.s2, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Done</Text>
+              </Tap>
+              <Text style={{ flex: 1, fontWeight: '600', fontSize: 13, color: c.t2, textAlign: 'center' }}>
+                {selected.size ? `${selected.size} selected` : 'Tap files to select'}
+              </Text>
+              <Tap onPress={bulkDelete} disabled={!selected.size} style={{ paddingHorizontal: 14, height: 34, borderRadius: 10, backgroundColor: selected.size ? c.errorDim : c.s2, alignItems: 'center', justifyContent: 'center', opacity: selected.size ? 1 : 0.5 }}>
+                <Text style={{ fontWeight: '700', fontSize: 13, color: selected.size ? c.error : c.t3 }}>Delete</Text>
+              </Tap>
+            </View>
+          )}
           {!!files?.length && (
-            <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 20, paddingTop: 14 }}>
-              {(['all', 'models', 'sliced'] as TypeFilter[]).map((k) => {
-                const on = filter === k;
-                return (
-                  <Tap key={k} onPress={() => setFilter(k)} style={{ paddingHorizontal: 13, height: 32, borderRadius: 10, backgroundColor: on ? c.accentDim : c.s2, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Text style={{ fontWeight: '600', fontSize: 12, color: on ? c.accent : c.t2 }}>{k === 'all' ? 'All' : k === 'models' ? 'Models' : 'Sliced'}</Text>
-                    <Text style={{ fontWeight: '600', fontSize: 11, color: on ? c.accent : c.t3, fontFamily: mono }}>{counts[k]}</Text>
-                  </Tap>
-                );
-              })}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 20, marginTop: 10, paddingHorizontal: 12, height: 38, borderRadius: 12, backgroundColor: c.s2, borderWidth: 1, borderColor: c.line }}>
+              <Feather name="search" size={14} color={c.t3} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search files"
+                placeholderTextColor={c.t3}
+                autoCapitalize="none"
+                autoCorrect={false}
+                clearButtonMode="while-editing"
+                style={{ flex: 1, color: c.t1, fontSize: 13.5, paddingVertical: 0 }}
+              />
             </View>
           )}
           {files === null && !loadFailed && <ActivityIndicator color={c.accent} style={{ marginTop: 40 }} />}
           {files?.length === 0 && !loadFailed && <Empty icon="folder" title="No files yet" body="Upload an STL, 3MF, or sliced G-code and it'll show up here." cta="Upload a model" onCta={onUpload} />}
-          {!!files?.length && (
+          {!!files?.length && shown.length === 0 && (
+            <Text style={{ textAlign: 'center', marginTop: 40, fontWeight: '500', fontSize: 13, color: c.t3 }}>No files match{query.trim() ? ` “${query.trim()}”` : ''}.</Text>
+          )}
+          {!!files?.length && view === 'grid' && (
             <>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, paddingTop: 14, gap: 13 }}>
                 {shown.map((f) => {
                   const sliced = isSlicedFile(f);
+                  const sel = selected.has(f.id);
                   return (
-                    <Tap key={f.id} onPress={() => onPick(f)} onLongPress={() => fileMenu(f)} style={{ width: '47%', flexGrow: 1 }}>
-                      <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: 1, borderColor: c.line, alignItems: 'center', justifyContent: 'center' }}>
+                    <Tap
+                      key={f.id}
+                      onPress={() => (selecting ? setSelected(toggleSelection(selected, f.id)) : onPick(f))}
+                      onLongPress={() => !selecting && fileMenu(f)}
+                      style={{ width: '47%', flexGrow: 1, opacity: selecting && !sel ? 0.55 : 1 }}>
+                      <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 14, overflow: 'hidden', backgroundColor: c.thumb, borderWidth: selecting && sel ? 2 : 1, borderColor: selecting && sel ? c.accent : c.line, alignItems: 'center', justifyContent: 'center' }}>
                         {f.thumbnail_path ? (
                           <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} cachePolicy="memory-disk" />
                         ) : (
@@ -261,25 +332,78 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
                         <View style={{ position: 'absolute', top: 8, left: 8, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.5)' }}>
                           <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: 'rgba(255,255,255,0.8)', fontFamily: mono }}>{(f.file_type || '').toUpperCase()}</Text>
                         </View>
-                        {sliced && (
-                          <View style={{ position: 'absolute', top: 7, right: 7, width: 18, height: 18, borderRadius: 9, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
-                            <Feather name="check" size={11} color={c.accentInk} />
+                        {selecting ? (
+                          <View style={{ position: 'absolute', top: 7, right: 7, width: 22, height: 22, borderRadius: 11, backgroundColor: sel ? c.accent : 'rgba(0,0,0,0.5)', borderWidth: sel ? 0 : 1.5, borderColor: 'rgba(255,255,255,0.7)', alignItems: 'center', justifyContent: 'center' }}>
+                            {sel && <Feather name="check" size={13} color={c.accentInk} />}
                           </View>
+                        ) : (
+                          sliced && (
+                            <View style={{ position: 'absolute', top: 7, right: 7, width: 18, height: 18, borderRadius: 9, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
+                              <Feather name="check" size={11} color={c.accentInk} />
+                            </View>
+                          )
                         )}
                         {/* Texturize — STL models only (the sidecar takes raw meshes, not sliced gcode). */}
-                        {onTexturize && (f.file_type || '').toLowerCase() === 'stl' && (
+                        {!selecting && onTexturize && (f.file_type || '').toLowerCase() === 'stl' && (
                           <Tap onPress={() => onTexturize(f)} hitSlop={6} style={{ position: 'absolute', bottom: 7, right: 7, width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
                             <Feather name="droplet" size={13} color="#fff" />
                           </Tap>
                         )}
                       </View>
-                      <Text numberOfLines={1} style={{ marginTop: 9, fontWeight: '600', fontSize: 13, color: c.t1 }}>{f.print_name || f.filename}</Text>
+                      <Text numberOfLines={1} style={{ marginTop: 9, fontWeight: '600', fontSize: 13, color: c.t1 }}>{displayName(f)}</Text>
                       <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{fmtBytes(f.file_size)}</Text>
                     </Tap>
                   );
                 })}
               </View>
-              <Text style={{ textAlign: 'center', marginTop: 16, fontWeight: '500', fontSize: 11, color: c.t3 }}>Tap to print · hold for options</Text>
+              {shown.length > 0 && (
+                <Text style={{ textAlign: 'center', marginTop: 16, fontWeight: '500', fontSize: 11, color: c.t3 }}>
+                  {selecting ? 'Tap to select · Delete removes all selected' : 'Tap to print · hold for options'}
+                </Text>
+              )}
+            </>
+          )}
+          {!!files?.length && view === 'list' && (
+            <>
+              <View style={{ marginHorizontal: 20, marginTop: 14, borderRadius: 16, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, overflow: 'hidden' }}>
+                {shown.map((f, i) => {
+                  const sliced = isSlicedFile(f);
+                  const sel = selected.has(f.id);
+                  return (
+                    <Tap
+                      key={f.id}
+                      onPress={() => (selecting ? setSelected(toggleSelection(selected, f.id)) : onPick(f))}
+                      onLongPress={() => !selecting && fileMenu(f)}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: i === shown.length - 1 ? 0 : 1, borderBottomColor: c.line, backgroundColor: selecting && sel ? c.accentDim : 'transparent' }}>
+                      <View style={{ width: 44, height: 44, borderRadius: 10, overflow: 'hidden', backgroundColor: c.thumb, alignItems: 'center', justifyContent: 'center' }}>
+                        {f.thumbnail_path ? (
+                          <Image source={{ uri: client.fileThumbUrl(f.id, camToken, f.thumbnail_path) }} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={100} cachePolicy="memory-disk" />
+                        ) : (
+                          <Feather name={(f.file_type || '').includes('gcode') ? 'box' : 'file'} size={18} color={c.t3} />
+                        )}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{displayName(f)}</Text>
+                        <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>
+                          {(f.file_type || '').toUpperCase()}{sliced ? ' · sliced' : ''} · {fmtBytes(f.file_size)}
+                        </Text>
+                      </View>
+                      {selecting ? (
+                        <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: sel ? c.accent : 'transparent', borderWidth: sel ? 0 : 1.5, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
+                          {sel && <Feather name="check" size={13} color={c.accentInk} />}
+                        </View>
+                      ) : (
+                        <Feather name="chevron-right" size={16} color={c.t3} />
+                      )}
+                    </Tap>
+                  );
+                })}
+              </View>
+              {shown.length > 0 && (
+                <Text style={{ textAlign: 'center', marginTop: 16, fontWeight: '500', fontSize: 11, color: c.t3 }}>
+                  {selecting ? 'Tap to select · Delete removes all selected' : 'Tap to print · hold for options'}
+                </Text>
+              )}
             </>
           )}
         </>
