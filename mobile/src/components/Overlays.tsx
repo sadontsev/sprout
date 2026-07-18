@@ -743,7 +743,7 @@ export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlat
   );
 }
 
-export function WizardOverlay({ client, file, camToken, status, printerId, printer, onClose, onStarted }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; printer: Printer | null; onClose: () => void; onStarted: () => void }) {
+export function WizardOverlay({ client, file, camToken, status, printerId, printer, onClose, onStarted, onTexturize }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; printer: Printer | null; onClose: () => void; onStarted: () => void; onTexturize?: (f: LibraryFile) => void }) {
   const insets = useSafeAreaInsets();
   const profile = printerProfile(printer);
   const token = profile.presetToken; // "@BBL A1" / "@BBL H2C" — preset-name suffix for this machine
@@ -980,6 +980,18 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
                   <Text style={{ marginTop: 5, marginBottom: 16, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · will be sliced</Text>
                   {/* Multi-plate files (e.g. a 6-plate project) expose all plates here — pick which one to slice. */}
                   <PlateReview client={client} fileId={file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} sliced={false} />
+                  {onTexturize && (file.file_type || '').toLowerCase() === 'stl' && (
+                    <Tap onPress={() => onTexturize(file)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 14, backgroundColor: c.s2, marginTop: 14 }}>
+                      <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: c.accentDim, alignItems: 'center', justifyContent: 'center' }}>
+                        <Feather name="droplet" size={18} color={c.accent} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>Texturize first</Text>
+                        <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>Bake a surface pattern onto the model, then print the textured copy</Text>
+                      </View>
+                      <Feather name="chevron-right" size={16} color={c.t3} />
+                    </Tap>
+                  )}
                 </>
               )}
             </>

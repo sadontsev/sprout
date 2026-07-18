@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import * as Updates from 'expo-updates';
 import { getConfig, setConfig, clearConfig, patchConfig } from '@/config/secureConfig';
 import { c, mono, useTheme, setTheme, getThemeName, type ThemeName } from '@/theme';
 import { Tap, Toggle } from '@/components/anim';
@@ -249,6 +250,9 @@ export default function Settings() {
               {/* ABOUT */}
               <Section title="ABOUT">
                 <Row label="App version" value={appVersion} />
+                {/* Which JS bundle is actually running: the OTA update id (short), or the build's
+                    embedded bundle. This is the ground truth for "did the OTA land?" confusion. */}
+                <Row label="Update" value={Updates.updateId ? Updates.updateId.slice(0, 8) : 'embedded'} />
                 <Row label="Printer" value={printerName ?? '—'} last />
               </Section>
 
