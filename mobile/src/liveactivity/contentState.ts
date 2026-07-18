@@ -31,6 +31,11 @@ export type PrintActivityProps = {
   modelUri: string; // file:// URI of the plate thumbnail in the App Group ('' -> nozzle glyph) — leading visual
   queueCount: number; // prints waiting in the queue (drives the "Up next" banner row)
   nextName: string; // name of the next queued print ('' if none)
+  // ---- AMS drying card (second activity per printer; widget branches on `dry`) ----
+  dry?: boolean; // true -> this card shows a DRYING cycle, not a print
+  amsTemp?: number; // current AMS interior °C
+  amsTarget?: number; // drying target °C (0 when unknown)
+  humidity?: number; // AMS %RH
 };
 
 export type LiveActivityExtras = { modelUri?: string | null; queueCount?: number; nextName?: string | null };
@@ -88,6 +93,39 @@ export function toContentState(
   };
 }
 
+/** Pure: AMS drying status -> a drying-card ContentState, or null when no cycle is active.
+ *  `dry_time` (minutes remaining) > 0 is THE active signal (dry_status is unreliable, and WS numbers
+ *  can arrive as strings — verified live on the H2C). The countdown itself renders client-side from
+ *  etaEpochMs (ActivityKit timer), so pushes are only needed for temp/humidity drift and the end. */
+export function toDryContentState(status: PrinterStatus, nowMs: number, iconUri = '', printerName = ''): PrintActivityProps | null {
+  const ams = status.ams?.[0];
+  if (!ams) return null;
+  const num = (v: unknown): number => {
+    const n = typeof v === 'number' ? v : Number(v ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const mins = num(ams.dry_time);
+  if (mins <= 0) return null;
+  const target = Math.round(num(ams.dry_target_temp));
+  const fil = ams.dry_filament || 'Filament';
+  return {
+    ...GENERIC_END,
+    printerName,
+    iconUri,
+    dry: true,
+    stateLabel: 'Drying',
+    name: target > 0 ? `${fil} @ ${target}°` : fil,
+    tint: '#FFB86C',
+    symbol: 'humidity.fill',
+    finished: false,
+    progress: 0,
+    etaEpochMs: nowMs + mins * 60000,
+    amsTemp: Math.round(num(ams.temp)),
+    amsTarget: target,
+    humidity: Math.round(num(ams.humidity)),
+  };
+}
+
 // Minimal content used only to dismiss an orphaned activity we can't map back to a printer.
 export const GENERIC_END: PrintActivityProps = {
   printerName: '', name: '', stateLabel: 'Complete', progress: 100, layer: 0, totalLayers: 0, etaEpochMs: 0,
@@ -117,6 +155,11 @@ export function meaningfulChange(a: PrintActivityProps | null, b: PrintActivityP
     a.activeNozzle !== b.activeNozzle ||
     Math.abs(a.bed - b.bed) >= 2 ||
     a.bedTarget !== b.bedTarget ||
-    Math.abs(a.etaEpochMs - b.etaEpochMs) >= 60_000
+    Math.abs(a.etaEpochMs - b.etaEpochMs) >= 60_000 ||
+    // Drying cards: temp climb + humidity fall are the whole story; the countdown ticks client-side.
+    (a.dry ?? false) !== (b.dry ?? false) ||
+    Math.abs((a.amsTemp ?? 0) - (b.amsTemp ?? 0)) >= 1 ||
+    (a.amsTarget ?? 0) !== (b.amsTarget ?? 0) ||
+    Math.abs((a.humidity ?? 0) - (b.humidity ?? 0)) >= 2
   );
 }

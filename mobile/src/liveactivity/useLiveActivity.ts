@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import { printActivity } from './PrintActivity';
-import { toContentState, meaningfulChange, GENERIC_END, type PrintActivityProps, type LiveActivityExtras } from './contentState';
+import { toContentState, toDryContentState, meaningfulChange, GENERIC_END, type PrintActivityProps, type LiveActivityExtras } from './contentState';
 import { nozzleIconUri } from './nozzleIcon';
 import type { LiveActivity } from 'expo-widgets';
 import type { PrinterStatus } from '@/api/types';
@@ -23,14 +23,14 @@ export type ActivityEntry = {
 
 /** Register a card's APNs push token with the la-push service (keyed by printer) so it keeps updating
  *  when the app is closed. Fire-and-forget — push is a bonus; foreground updates work regardless. */
-function registerPushToken(pushUrl: string, apiKey: string, printerId: number, printerName: string, pushToken: string): void {
+function registerPushToken(pushUrl: string, apiKey: string, printerId: number, printerName: string, pushToken: string, kind: 'print' | 'dry' = 'print'): void {
   if (!pushToken) return;
   // X-API-Key gates la-push registration to holders of the Bambuddy key, so a stranger who knows the
   // URL can't register their token and receive this printer's notifications.
   fetch(`${pushUrl.replace(/\/+$/, '')}/register`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'X-API-Key': apiKey },
-    body: JSON.stringify({ printer_id: printerId, push_token: pushToken, printer_name: printerName, icon_uri: nozzleIconUri() }),
+    body: JSON.stringify({ printer_id: printerId, push_token: pushToken, printer_name: printerName, icon_uri: nozzleIconUri(), kind }),
   }).catch(() => {});
 }
 
@@ -48,14 +48,20 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
   const lastState = useRef(new Map<number, PrintActivityProps>());
   const subs = useRef(new Map<number, { remove: () => void }>());
   const adopted = useRef(false);
+  // Drying cards: a SECOND activity per printer (print + drying can run simultaneously).
+  const dryInstances = useRef(new Map<number, LiveActivity<PrintActivityProps>>());
+  const dryLastPush = useRef(new Map<number, number>());
+  const dryLastState = useRef(new Map<number, PrintActivityProps>());
+  const drySubs = useRef(new Map<number, { remove: () => void }>());
 
   // Grab the card's APNs push token (now + on rotation) and register it with la-push.
-  const wirePush = (printerId: number, printerName: string, inst: LiveActivity<PrintActivityProps>) => {
-    if (!pushUrl || !apiKey || subs.current.has(printerId)) return;
+  const wirePush = (printerId: number, printerName: string, inst: LiveActivity<PrintActivityProps>, kind: 'print' | 'dry' = 'print') => {
+    const sm = kind === 'dry' ? drySubs : subs;
+    if (!pushUrl || !apiKey || sm.current.has(printerId)) return;
     try {
-      inst.getPushToken().then((tok) => tok && registerPushToken(pushUrl, apiKey, printerId, printerName, tok)).catch(() => {});
-      const sub = inst.addPushTokenListener((ev) => registerPushToken(pushUrl, apiKey, printerId, printerName, ev.pushToken));
-      subs.current.set(printerId, sub);
+      inst.getPushToken().then((tok) => tok && registerPushToken(pushUrl, apiKey, printerId, printerName, tok, kind)).catch(() => {});
+      const sub = inst.addPushTokenListener((ev) => registerPushToken(pushUrl, apiKey, printerId, printerName, ev.pushToken, kind));
+      sm.current.set(printerId, sub);
     } catch {
       /* older expo-widgets / push disabled — foreground updates still work */
     }
@@ -125,6 +131,43 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
           lastState.current.set(e.printerId, next);
           lastPush.current.set(e.printerId, now);
         }
+      }
+    }
+
+    // ---- Drying cards: independent lifecycle driven by ams.dry_time (>0 = active). ----
+    for (const e of entries) {
+      if (!e.status) continue;
+      const dcs = toDryContentState(e.status, now, nozzleIconUri(), e.printerName);
+      const dinst = dryInstances.current.get(e.printerId);
+      if (!dcs) {
+        if (dinst) {
+          // Cycle over (or cancelled) -> end the card with a Done face.
+          dinst.end('default', { ...(dryLastState.current.get(e.printerId) ?? GENERIC_END), dry: true, stateLabel: 'Done', finished: true, etaEpochMs: 0 }, new Date(now)).catch(() => {});
+          dryInstances.current.delete(e.printerId);
+          dryLastState.current.delete(e.printerId);
+          dryLastPush.current.delete(e.printerId);
+          drySubs.current.get(e.printerId)?.remove();
+          drySubs.current.delete(e.printerId);
+        }
+        continue;
+      }
+      if (!dinst) {
+        try {
+          const ni = printActivity.start(dcs, 'bambu://');
+          dryInstances.current.set(e.printerId, ni);
+          dryLastState.current.set(e.printerId, dcs);
+          dryLastPush.current.set(e.printerId, now);
+          wirePush(e.printerId, e.printerName, ni, 'dry');
+        } catch {
+          /* disabled by user / not a dev build */
+        }
+        continue;
+      }
+      const due = now - (dryLastPush.current.get(e.printerId) ?? 0) >= MIN_UPDATE_MS;
+      if (due && meaningfulChange(dryLastState.current.get(e.printerId) ?? null, dcs)) {
+        dinst.update(dcs).catch(() => {});
+        dryLastState.current.set(e.printerId, dcs);
+        dryLastPush.current.set(e.printerId, now);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
