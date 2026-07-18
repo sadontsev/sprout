@@ -195,7 +195,7 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
   };
 
   const confirmDelete = (f: LibraryFile) =>
-    Alert.alert('Delete file?', `“${f.print_name || f.filename}” will be removed from the library. This can’t be undone.`, [
+    Alert.alert('Delete file?', `“${displayName(f)}” will be removed from the library. This can’t be undone.`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => client.deleteFile(f.id).then(load).catch((e) => Alert.alert('Couldn’t delete', String(e))) },
     ]);
@@ -203,7 +203,7 @@ export function LibraryView({ client, camToken, printerId, plate, onUpload, onPi
   // Long-press action menu (was delete-only — Texturize was undiscoverable as just a corner badge).
   const fileMenu = (f: LibraryFile) => {
     const isStl = (f.file_type || '').toLowerCase() === 'stl';
-    Alert.alert(f.print_name || f.filename, undefined, [
+    Alert.alert(displayName(f), undefined, [
       { text: 'Print…', onPress: () => onPick(f) },
       ...(onView3D && isStl ? [{ text: 'View in 3D', onPress: () => onView3D(f) }] : []),
       ...(onTexturize && isStl ? [{ text: 'Texturize…', onPress: () => onTexturize(f) }] : []),
