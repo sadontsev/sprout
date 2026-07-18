@@ -12,6 +12,7 @@ import type { TexturizeClient, TexturizeTexture, TexturizeMappingMode } from '@/
 import type { LibraryFile, Printer, PrinterStatus, MakerWorldResolved, MWInstance, PlatesResponse, FileMetadata, SlotAssignment } from '@/api/types';
 import { presentDashboard, normColor } from '@/dashboard/present';
 import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
+import { displayName } from '@/library/libraryBrowse';
 import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
 import { parseGcodeLayers, gcodeViewerHtml, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
 import { stlViewerHtml } from '@/library/stlViewerHtml';
@@ -236,13 +237,7 @@ function SheetLabel({ children, first }: { children: React.ReactNode; first?: bo
 
 /** "-textured.stl" name for a texturize result, mirroring the sidecar's texturedName(). */
 function texturedDisplayName(f: LibraryFile): string {
-  let name = f.print_name || f.filename || `model-${f.id}`;
-  try {
-    name = decodeURIComponent(name);
-  } catch {
-    /* keep raw */
-  }
-  return `${name.replace(/\.(stl|3mf|obj|gcode(\.3mf)?)$/i, '')}-textured.stl`;
+  return `${displayName(f).replace(/\.(stl|3mf|obj|gcode(\.3mf)?)$/i, '')}-textured.stl`;
 }
 
 export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient: TexturizeClient; file: LibraryFile; onClose: () => void; onDone: () => void }) {
@@ -333,7 +328,7 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
         <Pressable onPress={() => {}} style={{ backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingTop: 10, paddingBottom: insets.bottom + 16, ...shadow1 }}>
           <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginBottom: 14 }} />
           <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1, textAlign: 'center' }}>Texturize</Text>
-          <Text numberOfLines={1} style={{ marginTop: 3, marginBottom: 12, fontWeight: '500', fontSize: 12, color: c.t3, textAlign: 'center', fontFamily: mono }}>{file.print_name || file.filename}</Text>
+          <Text numberOfLines={1} style={{ marginTop: 3, marginBottom: 12, fontWeight: '500', fontSize: 12, color: c.t3, textAlign: 'center', fontFamily: mono }}>{displayName(file)}</Text>
           {/* Settings scroll inside a BOUNDED height; buttons are pinned BELOW the scroll so they can
               never be pushed off-screen (tall content used to overflow past maxHeight without
               scrolling — RN clips nothing by default, so the buttons landed under the home bar). */}
@@ -1112,7 +1107,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
               <L>SELECTED FILE</L>
               {alreadySliced ? (
                 <>
-                  <Text style={{ fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
+                  <Text style={{ fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{displayName(file)}</Text>
                   <Text style={{ marginTop: 5, marginBottom: 16, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · pre-sliced</Text>
                   {printerMismatch && (
                     <View style={{ flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.errorDim, borderWidth: 1, borderColor: c.error, marginBottom: 14 }}>
@@ -1122,17 +1117,17 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
                       </Text>
                     </View>
                   )}
-                  <PlateReview client={client} fileId={file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} onViewLayers={() => setViewLayers({ fileId: file.id, title: file.print_name || file.filename })} />
+                  <PlateReview client={client} fileId={file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} onViewLayers={() => setViewLayers({ fileId: file.id, title: displayName(file) })} />
                 </>
               ) : (
                 <>
-                  <Text style={{ fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
+                  <Text style={{ fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{displayName(file)}</Text>
                   <Text style={{ marginTop: 5, marginBottom: 16, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · will be sliced</Text>
                   {(file.file_type || '').toLowerCase() === 'stl' ? (
                     /* Raw STLs have no slicer plates yet — PlateReview would be an empty grey box.
                        Show the LIVE mesh inline instead (compact page: orbit works, controls hidden). */
                     <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: c.line, backgroundColor: '#0A0B0C' }}>
-                      <StlWebView client={client} fileId={file.id} name={file.print_name || file.filename} compact />
+                      <StlWebView client={client} fileId={file.id} name={displayName(file)} compact />
                     </View>
                   ) : (
                     /* Multi-plate files (e.g. a 6-plate project) expose all plates here — pick which one to slice. */
@@ -1292,7 +1287,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
 
           {step === 5 && (
             <>
-              <PlateReview client={client} fileId={result?.library_file_id ?? file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} onViewLayers={() => setViewLayers({ fileId: result?.library_file_id ?? file.id, title: file.print_name || file.filename })} />
+              <PlateReview client={client} fileId={result?.library_file_id ?? file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} onViewLayers={() => setViewLayers({ fileId: result?.library_file_id ?? file.id, title: displayName(file) })} />
               <View style={{ marginTop: 14, flexDirection: 'row', gap: 10, padding: 13, borderRadius: 13, backgroundColor: c.accentDim }}>
                 <Feather name="info" size={17} color={c.accent} />
                 <Text style={{ flex: 1, fontWeight: '500', fontSize: 12.5, lineHeight: 18, color: c.t2 }}>Nothing prints yet. Review the plate, then map filament to a tray.</Text>
@@ -1326,7 +1321,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
             <>
               <L>READY TO PRINT</L>
               <View style={{ borderRadius: 16, backgroundColor: c.s2, overflow: 'hidden' }}>
-                <Row k="File" v={file.print_name || file.filename} />
+                <Row k="File" v={displayName(file)} />
                 <Row k="Printer" v={printer?.name ?? '—'} />
                 <Row k="Material" v={(filament?.name ?? 'As sliced').replace(` ${token}`, '')} />
                 <Row k="Mapped to" v={`Slot ${slot + 1}`} />

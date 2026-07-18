@@ -13,6 +13,7 @@ import { useStatusNotifications } from '@/notifications/useStatusNotifications';
 import { presentDashboard, type DashVM } from '@/dashboard/present';
 import { printerProfile } from '@/printers/profile';
 import { reconcileSelection, initialSelectionState, type SelectionState } from '@/printers/selection';
+import { displayName } from '@/library/libraryBrowse';
 import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
 import { TabBar, type TabKey } from '@/components/TabBar';
 import { LibraryView, JobsView, AmsView, PowerView } from '@/components/TabScreens';
@@ -169,7 +170,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   // Fullscreen interactive STL viewer (renders ABOVE the texturize sheet so "View in 3D" from the
   // done state returns to the sheet on close, keeping the tweak → re-run loop intact).
   const [viewStl, setViewStl] = useState<{ fileId: number; name: string } | null>(null);
-  const openStl = (f: LibraryFile) => setViewStl({ fileId: f.id, name: f.print_name || f.filename });
+  const openStl = (f: LibraryFile) => setViewStl({ fileId: f.id, name: displayName(f) });
 
   // Speed: the printer's real speed_level drives the UI; a short-lived optimistic override bridges
   // the gap between tapping a mode and the next status frame reflecting it.
