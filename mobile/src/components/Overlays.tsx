@@ -671,8 +671,8 @@ export function GcodeViewerOverlay({ load, title, onClose, plate }: { load: () =
 }
 
 // ---------------- STL 3D VIEWER (interactive mesh preview — raw WebGL in a WebView) ----------------
-export function StlViewerOverlay({ client, fileId, name, onClose }: { client: BambuddyClient; fileId: number; name: string; onClose: () => void }) {
-  const insets = useSafeAreaInsets();
+/** Shared mint-URL → viewer-page WebView. `compact` hides the in-page control card (inline embeds). */
+export function StlWebView({ client, fileId, name, compact, style }: { client: BambuddyClient; fileId: number; name: string; compact?: boolean; style?: object }) {
   const [html, setHtml] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -682,7 +682,7 @@ export function StlViewerOverlay({ client, fileId, name, onClose }: { client: Ba
     // the mesh bytes never cross the RN bridge and no auth headers are needed in-page.
     client
       .mintFileDownloadUrl(fileId, name)
-      .then((url) => alive && setHtml(stlViewerHtml({ url, name })))
+      .then((url) => alive && setHtml(stlViewerHtml({ url, name, compact })))
       .catch((e) => alive && setErr(apiErrorDetail(e)));
     return () => {
       alive = false;
@@ -691,40 +691,48 @@ export function StlViewerOverlay({ client, fileId, name, onClose }: { client: Ba
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  if (!html || err) {
+    return (
+      <View style={[{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, backgroundColor: '#0A0B0C' }, style]}>
+        {err ? (
+          <>
+            <Feather name="box" size={compact ? 22 : 30} color="#3a4046" />
+            <Text style={{ marginTop: 10, color: '#6b7177', fontSize: compact ? 12 : 14, textAlign: 'center', lineHeight: 18 }}>{err}</Text>
+          </>
+        ) : (
+          <>
+            <ActivityIndicator color={c.accent} />
+            <Text style={{ marginTop: 10, fontFamily: mono, color: '#3a4046', letterSpacing: 2, fontSize: 10 }}>LOADING MODEL…</Text>
+          </>
+        )}
+      </View>
+    );
+  }
+  return (
+    <WebView
+      source={{ html, baseUrl: `${client.baseUrl}/` }}
+      originWhitelist={['*']}
+      style={[{ flex: 1, backgroundColor: '#0A0B0C' }, style]}
+      scrollEnabled={false}
+      javaScriptEnabled
+      domStorageEnabled
+      onMessage={(e) => {
+        try {
+          const m = JSON.parse(e.nativeEvent.data);
+          if (m.type === 'error') setErr(m.message || 'render error');
+        } catch {
+          /* ignore */
+        }
+      }}
+    />
+  );
+}
+
+export function StlViewerOverlay({ client, fileId, name, onClose }: { client: BambuddyClient; fileId: number; name: string; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
   return (
     <View style={{ position: 'absolute', inset: 0, backgroundColor: '#0A0B0C', zIndex: 84 } as any}>
-      {html && !err ? (
-        <WebView
-          source={{ html, baseUrl: `${client.baseUrl}/` }}
-          originWhitelist={['*']}
-          style={{ flex: 1, backgroundColor: '#0A0B0C' }}
-          scrollEnabled={false}
-          javaScriptEnabled
-          domStorageEnabled
-          onMessage={(e) => {
-            try {
-              const m = JSON.parse(e.nativeEvent.data);
-              if (m.type === 'error') setErr(m.message || 'render error');
-            } catch {
-              /* ignore */
-            }
-          }}
-        />
-      ) : (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 }}>
-          {err ? (
-            <>
-              <Feather name="box" size={30} color="#3a4046" />
-              <Text style={{ marginTop: 14, color: '#6b7177', fontSize: 14, textAlign: 'center', lineHeight: 20 }}>{err}</Text>
-            </>
-          ) : (
-            <>
-              <ActivityIndicator color={c.accent} />
-              <Text style={{ marginTop: 14, fontFamily: mono, color: '#3a4046', letterSpacing: 2, fontSize: 11 }}>LOADING MODEL…</Text>
-            </>
-          )}
-        </View>
-      )}
+      <StlWebView client={client} fileId={fileId} name={name} />
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
         <Tap onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="chevron-down" size={22} color="#fff" />
@@ -1076,8 +1084,16 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
                 <>
                   <Text style={{ fontWeight: '700', fontSize: 19, color: c.t1, letterSpacing: -0.3 }}>{file.print_name || file.filename}</Text>
                   <Text style={{ marginTop: 5, marginBottom: 16, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{file.file_type} · will be sliced</Text>
-                  {/* Multi-plate files (e.g. a 6-plate project) expose all plates here — pick which one to slice. */}
-                  <PlateReview client={client} fileId={file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} sliced={false} />
+                  {(file.file_type || '').toLowerCase() === 'stl' ? (
+                    /* Raw STLs have no slicer plates yet — PlateReview would be an empty grey box.
+                       Show the LIVE mesh inline instead (compact page: orbit works, controls hidden). */
+                    <View style={{ width: '100%', aspectRatio: 4 / 3, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: c.line, backgroundColor: '#0A0B0C' }}>
+                      <StlWebView client={client} fileId={file.id} name={file.print_name || file.filename} compact />
+                    </View>
+                  ) : (
+                    /* Multi-plate files (e.g. a 6-plate project) expose all plates here — pick which one to slice. */
+                    <PlateReview client={client} fileId={file.id} camToken={camToken} plateIndex={selectedPlate} onSelectPlate={setSelectedPlate} sliced={false} />
+                  )}
                   {(file.file_type || '').toLowerCase() === 'stl' && (
                     <>
                       {onView3D && (
