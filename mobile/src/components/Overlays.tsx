@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert, TextInput } from 'react-native';
+import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert, TextInput, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { WebView } from 'react-native-webview';
 import Animated, { SlideInDown, FadeIn } from 'react-native-reanimated';
@@ -247,6 +247,7 @@ function texturedDisplayName(f: LibraryFile): string {
 
 export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient: TexturizeClient; file: LibraryFile; onClose: () => void; onDone: () => void }) {
   const insets = useSafeAreaInsets();
+  const { height: winH } = useWindowDimensions();
   const [textures, setTextures] = useState<TexturizeTexture[] | null>(null);
   const [texId, setTexId] = useState<string | null>(null);
   const [amplitude, setAmplitude] = useState(0.5);
@@ -329,11 +330,14 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
     <Pressable onPress={busy ? undefined : onClose} style={{ position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 72 } as any}>
       <Animated.View entering={FadeIn.duration(220)} pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)' } as any} />
       <Animated.View entering={SlideInDown.duration(320)}>
-        <Pressable onPress={() => {}} style={{ backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingTop: 10, paddingBottom: insets.bottom + 20, maxHeight: 640, ...shadow1 }}>
+        <Pressable onPress={() => {}} style={{ backgroundColor: c.sheet, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingTop: 10, paddingBottom: insets.bottom + 16, ...shadow1 }}>
           <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginBottom: 14 }} />
           <Text style={{ fontWeight: '700', fontSize: 17, color: c.t1, textAlign: 'center' }}>Texturize</Text>
           <Text numberOfLines={1} style={{ marginTop: 3, marginBottom: 12, fontWeight: '500', fontSize: 12, color: c.t3, textAlign: 'center', fontFamily: mono }}>{file.print_name || file.filename}</Text>
-          <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+          {/* Settings scroll inside a BOUNDED height; buttons are pinned BELOW the scroll so they can
+              never be pushed off-screen (tall content used to overflow past maxHeight without
+              scrolling — RN clips nothing by default, so the buttons landed under the home bar). */}
+          <ScrollView style={{ maxHeight: Math.max(220, winH - insets.top - insets.bottom - 320) }} showsVerticalScrollIndicator={false} bounces={false}>
             <SheetLabel first>TEXTURE</SheetLabel>
             {textures === null && !error && <ActivityIndicator color={c.accent} style={{ marginVertical: 16 }} />}
             {!!textures?.length && (
@@ -359,31 +363,31 @@ export function TexturizeSheet({ texClient, file, onClose, onDone }: { texClient
             <Chips<TexturizeMappingMode> value={mapping} onChange={setMapping} options={[['triplanar', 'Auto'], ['cubic', 'Boxy'], ['cylindrical', 'Round']]} />
             <SheetLabel>DETAIL</SheetLabel>
             <Chips value={detail} onChange={setDetail} options={[[0.4, 'Standard'], [0.25, 'Fine · slower']]} />
-            {error && (
-              <View style={{ marginTop: 16, padding: 12, borderRadius: 12, backgroundColor: c.s2, borderWidth: 1, borderColor: c.error }}>
-                <Text style={{ color: c.error, fontSize: 12.5, lineHeight: 17, fontWeight: '500' }}>{error}</Text>
-              </View>
-            )}
-            {busy && (
-              <View style={{ marginTop: 16 }}>
-                <View style={{ height: 6, borderRadius: 3, backgroundColor: c.s3, overflow: 'hidden' }}>
-                  <View style={{ width: `${Math.round(job.progress * 100)}%`, height: 6, borderRadius: 3, backgroundColor: c.accent }} />
-                </View>
-                <Text style={{ marginTop: 7, fontWeight: '500', fontSize: 11.5, color: c.t3, textAlign: 'center', fontFamily: mono }}>{job.stage} · {Math.round(job.progress * 100)}%</Text>
-              </View>
-            )}
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
-              <Tap onPress={onClose} disabled={busy} style={{ paddingHorizontal: 22, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.5 : 1 }}>
-                <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>Cancel</Text>
-              </Tap>
-              <Tap onPress={start} disabled={busy || !texId} style={{ flex: 1, height: 50, borderRadius: 14, backgroundColor: busy || !texId ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontWeight: '700', fontSize: 15, color: busy || !texId ? c.t3 : c.accentInk }}>{busy ? 'Texturizing…' : 'Texturize'}</Text>
-              </Tap>
-            </View>
-            <Text style={{ marginTop: 10, fontSize: 10.5, lineHeight: 14, color: c.t3, textAlign: 'center' }}>
-              The result opens for review first — nothing is saved until you Keep it. The bed face stays flat.
-            </Text>
           </ScrollView>
+          {error && (
+            <View style={{ marginTop: 14, padding: 12, borderRadius: 12, backgroundColor: c.s2, borderWidth: 1, borderColor: c.error }}>
+              <Text style={{ color: c.error, fontSize: 12.5, lineHeight: 17, fontWeight: '500' }}>{error}</Text>
+            </View>
+          )}
+          {busy && (
+            <View style={{ marginTop: 14 }}>
+              <View style={{ height: 6, borderRadius: 3, backgroundColor: c.s3, overflow: 'hidden' }}>
+                <View style={{ width: `${Math.round(job.progress * 100)}%`, height: 6, borderRadius: 3, backgroundColor: c.accent }} />
+              </View>
+              <Text style={{ marginTop: 7, fontWeight: '500', fontSize: 11.5, color: c.t3, textAlign: 'center', fontFamily: mono }}>{job.stage} · {Math.round(job.progress * 100)}%</Text>
+            </View>
+          )}
+          <View style={{ flexDirection: 'row', gap: 12, marginTop: 14 }}>
+            <Tap onPress={onClose} disabled={busy} style={{ paddingHorizontal: 22, height: 50, borderRadius: 14, backgroundColor: c.s3, alignItems: 'center', justifyContent: 'center', opacity: busy ? 0.5 : 1 }}>
+              <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>Cancel</Text>
+            </Tap>
+            <Tap onPress={start} disabled={busy || !texId} style={{ flex: 1, height: 50, borderRadius: 14, backgroundColor: busy || !texId ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontWeight: '700', fontSize: 15, color: busy || !texId ? c.t3 : c.accentInk }}>{busy ? 'Texturizing…' : 'Texturize'}</Text>
+            </Tap>
+          </View>
+          <Text style={{ marginTop: 9, fontSize: 10.5, lineHeight: 14, color: c.t3, textAlign: 'center' }}>
+            The result opens for review first — nothing is saved until you Keep it. The bed face stays flat.
+          </Text>
         </Pressable>
       </Animated.View>
 
