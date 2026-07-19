@@ -82,7 +82,10 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
         fetch(`${pushUrl.replace(/\/+$/, '')}/register-start`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'X-API-Key': apiKey },
-          body: JSON.stringify({ push_token: tok }),
+          // Hand over the App-Group glyph path too: la-push has no way to know it, so without this
+          // remotely-started cards render the SF-symbol fallback while app-started ones show the
+          // brand nozzle — the visual tell that gave this whole bug away.
+          body: JSON.stringify({ push_token: tok, icon_uri: nozzleIconUri() }),
         }).catch(() => {});
       });
     } catch {
@@ -94,21 +97,17 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
 
-    // Adopt activities left over from a previous launch (once). We can't map an orphan back to its
-    // printer, but a card's identity is just its content — so we hand each orphan to a currently-live
-    // printer and let the update loop below rewrite it with the right data. Surplus orphans are ended.
+    // RECONCILE (once per mount): the app is the authority on what's on the lock screen.
+    // Cards now come from three places — this app, a previous launch, and la-push's push-to-start —
+    // and expo-widgets exposes NO way to read an adopted instance's content, so an orphan can't be
+    // told apart from a print card, a dry card, or a zombie. Blind adoption therefore mis-assigned
+    // them and the loops below started duplicates (observed: 3 print cards + 1 dry card stacked).
+    // So: end EVERY existing activity, then let the loops below create exactly the cards that should
+    // exist — app-owned, correct glyph, freshly registered with la-push.
     if (!adopted.current) {
       adopted.current = true;
       try {
-        const pool = printActivity.getInstances();
-        const live = entries.filter((e) => isLive(e.vm) && e.status);
-        live.forEach((e, i) => {
-          if (pool[i]) {
-            instances.current.set(e.printerId, pool[i]);
-            wirePush(e.printerId, e.printerName, pool[i]);
-          }
-        });
-        pool.slice(live.length).forEach((inst) => inst.end('default', GENERIC_END, new Date()).catch(() => {}));
+        printActivity.getInstances().forEach((inst) => inst.end('immediate', GENERIC_END, new Date()).catch(() => {}));
       } catch {
         /* Expo Go / no native module — ignore */
       }

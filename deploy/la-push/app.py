@@ -172,6 +172,13 @@ _device_tokens: list[str] = []
 _p2s_tokens: list[str] = []
 # _p2s_dry_sent: pid -> True once we remote-started a dry card for the CURRENT cycle (reset when idle).
 _p2s_dry_sent: dict[str, bool] = {}
+# _p2s_icons: p2s token -> App-Group glyph URI (the app knows the path; we don't).
+_p2s_icons: dict[str, str] = {}
+# _p2s_pending: pid -> True while a remotely-started card has NOT yet reported an update token. Such a
+# card is unreachable (we can never update or END it), so we must not start another on top of it —
+# that stacking is what piled 3 print cards onto the lock screen. Cleared when a real registration
+# arrives (app opened -> reconciled) or the printer leaves the live state.
+_p2s_pending: dict[str, bool] = {}
 # _last_kind: printerId -> last-seen kind, for edge-triggered notifications. Persisted (in REG_FILE) so a
 # restart/crash mid-print doesn't lose the live->complete/error edge and silently drop the alert.
 _last_kind: dict[int, str] = {}
@@ -183,7 +190,7 @@ _printers_cache: dict[int, str] = {}
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending
     try:
         data = json.loads(REG_FILE.read_text())
         _regs = data.get("regs", {})
@@ -193,14 +200,18 @@ def _load() -> None:
         _last_dry = data.get("last_dry", {})
         _p2s_tokens = data.get("p2s", [])
         _p2s_dry_sent = data.get("p2s_dry_sent", {})
+        _p2s_icons = data.get("p2s_icons", {})
+        _p2s_pending = data.get("p2s_pending", {})
     except (FileNotFoundError, json.JSONDecodeError):
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
+        _p2s_icons, _p2s_pending = {}, {}
 
 
 def _save() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind,
-                                    "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent}))
+                                    "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
+                                    "p2s_icons": _p2s_icons, "p2s_pending": _p2s_pending}))
 
 
 # ---- APNs ----
@@ -422,22 +433,30 @@ async def _tick(client: httpx.AsyncClient) -> None:
         # Live Activity remotely. Edge-triggered exactly like the banners so it fires once per event.
         if _p2s_tokens:
             prev_kind = _last_kind.get(pid)
-            if kind == "live" and prev_kind is not None and prev_kind != "live" and str(pid) not in _regs:
-                cs0 = {"printerName": name, "iconUri": "", **fields}
+            # A remotely-started card we never got a token for is UNREACHABLE (can't update, can't
+            # end). Starting another on top just stacks orphans, so hold until the app reconciles.
+            if (kind == "live" and prev_kind is not None and prev_kind != "live"
+                    and str(pid) not in _regs and not _p2s_pending.get(str(pid))):
                 for tok in list(_p2s_tokens):
-                    code = await _push_start(client, tok, cs0)
+                    code = await _push_start(client, tok, {"printerName": name, "iconUri": _p2s_icons.get(tok, ""), **fields})
                     print(f"[p2s] start print {pid} -> {code}", flush=True)
                     if code in (400, 410):
                         _p2s_tokens.remove(tok)
-                        _save()
+                        _p2s_icons.pop(tok, None)
+                _p2s_pending[str(pid)] = True
+                _save()
+            elif kind != "live" and _p2s_pending.get(str(pid)):
+                _p2s_pending.pop(str(pid), None)  # cycle over; the next print may start a card again
+                _save()
+
             ds0 = dry_state(status)
             if ds0 is not None and not _p2s_dry_sent.get(str(pid)) and f"dry:{pid}" not in _regs:
-                dcs0 = {"printerName": name, "iconUri": "", **ds0}
                 for tok in list(_p2s_tokens):
-                    code = await _push_start(client, tok, dcs0)
+                    code = await _push_start(client, tok, {"printerName": name, "iconUri": _p2s_icons.get(tok, ""), **ds0})
                     print(f"[p2s] start dry {pid} -> {code}", flush=True)
                     if code in (400, 410):
                         _p2s_tokens.remove(tok)
+                        _p2s_icons.pop(tok, None)
                 _p2s_dry_sent[str(pid)] = True
                 _save()
             elif ds0 is None and _p2s_dry_sent.get(str(pid)):
@@ -540,14 +559,18 @@ async def health() -> dict:
 
 class StartReg(BaseModel):
     push_token: str  # ActivityKit push-to-start token (per device, per attributes type)
+    icon_uri: str = ""  # App-Group glyph path, so remote starts match app-started cards
 
 
 @app.post("/register-start")
 async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
-    if r.push_token and r.push_token not in _p2s_tokens:
-        _p2s_tokens.append(r.push_token)
+    if r.push_token:
+        if r.push_token not in _p2s_tokens:
+            _p2s_tokens.append(r.push_token)
+            print(f"[p2s] registered start token {r.push_token[:8]}… ({len(_p2s_tokens)} total)", flush=True)
+        if r.icon_uri:
+            _p2s_icons[r.push_token] = r.icon_uri
         _save()
-        print(f"[p2s] registered start token {r.push_token[:8]}… ({len(_p2s_tokens)} total)", flush=True)
     return {"ok": True}
 
 
@@ -567,6 +590,8 @@ async def register(r: Register, _: None = Depends(_require_key)) -> dict:
         "printerId": r.printer_id, "pushToken": r.push_token, "printerName": r.printer_name,
         "iconUri": r.icon_uri, "kind": r.kind, "lastPush": 0, "lastState": None,
     }
+    if r.kind != "dry":
+        _p2s_pending.pop(str(r.printer_id), None)  # reachable again — future starts are allowed
     _save()
     print(f"[register] {r.kind} printer {r.printer_id} ({r.printer_name}) token {r.push_token[:8]}…", flush=True)
     return {"ok": True}
