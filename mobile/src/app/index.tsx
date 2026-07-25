@@ -12,7 +12,7 @@ import { usePrinterActivities, type ActivityEntry } from '@/liveactivity/useLive
 import { useStatusNotifications } from '@/notifications/useStatusNotifications';
 import { presentDashboard, type DashVM } from '@/dashboard/present';
 import { presentAlerts, type AlertVM, type AlertActionVM } from '@/alerts/present';
-import { loadHmsCatalog, describeHms, describePrintError, EMPTY_CATALOG, type HmsCatalog } from '@/alerts/hmsCatalog';
+import { loadHmsCatalog, learnCodes, describeHms, describePrintError, EMPTY_CATALOG, type HmsCatalog } from '@/alerts/hmsCatalog';
 import { printerProfile } from '@/printers/profile';
 import { reconcileSelection, initialSelectionState, type SelectionState } from '@/printers/selection';
 import { displayName } from '@/library/libraryBrowse';
@@ -127,6 +127,22 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       ),
     [status, hmsCat, printer?.model],
   );
+  // Codes Bambu's feed doesn't carry (every H2-family one) get read off the wiki page ONCE and
+  // remembered — that's how "0C00-0100-0002-0017" becomes "Nozzle camera lens is dirty…".
+  useEffect(() => {
+    const unknown = alerts
+      .filter((a) => a.code && !describeHms(hmsCat, a.code))
+      .map((a) => ({ code: a.code!, urls: a.actions.find((x) => x.id === 'lookup')?.urls ?? [] }))
+      .filter((x) => x.urls.length);
+    if (!unknown.length) return;
+    let alive = true;
+    void learnCodes(unknown).then((cat) => alive && setHmsCat(cat));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alerts.map((a) => a.code).join(','), hmsCat.fetchedAt]);
+
   const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
 
   // Fleet rows for the switcher: every printer with its live state (the shared WS carries all).
