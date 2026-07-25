@@ -92,13 +92,14 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
   const serverMode = !!(pushUrl && apiKey);
 
   /**
-   * Offer every live activity's push token to la-push and act on the verdict.
+   * Tell la-push exactly which cards exist, and act on what it can't account for.
    *
-   * A push token is the ONLY identity an adopted activity exposes, and it is also the handle la-push
-   * needs in order to update or end that card — so this single exchange both identifies the card and
-   * repairs the case that produced "stuck at 0%": a card la-push remote-started but never received a
-   * token for, and therefore could never update. `known` means la-push now owns it; `false` means
-   * nothing on the server accounts for it, so it is a zombie and gets ended here.
+   * This has to be the FULL set, not one token at a time: APNs answers 200 for a card the user has
+   * swiped away, so la-push cannot detect a dismissal on its own — it kept believing it owned a card
+   * that was gone, and refused to start a replacement. The app is the only party that can see the
+   * truth, so it reports all of it and the server converges: forget vanished cards, bind an unknown
+   * token to a card it just remote-started (what makes a frozen card updatable), and hand back
+   * anything nothing accounts for, which we end here.
    */
   const reconcile = async () => {
     if (!serverMode) return;
@@ -108,21 +109,26 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
     } catch {
       return; // Expo Go / no native module
     }
+    const byToken = new Map<string, LiveActivity<PrintActivityProps>>();
     for (const inst of list) {
       try {
         const tok = await inst.getPushToken();
-        if (!tok) continue; // token not minted yet — next pass picks it up
-        const res = await fetch(`${pushUrl!.replace(/\/+$/, '')}/adopt`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'X-API-Key': apiKey! },
-          body: JSON.stringify({ push_token: tok, icon_uri: nozzleIconUri() }),
-        });
-        if (!res.ok) continue; // la-push unreachable -> leave the card alone, never destroy on doubt
-        const { known } = (await res.json()) as { known?: boolean };
-        if (known === false) await inst.end('immediate', GENERIC_END, new Date()).catch(() => {});
+        if (tok) byToken.set(tok, inst); // no token yet -> next pass picks it up
       } catch {
         /* one bad instance must not abort the sweep */
       }
+    }
+    try {
+      const res = await fetch(`${pushUrl!.replace(/\/+$/, '')}/sync`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'X-API-Key': apiKey! },
+        body: JSON.stringify({ tokens: [...byToken.keys()], icon_uri: nozzleIconUri() }),
+      });
+      if (!res.ok) return; // la-push unreachable -> leave every card alone; never destroy on doubt
+      const { end = [] } = (await res.json()) as { end?: string[] };
+      for (const tok of end) await byToken.get(tok)?.end('immediate', GENERIC_END, new Date()).catch(() => {});
+    } catch {
+      /* offline -> try again on the next pass */
     }
   };
 

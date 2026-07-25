@@ -472,22 +472,21 @@ async def _tick(client: httpx.AsyncClient) -> None:
         # Live Activity remotely. Edge-triggered exactly like the banners so it fires once per event.
         if _p2s_tokens:
             prev_kind = _last_kind.get(pid)
-            # la-push is the ONLY starter of cards (the app never calls start() in server mode), so
-            # "did a card already get made for this" is answered entirely from state here.
-            if kind == "live" and prev_kind is not None and prev_kind != "live":
+            # STATE-based, not edge-based: "this printer is live and has no card" is the condition,
+            # so a print that was ALREADY running when the service (or the card) went away still gets
+            # one. Edge-triggering meant a mid-print restart, or a card the user swiped away, could
+            # never be recovered — you had to wait for the next print. _remote_start still enforces
+            # "no existing card for this key" and the single-outstanding rule.
+            if kind == "live":
                 await _remote_start(client, str(pid), {"printerName": name, **fields}, f"print {pid}")
-            elif kind != "live":
+            else:
                 _p2s_pending.pop(str(pid), None)  # cycle over; the next print may start a card again
 
             ds0 = dry_state(status)
-            if ds0 is not None and not _p2s_dry_sent.get(str(pid)):
-                if await _remote_start(client, f"dry:{pid}", {"printerName": name, **ds0}, f"dry {pid}"):
-                    _p2s_dry_sent[str(pid)] = True
-                    _save()
-            elif ds0 is None and _p2s_dry_sent.get(str(pid)):
-                _p2s_dry_sent.pop(str(pid), None)
+            if ds0 is not None:
+                await _remote_start(client, f"dry:{pid}", {"printerName": name, **ds0}, f"dry {pid}")
+            else:
                 _p2s_pending.pop(f"dry:{pid}", None)
-                _save()
 
         # 2) Alert on a state transition (edge-triggered; the first observation is silent). _last_kind is
         # persisted, so a restart/crash mid-print still fires the finish/error edge on the next poll.
@@ -600,45 +599,56 @@ async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
     return {"ok": True}
 
 
-class Adopt(BaseModel):
-    push_token: str
+class Sync(BaseModel):
+    tokens: list[str] = []  # EVERY live activity the app can currently see
     icon_uri: str = ""
 
 
-@app.post("/adopt")
-async def adopt(r: Adopt, _: None = Depends(_require_key)) -> dict:
-    """Identify a live activity the app found on the lock screen.
+@app.post("/sync")
+async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
+    """Reconcile our registry against what actually exists on the device.
 
-    A push token is the only identity an adopted activity exposes to the app, and it is exactly what
-    we need to drive that card — so this one call both names the card and repairs it:
-      * already registered -> known, nothing to do;
-      * matches our single outstanding remote start -> BIND it, which is what un-freezes a card we
-        started but could never update (the reported "stuck at 0%");
-      * neither -> we do not own it. The app ends it, which is how zombies get collected.
+    APNs answering 200 does NOT mean a card exists — a user who swipes a card away leaves us pushing
+    into the void while our registry still claims we own it, and since we refuse to start a card for a
+    key we already hold, no replacement is ever created. That deadlock is exactly how the lock screen
+    ended up empty mid-print. The app is the only party that can observe the truth, so it sends the
+    FULL set of tokens it can see and we converge on it:
+      * a registration whose token is absent -> that card is gone; drop it so a fresh one can start;
+      * an unknown token that matches our outstanding remote start -> bind it (this is what makes a
+        remotely-started card updatable, instead of frozen at 0%);
+      * an unknown token with nothing to claim it -> we return it for the app to end.
     """
-    if not r.push_token:
-        return {"known": False}
-    for key, reg in _regs.items():
-        if reg.get("pushToken") == r.push_token:
-            if r.icon_uri and not reg.get("iconUri"):
-                reg["iconUri"] = r.icon_uri
-                _save()
-            return {"known": True, "key": key}
+    seen = {t for t in r.tokens if t}
 
-    key = _pending_key()
-    if key is None:
-        return {"known": False}
-    pid = int(key.split(":")[1]) if key.startswith("dry:") else int(key)
-    _regs[key] = {
-        "printerId": pid, "pushToken": r.push_token,
-        "printerName": _printers_cache.get(pid) or f"Printer {pid}",
-        "iconUri": r.icon_uri, "kind": "dry" if key.startswith("dry:") else "print",
-        "lastPush": 0, "lastState": None,
-    }
-    _p2s_pending.pop(key, None)
+    # 1. Forget cards that no longer exist.
+    for key, reg in list(_regs.items()):
+        if reg.get("pushToken") and reg["pushToken"] not in seen:
+            _regs.pop(key, None)
+            print(f"[sync] card {key} is gone from the device — dropped, free to restart", flush=True)
+
+    # 2. Claim / disown the tokens we were handed.
+    known = {reg.get("pushToken") for reg in _regs.values()}
+    orphans: list[str] = []
+    for tok in seen:
+        if tok in known:
+            continue
+        key = _pending_key()
+        if key is None:
+            orphans.append(tok)
+            continue
+        pid = int(key.split(":")[1]) if key.startswith("dry:") else int(key)
+        _regs[key] = {
+            "printerId": pid, "pushToken": tok,
+            "printerName": _printers_cache.get(pid) or f"Printer {pid}",
+            "iconUri": r.icon_uri, "kind": "dry" if key.startswith("dry:") else "print",
+            "lastPush": 0, "lastState": None,
+        }
+        _p2s_pending.pop(key, None)
+        known.add(tok)
+        print(f"[sync] bound {key} -> token {tok[:8]}… (card is now updatable)", flush=True)
+
     _save()
-    print(f"[adopt] bound {key} -> token {r.push_token[:8]}… (card is now updatable)", flush=True)
-    return {"known": True, "key": key}
+    return {"end": orphans, "cards": list(_regs.keys())}
 
 
 @app.post("/register-device")
