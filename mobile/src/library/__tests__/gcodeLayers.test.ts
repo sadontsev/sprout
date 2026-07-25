@@ -179,3 +179,66 @@ test('no purge: normal ascending files keep full bounds', () => {
   expect(p.bounds.maxZ).toBe(0.4);
   expect(p.bounds.maxX).toBe(30);
 });
+
+describe('fitToBudget (segment budget for the phone)', () => {
+  const { fitToBudget, countSegments, SEGMENT_BUDGET, MAX_GCODE_BYTES } = require('../gcodeLayers');
+  // 3 layers x 100 segments each (4 numbers per segment), plus supports on layer 1.
+  const mk = () => ({
+    layers: [0, 1, 2].map(() => Array.from({ length: 400 }, (_, i) => i)),
+    supportLayers: [Array.from({ length: 400 }, (_, i) => i), [], []],
+    layerZ: [0.2, 0.4, 0.6],
+    supportEnabled: true,
+    hasSupport: true,
+    bounds: { minX: 0, minY: 0, maxX: 10, maxY: 10, minZ: 0.2, maxZ: 0.6 },
+  });
+
+  it('counts model + support segments', () => {
+    expect(countSegments(mk())).toBe(400); // 3*100 model + 100 support
+  });
+
+  it('is a no-op (keptEvery 1) when the file already fits', () => {
+    const g = mk();
+    const out = fitToBudget(g, 10_000);
+    expect(out.keptEvery).toBe(1);
+    expect(out.layers).toBe(g.layers); // untouched, not copied
+  });
+
+  it('thins to the budget and reports the ratio', () => {
+    const out = fitToBudget(mk(), 100); // 400 segs / 100 => every 4th
+    expect(out.keptEvery).toBe(4);
+    expect(countSegments(out)).toBeLessThanOrEqual(100);
+  });
+
+  it('preserves layer structure so the slider keeps meaning what it says', () => {
+    const g = mk();
+    const out = fitToBudget(g, 100);
+    expect(out.layers).toHaveLength(g.layers.length);
+    expect(out.supportLayers).toHaveLength(g.supportLayers.length);
+    expect(out.layerZ).toEqual(g.layerZ);
+    expect(out.bounds).toEqual(g.bounds);
+    expect(out.hasSupport).toBe(true); // supports must survive — this view is how they're verified
+    out.layers.forEach((L: number[]) => expect(L.length % 4).toBe(0)); // whole segments only
+  });
+
+  it('keeps the real spike-ball case (1.13M segments) inside the budget', () => {
+    const big = { ...mk(), layers: [Array.from({ length: 1_130_000 * 4 }, () => 1)], supportLayers: [[]] };
+    const out = fitToBudget(big, SEGMENT_BUDGET);
+    expect(countSegments(out)).toBeLessThanOrEqual(SEGMENT_BUDGET);
+    expect(out.keptEvery).toBe(3);
+  });
+
+  it('the size gate admits that file (69.9 MB) — it used to reject at 14 MB', () => {
+    expect(MAX_GCODE_BYTES).toBeGreaterThan(69_890_554);
+  });
+});
+
+test('parser handles a final line with no trailing newline (index scan boundary)', () => {
+  const g = parseGcodeLayers('G90\nG1 X0 Y0 Z0.2 E0\nG1 X5 Y0 E1'); // no trailing \n
+  expect(g.layers[0]).toEqual([0, 0, 5, 0]);
+});
+
+test('viewer surfaces the reduced-detail ratio, and hides it at full detail', () => {
+  const tiny2 = parseGcodeLayers('G90\nG1 X10 Y10 Z0.2 E1\nG1 X20 Y10 E2\n');
+  expect(gcodeViewerHtml(tiny2, { w: 256, d: 256 }, 3)).toContain("KEPT>1?'  ·  1 in '+KEPT");
+  expect(gcodeViewerHtml(tiny2)).toContain('KEPT=1');
+});
