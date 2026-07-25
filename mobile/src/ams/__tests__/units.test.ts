@@ -57,7 +57,7 @@ describe('presentAms', () => {
   it('returns both units with the right kind, capacity and drying ceiling', () => {
     const { units } = presentAms(live());
     expect(units).toHaveLength(2);
-    expect(units[0]).toMatchObject({ id: 0, label: 'AMS 1', kind: 'ams', capacity: 4, loaded: 4, maxDryTemp: 65, extruder: 0, serialTail: 'L001' });
+    expect(units[0]).toMatchObject({ id: 0, label: 'AMS 1', kind: 'ams', capacity: 4, loaded: 4, maxDryTemp: 65, extruder: 0, serialTail: 'S001' });
     expect(units[1]).toMatchObject({ id: 128, label: 'AMS HT', kind: 'ht', capacity: 1, loaded: 1, maxDryTemp: 85, extruder: 1 });
   });
 
