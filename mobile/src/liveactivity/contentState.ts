@@ -5,6 +5,7 @@
 // unit-testable under jest. The widget component consumes the `PrintActivityProps` type from here.
 import type { PrinterStatus } from '@/api/types';
 import type { DashVM } from '@/dashboard/present';
+import { c } from '@/theme';
 
 /** Flat, JSON-serializable ContentState the activity renders. Mirrors what la-push pushes (app.py). */
 export type PrintActivityProps = {
@@ -39,6 +40,35 @@ export type PrintActivityProps = {
 };
 
 export type LiveActivityExtras = { modelUri?: string | null; queueCount?: number; nextName?: string | null };
+
+/**
+ * FIXED palette for Live Activity content — deliberately NOT the app theme's `c.*`.
+ *
+ * A card lives on the lock screen, which has no relationship to the in-app theme, and la-push (which
+ * owns cards in server mode) has no idea what theme the phone is on: it always sends these values.
+ * Reading `vm.stateColor` meant a light-mode app produced #23B24A while an identical card pushed from
+ * the server produced #30D158 — the same print rendering in two different greens depending on which
+ * side created the card. These values are the single source of truth and MUST equal la-push's COLORS.
+ */
+export const LA_COLORS = {
+  running: '#30D158',
+  heating: '#FF9F0A',
+  paused: '#0A84FF',
+  error: '#FF453A',
+  idle: '#8E9398',
+} as const;
+
+/** Theme-independent tint for a print card. Derived from the VM's semantic state, not its themed
+ *  colour, so the same print looks identical whoever built the card and whatever theme is active. */
+export function laTint(vm: DashVM): string {
+  if (vm.kind === 'error') return LA_COLORS.error;
+  if (vm.isPaused) return LA_COLORS.paused;
+  if (vm.kind === 'idle' || vm.kind === 'offline' || vm.kind === 'connecting') return LA_COLORS.idle;
+  if (vm.kind === 'complete') return LA_COLORS.running;
+  // Live: heating / a named sub-stage is amber, steady printing is green — mirrors present.ts and
+  // la-push's classify() by comparing against the THEMED token rather than a hardcoded hex.
+  return vm.stateColor === c.heating ? LA_COLORS.heating : LA_COLORS.running;
+}
 
 // state label -> SF Symbol shown in the activity.
 const SYMBOLS: Record<string, string> = {
@@ -81,7 +111,7 @@ export function toContentState(
     etaEpochMs: !finished && remainingMin > 0 ? nowMs + remainingMin * 60000 : 0,
     finished,
     symbol: SYMBOLS[vm.stateLabel] ?? (vm.kind === 'error' ? SYMBOLS.Error : SYMBOLS.Printing),
-    tint: vm.stateColor,
+    tint: laTint(vm),
     nozzle: Math.round(t?.nozzle ?? 0),
     nozzleTarget: Math.round(t?.nozzle_target ?? 0),
     nozzle2: Math.round(t?.nozzle_2 ?? 0),
@@ -123,7 +153,7 @@ export function toDryContentState(status: PrinterStatus, nowMs: number, iconUri 
     dry: true,
     stateLabel: 'Drying',
     name: [unitLabel, target > 0 ? `${fil} @ ${target}°` : fil].filter(Boolean).join(' · '),
-    tint: '#FFB86C',
+    tint: '#FFB86C', // drying amber — fixed, matches la-push's dry_state
     symbol: 'humidity.fill',
     finished: false,
     progress: 0,
@@ -137,7 +167,7 @@ export function toDryContentState(status: PrinterStatus, nowMs: number, iconUri 
 // Minimal content used only to dismiss an orphaned activity we can't map back to a printer.
 export const GENERIC_END: PrintActivityProps = {
   printerName: '', name: '', stateLabel: 'Complete', progress: 100, layer: 0, totalLayers: 0, etaEpochMs: 0,
-  finished: true, symbol: 'checkmark.circle.fill', iconUri: '', tint: '#30D158',
+  finished: true, symbol: 'checkmark.circle.fill', iconUri: '', tint: LA_COLORS.running,
   nozzle: 0, nozzleTarget: 0, nozzle2: 0, nozzle2Target: 0, hasNozzle2: false, activeNozzle: 0,
   bed: 0, bedTarget: 0, modelUri: '', queueCount: 0, nextName: '',
 };

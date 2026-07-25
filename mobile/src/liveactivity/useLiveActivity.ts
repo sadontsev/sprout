@@ -36,12 +36,33 @@ function registerPushToken(pushUrl: string, apiKey: string, printerId: number, p
 }
 
 /**
- * Drives ONE iOS Live Activity per printer that's actively printing — so both machines show as
- * separate cards on the lock screen. v1 pushes updates while the app is running (foreground /
- * briefly background). v2 (in progress): ActivityKit APNs push so each card keeps tracking with the
- * app closed — the app registers each activity's push token and a homeserver-side service pushes updates.
- * offline/connecting are deliberately no-ops so a WS blip doesn't kill a card mid-print; only
- * complete/error/idle end it.
+ * Live Activities, with EXACTLY ONE OWNER of every card.
+ *
+ * The old design had two independent producers — this hook started cards locally AND la-push
+ * push-to-started them — with nothing able to reconcile the two, because expo-widgets exposes no id
+ * and no content on an adopted activity (see getInstances(): you get an opaque handle). That produced
+ * all three reported failures at once: duplicate cards for one print, cards frozen at 0% that nobody
+ * owned, and local-vs-remote cards rendering different colours/icons.
+ *
+ * Ownership is now decided by MODE, so a conflict cannot arise:
+ *
+ *   SERVER mode (a la-push URL is configured) — la-push owns every card: it starts them (push-to-
+ *   start), updates them, and ends them. This hook NEVER calls start(). Its only jobs are to hand
+ *   over the device's push-to-start token and to RECONCILE: enumerate the live activities, read each
+ *   one's push token (the only identity an adopted card exposes), and offer it to la-push. la-push
+ *   either recognises it, binds it to the card it just remote-started (this is what un-freezes a
+ *   stuck card), or disowns it — and a disowned card is ended here. Cards therefore converge to
+ *   exactly the set la-push believes in.
+ *
+ *   LOCAL mode (no la-push) — this hook owns every card, exactly as before: start on live, throttled
+ *   updates, end on terminal. No server, no push, no reconciliation needed.
+ *
+ * Tradeoff, deliberately taken: in server mode a card appears on la-push's next poll (<=5s) rather
+ * than instantly, and if la-push is down there is no card at all. Predictable beats partially-working
+ * — the previous "both try" behaviour is precisely what produced duplicates and zombies.
+ *
+ * offline/connecting remain no-ops so a WS blip never kills a card mid-print; only complete/error/idle
+ * ends one.
  */
 export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string | null, apiKey?: string) {
   const instances = useRef(new Map<number, LiveActivity<PrintActivityProps>>());
@@ -67,6 +88,52 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
       /* older expo-widgets / push disabled — foreground updates still work */
     }
   };
+
+  const serverMode = !!(pushUrl && apiKey);
+
+  /**
+   * Offer every live activity's push token to la-push and act on the verdict.
+   *
+   * A push token is the ONLY identity an adopted activity exposes, and it is also the handle la-push
+   * needs in order to update or end that card — so this single exchange both identifies the card and
+   * repairs the case that produced "stuck at 0%": a card la-push remote-started but never received a
+   * token for, and therefore could never update. `known` means la-push now owns it; `false` means
+   * nothing on the server accounts for it, so it is a zombie and gets ended here.
+   */
+  const reconcile = async () => {
+    if (!serverMode) return;
+    let list: LiveActivity<PrintActivityProps>[] = [];
+    try {
+      list = printActivity.getInstances();
+    } catch {
+      return; // Expo Go / no native module
+    }
+    for (const inst of list) {
+      try {
+        const tok = await inst.getPushToken();
+        if (!tok) continue; // token not minted yet — next pass picks it up
+        const res = await fetch(`${pushUrl!.replace(/\/+$/, '')}/adopt`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'X-API-Key': apiKey! },
+          body: JSON.stringify({ push_token: tok, icon_uri: nozzleIconUri() }),
+        });
+        if (!res.ok) continue; // la-push unreachable -> leave the card alone, never destroy on doubt
+        const { known } = (await res.json()) as { known?: boolean };
+        if (known === false) await inst.end('immediate', GENERIC_END, new Date()).catch(() => {});
+      } catch {
+        /* one bad instance must not abort the sweep */
+      }
+    }
+  };
+
+  // Re-reconcile periodically while the app is open: a card la-push starts while we're running only
+  // becomes updatable once we hand over its token, and tokens can rotate.
+  useEffect(() => {
+    if (!serverMode) return;
+    const id = setInterval(() => void reconcile(), 45_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverMode, pushUrl, apiKey]);
 
   // Push-to-start: register the DEVICE's start token so la-push can CREATE cards with the app
   // closed — a print or drying cycle started from Studio / the printer screen / the queue raises a
@@ -97,13 +164,17 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
 
-    // RECONCILE (once per mount): the app is the authority on what's on the lock screen.
-    // Cards now come from three places — this app, a previous launch, and la-push's push-to-start —
-    // and expo-widgets exposes NO way to read an adopted instance's content, so an orphan can't be
-    // told apart from a print card, a dry card, or a zombie. Blind adoption therefore mis-assigned
-    // them and the loops below started duplicates (observed: 3 print cards + 1 dry card stacked).
-    // So: end EVERY existing activity, then let the loops below create exactly the cards that should
-    // exist — app-owned, correct glyph, freshly registered with la-push.
+    // SERVER mode: la-push owns every card. Reconcile instead of starting anything.
+    if (serverMode) {
+      if (!adopted.current) {
+        adopted.current = true;
+        void reconcile();
+      }
+      return;
+    }
+
+    // LOCAL mode: this hook owns every card. Sweep anything left from a previous launch (it can't be
+    // identified, and nothing else will ever end it), then rebuild below from live state.
     if (!adopted.current) {
       adopted.current = true;
       try {
