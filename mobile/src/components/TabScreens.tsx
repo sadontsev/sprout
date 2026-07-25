@@ -6,6 +6,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { GcodeViewerOverlay } from './Overlays';
 import { isSliced3mf, isPlayableVideo, isMediaFolder, mediaThumbPath, mediaLabel } from '@/library/printerFiles';
 import { isSlicedFile, filterFiles, toggleSelection, displayName, safeShareName, type TypeFilter } from '@/library/libraryBrowse';
+import type { AmsSlotVM } from '@/ams/units';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -786,13 +787,8 @@ function QueueSection({ client, status, printerId, printers, onBrowse }: { clien
 // ---------------- AMS ----------------
 export function AmsView({ client, status, printerId, amsLabel }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; amsLabel: string }) {
   const vm = presentDashboard(status, Date.now());
-  const unit = status?.ams?.[0];
-  const trays = unit?.tray ?? [];
-  const amsId = unit?.id ?? 0;
+  // Units + slots come from presentAms via the view-model — no ams[0] anywhere in this screen.
   const dryers = presentDryer(status);
-  // The WS delivers AMS temp (and sometimes humidity) as STRINGS — coerce before any number method.
-  const amsHumidity = asNum(unit?.humidity);
-  const amsTemp = asNum(unit?.temp);
 
   const [assigns, setAssigns] = useState<SlotAssignment[] | null>(null);
   const loadInv = useCallback(() => {
@@ -812,49 +808,65 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
   };
 
   // Resolve the spool assigned to AMS slot `i`. Prefer tray_uuid (RFID), fall back to (ams_id,tray_id).
-  const spoolForSlot = (i: number): SlotAssignment['spool'] | null => {
+  // Assignments are stored per (ams_id, LOCAL tray_id) — matching on tray_id alone would resolve the
+  // HT's spool to AMS-0's, since both units have a tray 0.
+  const spoolForSlot = (slot: AmsSlotVM): SlotAssignment['spool'] | null => {
     if (!assigns?.length) return null;
-    const uuid = trays[i]?.tray_uuid ?? null;
+    const uuid = (status?.ams ?? []).find((u) => (asNum(u.id) ?? 0) === slot.unitId)?.tray?.[slot.localId]?.tray_uuid ?? null;
     const byUuid = uuid ? assigns.find((a) => a.spool?.tray_uuid === uuid) : undefined;
-    const hit = byUuid ?? assigns.find((a) => a.ams_id === amsId && a.tray_id === i);
+    const hit = byUuid ?? assigns.find((a) => a.ams_id === slot.unitId && a.tray_id === slot.localId);
     return hit?.spool ?? null;
   };
 
   return (
     <Page title="Hardware" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}>
-      <SectionHead label="FILAMENT" right={amsLabel} first />
+      <SectionHead label="FILAMENT" right={vm.amsUnits.length > 1 ? `${vm.amsUnits.length} units` : amsLabel} first />
       <View style={{ paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <Text style={{ fontWeight: '500', fontSize: 13, color: c.t3 }}>
-          {trays.filter((t) => t.tray_type).length} of {Math.max(trays.length, 4)} slots loaded
+          {vm.ams.filter((t) => !t.empty).length} of {vm.ams.length || 4} slots loaded
         </Text>
-        {amsHumidity != null && amsHumidity > 0 && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: c.s2 }}>
-            <Feather name="droplet" size={11} color={c.t3} />
-            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t2, fontFamily: mono }}>{Math.round(amsHumidity)}%</Text>
+        {/* One chip per unit: an AMS 2 Pro and an AMS HT sit at very different humidity/temp, so a
+            single machine-wide reading (this used to show ams[0]'s) was actively misleading. */}
+        {vm.amsUnits.map((u) => (
+          <View key={u.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 3, borderRadius: 8, backgroundColor: c.s2 }}>
+            <Text style={{ fontWeight: '700', fontSize: 10, color: c.t2, fontFamily: mono }}>{u.label}</Text>
+            {u.humidity != null && u.humidity > 0 && (
+              <>
+                <Feather name="droplet" size={10} color={c.t3} />
+                <Text style={{ fontWeight: '600', fontSize: 10.5, color: c.t3, fontFamily: mono }}>{Math.round(u.humidity)}%</Text>
+              </>
+            )}
+            {u.tempC != null && u.tempC > 0 && (
+              <>
+                <Feather name="thermometer" size={10} color={c.t3} />
+                <Text style={{ fontWeight: '600', fontSize: 10.5, color: c.t3, fontFamily: mono }}>{u.tempC.toFixed(1)}°</Text>
+              </>
+            )}
+            {u.extruder != null && vm.amsUnits.length > 1 && (
+              <Text style={{ fontWeight: '600', fontSize: 10, color: c.t3, fontFamily: mono }}>→ {u.extruder === 0 ? 'L' : 'R'}</Text>
+            )}
           </View>
-        )}
-        {amsTemp != null && amsTemp > 0 && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: c.s2 }}>
-            <Feather name="thermometer" size={11} color={c.t3} />
-            <Text style={{ fontWeight: '600', fontSize: 11, color: c.t2, fontFamily: mono }}>{amsTemp.toFixed(1)}°</Text>
-          </View>
-        )}
+        ))}
+
       </View>
       {dryers.map((d, i) => (
-        <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryers.length > 1 ? `${d.isHt ? 'AMS-HT' : 'AMS'} ${i + 1}` : null} />
+        <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryers.length > 1 ? (vm.amsUnits.find((u) => u.id === d.amsId)?.label ?? `AMS ${i + 1}`) : null} />
       ))}
       <View style={{ paddingHorizontal: 20, paddingTop: 18, gap: 12 }}>
-        {vm.ams.map((t, i) => {
-          const spool = spoolForSlot(i);
+        {vm.ams.map((t) => {
+          const spool = spoolForSlot(t);
           const swatch = spool ? (normColor(spool.rgba ?? undefined) ?? t.color) : t.color;
           const title = spool
             ? (spool.color_name ? `${spool.color_name} ${spool.material}` : spool.material)
             : (t.empty ? 'Empty slot' : t.label);
           const grams = spool ? spoolGramsRemaining(spool) : null;
-          const sub = spool ? [spool.brand, spool.slicer_filament_name].filter(Boolean).join(' · ') || `Slot ${i + 1}` : `Slot ${i + 1}`;
+          // Name the slot by its UNIT once there's more than one — "Slot 1" is ambiguous across units.
+          const slotName = vm.amsUnits.length > 1 ? `${t.unitLabel} · Slot ${t.localId + 1}` : `Slot ${t.localId + 1}`;
+          const sub = spool ? [spool.brand, spool.slicer_filament_name].filter(Boolean).join(' · ') || slotName : slotName;
+          const isHt = vm.amsUnits.find((u) => u.id === t.unitId)?.kind === 'ht';
 
           return (
-            <View key={i} style={{ padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: t.active ? 1.5 : 1, borderColor: t.active ? c.accent : c.line, ...shadow1 }}>
+            <View key={t.globalId} style={{ padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: t.active ? 1.5 : 1, borderColor: t.active ? c.accent : c.line, ...shadow1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
                 <View style={{ width: 46, height: 46, borderRadius: 12, backgroundColor: t.empty ? 'transparent' : swatch, borderWidth: t.empty ? 1 : 0, borderColor: c.line2, borderStyle: t.empty ? 'dashed' : 'solid' }} />
                 <View style={{ flex: 1 }}>
@@ -886,9 +898,14 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
                   </Tap>
                 </View>
               ) : (
-                <Tap onPress={() => client.amsLoad(printerId, i).catch((e) => Alert.alert('Load failed', String(e)))} style={{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ fontWeight: '600', fontSize: 13, color: c.accent }}>Load filament</Text>
-                </Tap>
+                // Global tray id, not the flat index — index 4 is the HT, whose id is 128.
+                // Bambuddy documents ams/load for tray ids 0-15 only, so the HT's button stays hidden
+                // until it's confirmed on hardware; reads and drying are unaffected.
+                !isHt && (
+                  <Tap onPress={() => client.amsLoad(printerId, t.globalId).catch((e) => Alert.alert('Load failed', String(e)))} style={{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontWeight: '600', fontSize: 13, color: c.accent }}>Load filament</Text>
+                  </Tap>
+                )
               )}
             </View>
           );

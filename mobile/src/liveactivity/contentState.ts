@@ -98,12 +98,20 @@ export function toContentState(
  *  can arrive as strings — verified live on the H2C). The countdown itself renders client-side from
  *  etaEpochMs (ActivityKit timer), so pushes are only needed for temp/humidity drift and the end. */
 export function toDryContentState(status: PrinterStatus, nowMs: number, iconUri = '', printerName = ''): PrintActivityProps | null {
-  const ams = status.ams?.[0];
-  if (!ams) return null;
+  // Scan EVERY unit, not ams[0]: the H2C runs an AMS 2 Pro (id 0) plus an AMS HT (id 128), and a
+  // cycle on the HT produced no card at all. The card names its unit so it's unambiguous which one
+  // is drying. NOTE: with two units drying at once this still shows the first — one card per unit
+  // needs the la-push registry keyed per unit too (dry:<pid>:<amsId>), which is a separate change.
+  const units = status.ams ?? [];
   const num = (v: unknown): number => {
     const n = typeof v === 'number' ? v : Number(v ?? 0);
     return Number.isFinite(n) ? n : 0;
   };
+  const ams = units.find((u) => num(u.dry_time) > 0) ?? units[0];
+  if (!ams) return null;
+  const unitId = num(ams.id);
+  const isHt = ams.is_ams_ht === true || unitId >= 128;
+  const unitLabel = units.length > 1 ? (isHt ? 'AMS HT' : `AMS ${unitId + 1}`) : '';
   const mins = num(ams.dry_time);
   if (mins <= 0) return null;
   const target = Math.round(num(ams.dry_target_temp));
@@ -114,7 +122,7 @@ export function toDryContentState(status: PrinterStatus, nowMs: number, iconUri 
     iconUri,
     dry: true,
     stateLabel: 'Drying',
-    name: target > 0 ? `${fil} @ ${target}°` : fil,
+    name: [unitLabel, target > 0 ? `${fil} @ ${target}°` : fil].filter(Boolean).join(' · '),
     tint: '#FFB86C',
     symbol: 'humidity.fill',
     finished: false,
