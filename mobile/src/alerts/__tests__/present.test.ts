@@ -46,11 +46,13 @@ describe('HMS notices', () => {
   // The live H2C notice, verbatim.
   const hms = (over: object = {}) => ({ code: '0x10007', module: 5, severity: 5, full_code: '0500050000010007', ...over });
 
-  it('formats the code and links Bambu’s own reference rather than inventing an explanation', () => {
+  it('displays the dashed code but links the wiki’s UNDERSCORE path (verified: dashed 404s, underscore 200s)', () => {
     const a = presentAlerts(st({ hms_errors: [hms()] }), OK).find((x) => x.id.startsWith('hms-'))!;
     expect(a.code).toBe('0500-0500-0001-0007');
-    const lookup = a.actions.find((x) => x.id === 'lookup');
-    expect(lookup?.url).toContain('0500-0500-0001-0007');
+    const lookup = a.actions.find((x) => x.id === 'lookup')!;
+    expect(lookup.url).toBe('https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/0500_0500_0001_0007');
+    expect(lookup.url!.split('/').pop()).toBe('0500_0500_0001_0007'); // separator is what mattered
+    expect(lookup.fallbackUrl).toContain('/hms/error-code'); // not every code has a page
   });
 
   it('an unrecognised severity stays a neutral notice instead of guessing a level', () => {
@@ -117,5 +119,51 @@ describe('alertSummary — the single dashboard row', () => {
     expect(alertSummary(list)!.label).toBe('1 alert · 1 actionable');
     const offline = presentAlerts(st({ connected: false, hms_errors: [{ full_code: '0500050000010007', severity: 4 }] }), { connected: false, canControl: true });
     expect(alertSummary(offline)!.label).toBe('1 alert'); // nothing actionable while offline
+  });
+});
+
+describe('local HMS descriptions (Bambu’s own feed)', () => {
+  const { parseHmsFeed, describeHms, describePrintError } = require('@/alerts/hmsCatalog');
+  // Verbatim shape of https://e.bambulab.com/query.php?lang=en (4,882 hms + 654 error entries live).
+  const feed = {
+    data: {
+      device_hms: { ver: 1, en: [{ ecode: '0501040000030002', intro: 'Threaded rods need lubrication now.' }] },
+      device_error: { ver: 1, en: [{ ecode: '18048012', intro: 'Failed to get AMS mapping table; please select "Resume" to retry.' }] },
+    },
+  };
+  const cat = { ...parseHmsFeed(feed), fetchedAt: Date.now() };
+
+  it('parses both sections into lookup maps', () => {
+    expect(Object.keys(cat.hms)).toHaveLength(1);
+    expect(Object.keys(cat.err)).toHaveLength(1);
+  });
+
+  it('looks up by the DASHED display code as well as raw hex', () => {
+    expect(describeHms(cat, '0501-0400-0003-0002')).toBe('Threaded rods need lubrication now.');
+    expect(describeHms(cat, '0501040000030002')).toBe('Threaded rods need lubrication now.');
+    expect(describeHms(cat, '0501_0400_0003_0002')).toBe('Threaded rods need lubrication now.');
+  });
+
+  it('returns null for a code the feed does not cover (the H2C fatal is one)', () => {
+    expect(describeHms(cat, '0C00-0100-0002-0017')).toBeNull();
+    expect(describeHms(cat, null)).toBeNull();
+  });
+
+  it('resolves print_error numbers too', () => {
+    expect(describePrintError(cat, 18048012)).toMatch(/AMS mapping table/);
+    expect(describePrintError(cat, 999)).toBeNull();
+  });
+
+  it('presentAlerts shows Bambu’s wording when available, generic copy when not', () => {
+    const describe = { hms: (c: string) => describeHms(cat, c) };
+    const withText = presentAlerts(st({ hms_errors: [{ full_code: '0501040000030002', severity: 4 }] }), OK, describe);
+    expect(withText[0].detail).toBe('Threaded rods need lubrication now.');
+    const without = presentAlerts(st({ hms_errors: [{ full_code: '0C00010000020017', severity: 1 }] }), OK, describe);
+    expect(without[0].detail).toMatch(/serious condition/i);
+  });
+
+  it('a malformed feed yields empty maps rather than throwing', () => {
+    expect(parseHmsFeed({})).toEqual({ hms: {}, err: {} });
+    expect(parseHmsFeed(null)).toEqual({ hms: {}, err: {} });
   });
 });

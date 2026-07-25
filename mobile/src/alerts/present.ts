@@ -22,8 +22,10 @@ export interface AlertActionVM {
   label: string;
   /** Irreversible or job-ending — the UI confirms these first. */
   destructive?: boolean;
-  /** Present for 'lookup': Bambu's public HMS page for this code. */
+  /** Present for 'lookup': Bambu's page for this exact code. */
   url?: string;
+  /** Where to go when `url` doesn't exist — newer machines raise codes the wiki has no page for. */
+  fallbackUrl?: string;
 }
 
 export interface AlertVM {
@@ -38,6 +40,12 @@ export interface AlertVM {
 }
 
 /** What the app is currently allowed/able to do — actions are filtered through this. */
+/** Looks up Bambu's own text for a code. Injected so presentAlerts stays pure — see hmsCatalog.ts. */
+export interface AlertDescribe {
+  hms?: (code: string) => string | null;
+  printError?: (err: number | string) => string | null;
+}
+
 export interface AlertCaps {
   /** The printer is reachable; without this NO control action can succeed. */
   connected: boolean;
@@ -45,9 +53,14 @@ export interface AlertCaps {
   canControl: boolean;
 }
 
-// Bambu publishes a lookup page per HMS code; deep-linking it beats us inventing explanations for
-// codes we've never seen. Format is the dashed code, lowercase.
-const hmsUrl = (dashed: string) => `https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/${dashed.toLowerCase()}`;
+// Bambu publishes a page per HMS code. The path uses UNDERSCORES, not the dashes the code is
+// displayed with — verified against the live wiki: .../hmscode/0500_0500_0001_0007 returns 200 while
+// the dashed form 404s. (Case is tolerated either way; the separator was the whole bug.)
+const hmsUrl = (dashed: string) => `https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/${dashed.replace(/-/g, '_')}`;
+
+/** Searchable index of every HMS code. Not every code has its own page — the H2C's
+ *  0C00-0100-0002-0017 does not — so the lookup falls back here rather than to a 404. */
+export const HMS_INDEX_URL = 'https://wiki.bambulab.com/en/hms/error-code';
 
 /** Bambu's documented severity ladder. Anything outside it stays a neutral "Notice" rather than
  *  guessing a level we can't justify — some firmwares report values outside 1-4. */
@@ -81,7 +94,7 @@ export function alertSummary(alerts: AlertVM[]): { count: number; level: AlertLe
   };
 }
 
-export function presentAlerts(status: PrinterStatus | null, caps: AlertCaps): AlertVM[] {
+export function presentAlerts(status: PrinterStatus | null, caps: AlertCaps, describe: AlertDescribe = {}): AlertVM[] {
   if (!status) return [];
   const out: AlertVM[] = [];
   const state = (status.state || '').toUpperCase();
@@ -95,9 +108,11 @@ export function presentAlerts(status: PrinterStatus | null, caps: AlertCaps): Al
       id: 'print-error',
       level: 'error',
       title: 'Print error',
-      detail: status.print_error
-        ? `The printer reported error ${status.print_error}. Check the machine before continuing.`
-        : 'The printer stopped with an error. Check the machine before continuing.',
+      detail:
+        (status.print_error ? describe.printError?.(status.print_error) : null) ??
+        (status.print_error
+          ? `The printer reported error ${status.print_error}. Check the machine before continuing.`
+          : 'The printer stopped with an error. Check the machine before continuing.'),
       actions: canAct
         ? [
             { id: 'resume', label: 'Resume' },
@@ -141,18 +156,22 @@ export function presentAlerts(status: PrinterStatus | null, caps: AlertCaps): Al
     const dashed = fmtHmsCode(h.full_code ?? h.code);
     const sev = SEVERITY[num(h.severity) ?? -1];
     const actions: AlertActionVM[] = [];
-    if (dashed) actions.push({ id: 'lookup', label: 'What is this?', url: hmsUrl(dashed) });
+    if (dashed) actions.push({ id: 'lookup', label: 'What is this?', url: hmsUrl(dashed), fallbackUrl: HMS_INDEX_URL });
     // One clear covers every notice, so only offer it on the first row.
     if (canAct && i === 0) actions.push({ id: 'clearHms', label: hms.length > 1 ? `Dismiss all (${hms.length})` : 'Dismiss' });
     out.push({
       id: `hms-${dashed ?? i}`,
       level: sev?.level ?? 'warning',
       title: sev ? `${sev.label} notice` : 'Printer notice',
-      detail: !dashed
-        ? 'The printer raised a health notice with no code attached.'
-        : sev?.level === 'error'
-          ? 'The printer flagged a serious condition. Check the machine — look up the code for what it means.'
-          : 'A health notice. The printer keeps going unless it also paused.',
+      // Bambu's own words when we have them — "Threaded rods need lubrication now." beats any
+      // sentence we could write. Falls back to severity-appropriate generic copy.
+      detail:
+        (dashed ? describe.hms?.(dashed) : null) ??
+        (!dashed
+          ? 'The printer raised a health notice with no code attached.'
+          : sev?.level === 'error'
+            ? 'The printer flagged a serious condition. Check the machine — look up the code for what it means.'
+            : 'A health notice. The printer keeps going unless it also paused.'),
       code: dashed ?? undefined,
       actions,
     });
