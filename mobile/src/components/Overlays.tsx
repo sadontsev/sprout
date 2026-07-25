@@ -1118,8 +1118,14 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
     <View style={{ position: 'absolute', inset: 0, justifyContent: 'flex-end', zIndex: 72 } as any}>
       <Animated.View entering={FadeIn.duration(220)} pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.55)' } as any} />
       <Animated.View entering={SlideInDown.duration(340)} style={{ height: '92%', backgroundColor: c.sheet, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' }}>
-        <View style={{ paddingHorizontal: 18, paddingTop: insets.top + 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Tap onPress={onClose} hitSlop={10}><Text style={{ fontWeight: '500', fontSize: 15, color: c.t2 }}>Cancel</Text></Tap>
+        <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: c.line2, alignSelf: 'center', marginTop: 8 }} />
+        {/* No safe-area padding here: this is a BOTTOM sheet at 92% height, so its top edge already
+            sits below the notch. Adding insets.top pushed the header ~59pt further down on top of
+            that, leaving a dead band above "Cancel". */}
+        <View style={{ paddingHorizontal: 18, paddingTop: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          {/* Cancel is the primary escape from a 4-step flow — tinted like a real button, not muted
+              secondary text that reads as disabled. */}
+          <Tap onPress={onClose} hitSlop={12}><Text style={{ fontWeight: '600', fontSize: 15, color: c.accent }}>Cancel</Text></Tap>
           <View style={{ alignItems: 'center', flex: 1 }}>
             <Text style={{ fontWeight: '600', fontSize: 15, color: c.t1 }}>{titles[step]}</Text>
             <Text numberOfLines={1} style={{ marginTop: 2, fontWeight: '500', fontSize: 11, color: c.t3 }}>{captions[step]}</Text>
