@@ -28,7 +28,10 @@ const EPS = 1e-6;
  * G90/G91 (E abs/rel), and G92 E (extruder reset). Comments (`;`) are stripped.
  */
 export function parseGcodeLayers(gcode: string): GcodeLayers {
-  const lines = gcode.split('\n');
+  // Scan line boundaries by index instead of gcode.split('\n'): the real spike-ball file is 69.9 MB /
+  // 2.97M lines, and materializing that array costs ~150-190 MB of Hermes string primitives ON TOP of
+  // the 70 MB source — the difference between "previews" and an OOM kill with no error.
+  const total = gcode.length;
   const layers: number[][] = [];
   const supportLayers: number[][] = [];
   const zs: number[] = [];
@@ -61,8 +64,11 @@ export function parseGcodeLayers(gcode: string): GcodeLayers {
     }
   };
 
-  for (let li = 0; li < lines.length; li++) {
-    let line = lines[li];
+  for (let pos = 0; pos < total; ) {
+    let nl = gcode.indexOf('\n', pos);
+    if (nl < 0) nl = total;
+    let line = gcode.slice(pos, nl);
+    pos = nl + 1;
     const sc = line.indexOf(';');
     if (sc >= 0) {
       // Read slicer metadata from the comment before stripping it: which feature we're printing, and
@@ -212,8 +218,48 @@ export function parseGcodeLayers(gcode: string): GcodeLayers {
   return { layers, supportLayers, layerZ: zs, supportEnabled, hasSupport, bounds: { minX, minY, maxX, maxY, minZ, maxZ } };
 }
 
-/** Guard: don't try to render gigantic sliced files on-device. */
-export const MAX_GCODE_BYTES = 14_000_000;
+/**
+ * Guard: don't try to render gigantic sliced files on-device. Raised from 14 MB once the renderer
+ * stopped being the bottleneck — measured ~12.2k segments/MB, so 14 MB rejected files at ~171k
+ * segments while the GL path comfortably draws 400k. The user's spike ball is 69.9 MB decompressed.
+ */
+export const MAX_GCODE_BYTES = 90_000_000;
+
+/** Segments we're willing to hand the WebView. Above this, geometry + the JSON bridge copy dominate. */
+export const SEGMENT_BUDGET = 400_000;
+
+/** Total extrusion segments across all layers (4 numbers per segment). */
+export function countSegments(g: Pick<GcodeLayers, 'layers' | 'supportLayers'>): number {
+  let n = 0;
+  for (const L of g.layers) n += L.length >> 2;
+  for (const L of g.supportLayers) n += L.length >> 2;
+  return n;
+}
+
+/**
+ * Thin a parsed file down to `budget` segments by keeping every Nth one, PRESERVING per-layer
+ * structure (layer count, Z heights and the model/support split all stay index-aligned, so the layer
+ * slider keeps meaning what it says). Returns `keptEvery: 1` when the file already fits, which the
+ * viewer uses to decide whether to warn the user that detail was dropped.
+ *
+ * Doing this here — before JSON.stringify, before the bridge copy, before the page allocates GL
+ * buffers — collapses every downstream cost at once. The page used to drop every 2nd segment AFTER
+ * paying all three.
+ */
+export function fitToBudget(g: GcodeLayers, budget = SEGMENT_BUDGET): GcodeLayers & { keptEvery: number } {
+  const total = countSegments(g);
+  const keptEvery = total > budget ? Math.ceil(total / budget) : 1;
+  if (keptEvery === 1) return { ...g, keptEvery: 1 };
+  const thin = (rows: number[][]): number[][] =>
+    rows.map((L) => {
+      const out: number[] = [];
+      for (let i = 0, seg = 0; i < L.length; i += 4, seg++) {
+        if (seg % keptEvery === 0) out.push(L[i], L[i + 1], L[i + 2], L[i + 3]);
+      }
+      return out;
+    });
+  return { ...g, layers: thin(g.layers), supportLayers: thin(g.supportLayers), keptEvery };
+}
 
 /**
  * Build the self-contained HTML for the WebView layer viewer. Parsing already happened in
@@ -230,11 +276,16 @@ export const MAX_GCODE_BYTES = 14_000_000;
  * The `plate` argument is the machine's physical bed footprint in mm (from printerProfile). NO
  * external/CDN imports — fully offline in WKWebView. Pure (no RN deps) → unit-testable.
  */
-export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number } = { w: 256, d: 256 }): string {
+export function gcodeViewerHtml(
+  data: GcodeLayers,
+  plate: { w: number; d: number } = { w: 256, d: 256 },
+  keptEvery = 1,
+): string {
   const lit = JSON.stringify(data).replace(/</g, '\\u003c');
   // Bambu gcode is plate-origin (0,0 = front-left corner); grow the drawn plate to a 50 mm multiple
   // if the toolpath somehow exceeds the declared footprint (never draw the model off the plate).
   const plateLit = JSON.stringify({ w: plate.w, d: plate.d });
+  const keptLit = JSON.stringify(Math.max(1, Math.round(keptEvery)));
   return `<!doctype html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
@@ -266,7 +317,7 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
   function fail(m){var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t render the preview. '+m;post({type:'error',message:String(m)});}
   window.addEventListener('error',function(e){fail(e.message||'error');});
   try{
-    var DATA=${lit}, PLATE=${plateLit}, layers=DATA.layers, sup=DATA.supportLayers||[], zs=DATA.layerZ, b=DATA.bounds;
+    var DATA=${lit}, PLATE=${plateLit}, KEPT=${keptLit}, layers=DATA.layers, sup=DATA.supportLayers||[], zs=DATA.layerZ, b=DATA.bounds;
     var total=layers.length||1;
     // Grow the plate to cover stray toolpaths, in 50 mm steps.
     var pw=Math.max(PLATE.w, Math.ceil(Math.max(b.maxX,1)/50)*50), pd=Math.max(PLATE.d, Math.ceil(Math.max(b.maxY,1)/50)*50);
@@ -343,7 +394,7 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     // Geometry: 4 verts/segment (A-1,A+1,B-1,B+1), 8 floats each [ax,ay,az, bx,by,bz, end,side];
     // 6 uint32 indices/segment. Ordered by layer, so "draw up to layer N" is one prefix drawElements
     // per buffer. Dense models decimate every 2nd segment (visual density is unaffected at phone size).
-    var SEG_BUDGET=800000, skip=segTotal>SEG_BUDGET?2:1;
+    var skip=1; // decimation happens UPSTREAM now (fitToBudget) so the JSON + GL buffers are bounded
     function buildGeo(perLayer){
       var segs=0,k,Lr;
       for(k=0;k<perLayer.length;k++){ Lr=perLayer[k]; if(!Lr) continue;
@@ -527,7 +578,8 @@ export function gcodeViewerHtml(data: GcodeLayers, plate: { w: number; d: number
     }); });
 
     var s2=document.getElementById('s'), lbl=document.getElementById('lbl');
-    function setLbl(){ var zmm=zs[Math.max(0,cur-1)]||0; lbl.textContent='Layer '+cur+' / '+total+' · '+zmm.toFixed(1)+'mm'; }
+    function setLbl(){ var zmm=zs[Math.max(0,cur-1)]||0;
+      lbl.textContent='Layer '+cur+' / '+total+' · '+zmm.toFixed(1)+'mm'+(KEPT>1?'  ·  1 in '+KEPT:''); }
     s2.max=String(total); s2.value=String(total); setLbl();
     s2.addEventListener('input',function(){ cur=+s2.value; setLbl(); schedule(); });
     window.addEventListener('resize',resize);

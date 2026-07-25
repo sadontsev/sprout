@@ -13,8 +13,8 @@ import type { LibraryFile, Printer, PrinterStatus, MakerWorldResolved, MWInstanc
 import { presentDashboard, normColor } from '@/dashboard/present';
 import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
 import { displayName } from '@/library/libraryBrowse';
-import { loadedFilaments, type LoadedFilament } from '@/library/filamentMatch';
-import { parseGcodeLayers, gcodeViewerHtml, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
+import { loadedFilaments, catalogFilaments, type LoadedFilament } from '@/library/filamentMatch';
+import { parseGcodeLayers, gcodeViewerHtml, fitToBudget, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
 import { stlViewerHtml } from '@/library/stlViewerHtml';
 import { selectProcess, pickDefaultQuality, mountedNozzles, defaultNozzle, printerPresetNameFor, type Preset, type NozzleSize } from '@/library/presetSelect';
 import { buildProcessDelta, buildFilamentDelta, hasProcessOverrides, hasFilamentOverrides, overrideCount, INFILL_PATTERNS, TOP_PATTERNS, SUPPORT_STYLES, type SliceOverrides } from '@/library/sliceOverrides';
@@ -641,7 +641,7 @@ export function GcodeViewerOverlay({ load, title, onClose, plate }: { load: () =
       .then((g) => {
         if (!alive) return;
         if (g.length > MAX_GCODE_BYTES) {
-          setErr('This sliced file is too large to preview on the phone.');
+          setErr(`This sliced file is too large to preview on the phone (${Math.round(g.length / 1e6)} MB of G-code).`);
           return;
         }
         const parsed = parseGcodeLayers(g);
@@ -650,7 +650,11 @@ export function GcodeViewerOverlay({ load, title, onClose, plate }: { load: () =
           return;
         }
         setHasSupport(parsed.hasSupport);
-        setHtml(gcodeViewerHtml(parsed, plate));
+        // Thin to a segment budget BEFORE the JSON bridge copy + the page's GL buffers. keptEvery>1
+        // is shown in the viewer's label — this screen is how the user verifies supports actually
+        // generated, so dropped detail must be visible, never silent.
+        const fitted = fitToBudget(parsed);
+        setHtml(gcodeViewerHtml(fitted, plate, fitted.keptEvery));
       })
       .catch((e) => alive && setErr(String(e)));
     return () => {
@@ -955,11 +959,9 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
         // user's custom profiles), other nozzle variants excluded. Pure + unit-tested in presetSelect.
         const { qualities, hasSupportProfile, supportByBase } = selectProcess(p, token, nozzle);
         const allFilaments: Preset[] = std.filament ?? [];
-        // Curated "Other filament" catalog (common materials) shown when the AMS choice isn't enough.
-        const catalogRe = new RegExp(
-          `Bambu (PLA Basic|PLA Matte|PETG HF|PETG-CF|ABS|ASA|TPU 95A HF|Support For PLA) ${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($| 0\\.4 nozzle$)`,
-        );
-        const catalog = allFilaments.filter((x) => catalogRe.test(x.name));
+        // Curated "Other filament" catalog — resolved for the SELECTED nozzle by filamentMatch (this
+        // used to be a second, 0.4-only regex here, which is how the nozzle bug lived in two places).
+        const catalog = catalogFilaments(allFilaments, token, nozzle);
         setPresets({ printer: printerPreset, qualities, catalog, allFilaments, hasSupportProfile, supportByBase });
         setAssigns(a as SlotAssignment[]);
         setQuality(pickDefaultQuality(qualities));
@@ -1094,7 +1096,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
 
   const trays = status?.ams?.[0]?.tray ?? [];
   // Filaments actually loaded in the AMS, mapped to slicer presets (drops support material).
-  const loaded: LoadedFilament[] = presets ? loadedFilaments(trays, assigns, presets.allFilaments, token).filter((f) => !f.isSupport) : [];
+  const loaded: LoadedFilament[] = presets ? loadedFilaments(trays, assigns, presets.allFilaments, token, nozzle).filter((f) => !f.isSupport) : [];
 
   // Default-select the loaded filament (matching the active tray) once the AMS + presets are known.
   const loadedKey = loaded.map((f) => `${f.slot}:${f.preset?.id ?? ''}`).join(',');
