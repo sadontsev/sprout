@@ -119,3 +119,34 @@ describe('toDryContentState (AMS drying card)', () => {
     expect(meaningfulChange(a, sameSoon)).toBe(false);
   });
 });
+
+describe('laTint — lock-screen colours must not follow the app theme', () => {
+  const { laTint, LA_COLORS, toContentState } = require('../contentState');
+  const { presentDashboard } = require('@/dashboard/present');
+  const { setTheme } = require('@/theme');
+  const status = (over: object = {}) =>
+    ({ connected: true, state: 'RUNNING', progress: 42, temperatures: { nozzle: 220, nozzle_target: 220, bed: 60, bed_target: 60 }, ...over }) as never;
+
+  afterEach(() => setTheme('dark'));
+
+  it('is IDENTICAL in light and dark mode (la-push has no idea what theme the phone is on)', () => {
+    setTheme('dark');
+    const dark = toContentState(presentDashboard(status(), 0), status(), 0).tint;
+    setTheme('light');
+    const light = toContentState(presentDashboard(status(), 0), status(), 0).tint;
+    expect(light).toBe(dark);
+    expect(light).toBe(LA_COLORS.running); // and it matches la-push's COLORS['running']
+  });
+
+  it('maps each state to the fixed palette', () => {
+    expect(laTint(presentDashboard(status({ print_error: 1 }), 0))).toBe(LA_COLORS.error);
+    expect(laTint(presentDashboard(status({ state: 'PAUSE' }), 0))).toBe(LA_COLORS.paused);
+    expect(laTint(presentDashboard(status({ state: 'IDLE' }), 0))).toBe(LA_COLORS.idle);
+    expect(laTint(presentDashboard(status({ state: 'FINISH' }), 0))).toBe(LA_COLORS.running);
+  });
+
+  it('heating (a named sub-stage) is amber, steady printing is green', () => {
+    expect(laTint(presentDashboard(status({ stg_cur_name: 'Auto bed leveling' }), 0))).toBe(LA_COLORS.heating);
+    expect(laTint(presentDashboard(status(), 0))).toBe(LA_COLORS.running);
+  });
+});

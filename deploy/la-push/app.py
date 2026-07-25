@@ -174,11 +174,18 @@ _p2s_tokens: list[str] = []
 _p2s_dry_sent: dict[str, bool] = {}
 # _p2s_icons: p2s token -> App-Group glyph URI (the app knows the path; we don't).
 _p2s_icons: dict[str, str] = {}
-# _p2s_pending: pid -> True while a remotely-started card has NOT yet reported an update token. Such a
-# card is unreachable (we can never update or END it), so we must not start another on top of it —
-# that stacking is what piled 3 print cards onto the lock screen. Cleared when a real registration
-# arrives (app opened -> reconciled) or the printer leaves the live state.
-_p2s_pending: dict[str, bool] = {}
+# _p2s_pending: {registry key -> unix ts} for remote starts awaiting their update token.
+#
+# A remotely-started card is UNREACHABLE until the app hands us its token — we can neither update nor
+# end it. Two rules keep that from turning into lock-screen litter:
+#   1. At most ONE outstanding start at a time, globally. The app identifies a card only by its push
+#      token (expo-widgets exposes nothing else), so if two cards were pending we could not tell which
+#      token belonged to which — /adopt would bind them arbitrarily and show a dry card's content on a
+#      print card. Serialising starts makes the binding unambiguous by construction.
+#   2. Entries expire (P2S_PENDING_TTL). The stale card then has no owner and no pending claim, so the
+#      app's reconcile sees an unknown token, /adopt answers known:false, and the app ends it.
+_p2s_pending: dict[str, float] = {}
+P2S_PENDING_TTL = 600.0
 # _last_kind: printerId -> last-seen kind, for edge-triggered notifications. Persisted (in REG_FILE) so a
 # restart/crash mid-print doesn't lose the live->complete/error edge and silently drop the alert.
 _last_kind: dict[int, str] = {}
@@ -319,6 +326,33 @@ async def _notify(client: httpx.AsyncClient, title: str, body: str) -> None:
             print(f"[notify] error: {e}", flush=True)
 
 
+def _pending_key() -> str | None:
+    """The single outstanding remote start, dropping it if it has aged out."""
+    for key, ts in list(_p2s_pending.items()):
+        if time.time() - ts > P2S_PENDING_TTL:
+            _p2s_pending.pop(key, None)
+            print(f"[p2s] pending {key} expired — the app will end that card as an orphan", flush=True)
+            _save()
+        else:
+            return key
+    return None
+
+
+async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: str) -> bool:
+    """Push-to-start one card, unless another start is still awaiting adoption. Returns True if sent."""
+    if not _p2s_tokens or key in _regs or _pending_key() is not None:
+        return False
+    for tok in list(_p2s_tokens):
+        code = await _push_start(client, tok, {**cs, "iconUri": _p2s_icons.get(tok, cs.get("iconUri", ""))})
+        print(f"[p2s] start {label} -> {code}", flush=True)
+        if code in (400, 410):
+            _p2s_tokens.remove(tok)
+            _p2s_icons.pop(tok, None)
+    _p2s_pending[key] = time.time()
+    _save()
+    return True
+
+
 def dry_state(status: dict) -> dict | None:
     """AMS drying card ContentState, or None when no cycle is active. Mirrors the app's
     toDryContentState: dry_time (minutes remaining) > 0 is THE active signal; the countdown itself
@@ -438,34 +472,21 @@ async def _tick(client: httpx.AsyncClient) -> None:
         # Live Activity remotely. Edge-triggered exactly like the banners so it fires once per event.
         if _p2s_tokens:
             prev_kind = _last_kind.get(pid)
-            # A remotely-started card we never got a token for is UNREACHABLE (can't update, can't
-            # end). Starting another on top just stacks orphans, so hold until the app reconciles.
-            if (kind == "live" and prev_kind is not None and prev_kind != "live"
-                    and str(pid) not in _regs and not _p2s_pending.get(str(pid))):
-                for tok in list(_p2s_tokens):
-                    code = await _push_start(client, tok, {"printerName": name, "iconUri": _p2s_icons.get(tok, ""), **fields})
-                    print(f"[p2s] start print {pid} -> {code}", flush=True)
-                    if code in (400, 410):
-                        _p2s_tokens.remove(tok)
-                        _p2s_icons.pop(tok, None)
-                _p2s_pending[str(pid)] = True
-                _save()
-            elif kind != "live" and _p2s_pending.get(str(pid)):
+            # la-push is the ONLY starter of cards (the app never calls start() in server mode), so
+            # "did a card already get made for this" is answered entirely from state here.
+            if kind == "live" and prev_kind is not None and prev_kind != "live":
+                await _remote_start(client, str(pid), {"printerName": name, **fields}, f"print {pid}")
+            elif kind != "live":
                 _p2s_pending.pop(str(pid), None)  # cycle over; the next print may start a card again
-                _save()
 
             ds0 = dry_state(status)
-            if ds0 is not None and not _p2s_dry_sent.get(str(pid)) and f"dry:{pid}" not in _regs:
-                for tok in list(_p2s_tokens):
-                    code = await _push_start(client, tok, {"printerName": name, "iconUri": _p2s_icons.get(tok, ""), **ds0})
-                    print(f"[p2s] start dry {pid} -> {code}", flush=True)
-                    if code in (400, 410):
-                        _p2s_tokens.remove(tok)
-                        _p2s_icons.pop(tok, None)
-                _p2s_dry_sent[str(pid)] = True
-                _save()
+            if ds0 is not None and not _p2s_dry_sent.get(str(pid)):
+                if await _remote_start(client, f"dry:{pid}", {"printerName": name, **ds0}, f"dry {pid}"):
+                    _p2s_dry_sent[str(pid)] = True
+                    _save()
             elif ds0 is None and _p2s_dry_sent.get(str(pid)):
                 _p2s_dry_sent.pop(str(pid), None)
+                _p2s_pending.pop(f"dry:{pid}", None)
                 _save()
 
         # 2) Alert on a state transition (edge-triggered; the first observation is silent). _last_kind is
@@ -577,6 +598,47 @@ async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
             _p2s_icons[r.push_token] = r.icon_uri
         _save()
     return {"ok": True}
+
+
+class Adopt(BaseModel):
+    push_token: str
+    icon_uri: str = ""
+
+
+@app.post("/adopt")
+async def adopt(r: Adopt, _: None = Depends(_require_key)) -> dict:
+    """Identify a live activity the app found on the lock screen.
+
+    A push token is the only identity an adopted activity exposes to the app, and it is exactly what
+    we need to drive that card — so this one call both names the card and repairs it:
+      * already registered -> known, nothing to do;
+      * matches our single outstanding remote start -> BIND it, which is what un-freezes a card we
+        started but could never update (the reported "stuck at 0%");
+      * neither -> we do not own it. The app ends it, which is how zombies get collected.
+    """
+    if not r.push_token:
+        return {"known": False}
+    for key, reg in _regs.items():
+        if reg.get("pushToken") == r.push_token:
+            if r.icon_uri and not reg.get("iconUri"):
+                reg["iconUri"] = r.icon_uri
+                _save()
+            return {"known": True, "key": key}
+
+    key = _pending_key()
+    if key is None:
+        return {"known": False}
+    pid = int(key.split(":")[1]) if key.startswith("dry:") else int(key)
+    _regs[key] = {
+        "printerId": pid, "pushToken": r.push_token,
+        "printerName": _printers_cache.get(pid) or f"Printer {pid}",
+        "iconUri": r.icon_uri, "kind": "dry" if key.startswith("dry:") else "print",
+        "lastPush": 0, "lastState": None,
+    }
+    _p2s_pending.pop(key, None)
+    _save()
+    print(f"[adopt] bound {key} -> token {r.push_token[:8]}… (card is now updatable)", flush=True)
+    return {"known": True, "key": key}
 
 
 @app.post("/register-device")
