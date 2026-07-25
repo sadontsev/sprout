@@ -317,13 +317,22 @@ async def _list_printers(client: httpx.AsyncClient) -> dict[int, str]:
 
 
 # ---- alert notifications (print done / error) ----
-async def _notify(client: httpx.AsyncClient, title: str, body: str) -> None:
+async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool = True) -> None:
+    """Send an alert banner to every registered device.
+
+    `interruption-level: time-sensitive` asks iOS to break through Focus modes and the Scheduled
+    Summary — the difference between "the printer halted 40 minutes ago" and knowing now. It requires
+    the com.apple.developer.usernotifications.time-sensitive entitlement (added in app.json, so it
+    takes effect at the next NATIVE build); until then iOS simply ignores the field, and APNs still
+    returns 200 either way, so a delivered-but-not-shown alert looks identical to a working one from
+    here."""
     for tok in list(_device_tokens):
         try:
             r = await client.post(
                 f"https://{APNS_HOST}/3/device/{tok}",
                 headers={"authorization": f"bearer {_apns_token()}", "apns-topic": APNS_BUNDLE_ID, "apns-push-type": "alert", "apns-priority": "10"},
-                json={"aps": {"alert": {"title": title, "body": body}, "sound": "default"}},
+                json={"aps": {"alert": {"title": title, "body": body}, "sound": "default",
+                              "interruption-level": "time-sensitive" if urgent else "active"}},
             )
             print(f"[notify] {title!r} -> {r.status_code}", flush=True)
             if r.status_code in (400, 410):
