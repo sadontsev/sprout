@@ -17,7 +17,7 @@ const live = (over: Partial<PrinterStatus> = {}): PrinterStatus =>
         is_ams_ht: false,
         humidity: 19,
         temp: 40.7,
-        serial_number: '1912345678901232',
+        serial_number: 'FAKESERIALAMS001',
         dry_time: 0,
         tray: [
           { id: 0, tray_type: 'PETG', tray_color: '000000FF', remain: 18 },
@@ -32,7 +32,7 @@ const live = (over: Partial<PrinterStatus> = {}): PrinterStatus =>
         is_ams_ht: true,
         humidity: 17,
         temp: 32,
-        serial_number: '2098765432109876',
+        serial_number: 'FAKESERIALHT0002',
         dry_time: 0,
         tray: [{ id: 0, tray_type: 'PETG-CF', tray_color: '565656FF', remain: 96 }],
       },
@@ -57,7 +57,7 @@ describe('presentAms', () => {
   it('returns both units with the right kind, capacity and drying ceiling', () => {
     const { units } = presentAms(live());
     expect(units).toHaveLength(2);
-    expect(units[0]).toMatchObject({ id: 0, label: 'AMS 1', kind: 'ams', capacity: 4, loaded: 4, maxDryTemp: 65, extruder: 0 });
+    expect(units[0]).toMatchObject({ id: 0, label: 'AMS 1', kind: 'ams', capacity: 4, loaded: 4, maxDryTemp: 65, extruder: 0, serialTail: 'L001' });
     expect(units[1]).toMatchObject({ id: 128, label: 'AMS HT', kind: 'ht', capacity: 1, loaded: 1, maxDryTemp: 85, extruder: 1 });
   });
 
