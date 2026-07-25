@@ -122,8 +122,25 @@ const NOZZLE_TYPE_LABEL: Record<string, string> = {
   HS00: 'Stainless',
   hardened_steel: 'Hardened',
   stainless_steel: 'Stainless',
+  tungsten_carbide: 'Tungsten Carbide',
+  hardened_tungsten: 'Hardened Tungsten',
 };
-const nozzleType = (t?: string): string => (t ? NOZZLE_TYPE_LABEL[t] ?? t : '');
+
+/**
+ * Human label for a nozzle type code. The map can't be exhaustive — Bambu adds codes with new
+ * hardware (a tungsten nozzle is arriving and its code isn't published), and the old `?? code`
+ * fallback printed a raw `HS02` next to cards reading "Hardened", which reads like a material name.
+ * So: known code -> label; snake_case -> Title Case; anything else -> "Type <code>", which at least
+ * reads as a machine code. Never returns a bare unknown token.
+ */
+export function nozzleTypeLabel(t?: string | null): string {
+  if (!t) return '';
+  const known = NOZZLE_TYPE_LABEL[t];
+  if (known) return known;
+  if (t.includes('_')) return t.split('_').map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)).join(' ');
+  return `Type ${t}`;
+}
+const nozzleType = (t?: string): string => nozzleTypeLabel(t);
 const nozzleDia = (d?: string | number): string => {
   const n = asNum(d);
   return n != null ? `${n} mm` : '';
