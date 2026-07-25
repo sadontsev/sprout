@@ -73,10 +73,16 @@ describe('HMS notices', () => {
     expect(dismissals[0].label).toBe('Dismiss all (2)');
   });
 
-  it('a notice never claims the print failed — that is reserved for a real error', () => {
-    const a = presentAlerts(st({ hms_errors: [hms()] }), OK).find((x) => x.id.startsWith('hms-'))!;
-    expect(a.detail).toMatch(/keeps printing/i);
+  it('a routine notice never claims the print failed — that is reserved for a real error', () => {
+    const a = presentAlerts(st({ hms_errors: [hms({ severity: 4 })] }), OK).find((x) => x.id.startsWith('hms-'))!;
+    expect(a.detail).toMatch(/keeps going/i);
     expect(ids(st({ hms_errors: [hms()] }))).not.toContain('print-error');
+  });
+
+  it('a FATAL notice does NOT reassure that the printer keeps going', () => {
+    const a = presentAlerts(st({ hms_errors: [hms({ severity: 1 })] }), OK).find((x) => x.id.startsWith('hms-'))!;
+    expect(a.detail).not.toMatch(/keeps going|keeps printing/i);
+    expect(a.detail).toMatch(/serious/i);
   });
 
   it('ids are stable across polls so the list does not churn mid-print', () => {
@@ -91,4 +97,25 @@ test('a real print error leads the list and offers resume or stop', () => {
   expect(list[0].level).toBe('error');
   expect(list[0].detail).toContain('84033543');
   expect(list[0].actions.map((a) => a.id)).toEqual(['resume', 'stop']);
+});
+
+
+describe('alertSummary — the single dashboard row', () => {
+  const { alertSummary } = require('@/alerts/present');
+  it('is null when all is well, so the dashboard shows nothing at all', () => {
+    expect(alertSummary([])).toBeNull();
+  });
+  it('reports the WORST level present', () => {
+    const list = presentAlerts(st({ state: 'PAUSE', hms_errors: [{ full_code: '0500050000010007', severity: 4 }] }), OK);
+    expect(alertSummary(list)!.level).toBe('warning'); // paused outranks an info notice
+    const fatal = presentAlerts(st({ print_error: 1 }), OK);
+    expect(alertSummary(fatal)!.level).toBe('error');
+  });
+  it('counts how many are actionable, ignoring lookup-only rows', () => {
+    const list = presentAlerts(st({ hms_errors: [{ full_code: '0500050000010007', severity: 4 }] }), OK);
+    // one notice: it has lookup + the batch dismiss -> actionable
+    expect(alertSummary(list)!.label).toBe('1 alert · 1 actionable');
+    const offline = presentAlerts(st({ connected: false, hms_errors: [{ full_code: '0500050000010007', severity: 4 }] }), { connected: false, canControl: true });
+    expect(alertSummary(offline)!.label).toBe('1 alert'); // nothing actionable while offline
+  });
 });

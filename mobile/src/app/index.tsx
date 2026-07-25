@@ -19,6 +19,7 @@ import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/
 import { TabBar, type TabKey } from '@/components/TabBar';
 import { LibraryView, JobsView, AmsView, PowerView } from '@/components/TabScreens';
 import { CameraOverlay, UploadSheet, WizardOverlay, TexturizeSheet, StlViewerOverlay } from '@/components/Overlays';
+import { AlertsOverlay } from '@/components/AlertsOverlay';
 import { TexturizeClient } from '@/api/texturizeClient';
 import { resolveTexturizeUrl } from '@/config/texturizeConfig';
 import { FadeRise } from '@/components/anim';
@@ -192,6 +193,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   // Fullscreen interactive STL viewer (renders ABOVE the texturize sheet so "View in 3D" from the
   // done state returns to the sheet on close, keeping the tweak → re-run loop intact).
   const [viewStl, setViewStl] = useState<{ fileId: number; name: string } | null>(null);
+  const [alertsOpen, setAlertsOpen] = useState(false);
   const openStl = (f: LibraryFile) => setViewStl({ fileId: f.id, name: displayName(f) });
 
   // Speed: the printer's real speed_level drives the UI; a short-lived optimistic override bridges
@@ -291,24 +293,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
         Alert.alert('Speed failed', String(e));
       });
     },
-    // Alerts carry only actions the state allows (alerts/present.ts); this maps them to endpoints.
-    // Destructive ones confirm first — everything else is a routine "I fixed it, carry on".
-    onAlertAction: (a: AlertVM, act: AlertActionVM) => {
-      const run = () => {
-        if (act.id === 'resume') return client.resume(printerId).catch((e) => Alert.alert('Couldn’t resume', apiErrorDetail(e)));
-        if (act.id === 'stop') return client.stop(printerId).catch((e) => Alert.alert('Couldn’t stop', apiErrorDetail(e)));
-        if (act.id === 'clearHms') return client.clearHms(printerId).catch((e) => Alert.alert('Couldn’t clear', apiErrorDetail(e)));
-        if (act.id === 'plateCleared')
-          return client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', apiErrorDetail(e)));
-        if (act.id === 'lookup' && act.url) return void Linking.openURL(act.url).catch(() => {});
-        return undefined;
-      };
-      if (!act.destructive) return void run();
-      Alert.alert(act.label + '?', `${a.title} — this can’t be undone.`, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: act.label, style: 'destructive', onPress: () => void run() },
-      ]);
-    },
+    onAlerts: () => setAlertsOpen(true),
     onPlateCleared: () =>
       client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', String(e))),
     onPrintAgain: () => {
@@ -326,6 +311,25 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
         },
       ]);
     },
+  };
+
+  // Maps an alert action to its endpoint. Destructive ones confirm first; everything else is the
+  // routine "I fixed it, carry on".
+  const runAlertAction = (a: AlertVM, act: AlertActionVM) => {
+    const run = () => {
+      if (act.id === 'resume') return client.resume(printerId).catch((e) => Alert.alert('Couldn’t resume', apiErrorDetail(e)));
+      if (act.id === 'stop') return client.stop(printerId).catch((e) => Alert.alert('Couldn’t stop', apiErrorDetail(e)));
+      if (act.id === 'clearHms') return client.clearHms(printerId).catch((e) => Alert.alert('Couldn’t clear', apiErrorDetail(e)));
+      if (act.id === 'plateCleared')
+        return client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', apiErrorDetail(e)));
+      if (act.id === 'lookup' && act.url) return void Linking.openURL(act.url).catch(() => {});
+      return undefined;
+    };
+    if (!act.destructive) return void run();
+    Alert.alert(`${act.label}?`, `${a.title} — this can’t be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: act.label, style: 'destructive', onPress: () => void run() },
+    ]);
   };
 
   return (
@@ -356,6 +360,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       {texturizeFile && texClient && (
         <TexturizeSheet texClient={texClient} file={texturizeFile} onClose={() => setTexturizeFile(null)} onDone={() => setLibKey((k) => k + 1)} />
       )}
+      {alertsOpen && <AlertsOverlay alerts={alerts} onAction={runAlertAction} onClose={() => setAlertsOpen(false)} />}
       {viewStl && <StlViewerOverlay client={client} fileId={viewStl.fileId} name={viewStl.name} onClose={() => setViewStl(null)} />}
       {wizardFile && (
         <WizardOverlay
