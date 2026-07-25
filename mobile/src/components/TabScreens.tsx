@@ -523,7 +523,7 @@ export function LibraryView({ client, texClient, camToken, printerId, plate, onU
       )}
       {viewGcode && (
         <Modal visible animationType="slide" onRequestClose={() => setViewGcode(null)}>
-          <GcodeViewerOverlay key={viewGcode.path} load={() => client.getPrinterFileGcode(printerId, viewGcode.path)} title={viewGcode.name} plate={plate} onClose={() => setViewGcode(null)} />
+          <GcodeViewerOverlay key={viewGcode.path} src={{ url: client.baseUrl + client.printerGcodePath(printerId, viewGcode.path), headers: client.authHeaders() }} title={viewGcode.name} plate={plate} onClose={() => setViewGcode(null)} />
         </Modal>
       )}
       {playFile && (

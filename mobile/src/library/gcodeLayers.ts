@@ -1,265 +1,13 @@
+import { GCODE_PARSER_JS } from './gcodeParserSource';
 // Pure G-code -> per-layer toolpath parser for the layer viewer.
 //
 // We parse on the RN/JS side (testable, off the WebView) and hand the WebView only the rendered
 // geometry as JSON. Each layer is a flat array of extrusion segments [x0,y0,x1,y1, x0,y0,x1,y1, ...]
 // (numbers, not objects) to keep the payload compact for large prints.
 
-export interface GcodeLayers {
-  /** One entry per layer: flat [x0,y0,x1,y1,...] of extruding XY moves (the model itself). */
-  layers: number[][];
-  /** Support-structure extrusion per layer — index-aligned with `layers` (empty where none). */
-  supportLayers: number[][];
-  /** Z height (mm) of each layer — index-aligned with `layers`. Drives the 3D stacking. */
-  layerZ: number[];
-  /** Whether the slicer's support setting was on (`; enable_support = 1` in the G-code). */
-  supportEnabled: boolean;
-  /** Whether any actual support toolpath was generated (the honest "this print has supports"). */
-  hasSupport: boolean;
-  /** XYZ extent of all extrusion, for fit-to-view. Always finite. */
-  bounds: { minX: number; minY: number; maxX: number; maxY: number; minZ: number; maxZ: number };
-}
-
-const EPS = 1e-6;
-
-/**
- * Parse G0/G1 moves into layers, splitting a new layer at the first *extruding* move whose Z differs
- * from the current layer's Z. Keying layers off extrusion Z (not raw Z changes) makes this robust to
- * travel Z-hops, which would otherwise fragment layers. Honors G90/G91 (XYZ abs/rel), M82/M83 and
- * G90/G91 (E abs/rel), and G92 E (extruder reset). Comments (`;`) are stripped.
- */
-export function parseGcodeLayers(gcode: string): GcodeLayers {
-  // Scan line boundaries by index instead of gcode.split('\n'): the real spike-ball file is 69.9 MB /
-  // 2.97M lines, and materializing that array costs ~150-190 MB of Hermes string primitives ON TOP of
-  // the 70 MB source — the difference between "previews" and an OOM kill with no error.
-  const total = gcode.length;
-  const layers: number[][] = [];
-  const supportLayers: number[][] = [];
-  const zs: number[] = [];
-  let seg: number[] = [];
-  let supSeg: number[] = [];
-  let x = 0,
-    y = 0,
-    z = 0,
-    e = 0;
-  let absXYZ = true,
-    absE = true;
-  let layerZ: number | null = null;
-  let feature = ''; // current `; FEATURE: ...` block — slicers tag support toolpaths this way
-  let isSupport = false;
-  let supportEnabled = false;
-  let hasSupport = false;
-  let minX = Infinity,
-    minY = Infinity,
-    maxX = -Infinity,
-    maxY = -Infinity;
-
-  // Close the current layer, recording the Z it was extruded at (index-aligned with `layers`).
-  const pushLayer = () => {
-    if (seg.length || supSeg.length) {
-      layers.push(seg);
-      supportLayers.push(supSeg);
-      zs.push(layerZ ?? 0);
-      seg = [];
-      supSeg = [];
-    }
-  };
-
-  for (let pos = 0; pos < total; ) {
-    let nl = gcode.indexOf('\n', pos);
-    if (nl < 0) nl = total;
-    let line = gcode.slice(pos, nl);
-    pos = nl + 1;
-    const sc = line.indexOf(';');
-    if (sc >= 0) {
-      // Read slicer metadata from the comment before stripping it: which feature we're printing, and
-      // whether supports were enabled at all.
-      const comment = line.slice(sc + 1);
-      const fm = /FEATURE:\s*(.+)/i.exec(comment);
-      if (fm) {
-        feature = fm[1].trim();
-        isSupport = /support/i.test(feature);
-      } else {
-        const em = /\benable_support\s*=\s*([01])/i.exec(comment);
-        if (em) supportEnabled = em[1] === '1';
-      }
-      line = line.slice(0, sc);
-    }
-    line = line.trim();
-    if (!line) continue;
-    const t = line.split(/\s+/);
-    const cmd = t[0];
-
-    if (cmd === 'G90') {
-      absXYZ = true;
-      absE = true;
-      continue;
-    }
-    if (cmd === 'G91') {
-      absXYZ = false;
-      absE = false;
-      continue;
-    }
-    if (cmd === 'M82') {
-      absE = true;
-      continue;
-    }
-    if (cmd === 'M83') {
-      absE = false;
-      continue;
-    }
-    if (cmd === 'G92') {
-      for (let i = 1; i < t.length; i++) {
-        if (t[i][0] === 'E') {
-          const v = parseFloat(t[i].slice(1));
-          if (!isNaN(v)) e = v;
-        }
-      }
-      continue;
-    }
-    if (cmd !== 'G0' && cmd !== 'G1') continue;
-
-    let nx = x,
-      ny = y,
-      nz = z,
-      ne = e,
-      hasE = false,
-      movedXY = false;
-    for (let i = 1; i < t.length; i++) {
-      const p = t[i];
-      const v = parseFloat(p.slice(1));
-      if (isNaN(v)) continue;
-      const a = p[0];
-      if (a === 'X') {
-        nx = absXYZ ? v : x + v;
-        movedXY = true;
-      } else if (a === 'Y') {
-        ny = absXYZ ? v : y + v;
-        movedXY = true;
-      } else if (a === 'Z') {
-        nz = absXYZ ? v : z + v;
-      } else if (a === 'E') {
-        ne = absE ? v : e + v;
-        hasE = true;
-      }
-    }
-
-    const extruding = hasE && ne > e + EPS && movedXY && (nx !== x || ny !== y);
-    if (extruding) {
-      if (layerZ === null) layerZ = nz;
-      else if (Math.abs(nz - layerZ) > 0.001) {
-        pushLayer();
-        layerZ = nz;
-      }
-      if (isSupport) {
-        supSeg.push(x, y, nx, ny);
-        hasSupport = true;
-      } else {
-        seg.push(x, y, nx, ny);
-      }
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-      if (nx < minX) minX = nx;
-      if (nx > maxX) maxX = nx;
-      if (ny < minY) minY = ny;
-      if (ny > maxY) maxY = ny;
-    }
-
-    x = nx;
-    y = ny;
-    z = nz;
-    if (hasE) e = ne;
-  }
-  pushLayer();
-
-  // Leading PRIME/PURGE layers: the H2C purges at an ELEVATED Z (observed: 5.8 mm, X≈290) before
-  // the first real 0.2 mm layer. A leading layer followed by a >0.5 mm DROP in Z is priming, not
-  // model — exclude those from the bounds so fit/pivot/shadow/height-ramp track the actual print
-  // (they still render). Without this the viewer centers between model and purge line and reports
-  // minZ as the purge height, which made the model look like it floats above the plate.
-  let firstReal = 0;
-  while (firstReal < zs.length - 1 && zs[firstReal] > zs[firstReal + 1] + 0.5) firstReal++;
-  if (firstReal > 0) {
-    minX = Infinity;
-    minY = Infinity;
-    maxX = -Infinity;
-    maxY = -Infinity;
-    for (let k = firstReal; k < layers.length; k++) {
-      for (const L of [layers[k], supportLayers[k]]) {
-        for (let i = 0; i < L.length; i += 2) {
-          const vx = L[i],
-            vy = L[i + 1];
-          if (vx < minX) minX = vx;
-          if (vx > maxX) maxX = vx;
-          if (vy < minY) minY = vy;
-          if (vy > maxY) maxY = vy;
-        }
-      }
-    }
-  }
-  if (!isFinite(minX)) {
-    minX = 0;
-    minY = 0;
-    maxX = 256;
-    maxY = 256;
-  }
-  // True extremes over the REAL layers — never assume zs is sorted (the purge layer isn't).
-  let minZ = Infinity,
-    maxZ = -Infinity;
-  for (let k = firstReal; k < zs.length; k++) {
-    if (zs[k] < minZ) minZ = zs[k];
-    if (zs[k] > maxZ) maxZ = zs[k];
-  }
-  if (!isFinite(minZ)) {
-    minZ = 0;
-    maxZ = 1;
-  }
-  return { layers, supportLayers, layerZ: zs, supportEnabled, hasSupport, bounds: { minX, minY, maxX, maxY, minZ, maxZ } };
-}
-
-/**
- * Guard: don't try to render gigantic sliced files on-device. Raised from 14 MB once the renderer
- * stopped being the bottleneck — measured ~12.2k segments/MB, so 14 MB rejected files at ~171k
- * segments while the GL path comfortably draws 400k. The user's spike ball is 69.9 MB decompressed.
- */
-export const MAX_GCODE_BYTES = 90_000_000;
-
-/** Segments we're willing to hand the WebView. Above this, geometry + the JSON bridge copy dominate. */
-export const SEGMENT_BUDGET = 400_000;
-
-/** Total extrusion segments across all layers (4 numbers per segment). */
-export function countSegments(g: Pick<GcodeLayers, 'layers' | 'supportLayers'>): number {
-  let n = 0;
-  for (const L of g.layers) n += L.length >> 2;
-  for (const L of g.supportLayers) n += L.length >> 2;
-  return n;
-}
-
-/**
- * Thin a parsed file down to `budget` segments by keeping every Nth one, PRESERVING per-layer
- * structure (layer count, Z heights and the model/support split all stay index-aligned, so the layer
- * slider keeps meaning what it says). Returns `keptEvery: 1` when the file already fits, which the
- * viewer uses to decide whether to warn the user that detail was dropped.
- *
- * Doing this here — before JSON.stringify, before the bridge copy, before the page allocates GL
- * buffers — collapses every downstream cost at once. The page used to drop every 2nd segment AFTER
- * paying all three.
- */
-export function fitToBudget(g: GcodeLayers, budget = SEGMENT_BUDGET): GcodeLayers & { keptEvery: number } {
-  const total = countSegments(g);
-  const keptEvery = total > budget ? Math.ceil(total / budget) : 1;
-  if (keptEvery === 1) return { ...g, keptEvery: 1 };
-  const thin = (rows: number[][]): number[][] =>
-    rows.map((L) => {
-      const out: number[] = [];
-      for (let i = 0, seg = 0; i < L.length; i += 4, seg++) {
-        if (seg % keptEvery === 0) out.push(L[i], L[i + 1], L[i + 2], L[i + 3]);
-      }
-      return out;
-    });
-  return { ...g, layers: thin(g.layers), supportLayers: thin(g.supportLayers), keptEvery };
-}
+// The parser itself now lives in gcodeParserSource.ts and runs INSIDE the WebView — see the note
+// there. This module builds the viewer page; it no longer touches G-code text at all, which is why
+// MAX_GCODE_BYTES, fitToBudget and the segment budget are gone rather than merely raised.
 
 /**
  * Build the self-contained HTML for the WebView layer viewer. Parsing already happened in
@@ -277,15 +25,15 @@ export function fitToBudget(g: GcodeLayers, budget = SEGMENT_BUDGET): GcodeLayer
  * external/CDN imports — fully offline in WKWebView. Pure (no RN deps) → unit-testable.
  */
 export function gcodeViewerHtml(
-  data: GcodeLayers,
+  src: { url: string; headers?: Record<string, string> },
   plate: { w: number; d: number } = { w: 256, d: 256 },
-  keptEvery = 1,
 ): string {
-  const lit = JSON.stringify(data).replace(/</g, '\\u003c');
+  const urlLit = JSON.stringify(src.url).replace(/</g, '\\u003c');
   // Bambu gcode is plate-origin (0,0 = front-left corner); grow the drawn plate to a 50 mm multiple
   // if the toolpath somehow exceeds the declared footprint (never draw the model off the plate).
   const plateLit = JSON.stringify({ w: plate.w, d: plate.d });
-  const keptLit = JSON.stringify(Math.max(1, Math.round(keptEvery)));
+  const hdrLit = JSON.stringify(src.headers ?? {}).replace(/</g, '\\u003c');
+  const parserJs = GCODE_PARSER_JS;
   return `<!doctype html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
@@ -313,11 +61,28 @@ export function gcodeViewerHtml(
 <div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint">drag rotate · pinch zoom · 2-finger pan · double-tap reset</span></div><input id="s" type="range" min="1" max="1" value="1"><div id="chips"><div class="chip on" data-m="steel">Steel</div><div class="chip" data-m="ivory">Ivory</div><div class="chip" data-m="bg">Light bg</div></div></div></div>
 <div id="err"></div>
 <script>
+  var URL_=${urlLit}, HDRS=${hdrLit};
   var post=function(o){window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(o));};
   function fail(m){var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t render the preview. '+m;post({type:'error',message:String(m)});}
   window.addEventListener('error',function(e){fail(e.message||'error');});
   try{
-    var DATA=${lit}, PLATE=${plateLit}, KEPT=${keptLit}, layers=DATA.layers, sup=DATA.supportLayers||[], zs=DATA.layerZ, b=DATA.bounds;
+    var PLATE=${plateLit}, KEPT=1, layers=[], sup=[], zs=[], b=null;
+${parserJs}
+    // Fetch + parse HERE, not in React Native. The old path decoded the G-code in Hermes (no JIT),
+    // boxed millions of numbers, JSON-stringified them into this page and re-parsed — three copies of
+    // ~70 MB before drawing anything, which is why big prints "couldn't be previewed". JavaScriptCore
+    // JITs this loop and the result feeds GPU buffers directly, so there is no size cap any more.
+    fetch(URL_, { headers: HDRS })
+      .then(function (r) { if (!r.ok) throw new Error('download failed (HTTP ' + r.status + ')'); return r.text(); })
+      .then(function (text) {
+        var P = parseGcode(text);
+        if (!P.layers.length) throw new Error('no printable layers were found in this file');
+        boot(P);
+      })
+      .catch(function (e) { fail((e && e.message) || String(e)); });
+
+    function boot(P){
+    layers=P.layers; sup=P.sup; zs=P.zs; b=P.bounds;
     var total=layers.length||1;
     // Grow the plate to cover stray toolpaths, in 50 mm steps.
     var pw=Math.max(PLATE.w, Math.ceil(Math.max(b.maxX,1)/50)*50), pd=Math.max(PLATE.d, Math.ceil(Math.max(b.maxY,1)/50)*50);
@@ -353,17 +118,18 @@ export function gcodeViewerHtml(
     var cvg=document.getElementById('cg');
     var gl=cvg.getContext('webgl',{antialias:true,alpha:true,premultipliedAlpha:true});
     if(!gl) throw new Error('WebGL unavailable');
-    if(!gl.getExtension('OES_element_index_uint')) throw new Error('WebGL uint indices unavailable');
+    var INST=gl.getExtension('ANGLE_instanced_arrays');
+    if(!INST) throw new Error('WebGL instancing unavailable');
     function mkShader(ty,src){ var s=gl.createShader(ty); gl.shaderSource(s,src); gl.compileShader(s);
       if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
     var vsrc=
-      'attribute vec3 aA;attribute vec3 aB;attribute vec2 aES;'+ // aES.x: 0=at A / 1=at B, aES.y: side ±1
+      'attribute vec2 aA;attribute vec2 aB;attribute float aZ;attribute vec2 aES;'+ // aES.x: 0=at A / 1=at B, aES.y: side ±1
       'uniform vec3 uCtr;uniform vec2 uRot;uniform vec2 uPit;uniform float uS;uniform vec2 uOff;'+
       'uniform vec2 uVP;uniform float uHalf;varying float vZ;varying float vSide;varying float vDir;'+
       'vec2 scr(vec3 p){float xr=(p.x-uCtr.x)*uRot.x-(p.y-uCtr.y)*uRot.y;'+
       'float yr=(p.x-uCtr.x)*uRot.y+(p.y-uCtr.y)*uRot.x;'+
       'return vec2(uOff.x+xr*uS, uOff.y-((yr*uPit.x)+(p.z-uCtr.z)*uPit.y)*uS);}'+
-      'void main(){vec2 sA=scr(aA);vec2 sB=scr(aB);vec2 d=sB-sA;float L=max(length(d),0.0001);'+
+      'void main(){vec2 sA=scr(vec3(aA,aZ));vec2 sB=scr(vec3(aB,aZ));vec2 d=sB-sA;float L=max(length(d),0.0001);'+
       'vec2 dir=d/L;vec2 perp=vec2(-dir.y,dir.x);vec2 xy=mix(sA,sB,aES.x);'+
       // extend past the endpoint by half a width: joints between consecutive segments overlap
       // instead of leaving butt-cap notches (the "falling apart" ragged silhouette)
@@ -372,7 +138,7 @@ export function gcodeViewerHtml(
       // the light read bright, side walls dark, so FORM is visible (height ramp alone is not)
       'vec2 nw=normalize(vec2(-(aB.y-aA.y),(aB.x-aA.x))+vec2(0.0001));'+
       'vDir=abs(dot(nw,vec2(0.5547,0.8321)));'+
-      'gl_Position=vec4(xy.x/uVP.x*2.0-1.0, 1.0-xy.y/uVP.y*2.0, 0.0, 1.0);vZ=aA.z;vSide=aES.y;}';
+      'gl_Position=vec4(xy.x/uVP.x*2.0-1.0, 1.0-xy.y/uVP.y*2.0, 0.0, 1.0);vZ=aZ;vSide=aES.y;}';
     var fsrc=
       'precision mediump float;varying float vZ;varying float vSide;varying float vDir;'+
       'uniform float uMinZ;uniform float uSpanZ;uniform float uCurZ;uniform float uEps;uniform float uIsSup;'+
@@ -389,45 +155,56 @@ export function gcodeViewerHtml(
     if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     gl.useProgram(prog);
     var U={}; ['uCtr','uRot','uPit','uS','uOff','uVP','uHalf','uMinZ','uSpanZ','uCurZ','uEps','uIsSup','uColBot','uColTop'].forEach(function(n){U[n]=gl.getUniformLocation(prog,n);});
-    var locA=gl.getAttribLocation(prog,'aA'), locB=gl.getAttribLocation(prog,'aB'), locES=gl.getAttribLocation(prog,'aES');
+    // INSTANCED geometry: one shared 4-vertex quad, plus 5 floats PER SEGMENT (x0,y0,x1,y1,z) =
+    // 20 bytes. The previous non-instanced layout wrote 4 verts x 8 floats + 6 uint32 indices =
+    // 152 bytes/segment, i.e. 172 MB for the user's 1.13M-segment print; this is ~23 MB. That is the
+    // whole reason a cap and decimation existed, and why neither is needed now.
+    var quad=gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER,quad);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([0,-1, 0,1, 1,-1, 1,1]),gl.STATIC_DRAW);
 
-    // Geometry: 4 verts/segment (A-1,A+1,B-1,B+1), 8 floats each [ax,ay,az, bx,by,bz, end,side];
-    // 6 uint32 indices/segment. Ordered by layer, so "draw up to layer N" is one prefix drawElements
-    // per buffer. Dense models decimate every 2nd segment (visual density is unaffected at phone size).
-    var skip=1; // decimation happens UPSTREAM now (fitToBudget) so the JSON + GL buffers are bounded
     function buildGeo(perLayer){
-      var segs=0,k,Lr;
-      for(k=0;k<perLayer.length;k++){ Lr=perLayer[k]; if(!Lr) continue;
-        for(var q0=0;q0<Lr.length;q0+=4*skip){ if(Math.abs(Lr[q0+2]-Lr[q0])>=0.05||Math.abs(Lr[q0+3]-Lr[q0+1])>=0.05) segs++; } }
-      var vb=new Float32Array(segs*4*8), ib=new Uint32Array(segs*6), idxEnd=new Uint32Array(perLayer.length);
-      var v=0,i2=0,seg=0;
+      var segs=0,k;
+      for(k=0;k<perLayer.length;k++) segs+=perLayer[k].length>>2;
+      var data=new Float32Array(segs*5), n=0, layerEnd=new Uint32Array(perLayer.length), inst=0;
       for(k=0;k<perLayer.length;k++){
-        Lr=perLayer[k]||[]; var z=zs[k];
-        for(var q=0;q<Lr.length;q+=4*skip){
-          var ax=Lr[q],ay=Lr[q+1],bx2=Lr[q+2],by2=Lr[q+3];
-          // degenerate segments become uHalf-sized DOTS via the cap extension — drop them
-          if(Math.abs(bx2-ax)<0.05&&Math.abs(by2-ay)<0.05) continue;
-          for(var e2=0;e2<4;e2++){ // (end,side): (0,-1)(0,1)(1,-1)(1,1)
-            vb[v++]=ax;vb[v++]=ay;vb[v++]=z; vb[v++]=bx2;vb[v++]=by2;vb[v++]=z;
-            vb[v++]=e2>>1; vb[v++]=(e2&1)?1:-1;
-          }
-          var b0=seg*4;
-          ib[i2++]=b0;ib[i2++]=b0+1;ib[i2++]=b0+2; ib[i2++]=b0+2;ib[i2++]=b0+1;ib[i2++]=b0+3;
-          seg++;
+        var L=perLayer[k], z=zs[k];
+        for(var q=0;q<L.length;q+=4){
+          // Degenerate moves become uHalf-sized dots via the cap extension — drop them.
+          if(Math.abs(L[q+2]-L[q])<0.05 && Math.abs(L[q+3]-L[q+1])<0.05) continue;
+          data[n++]=L[q]; data[n++]=L[q+1]; data[n++]=L[q+2]; data[n++]=L[q+3]; data[n++]=z;
+          inst++;
         }
-        idxEnd[k]=i2;
+        layerEnd[k]=inst;
       }
-      var vbo=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,vb,gl.STATIC_DRAW);
-      var ibo=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,ib,gl.STATIC_DRAW);
-      return {vbo:vbo,ibo:ibo,idxEnd:idxEnd};
+      var vbo=gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
+      gl.bufferData(gl.ARRAY_BUFFER,data.subarray(0,n),gl.STATIC_DRAW);
+      return {vbo:vbo, layerEnd:layerEnd, count:inst};
     }
     var geoModel=buildGeo(layers), geoSup=buildGeo(sup);
-    var supTotal=geoSup.idxEnd.length?geoSup.idxEnd[geoSup.idxEnd.length-1]:0;
+    var supTotal=geoSup.count;
+    var locQ=gl.getAttribLocation(prog,'aES'), locA=gl.getAttribLocation(prog,'aA'),
+        locB=gl.getAttribLocation(prog,'aB'), locZ=gl.getAttribLocation(prog,'aZ');
     function bindGeo(gm){
-      gl.bindBuffer(gl.ARRAY_BUFFER,gm.vbo); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,gm.ibo);
-      gl.enableVertexAttribArray(locA); gl.vertexAttribPointer(locA,3,gl.FLOAT,false,32,0);
-      gl.enableVertexAttribArray(locB); gl.vertexAttribPointer(locB,3,gl.FLOAT,false,32,12);
-      gl.enableVertexAttribArray(locES); gl.vertexAttribPointer(locES,2,gl.FLOAT,false,32,24);
+      gl.bindBuffer(gl.ARRAY_BUFFER,quad);
+      gl.enableVertexAttribArray(locQ); gl.vertexAttribPointer(locQ,2,gl.FLOAT,false,0,0);
+      INST.vertexAttribDivisorANGLE(locQ,0);
+      gl.bindBuffer(gl.ARRAY_BUFFER,gm.vbo);
+      gl.enableVertexAttribArray(locA); gl.vertexAttribPointer(locA,2,gl.FLOAT,false,20,0);
+      gl.enableVertexAttribArray(locB); gl.vertexAttribPointer(locB,2,gl.FLOAT,false,20,8);
+      gl.enableVertexAttribArray(locZ); gl.vertexAttribPointer(locZ,1,gl.FLOAT,false,20,16);
+      INST.vertexAttribDivisorANGLE(locA,1); INST.vertexAttribDivisorANGLE(locB,1); INST.vertexAttribDivisorANGLE(locZ,1);
+    }
+    function drawRange(gm,from,to){
+      if(to<=from) return;
+      bindGeo(gm);
+      // Offset the per-instance attributes instead of re-uploading: draws layers [from,to).
+      gl.bindBuffer(gl.ARRAY_BUFFER,gm.vbo);
+      gl.vertexAttribPointer(locA,2,gl.FLOAT,false,20,from*20);
+      gl.vertexAttribPointer(locB,2,gl.FLOAT,false,20,from*20+8);
+      gl.vertexAttribPointer(locZ,1,gl.FLOAT,false,20,from*20+16);
+      INST.drawArraysInstancedANGLE(gl.TRIANGLE_STRIP,0,4,to-from);
     }
     // Painter's order (bottom layer -> top), NO depth buffer: same-layer crossings just overdraw
     // (a depth test z-fights them into speckle), and pitch is clamped above the horizon so layer
@@ -496,17 +273,17 @@ export function gcodeViewerHtml(
       var T=TINTS[tint]||TINTS.steel;
       gl.uniform3f(U.uColBot,T.bot[0],T.bot[1],T.bot[2]); gl.uniform3f(U.uColTop,T.top[0],T.top[1],T.top[2]);
       if(!supTotal){
-        var n1=geoModel.idxEnd[cur-1]||0;
-        if(n1){ gl.uniform1f(U.uIsSup,0); bindGeo(geoModel); gl.drawElements(gl.TRIANGLES,n1,gl.UNSIGNED_INT,0); }
+        gl.uniform1f(U.uIsSup,0);
+        drawRange(geoModel,0,geoModel.layerEnd[cur-1]||0);
         return;
       }
       // Supports exist: interleave per layer so painter's order stays faithful (a lower support
       // must not paint over a higher model layer).
       var prevM=0,prevS=0;
       for(var k=0;k<cur;k++){
-        var em=geoModel.idxEnd[k], es=geoSup.idxEnd[k];
-        if(es>prevS){ gl.uniform1f(U.uIsSup,1); bindGeo(geoSup); gl.drawElements(gl.TRIANGLES,es-prevS,gl.UNSIGNED_INT,prevS*4); }
-        if(em>prevM){ gl.uniform1f(U.uIsSup,0); bindGeo(geoModel); gl.drawElements(gl.TRIANGLES,em-prevM,gl.UNSIGNED_INT,prevM*4); }
+        var em=geoModel.layerEnd[k], es=geoSup.layerEnd[k];
+        if(es>prevS){ gl.uniform1f(U.uIsSup,1); drawRange(geoSup,prevS,es); }
+        if(em>prevM){ gl.uniform1f(U.uIsSup,0); drawRange(geoModel,prevM,em); }
         prevM=em; prevS=es;
       }
     }
@@ -584,7 +361,8 @@ export function gcodeViewerHtml(
     s2.addEventListener('input',function(){ cur=+s2.value; setLbl(); schedule(); });
     window.addEventListener('resize',resize);
     resize();
-    post({type:'ready',total:total});
+    post({type:'ready',total:total,hasSupport:P.hasSupport,segments:P.segTotal+P.supTotal});
+    }
   }catch(e){fail((e&&e.message)||e);}
 </script>
 </body></html>`;
