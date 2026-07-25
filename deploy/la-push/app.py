@@ -194,6 +194,12 @@ _last_kind: dict[int, str] = {}
 # halt is the single most important thing to be told about: the printer is stopped mid-print, waiting
 # on a human, and false positives are common with print_halt + every detector enabled.
 _last_paused: dict[int, bool] = {}
+# _paused_at: printerId -> when the pause began, for REMINDERS. One banner is a single point of
+# failure — miss it (phone face-down, Focus, glanced past it) and an unattended printer just sits
+# there halted. A paused print is re-announced at these offsets, then goes quiet.
+_paused_at: dict[int, float] = {}
+_paused_reminded: dict[int, int] = {}
+PAUSE_REMINDERS_MIN = (10, 30, 60)
 # _last_dry: "printerId:amsId" -> {"t": minutes remaining, "fil": filament} last seen — drives the
 # drying-finished banner (dry_time falling to 0). Persisted for the same restart-survival reason.
 _last_dry: dict[str, dict] = {}
@@ -202,7 +208,7 @@ _printers_cache: dict[int, str] = {}
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded
     try:
         data = json.loads(REG_FILE.read_text())
         _regs = data.get("regs", {})
@@ -210,6 +216,8 @@ def _load() -> None:
         # JSON object keys are strings; _last_kind is keyed by int printer id, so coerce back.
         _last_kind = {int(k): v for k, v in data.get("last_kind", {}).items()}
         _last_paused = {int(k): bool(v) for k, v in data.get("last_paused", {}).items()}
+        _paused_at = {int(k): float(v) for k, v in data.get("paused_at", {}).items()}
+        _paused_reminded = {int(k): int(v) for k, v in data.get("paused_reminded", {}).items()}
         _last_dry = data.get("last_dry", {})
         _p2s_tokens = data.get("p2s", [])
         _p2s_dry_sent = data.get("p2s_dry_sent", {})
@@ -217,7 +225,7 @@ def _load() -> None:
         _p2s_pending = data.get("p2s_pending", {})
     except (FileNotFoundError, json.JSONDecodeError):
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
-        _p2s_icons, _p2s_pending, _last_paused = {}, {}, {}
+        _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}
 
 
 def _save() -> None:
@@ -225,7 +233,8 @@ def _save() -> None:
     REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind,
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
                                     "p2s_icons": _p2s_icons, "p2s_pending": _p2s_pending,
-                                    "last_paused": _last_paused}))
+                                    "last_paused": _last_paused,
+                                    "paused_at": _paused_at, "paused_reminded": _paused_reminded}))
 
 
 # ---- APNs ----
@@ -538,7 +547,23 @@ async def _tick(client: httpx.AsyncClient) -> None:
                     why = f"Halted with error {err} — open the app to resume or stop."
                 await _notify(client, f"⏸️ {name} — print paused", f"{model}. {why}")
             _last_paused[pid] = paused_now
+            if paused_now:
+                _paused_at[pid] = time.time()
+                _paused_reminded[pid] = 0
+            else:
+                _paused_at.pop(pid, None)
+                _paused_reminded.pop(pid, None)
             _save()
+        elif paused_now and _device_tokens and pid in _paused_at:
+            # Still paused: re-announce at 10/30/60 minutes so a single missed banner doesn't leave a
+            # halted printer sitting unattended, then stop rather than nag forever.
+            mins = (time.time() - _paused_at[pid]) / 60.0
+            sent = _paused_reminded.get(pid, 0)
+            if sent < len(PAUSE_REMINDERS_MIN) and mins >= PAUSE_REMINDERS_MIN[sent]:
+                model = fields.get("name") or "your print"
+                await _notify(client, f"⏸️ {name} — still paused ({int(mins)} min)", f"{model} is waiting on you.")
+                _paused_reminded[pid] = sent + 1
+                _save()
 
         if prev != kind:
             _last_kind[pid] = kind
