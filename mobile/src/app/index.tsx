@@ -5,12 +5,13 @@ import * as Linking from 'expo-linking';
 import { File, Paths } from 'expo-file-system';
 import { getConfig, patchConfig, type AppConfig } from '@/config/secureConfig';
 import { resolvePushUrl } from '@/config/pushConfig';
-import { BambuddyClient } from '@/api/bambuddyClient';
+import { BambuddyClient, apiErrorDetail } from '@/api/bambuddyClient';
 import { usePrinterStatus } from '@/realtime/usePrinterStatus';
 import { useCameraStream } from '@/realtime/useCameraStream';
 import { usePrinterActivities, type ActivityEntry } from '@/liveactivity/useLiveActivity';
 import { useStatusNotifications } from '@/notifications/useStatusNotifications';
 import { presentDashboard, type DashVM } from '@/dashboard/present';
+import { presentAlerts, type AlertVM, type AlertActionVM } from '@/alerts/present';
 import { printerProfile } from '@/printers/profile';
 import { reconcileSelection, initialSelectionState, type SelectionState } from '@/printers/selection';
 import { displayName } from '@/library/libraryBrowse';
@@ -104,6 +105,11 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   };
 
   const { status, statuses } = usePrinterStatus(client, printerId);
+  // Control endpoints accept the scoped API key; an unreachable printer can't act at all.
+  const alerts = useMemo(
+    () => presentAlerts(status, { connected: status?.connected === true, canControl: true }),
+    [status],
+  );
   const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
 
   // Fleet rows for the switcher: every printer with its live state (the shared WS carries all).
@@ -285,8 +291,24 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
         Alert.alert('Speed failed', String(e));
       });
     },
-    onHmsClear: () =>
-      client.clearHms(printerId).catch((e) => Alert.alert('Couldn’t clear', String(e))),
+    // Alerts carry only actions the state allows (alerts/present.ts); this maps them to endpoints.
+    // Destructive ones confirm first — everything else is a routine "I fixed it, carry on".
+    onAlertAction: (a: AlertVM, act: AlertActionVM) => {
+      const run = () => {
+        if (act.id === 'resume') return client.resume(printerId).catch((e) => Alert.alert('Couldn’t resume', apiErrorDetail(e)));
+        if (act.id === 'stop') return client.stop(printerId).catch((e) => Alert.alert('Couldn’t stop', apiErrorDetail(e)));
+        if (act.id === 'clearHms') return client.clearHms(printerId).catch((e) => Alert.alert('Couldn’t clear', apiErrorDetail(e)));
+        if (act.id === 'plateCleared')
+          return client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', apiErrorDetail(e)));
+        if (act.id === 'lookup' && act.url) return void Linking.openURL(act.url).catch(() => {});
+        return undefined;
+      };
+      if (!act.destructive) return void run();
+      Alert.alert(act.label + '?', `${a.title} — this can’t be undone.`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: act.label, style: 'destructive', onPress: () => void run() },
+      ]);
+    },
     onPlateCleared: () =>
       client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', String(e))),
     onPrintAgain: () => {
@@ -312,7 +334,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
           mid-flight on a tab switch hits a reanimated-4 New-Arch teardown race (upstream #9402 /
           #9293: crash or whole-app freeze), so it stays mounted and is HIDDEN instead. */}
       <View style={{ flex: 1, display: tab === 'printer' ? 'flex' : 'none' }}>
-        <DashboardView vm={vm} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} printer={printer} fleet={fleet} />
+        <DashboardView vm={vm} alerts={alerts} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} printer={printer} fleet={fleet} />
       </View>
       {tab !== 'printer' && (
         <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
