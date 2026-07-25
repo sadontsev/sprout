@@ -122,10 +122,10 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
     () =>
       presentAlerts(
         status,
-        { connected: status?.connected === true, canControl: true },
+        { connected: status?.connected === true, canControl: true, model: printer?.model },
         { hms: (code) => describeHms(hmsCat, code), printError: (e) => describePrintError(hmsCat, e) },
       ),
-    [status, hmsCat],
+    [status, hmsCat, printer?.model],
   );
   const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
 
@@ -338,18 +338,23 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       if (act.id === 'clearHms') return client.clearHms(printerId).catch((e) => Alert.alert('Couldn’t clear', apiErrorDetail(e)));
       if (act.id === 'plateCleared')
         return client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', apiErrorDetail(e)));
-      if (act.id === 'lookup' && act.url) {
-        // Not every code has a wiki page (the H2C's 0C00-0100-0002-0017 doesn't), so check before
-        // sending the user there and fall back to the searchable index instead of a 404.
+      if (act.id === 'lookup' && act.urls?.length) {
+        // The wiki is per model FAMILY and each family has its own code namespace, so the right page
+        // can't be known from the code alone. Walk the candidates (this machine's family first) and
+        // open the first that actually resolves; the last entry is the searchable index, which always
+        // does. Without this a tap landed on a 404 — the reported "fatal is not found".
         const open = async () => {
-          let target = act.url!;
-          try {
-            const r = await fetch(target, { method: 'HEAD' });
-            if (!r.ok && act.fallbackUrl) target = act.fallbackUrl;
-          } catch {
-            /* offline or blocked — best effort, try the exact page */
+          const candidates = act.urls!;
+          for (const url of candidates.slice(0, -1)) {
+            try {
+              const r = await fetch(url, { method: 'HEAD' });
+              if (r.ok) return void Linking.openURL(url).catch(() => {});
+            } catch {
+              /* offline/blocked — stop probing and use the index */
+              break;
+            }
           }
-          await Linking.openURL(target).catch(() => {});
+          await Linking.openURL(candidates[candidates.length - 1]).catch(() => {});
         };
         return void open();
       }
