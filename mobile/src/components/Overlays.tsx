@@ -14,7 +14,7 @@ import { presentDashboard, normColor } from '@/dashboard/present';
 import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
 import { displayName } from '@/library/libraryBrowse';
 import { loadedFilaments, catalogFilaments, type LoadedFilament } from '@/library/filamentMatch';
-import { parseGcodeLayers, gcodeViewerHtml, fitToBudget, MAX_GCODE_BYTES } from '@/library/gcodeLayers';
+import { gcodeViewerHtml } from '@/library/gcodeLayers';
 import { stlViewerHtml } from '@/library/stlViewerHtml';
 import { selectProcess, pickDefaultQuality, mountedNozzles, defaultNozzle, printerPresetNameFor, type Preset, type NozzleSize } from '@/library/presetSelect';
 import { buildProcessDelta, buildFilamentDelta, hasProcessOverrides, hasFilamentOverrides, overrideCount, INFILL_PATTERNS, TOP_PATTERNS, SUPPORT_STYLES, type SliceOverrides } from '@/library/sliceOverrides';
@@ -629,39 +629,21 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
 // Pure parser + HTML builder live in @/library/gcodeLayers (unit-tested, headless-renderable).
 // `load` fetches the raw gcode — library files pass () => client.getGcode(id), the SD-card browser
 // passes () => client.getPrinterFileGcode(printerId, path). Same viewer either way.
-export function GcodeViewerOverlay({ load, title, onClose, plate }: { load: () => Promise<string>; title: string; onClose: () => void; plate?: { w: number; d: number } }) {
+export function GcodeViewerOverlay({ src, title, onClose, plate }: { src: { url: string; headers?: Record<string, string> }; title: string; onClose: () => void; plate?: { w: number; d: number } }) {
   const insets = useSafeAreaInsets();
   const [html, setHtml] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [hasSupport, setHasSupport] = useState<boolean | null>(null);
 
+  const pageOrigin = (() => {
+    const m = /^(https?:\/\/[^/]+)/i.exec(src.url);
+    return m ? `${m[1]}/` : 'https://localhost/';
+  })();
+  // No fetch here on purpose: the page pulls the G-code itself and parses it with JIT. Handing a
+  // 70 MB string across the bridge (then JSON-ing it back into the page) was the actual reason large
+  // prints "couldn't be previewed" — see gcodeViewerHtml.
   useEffect(() => {
-    let alive = true;
-    load()
-      .then((g) => {
-        if (!alive) return;
-        if (g.length > MAX_GCODE_BYTES) {
-          setErr(`This sliced file is too large to preview on the phone (${Math.round(g.length / 1e6)} MB of G-code).`);
-          return;
-        }
-        const parsed = parseGcodeLayers(g);
-        if (parsed.layers.length === 0) {
-          setErr('No printable layers were found in this file.');
-          return;
-        }
-        setHasSupport(parsed.hasSupport);
-        // Thin to a segment budget BEFORE the JSON bridge copy + the page's GL buffers. keptEvery>1
-        // is shown in the viewer's label — this screen is how the user verifies supports actually
-        // generated, so dropped detail must be visible, never silent.
-        const fitted = fitToBudget(parsed);
-        setHtml(gcodeViewerHtml(fitted, plate, fitted.keptEvery));
-      })
-      .catch((e) => alive && setErr(String(e)));
-    return () => {
-      alive = false;
-    };
-    // Mounted per-file (callers conditionally render one overlay per viewed file) — fetch exactly
-    // once. Depending on `load` would refetch+reparse on every parent re-render (inline arrow).
+    setHtml(gcodeViewerHtml(src, plate));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -669,7 +651,9 @@ export function GcodeViewerOverlay({ load, title, onClose, plate }: { load: () =
     <View style={{ position: 'absolute', inset: 0, backgroundColor: '#0A0B0C', zIndex: 80 } as any}>
       {html && !err ? (
         <WebView
-          source={{ html, baseUrl: 'https://localhost/' }}
+          // Load the page on the SERVER's origin so its in-page fetch is same-origin: Bambuddy sends
+          // no CORS headers, so a localhost origin would get the request blocked outright.
+          source={{ html, baseUrl: pageOrigin }}
           originWhitelist={['*']}
           style={{ flex: 1, backgroundColor: '#0A0B0C' }}
           scrollEnabled={false}
@@ -680,6 +664,7 @@ export function GcodeViewerOverlay({ load, title, onClose, plate }: { load: () =
             try {
               const m = JSON.parse(e.nativeEvent.data);
               if (m.type === 'error') setErr(m.message || 'render error');
+              if (m.type === 'ready') setHasSupport(!!m.hasSupport);
             } catch {
               /* ignore */
             }
@@ -1510,7 +1495,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
           </View>
         )}
       </Animated.View>
-      {viewLayers && <GcodeViewerOverlay key={viewLayers.fileId} load={() => client.getGcode(viewLayers.fileId)} title={viewLayers.title} plate={profile.plate} onClose={() => setViewLayers(null)} />}
+      {viewLayers && <GcodeViewerOverlay key={viewLayers.fileId} src={{ url: client.baseUrl + client.gcodePath(viewLayers.fileId), headers: client.authHeaders() }} title={viewLayers.title} plate={profile.plate} onClose={() => setViewLayers(null)} />}
     </View>
   );
 }

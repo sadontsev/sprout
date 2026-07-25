@@ -303,6 +303,16 @@ export class BambuddyClient {
     return `${this.baseUrl}/api/v1/library/files/${fileId}/plate-thumbnail/${plateIndex}?token=${encodeURIComponent(token)}`;
   }
   /** Raw G-code text of a sliced file — used to render the layer-by-layer preview. Can be large. */
+  /** Same-origin PATH of a library file's G-code, for the layer viewer's in-page fetch (send
+   *  authHeaders()). Handing the WebView a URL instead of a 70 MB string is what lets it parse with
+   *  JIT and build GPU buffers directly — see gcodeViewerHtml. */
+  gcodePath(fileId: number): string {
+    return `/api/v1/library/files/${fileId}/gcode`;
+  }
+  /** Same, for a sliced 3MF on the printer's SD card. */
+  printerGcodePath(printerId: number, path: string): string {
+    return `/api/v1/printers/${printerId}/files/gcode?${new URLSearchParams({ path })}`;
+  }
   getGcode(fileId: number): Promise<string> {
     return this.req(`/api/v1/library/files/${fileId}/gcode`).then((r) => r.text());
   }
