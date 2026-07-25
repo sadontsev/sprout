@@ -321,16 +321,23 @@ export function DashboardView({
                   <Feather name="chevron-right" size={13} color={c.accent} />
                 </Tap>
               </View>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
+              {/* Scrolls once a second unit is attached: a fixed flex row sized for 4 collapses to
+                  slivers at 5 (AMS 2 Pro + HT) and is unreadable at 9. Chips keep a minimum width and
+                  the row simply scrolls; with <=4 slots it still fills the width exactly as before. */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                scrollEnabled={vm.ams.length > 4}
+                contentContainerStyle={{ flexDirection: 'row', gap: 10, flexGrow: 1 }}>
                 {vm.ams.map((t, i) => (
-                  <View key={i} style={{ flex: 1, paddingVertical: 11, paddingHorizontal: 8, borderRadius: 15, backgroundColor: c.s1, alignItems: 'center', gap: 8, borderWidth: t.active ? 1.5 : 1, borderColor: t.active ? c.accent : c.line }}>
+                  <View key={`${t.unitId}:${t.localId}`} style={{ flex: vm.ams.length > 4 ? undefined : 1, minWidth: vm.ams.length > 4 ? 74 : undefined, paddingVertical: 11, paddingHorizontal: 8, borderRadius: 15, backgroundColor: c.s1, alignItems: 'center', gap: 8, borderWidth: t.active ? 1.5 : 1, borderColor: t.active ? c.accent : c.line }}>
                     <View style={{ width: 32, height: 32, borderRadius: 9, backgroundColor: t.empty ? 'transparent' : t.color, borderWidth: t.empty ? 1 : 0, borderColor: c.line2, borderStyle: t.empty ? 'dashed' : 'solid' }} />
                     <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 9.5, color: c.t2 }}>{t.label}</Text>
                     <Text style={{ fontWeight: '600', fontSize: 11, color: c.t1, fontFamily: mono, fontVariant: ['tabular-nums'] }}>{t.pct}</Text>
                     {t.active ? <PulseDot color={c.accent} size={5} period={2000} /> : <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: c.accent, opacity: 0 }} />}
                   </View>
                 ))}
-              </View>
+              </ScrollView>
             </View>
           </>
         )}

@@ -324,23 +324,28 @@ def dry_state(status: dict) -> dict | None:
     toDryContentState: dry_time (minutes remaining) > 0 is THE active signal; the countdown itself
     renders client-side from etaEpochMs, so pushes only carry temp/humidity drift and the end."""
     ams_list = status.get("ams") or []
-    ams = ams_list[0] if ams_list else None
-    if not ams:
-        return None
+
     def _f(v) -> float:
         try:
             return float(v or 0)
         except (TypeError, ValueError):
             return 0.0
-    mins = _f(ams.get("dry_time"))
-    if mins <= 0:
+
+    # Scan EVERY unit, not ams[0] — the H2C pairs an AMS 2 Pro (id 0) with an AMS HT (id 128), and a
+    # cycle on the HT produced no card. Mirrors the app's toDryContentState.
+    ams = next((u for u in ams_list if _f(u.get("dry_time")) > 0), None)
+    if not ams:
         return None
+    unit_id = int(_f(ams.get("id")))
+    is_ht = ams.get("is_ams_ht") is True or unit_id >= 128
+    unit_label = ("AMS HT" if is_ht else f"AMS {unit_id + 1}") if len(ams_list) > 1 else ""
+    mins = _f(ams.get("dry_time"))
     target = int(_f(ams.get("dry_target_temp")))
     fil = ams.get("dry_filament") or "Filament"
     now_ms = int(time.time() * 1000)
     return {
         "dry": True, "stateLabel": "Drying",
-        "name": f"{fil} @ {target}°" if target > 0 else fil,
+        "name": " · ".join(x for x in (unit_label, f"{fil} @ {target}°" if target > 0 else fil) if x),
         "tint": "#FFB86C", "symbol": "humidity.fill",
         "progress": 0, "layer": 0, "totalLayers": 0,
         "etaEpochMs": now_ms + int(mins * 60000), "finished": False,

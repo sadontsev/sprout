@@ -1,4 +1,5 @@
 import { c } from '../theme';
+import { presentAms, type AmsUnitVM, type AmsSlotVM } from '../ams/units';
 import type { PrinterStatus } from '../api/types';
 
 export type DashKind = 'connecting' | 'offline' | 'idle' | 'live' | 'complete' | 'error';
@@ -52,7 +53,10 @@ export interface DashVM {
   hmsCode: string | null; // first full_code, dashed for readability
   /** FINISH + plate not confirmed clear — the queue is blocked until the user confirms. */
   awaitingPlateClear: boolean;
-  ams: AmsTrayVM[];
+  /** Every slot across every AMS unit, flat and in unit order (field-compatible with AmsTrayVM). */
+  ams: AmsSlotVM[];
+  /** The units those slots belong to — grouping, capacity, drying ceiling, fed extruder. */
+  amsUnits: AmsUnitVM[];
 }
 
 const round = (n: number | undefined | null): number => Math.round(Number(n ?? 0)) || 0;
@@ -239,6 +243,7 @@ function base(): DashVM {
     hmsCode: null,
     awaitingPlateClear: false,
     ams: [],
+    amsUnits: [],
   };
 }
 
@@ -307,16 +312,10 @@ export function presentDashboard(status: PrinterStatus | null, nowMs = 0): DashV
   const chamberTarget = round(t.chamber_target);
   const chamberHeating = hasChamber && heating(t.chamber_heating, chamberNow, chamberTarget, 2);
 
-  const ams: AmsTrayVM[] = (status.ams?.[0]?.tray ?? []).slice(0, 4).map((tray, i) => {
-    const empty = !tray.tray_type;
-    return {
-      label: empty ? 'Empty' : tray.tray_type ?? '',
-      color: empty ? 'transparent' : normColor(tray.tray_color) ?? c.s4,
-      pct: empty ? '—' : `${round(tray.remain)}%`,
-      active: !empty && status.tray_now === i,
-      empty,
-    };
-  });
+  // ALL units, not just ams[0] — the H2C already runs an AMS 2 Pro (id 0) alongside an AMS HT
+  // (id 128). presentAms also owns the tray-id math: `active` compares tray_now to the GLOBAL id,
+  // where this used to compare it to a local index (right only by luck for unit 0).
+  const { units: amsUnits, slots: ams } = presentAms(status);
 
   const speedIdx = status.speed_level && status.speed_level >= 1 && status.speed_level <= 4 ? status.speed_level : 2;
   const hmsCount = status.hms_errors?.length ?? 0;
@@ -348,6 +347,7 @@ export function presentDashboard(status: PrinterStatus | null, nowMs = 0): DashV
     hmsCode,
     awaitingPlateClear: status.awaiting_plate_clear === true,
     ams,
+    amsUnits,
   };
 
   // A real failure: the backend's print_error, or an explicit failed state. An hms_errors entry
