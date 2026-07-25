@@ -49,10 +49,25 @@ describe('HMS notices', () => {
   it('displays the dashed code but links the wiki’s UNDERSCORE path (verified: dashed 404s, underscore 200s)', () => {
     const a = presentAlerts(st({ hms_errors: [hms()] }), OK).find((x) => x.id.startsWith('hms-'))!;
     expect(a.code).toBe('0500-0500-0001-0007');
-    const lookup = a.actions.find((x) => x.id === 'lookup')!;
-    expect(lookup.url).toBe('https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/0500_0500_0001_0007');
-    expect(lookup.url!.split('/').pop()).toBe('0500_0500_0001_0007'); // separator is what mattered
-    expect(lookup.fallbackUrl).toContain('/hms/error-code'); // not every code has a page
+    const urls = a.actions.find((x) => x.id === 'lookup')!.urls!;
+    expect(urls[0].split('/').pop()).toBe('0500_0500_0001_0007'); // separator is what mattered
+    expect(urls[urls.length - 1]).toContain('/hms/error-code'); // guaranteed-to-exist last resort
+  });
+
+  it('puts THIS machine’s wiki family first — each family has its own code namespace', () => {
+    // Verified live: 0C00_0100_0002_0017 is 200 under /h2/ and 404 under /x1/; the reverse for
+    // 0300_0D00_0001_0003. So the model decides which page to try first.
+    const h2 = presentAlerts(st({ hms_errors: [hms()] }), { ...OK, model: 'H2C' }).find((x) => x.id.startsWith('hms-'))!;
+    expect(h2.actions.find((x) => x.id === 'lookup')!.urls![0]).toContain('/en/h2/');
+    const x1 = presentAlerts(st({ hms_errors: [hms()] }), { ...OK, model: 'X1C' }).find((x) => x.id.startsWith('hms-'))!;
+    expect(x1.actions.find((x) => x.id === 'lookup')!.urls![0]).toContain('/en/x1/');
+  });
+
+  it('still offers every other family as a fallback, so a mis-modelled printer still finds the page', () => {
+    const urls = presentAlerts(st({ hms_errors: [hms()] }), { ...OK, model: 'H2C' })
+      .find((x) => x.id.startsWith('hms-'))!.actions.find((x) => x.id === 'lookup')!.urls!;
+    expect(urls.filter((u) => u.includes('/troubleshooting/'))).toHaveLength(4); // h2, x1, p1, a1
+    expect(urls[0]).toContain('/en/h2/');
   });
 
   it('an unrecognised severity stays a neutral notice instead of guessing a level', () => {
@@ -165,5 +180,21 @@ describe('local HMS descriptions (Bambu’s own feed)', () => {
   it('a malformed feed yields empty maps rather than throwing', () => {
     expect(parseHmsFeed({})).toEqual({ hms: {}, err: {} });
     expect(parseHmsFeed(null)).toEqual({ hms: {}, err: {} });
+  });
+});
+
+
+describe('wikiFamily', () => {
+  const { wikiFamily } = require('@/alerts/present');
+  it('maps each Bambu model line', () => {
+    expect(wikiFamily('H2C')).toBe('h2');
+    expect(wikiFamily('H2D')).toBe('h2');
+    expect(wikiFamily('X1C')).toBe('x1');
+    expect(wikiFamily('P1S')).toBe('p1');
+    expect(wikiFamily('A1 mini')).toBe('a1');
+  });
+  it('falls back to the largest/legacy set for an unknown or missing model', () => {
+    expect(wikiFamily('SomeNewPrinter')).toBe('x1');
+    expect(wikiFamily(null)).toBe('x1');
   });
 });

@@ -22,10 +22,9 @@ export interface AlertActionVM {
   label: string;
   /** Irreversible or job-ending — the UI confirms these first. */
   destructive?: boolean;
-  /** Present for 'lookup': Bambu's page for this exact code. */
-  url?: string;
-  /** Where to go when `url` doesn't exist — newer machines raise codes the wiki has no page for. */
-  fallbackUrl?: string;
+  /** Present for 'lookup': ordered candidate pages for this code, most likely first. The LAST entry
+   *  is Bambu's searchable index and always resolves, so the caller can open the first that works. */
+  urls?: string[];
 }
 
 export interface AlertVM {
@@ -51,16 +50,39 @@ export interface AlertCaps {
   connected: boolean;
   /** Control endpoints accept the app's credentials (Bambuddy's scoped key covers print control). */
   canControl: boolean;
+  /** Machine model ("H2C") — picks the right wiki family for code lookups. */
+  model?: string | null;
 }
 
-// Bambu publishes a page per HMS code. The path uses UNDERSCORES, not the dashes the code is
-// displayed with — verified against the live wiki: .../hmscode/0500_0500_0001_0007 returns 200 while
-// the dashed form 404s. (Case is tolerated either way; the separator was the whole bug.)
-const hmsUrl = (dashed: string) => `https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/${dashed.replace(/-/g, '_')}`;
+// Bambu's wiki has a page per HMS code, but the path is PER MODEL FAMILY and each family has its own
+// code namespace — verified live: 0C00_0100_0002_0017 is 200 under /h2/ and 404 under /x1/, while
+// 0300_0D00_0001_0003 is the exact reverse. The path also uses UNDERSCORES, not the dashes the code is
+// displayed with (the dashed form 404s everywhere; case is tolerated).
+//
+// So we can't know the right page from the code alone: build ordered candidates from the machine's
+// model, then the other families, and finally the searchable index — which always exists. The caller
+// opens the first that resolves.
+const FAMILIES = ['h2', 'x1', 'p1', 'a1'] as const;
 
-/** Searchable index of every HMS code. Not every code has its own page — the H2C's
- *  0C00-0100-0002-0017 does not — so the lookup falls back here rather than to a 404. */
+/** Wiki segment for a Bambuddy model string ("H2C" -> h2, "X1C" -> x1, "A1 mini" -> a1). */
+export function wikiFamily(model?: string | null): string {
+  const m = (model ?? '').trim().toUpperCase();
+  if (m.startsWith('H2')) return 'h2';
+  if (m.startsWith('X1')) return 'x1';
+  if (m.startsWith('P1')) return 'p1';
+  if (m.startsWith('A1')) return 'a1';
+  return 'x1'; // the largest/legacy set is the least-bad guess for an unknown machine
+}
+
+/** Searchable index of every HMS code — the guaranteed-to-exist last resort. */
 export const HMS_INDEX_URL = 'https://wiki.bambulab.com/en/hms/error-code';
+
+function hmsUrls(dashed: string, model?: string | null): string[] {
+  const code = dashed.replace(/-/g, '_');
+  const first = wikiFamily(model);
+  const ordered = [first, ...FAMILIES.filter((f) => f !== first)];
+  return [...ordered.map((f) => `https://wiki.bambulab.com/en/${f}/troubleshooting/hmscode/${code}`), HMS_INDEX_URL];
+}
 
 /** Bambu's documented severity ladder. Anything outside it stays a neutral "Notice" rather than
  *  guessing a level we can't justify — some firmwares report values outside 1-4. */
@@ -156,7 +178,7 @@ export function presentAlerts(status: PrinterStatus | null, caps: AlertCaps, des
     const dashed = fmtHmsCode(h.full_code ?? h.code);
     const sev = SEVERITY[num(h.severity) ?? -1];
     const actions: AlertActionVM[] = [];
-    if (dashed) actions.push({ id: 'lookup', label: 'What is this?', url: hmsUrl(dashed), fallbackUrl: HMS_INDEX_URL });
+    if (dashed) actions.push({ id: 'lookup', label: 'What is this?', urls: hmsUrls(dashed, caps.model) });
     // One clear covers every notice, so only offer it on the first row.
     if (canAct && i === 0) actions.push({ id: 'clearHms', label: hms.length > 1 ? `Dismiss all (${hms.length})` : 'Dismiss' });
     out.push({
