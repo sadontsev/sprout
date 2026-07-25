@@ -316,3 +316,25 @@ test('fmtDuration + normColor + fmtHmsCode helpers', () => {
   expect(fmtHmsCode('0x10007')).toBe('0x10007');
   expect(fmtHmsCode(null)).toBeNull();
 });
+
+describe('nozzleTypeLabel — the tungsten nozzle has an unpublished code', () => {
+  const { nozzleTypeLabel } = require('@/dashboard/present');
+  it('maps the codes we know', () => {
+    expect(nozzleTypeLabel('HS01')).toBe('Hardened');
+    expect(nozzleTypeLabel('HS00')).toBe('Stainless');
+    expect(nozzleTypeLabel('hardened_steel')).toBe('Hardened');
+  });
+  it('title-cases snake_case codes it has never seen', () => {
+    expect(nozzleTypeLabel('hardened_tungsten')).toBe('Hardened Tungsten');
+    expect(nozzleTypeLabel('some_new_alloy')).toBe('Some New Alloy');
+  });
+  it('never renders a bare opaque code as if it were a material name', () => {
+    expect(nozzleTypeLabel('HS02')).toBe('Type HS02'); // was: "HS02", next to cards saying "Hardened"
+    expect(nozzleTypeLabel('TU00')).toBe('Type TU00');
+  });
+  it('is empty for a missing type', () => {
+    expect(nozzleTypeLabel(undefined)).toBe('');
+    expect(nozzleTypeLabel(null)).toBe('');
+    expect(nozzleTypeLabel('')).toBe('');
+  });
+});
