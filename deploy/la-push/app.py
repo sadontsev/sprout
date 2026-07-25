@@ -490,17 +490,26 @@ async def _tick(client: httpx.AsyncClient) -> None:
 
         # 2) Alert on a state transition (edge-triggered; the first observation is silent). _last_kind is
         # persisted, so a restart/crash mid-print still fires the finish/error edge on the next poll.
+        prev = _last_kind.get(pid)
+        if prev != kind:
+            # Log EVERY transition. Nothing did before, which is why "why wasn't I notified?" could
+            # only be answered by inference — the service silently saw, or didn't see, the edge.
+            print(f"[state] printer {pid}: {prev} -> {kind}", flush=True)
         if _device_tokens:
-            prev = _last_kind.get(pid)
             if prev is not None and prev != kind:
                 model = fields.get("name") or "your print"
                 if kind == "complete":
                     await _notify(client, f"✅ {name} — print finished", model)
                 elif kind == "error":
                     await _notify(client, f"⚠️ {name} — needs attention", model)
-            if prev != kind:
-                _last_kind[pid] = kind
-                _save()
+                elif kind == "idle" and prev == "live":
+                    # A live print that goes IDLE ended WITHOUT completing — aborted by the printer,
+                    # or cancelled. This was silent: only complete/error notified, so the one case
+                    # you most want to hear about while away produced nothing at all.
+                    await _notify(client, f"⏹️ {name} — print stopped", f"{model} ended before finishing.")
+        if prev != kind:
+            _last_kind[pid] = kind
+            _save()
 
         # 3) AMS drying finished (edge-triggered per unit): dry_time (minutes remaining) falling to 0
         # from a SMALL value is a natural run-out -> banner. Falling from a big value is a manual
