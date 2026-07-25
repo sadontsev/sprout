@@ -189,6 +189,11 @@ P2S_PENDING_TTL = 600.0
 # _last_kind: printerId -> last-seen kind, for edge-triggered notifications. Persisted (in REG_FILE) so a
 # restart/crash mid-print doesn't lose the live->complete/error edge and silently drop the alert.
 _last_kind: dict[int, str] = {}
+# _last_paused: printerId -> was it paused last poll. A pause does NOT change `kind` (PAUSE maps to
+# "live" so the lock-screen card survives it), so the kind edge can never see it — yet an AI-detection
+# halt is the single most important thing to be told about: the printer is stopped mid-print, waiting
+# on a human, and false positives are common with print_halt + every detector enabled.
+_last_paused: dict[int, bool] = {}
 # _last_dry: "printerId:amsId" -> {"t": minutes remaining, "fil": filament} last seen — drives the
 # drying-finished banner (dry_time falling to 0). Persisted for the same restart-survival reason.
 _last_dry: dict[str, dict] = {}
@@ -197,13 +202,14 @@ _printers_cache: dict[int, str] = {}
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused
     try:
         data = json.loads(REG_FILE.read_text())
         _regs = data.get("regs", {})
         _device_tokens = data.get("devices", [])
         # JSON object keys are strings; _last_kind is keyed by int printer id, so coerce back.
         _last_kind = {int(k): v for k, v in data.get("last_kind", {}).items()}
+        _last_paused = {int(k): bool(v) for k, v in data.get("last_paused", {}).items()}
         _last_dry = data.get("last_dry", {})
         _p2s_tokens = data.get("p2s", [])
         _p2s_dry_sent = data.get("p2s_dry_sent", {})
@@ -211,14 +217,15 @@ def _load() -> None:
         _p2s_pending = data.get("p2s_pending", {})
     except (FileNotFoundError, json.JSONDecodeError):
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
-        _p2s_icons, _p2s_pending = {}, {}
+        _p2s_icons, _p2s_pending, _last_paused = {}, {}, {}
 
 
 def _save() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind,
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
-                                    "p2s_icons": _p2s_icons, "p2s_pending": _p2s_pending}))
+                                    "p2s_icons": _p2s_icons, "p2s_pending": _p2s_pending,
+                                    "last_paused": _last_paused}))
 
 
 # ---- APNs ----
@@ -507,6 +514,23 @@ async def _tick(client: httpx.AsyncClient) -> None:
                     # or cancelled. This was silent: only complete/error notified, so the one case
                     # you most want to hear about while away produced nothing at all.
                     await _notify(client, f"⏹️ {name} — print stopped", f"{model} ended before finishing.")
+        # PAUSE is not a `kind` change (see _last_paused), so it needs its own edge. This is the
+        # alert that matters most: an AI-detection halt (spaghetti/pile-up/first-layer) stops the
+        # print and waits for a human — and those fire false positives.
+        paused_now = (status.get("state") or "").upper() in ("PAUSE", "PAUSED")
+        was_paused = _last_paused.get(pid)
+        if was_paused != paused_now:
+            print(f"[state] printer {pid}: paused={paused_now}", flush=True)
+            if _device_tokens and was_paused is not None and paused_now:
+                model = fields.get("name") or "your print"
+                err = status.get("print_error")
+                why = "The printer halted it — resume or stop it in the app."
+                if err:
+                    why = f"Halted with error {err} — open the app to resume or stop."
+                await _notify(client, f"⏸️ {name} — print paused", f"{model}. {why}")
+            _last_paused[pid] = paused_now
+            _save()
+
         if prev != kind:
             _last_kind[pid] = kind
             _save()
