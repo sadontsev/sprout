@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1, type Palette } from '@/theme';
 import type { DashVM, DashKind } from '@/dashboard/present';
-import type { AlertVM, AlertActionVM } from '@/alerts/present';
+import { alertSummary, type AlertVM } from '@/alerts/present';
 import type { Printer } from '@/api/types';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton, Pop, Breathe } from './anim';
 
@@ -18,7 +18,8 @@ export interface DashHandlers {
   onSpeedSet: (i: number) => void;
   onSelectPrinter: (id: number) => void;
   /** Fired with the alert + the chosen action; the Shell maps it to the real endpoint. */
-  onAlertAction: (alert: AlertVM, action: AlertActionVM) => void;
+  /** Open the full alert list. */
+  onAlerts: () => void;
   onPlateCleared: () => void;
   onPrintAgain: () => void;
   onRetry: () => void;
@@ -120,6 +121,7 @@ export function DashboardView({
   const [speedOpen, setSpeedOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
+  const summary = alertSummary(alerts);
   const printerName = printer?.name ?? 'Printer';
   const brand = printer ? `BAMBU LAB ${printer.model.toUpperCase()}` : 'BAMBU LAB';
   const canSwitch = fleet.length > 1;
@@ -190,40 +192,16 @@ export function DashboardView({
           </FadeRise>
         )}
 
-        {/* NEEDS ATTENTION — every alert with only the actions that are possible right now (see
-            alerts/present.ts). Renders nothing at all when the printer is happy. */}
-        {alerts.length > 0 && (
+        {/* NEEDS ATTENTION — ONE row, styled like the maintenance banner. The detail and every
+            action live behind it (AlertsOverlay): with 3 HMS notices plus a plate prompt, inline
+            cards pushed the actual print state off the screen. */}
+        {summary && (
           <FadeRise>
-          <View style={{ marginHorizontal: 20, marginTop: 14, gap: 10 }}>
-            {alerts.map((a) => {
-              const tone = a.level === 'error' ? c.error : a.level === 'warning' ? c.heating : c.accent;
-              const toneDim = a.level === 'error' ? c.errorDim : a.level === 'warning' ? c.heatingDim : c.accentDim;
-              return (
-                <View key={a.id} style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: toneDim, borderWidth: 1, borderColor: tone }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
-                    <Feather name={a.level === 'info' ? 'info' : 'alert-circle'} size={16} color={tone} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>{a.title}</Text>
-                      <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11, color: c.t2, lineHeight: 15 }}>{a.detail}</Text>
-                      {!!a.code && <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>HMS {a.code}</Text>}
-                    </View>
-                  </View>
-                  {a.actions.length > 0 && (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 11 }}>
-                      {a.actions.map((act) => (
-                        <Tap
-                          key={act.id}
-                          onPress={() => h.onAlertAction(a, act)}
-                          style={{ paddingHorizontal: 14, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: act.destructive ? c.s3 : tone }}>
-                          <Text style={{ fontWeight: '700', fontSize: 12.5, color: act.destructive ? c.error : c.accentInk }}>{act.label}</Text>
-                        </Tap>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              );
-            })}
-          </View>
+          <Tap onPress={h.onAlerts} style={{ marginHorizontal: 20, marginTop: 14, paddingVertical: 13, paddingHorizontal: 14, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: summary.level === 'error' ? c.errorDim : summary.level === 'warning' ? c.heatingDim : c.accentDim, borderWidth: 1, borderColor: summary.level === 'error' ? c.error : summary.level === 'warning' ? c.heating : c.accent }}>
+            <Feather name={summary.level === 'info' ? 'info' : 'alert-circle'} size={16} color={summary.level === 'error' ? c.error : summary.level === 'warning' ? c.heating : c.accent} />
+            <Text style={{ flex: 1, fontWeight: '600', fontSize: 13, color: c.t1 }}>{summary.label}</Text>
+            <Feather name="chevron-right" size={16} color={c.t3} />
+          </Tap>
           </FadeRise>
         )}
 

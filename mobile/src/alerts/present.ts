@@ -63,6 +63,24 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+/** One-line rollup for the dashboard: how many, and how bad the worst one is. `null` = all clear,
+ *  so the dashboard renders nothing at all rather than a reassuring-but-noisy "no alerts" row. */
+export function alertSummary(alerts: AlertVM[]): { count: number; level: AlertLevel; label: string } | null {
+  if (!alerts.length) return null;
+  const level: AlertLevel = alerts.some((a) => a.level === 'error')
+    ? 'error'
+    : alerts.some((a) => a.level === 'warning')
+      ? 'warning'
+      : 'info';
+  const actionable = alerts.filter((a) => a.actions.some((x) => x.id !== 'lookup')).length;
+  const noun = alerts.length === 1 ? 'alert' : 'alerts';
+  return {
+    count: alerts.length,
+    level,
+    label: actionable > 0 ? `${alerts.length} ${noun} · ${actionable} actionable` : `${alerts.length} ${noun}`,
+  };
+}
+
 export function presentAlerts(status: PrinterStatus | null, caps: AlertCaps): AlertVM[] {
   if (!status) return [];
   const out: AlertVM[] = [];
@@ -130,9 +148,11 @@ export function presentAlerts(status: PrinterStatus | null, caps: AlertCaps): Al
       id: `hms-${dashed ?? i}`,
       level: sev?.level ?? 'warning',
       title: sev ? `${sev.label} notice` : 'Printer notice',
-      detail: dashed
-        ? 'The printer raised a health notice. It keeps printing unless it also paused.'
-        : 'The printer raised a health notice with no code attached.',
+      detail: !dashed
+        ? 'The printer raised a health notice with no code attached.'
+        : sev?.level === 'error'
+          ? 'The printer flagged a serious condition. Check the machine — look up the code for what it means.'
+          : 'A health notice. The printer keeps going unless it also paused.',
       code: dashed ?? undefined,
       actions,
     });
