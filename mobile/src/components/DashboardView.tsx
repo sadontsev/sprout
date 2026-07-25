@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1, type Palette } from '@/theme';
 import type { DashVM, DashKind } from '@/dashboard/present';
+import type { AlertVM, AlertActionVM } from '@/alerts/present';
 import type { Printer } from '@/api/types';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton, Pop, Breathe } from './anim';
 
@@ -16,7 +17,8 @@ export interface DashHandlers {
   onLight: () => void;
   onSpeedSet: (i: number) => void;
   onSelectPrinter: (id: number) => void;
-  onHmsClear: () => void;
+  /** Fired with the alert + the chosen action; the Shell maps it to the real endpoint. */
+  onAlertAction: (alert: AlertVM, action: AlertActionVM) => void;
   onPlateCleared: () => void;
   onPrintAgain: () => void;
   onRetry: () => void;
@@ -92,6 +94,7 @@ function Label({ children }: { children: React.ReactNode }) {
 
 export function DashboardView({
   vm,
+  alerts,
   snapshotUri,
   h,
   maintAlert,
@@ -100,6 +103,8 @@ export function DashboardView({
   fleet,
 }: {
   vm: DashVM;
+  /** Things needing attention, each with only the actions currently possible (alerts/present.ts). */
+  alerts: AlertVM[];
   snapshotUri: string | null;
   h: DashHandlers;
   maintAlert?: { due: number; warn: number };
@@ -118,8 +123,6 @@ export function DashboardView({
   const printerName = printer?.name ?? 'Printer';
   const brand = printer ? `BAMBU LAB ${printer.model.toUpperCase()}` : 'BAMBU LAB';
   const canSwitch = fleet.length > 1;
-  // HMS notices are non-blocking (the printer keeps printing) — a warning chip, not an error page.
-  const showHms = vm.hmsCount > 0 && vm.kind !== 'error' && vm.kind !== 'offline' && vm.kind !== 'connecting';
 
   return (
     <ScrollView
@@ -187,20 +190,39 @@ export function DashboardView({
           </FadeRise>
         )}
 
-        {/* HMS notice chip — the printer flagged something but keeps going */}
-        {showHms && (
+        {/* NEEDS ATTENTION — every alert with only the actions that are possible right now (see
+            alerts/present.ts). Renders nothing at all when the printer is happy. */}
+        {alerts.length > 0 && (
           <FadeRise>
-          <View style={{ marginHorizontal: 20, marginTop: 14, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: c.heatingDim, borderWidth: 1, borderColor: c.heating }}>
-            <Feather name="alert-circle" size={16} color={c.heating} />
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>
-                {vm.hmsCount === 1 ? 'Printer notice' : `${vm.hmsCount} printer notices`}
-              </Text>
-              {!!vm.hmsCode && <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>HMS {vm.hmsCode}</Text>}
-            </View>
-            <Tap onPress={h.onHmsClear} hitSlop={8} style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: c.s3 }}>
-              <Text style={{ fontWeight: '600', fontSize: 12, color: c.t1 }}>Clear</Text>
-            </Tap>
+          <View style={{ marginHorizontal: 20, marginTop: 14, gap: 10 }}>
+            {alerts.map((a) => {
+              const tone = a.level === 'error' ? c.error : a.level === 'warning' ? c.heating : c.accent;
+              const toneDim = a.level === 'error' ? c.errorDim : a.level === 'warning' ? c.heatingDim : c.accentDim;
+              return (
+                <View key={a.id} style={{ paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: toneDim, borderWidth: 1, borderColor: tone }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+                    <Feather name={a.level === 'info' ? 'info' : 'alert-circle'} size={16} color={tone} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>{a.title}</Text>
+                      <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 11, color: c.t2, lineHeight: 15 }}>{a.detail}</Text>
+                      {!!a.code && <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 10.5, color: c.t3, fontFamily: mono }}>HMS {a.code}</Text>}
+                    </View>
+                  </View>
+                  {a.actions.length > 0 && (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 11 }}>
+                      {a.actions.map((act) => (
+                        <Tap
+                          key={act.id}
+                          onPress={() => h.onAlertAction(a, act)}
+                          style={{ paddingHorizontal: 14, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: act.destructive ? c.s3 : tone }}>
+                          <Text style={{ fontWeight: '700', fontSize: 12.5, color: act.destructive ? c.error : c.accentInk }}>{act.label}</Text>
+                        </Tap>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
           </View>
           </FadeRise>
         )}
