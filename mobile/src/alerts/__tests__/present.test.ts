@@ -146,7 +146,7 @@ describe('local HMS descriptions (Bambu’s own feed)', () => {
       device_error: { ver: 1, en: [{ ecode: '18048012', intro: 'Failed to get AMS mapping table; please select "Resume" to retry.' }] },
     },
   };
-  const cat = { ...parseHmsFeed(feed), fetchedAt: Date.now() };
+  const cat = { ...parseHmsFeed(feed), learned: {}, fetchedAt: Date.now() };
 
   it('parses both sections into lookup maps', () => {
     expect(Object.keys(cat.hms)).toHaveLength(1);
@@ -177,6 +177,13 @@ describe('local HMS descriptions (Bambu’s own feed)', () => {
     expect(without[0].detail).toMatch(/serious condition/i);
   });
 
+  it('a catalog cached by an OLDER build (no `learned` map) does not crash', () => {
+    const legacy = { hms: { '0501040000030002': 'x' }, err: {}, fetchedAt: Date.now() } as never;
+    expect(describeHms(legacy, '0501-0400-0003-0002')).toBe('x');
+    expect(describeHms(legacy, '0C00-0100-0002-0017')).toBeNull();
+    expect(describePrintError(legacy, 1)).toBeNull();
+  });
+
   it('a malformed feed yields empty maps rather than throwing', () => {
     expect(parseHmsFeed({})).toEqual({ hms: {}, err: {} });
     expect(parseHmsFeed(null)).toEqual({ hms: {}, err: {} });
@@ -196,5 +203,29 @@ describe('wikiFamily', () => {
   it('falls back to the largest/legacy set for an unknown or missing model', () => {
     expect(wikiFamily('SomeNewPrinter')).toBe('x1');
     expect(wikiFamily(null)).toBe('x1');
+  });
+});
+
+describe('parseWikiTitle — codes the feed does not carry', () => {
+  const { parseWikiTitle } = require('@/alerts/hmsCatalog');
+  // Verbatim from https://wiki.bambulab.com/en/h2/troubleshooting/hmscode/0C00_0100_0002_0017
+  const page = `<html><head><title>HMS_0C00-0100-0002-0017: Nozzle camera lens is dirty, which may affect the AI monitoring functionality. Please clean the surface of the nozzle camera lens as soon as possible.  | Bambu Lab Wiki</title>
+    <meta property="og:title" content="HMS_0C00-0100-0002-0017: Nozzle camera lens is dirty, which may affect the AI monitoring functionality. Please clean the surface of the nozzle camera lens as soon as possible." />
+    <meta property="og:description" content="0C00-0100-0002-0017" /></head><body>x</body></html>`;
+
+  it('extracts the sentence and strips the HMS_<code>: prefix', () => {
+    expect(parseWikiTitle(page)).toBe(
+      'Nozzle camera lens is dirty, which may affect the AI monitoring functionality. Please clean the surface of the nozzle camera lens as soon as possible.',
+    );
+  });
+
+  it('falls back to <title> when og:title is absent, dropping the site suffix', () => {
+    const noOg = '<html><head><title>HMS_0300-0100-0001-0001: Something is wrong. | Bambu Lab Wiki</title></head></html>';
+    expect(parseWikiTitle(noOg)).toBe('Something is wrong.');
+  });
+
+  it('returns null for a page with no usable title', () => {
+    expect(parseWikiTitle('<html><body>404</body></html>')).toBeNull();
+    expect(parseWikiTitle('<html><head><title>  </title></head></html>')).toBeNull();
   });
 });
