@@ -81,3 +81,63 @@ describe('loadedFilaments', () => {
     expect(out.find((o) => o.slot === 1)!.isSupport).toBe(false);
   });
 });
+
+// ---- Nozzle-size resolution. Fixtures mirror the LIVE H2C set (189 presets, captured 2026-07-19):
+// every material ships a bare form; size variants exist only where Bambu tuned one. The convention is
+// asymmetric and these two materials ARE the whole spec:
+//   Bambu PLA Basic @BBL H2C -> bare + 0.2/0.6/0.8, NO 0.4  (0.4 must resolve to the bare form)
+//   Bambu PETG-CF  @BBL H2C -> bare + 0.4               (0.4 must resolve to the SUFFIXED one)
+describe('matchFilamentPreset — nozzle size', () => {
+  const { catalogFilaments } = require('../filamentMatch');
+  const P: FilamentPreset[] = [
+    { id: 'pla-bare', name: 'Bambu PLA Basic @BBL H2C' },
+    { id: 'pla-02', name: 'Bambu PLA Basic @BBL H2C 0.2 nozzle' },
+    { id: 'pla-06', name: 'Bambu PLA Basic @BBL H2C 0.6 nozzle' },
+    { id: 'pla-08', name: 'Bambu PLA Basic @BBL H2C 0.8 nozzle' },
+    { id: 'cf-bare', name: 'Bambu PETG-CF @BBL H2C' },
+    { id: 'cf-04', name: 'Bambu PETG-CF @BBL H2C 0.4 nozzle' },
+    { id: 'other-model', name: 'Bambu PLA Basic @BBL A1M 0.6 nozzle' },
+  ];
+  const pick = (name: string, nozzle?: never) => matchFilamentPreset(P, name, null, '@BBL H2C', nozzle);
+
+  it('0.4 falls back to the bare form when no 0.4 variant exists', () => {
+    expect(matchFilamentPreset(P, 'Bambu PLA Basic', null, '@BBL H2C', '0.4')?.id).toBe('pla-bare');
+  });
+  it('0.4 prefers an explicit 0.4 variant when one exists', () => {
+    expect(matchFilamentPreset(P, 'Bambu PETG-CF', null, '@BBL H2C', '0.4')?.id).toBe('cf-04');
+  });
+  it('0.6 / 0.2 / 0.8 pick their own variant (was impossible: pool was 0.4-only)', () => {
+    expect(matchFilamentPreset(P, 'Bambu PLA Basic', null, '@BBL H2C', '0.6')?.id).toBe('pla-06');
+    expect(matchFilamentPreset(P, 'Bambu PLA Basic', null, '@BBL H2C', '0.2')?.id).toBe('pla-02');
+    expect(matchFilamentPreset(P, 'Bambu PLA Basic', null, '@BBL H2C', '0.8')?.id).toBe('pla-08');
+  });
+  it('a size with no variant falls back to bare — never to a DIFFERENT size', () => {
+    expect(matchFilamentPreset(P, 'Bambu PETG-CF', null, '@BBL H2C', '0.6')?.id).toBe('cf-bare');
+    expect(matchFilamentPreset(P, 'Bambu PLA Basic', null, '@BBL H2C', '0.4')?.id).not.toBe('pla-06');
+  });
+  it('defaults to 0.4 when the caller omits the size (back-compat)', () => {
+    expect(pick('Bambu PLA Basic')?.id).toBe('pla-bare');
+  });
+  it('never leaks another printer model, whatever the size', () => {
+    expect(matchFilamentPreset(P, 'Bambu PLA Basic', null, '@BBL A1', '0.6')).toBeNull();
+  });
+  it('catalogFilaments resolves per size and keeps curated order', () => {
+    const c06 = catalogFilaments(P, '@BBL H2C', '0.6').map((p: FilamentPreset) => p.id);
+    expect(c06).toEqual(['pla-06', 'cf-bare']); // PLA Basic before PETG-CF, each at its best match
+    const c04 = catalogFilaments(P, '@BBL H2C', '0.4').map((p: FilamentPreset) => p.id);
+    expect(c04).toEqual(['pla-bare', 'cf-04']);
+  });
+});
+
+describe('loadedFilaments — nozzle size', () => {
+  it('threads the nozzle through to each tray’s preset', () => {
+    const P: FilamentPreset[] = [
+      { id: 'bare', name: 'Bambu PETG HF @BBL H2C' },
+      { id: 'six', name: 'Bambu PETG HF @BBL H2C 0.6 nozzle' },
+    ];
+    const trays: AmsTray[] = [{ id: 0, tray_type: 'PETG', tray_color: '000000FF' }];
+    const asg: AssignmentLike[] = [];
+    expect(loadedFilaments(trays, asg, P, '@BBL H2C', '0.6')[0].preset?.id).toBe('six');
+    expect(loadedFilaments(trays, asg, P, '@BBL H2C', '0.4')[0].preset?.id).toBe('bare');
+  });
+});
