@@ -12,6 +12,7 @@ import { usePrinterActivities, type ActivityEntry } from '@/liveactivity/useLive
 import { useStatusNotifications } from '@/notifications/useStatusNotifications';
 import { presentDashboard, type DashVM } from '@/dashboard/present';
 import { presentAlerts, type AlertVM, type AlertActionVM } from '@/alerts/present';
+import { loadHmsCatalog, describeHms, describePrintError, EMPTY_CATALOG, type HmsCatalog } from '@/alerts/hmsCatalog';
 import { printerProfile } from '@/printers/profile';
 import { reconcileSelection, initialSelectionState, type SelectionState } from '@/printers/selection';
 import { displayName } from '@/library/libraryBrowse';
@@ -106,10 +107,25 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   };
 
   const { status, statuses } = usePrinterStatus(client, printerId);
+  // Bambu's own HMS/print-error text, fetched once and cached on disk. Until it lands, alerts show
+  // the code with generic copy — never a spinner, never a blocked render.
+  const [hmsCat, setHmsCat] = useState<HmsCatalog>(EMPTY_CATALOG);
+  useEffect(() => {
+    let alive = true;
+    void loadHmsCatalog().then((cat) => alive && setHmsCat(cat));
+    return () => {
+      alive = false;
+    };
+  }, []);
   // Control endpoints accept the scoped API key; an unreachable printer can't act at all.
   const alerts = useMemo(
-    () => presentAlerts(status, { connected: status?.connected === true, canControl: true }),
-    [status],
+    () =>
+      presentAlerts(
+        status,
+        { connected: status?.connected === true, canControl: true },
+        { hms: (code) => describeHms(hmsCat, code), printError: (e) => describePrintError(hmsCat, e) },
+      ),
+    [status, hmsCat],
   );
   const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
 
@@ -322,7 +338,21 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       if (act.id === 'clearHms') return client.clearHms(printerId).catch((e) => Alert.alert('Couldn’t clear', apiErrorDetail(e)));
       if (act.id === 'plateCleared')
         return client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', apiErrorDetail(e)));
-      if (act.id === 'lookup' && act.url) return void Linking.openURL(act.url).catch(() => {});
+      if (act.id === 'lookup' && act.url) {
+        // Not every code has a wiki page (the H2C's 0C00-0100-0002-0017 doesn't), so check before
+        // sending the user there and fall back to the searchable index instead of a 404.
+        const open = async () => {
+          let target = act.url!;
+          try {
+            const r = await fetch(target, { method: 'HEAD' });
+            if (!r.ok && act.fallbackUrl) target = act.fallbackUrl;
+          } catch {
+            /* offline or blocked — best effort, try the exact page */
+          }
+          await Linking.openURL(target).catch(() => {});
+        };
+        return void open();
+      }
       return undefined;
     };
     if (!act.destructive) return void run();
