@@ -242,3 +242,43 @@ test('getPrinterFileGcode returns raw text from the SD gcode endpoint', async ()
   expect(g).toContain('HEADER_BLOCK_START');
   expect(fetchMock.mock.calls.at(-1)![0]).toBe('https://x/api/v1/printers/2/files/gcode?path=%2FBambu_Cube_XYZ.gcode.3mf');
 });
+
+describe('smart plugs', () => {
+  test('getPlug resolves the printer-bound plug, and swallows a 404 into null', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ id: 2, name: 'H2C Printer Plug', printer_id: 2 }) });
+    expect(await client.getPlug(2)).toMatchObject({ id: 2 });
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe('https://x/api/v1/smart-plugs/by-printer/2');
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404, text: async () => 'none' });
+    expect(await client.getPlug(9)).toBeNull();
+  });
+
+  test('listPlugs returns every plug, printer-bound or not', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ id: 2, printer_id: 2 }, { id: 3, name: 'AMS HT Plug' }],
+    });
+    expect(await client.listPlugs()).toHaveLength(2);
+    const [url, opts] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe('https://x/api/v1/smart-plugs/');
+    expect(opts.headers['X-API-Key']).toBe('bb_k');
+  });
+
+  test('listPlugs unwraps a paginated body and never returns a non-array', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ items: [{ id: 5 }] }) });
+    expect(await client.listPlugs()).toEqual([{ id: 5 }]);
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ unexpected: true }) });
+    expect(await client.listPlugs()).toEqual([]);
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'boom' });
+    expect(await client.listPlugs()).toEqual([]);
+  });
+
+  test('plugControl posts the on/off action', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    await client.plugControl(3, false);
+    const [url, opts] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe('https://x/api/v1/smart-plugs/3/control');
+    expect(opts.method).toBe('POST');
+    expect(JSON.parse(opts.body)).toEqual({ action: 'off' });
+  });
+});

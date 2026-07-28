@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, ScrollView, RefreshControl, ActivityIndicator, Alert, Modal, Share } from 'react-native';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 import { File, Paths } from 'expo-file-system';
@@ -14,6 +14,8 @@ import { c, mono, shadow1 } from '@/theme';
 import { apiErrorDetail, type BambuddyClient } from '@/api/bambuddyClient';
 import type { TexturizeClient } from '@/api/texturizeClient';
 import { presentDryer, DRY_MIN_TEMP, DRY_MAX_HOURS, type DryerVM } from '@/ams/dryer';
+import { otherPlugs, plugAutomations, plugLabel } from '@/power/present';
+import { usePlugState } from '@/power/usePlugState';
 import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFile, PrinterFileList, PrinterFilePlates } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
 import { presentDashboard, presentNozzles, fmtDuration, normColor, asNum } from '@/dashboard/present';
@@ -1182,56 +1184,72 @@ function NozzlesSection({ status }: { status: PrinterStatus | null }) {
 }
 
 // ---------------- POWER ----------------
+/** One peripheral plug (AMS, dryer, room AC…). Polls a little slower than the printer's own plug —
+ *  these are background devices, not the thing you're watching. */
+function PlugRow({ client, plug }: { client: BambuddyClient; plug: SmartPlug }) {
+  const { on, reachable, watts, set } = usePlugState(client, plug, 8000);
+  const name = plugLabel(plug);
+  const armed = plugAutomations(plug);
+
+  const apply = (next: boolean) => set(next).catch((e) => Alert.alert('Plug command failed', String(e)));
+  const toggle = () => {
+    if (!on) return apply(true);
+    // Cutting power to a peripheral is disruptive too — an AMS mid-print, a running dryer.
+    Alert.alert(`Switch off ${name}?`, 'This cuts power at the smart plug.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Switch off', style: 'destructive', onPress: () => apply(false) },
+    ]);
+  };
+
+  return (
+    <View style={{ marginHorizontal: 20, marginTop: 10, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{name}</Text>
+        <View style={{ marginTop: 5, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          {reachable ? (
+            <PulseDot color={on ? c.running : c.idle} size={6} period={2400} />
+          ) : (
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.idle }} />
+          )}
+          <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3 }}>
+            {!reachable ? 'Unreachable' : on ? (watts == null ? 'On' : `On · ${Math.round(watts)} W`) : 'Off'}
+          </Text>
+        </View>
+        {armed.length > 0 && (
+          <Text numberOfLines={1} style={{ marginTop: 4, fontWeight: '500', fontSize: 11, color: c.heating }}>{armed.map((a) => a.label).join(' · ')}</Text>
+        )}
+      </View>
+      <Toggle value={on} onChange={toggle} disabled={!reachable} />
+    </View>
+  );
+}
+
 export function PowerView({ client, printerId, status }: { client: BambuddyClient; printerId: number; status: PrinterStatus | null }) {
   const [plug, setPlug] = useState<SmartPlug | null | undefined>(undefined);
-  const [on, setOn] = useState(false);
-  const [reachable, setReachable] = useState(true);
-  const [watts, setWatts] = useState<number | null>(null);
-  const [kwh, setKwh] = useState<number | null>(null);
-  const [autoOff, setAutoOff] = useState(false);
+  const [allPlugs, setAllPlugs] = useState<SmartPlug[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
   const loadBase = useCallback(() => {
     client.getPlug(printerId).then((p) => setPlug(p ?? null)).catch(() => setPlug(null));
+    client.listPlugs().then(setAllPlugs).catch(() => setAllPlugs([]));
     client.getSettings().then(setSettings).catch(() => setSettings(null));
   }, [client, printerId]);
   useEffect(loadBase, [loadBase]);
-  // Pull-to-refresh: re-resolve the plug + settings; a fresh plug object re-arms the 5s status
-  // poll (its effect keys on `plug`), which fires immediately — live watts/kWh refresh too.
+  // Pull-to-refresh: re-resolve the plugs + settings; a fresh plug object re-arms the status poll
+  // (usePlugState keys on the id), which fires immediately — live watts/kWh refresh too.
   const [refreshing, setRefreshing] = useState(false);
   const refresh = () => {
     setRefreshing(true);
     loadBase();
     setTimeout(() => setRefreshing(false), 600);
   };
-  // While a toggle command is settling, ignore poll results — HA takes a few seconds to reflect
-  // the new state and the stale poll would visibly bounce the switch back.
-  const pendingUntil = useRef(0);
-  useEffect(() => {
-    if (!plug) return;
-    const poll = () =>
-      client.plugStatus(plug.id).then((s) => {
-        if (Date.now() < pendingUntil.current) return;
-        setOn(s.state?.toUpperCase() === 'ON');
-        setReachable(!!s.reachable);
-        const e = s.energy ?? null;
-        setWatts(typeof e?.power === 'number' ? e.power : null);
-        setKwh(typeof e?.today === 'number' ? e.today : null);
-      }).catch(() => setReachable(false));
-    poll();
-    const id = setInterval(poll, 5000);
-    return () => clearInterval(id);
-  }, [client, plug]);
+
+  const { on, reachable, watts, kwh, set: setPlugOn } = usePlugState(client, plug);
+  const others = useMemo(() => otherPlugs(allPlugs, plug?.id ?? null), [allPlugs, plug?.id]);
+  const automations = useMemo(() => plugAutomations(plug), [plug]);
 
   const applyPlug = (next: boolean) => {
-    if (!plug) return;
-    setOn(next);
-    pendingUntil.current = Date.now() + 8000;
-    client.plugControl(plug.id, next).catch((e) => {
-      pendingUntil.current = 0;
-      setOn(!next);
-      Alert.alert('Plug command failed', String(e));
-    });
+    setPlugOn(next).catch((e) => Alert.alert('Plug command failed', String(e)));
   };
   const toggle = () => {
     if (!plug) return;
@@ -1263,7 +1281,8 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
     projCost = (elapsedMin + remainMin) * kwhPerMin * price;
   }
 
-  if (plug === null) {
+  // Only truly empty when the printer has no plug AND there are no peripheral plugs to show.
+  if (plug === null && !others.length) {
     return (
       <Page title="Power" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}>
         <Empty icon="power" title="No smart plug linked" body="Link the printer's plug in Bambuddy (Settings → Smart Plugs) to control power here." />
@@ -1272,6 +1291,8 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
   }
   return (
     <Page title="Power" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}>
+      {plug !== null && (
+        <>
       <Text style={{ paddingHorizontal: 20, marginTop: 7, fontWeight: '500', fontSize: 13, color: c.t3 }}>{plug?.name ?? 'Printer smart plug'}</Text>
       <View style={{ marginHorizontal: 20, marginTop: 20, paddingVertical: 30, borderRadius: 22, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, alignItems: 'center' }}>
         <Breathe active={on && reachable} color={c.accent} grow={0.18} maxOpacity={0.5} style={{ borderRadius: 65 }}>
@@ -1342,13 +1363,43 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
           </Text>
         </View>
       )}
-      <View style={{ marginHorizontal: 20, marginTop: 14, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>Auto power-off</Text>
-          <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t3 }}>Turn off the plug after a print finishes and the hotend cools below 50°C.</Text>
+      {/* What Bambuddy will do on its own. This used to be a toggle wired to nothing but local
+          state — plug settings are admin-only (a scoped API key gets 403), so the app reports
+          them and Bambuddy owns them. */}
+      <View style={{ marginHorizontal: 20, marginTop: 14, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Feather name={automations.some((a) => a.cuts) ? 'clock' : 'shield'} size={13} color={automations.some((a) => a.cuts) ? c.heating : c.t3} />
+          <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.t3, fontFamily: mono }}>AUTOMATIC SWITCHING</Text>
         </View>
-        <Toggle value={autoOff} onChange={setAutoOff} />
+        {automations.length === 0 ? (
+          <Text style={{ marginTop: 9, fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t3 }}>
+            Nothing switches this plug automatically — power stays as you leave it.
+          </Text>
+        ) : (
+          automations.map((a) => (
+            <View key={a.key} style={{ marginTop: 10, flexDirection: 'row', gap: 9 }}>
+              <View style={{ marginTop: 5, width: 6, height: 6, borderRadius: 3, backgroundColor: a.cuts ? c.heating : c.t3 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>{a.label}</Text>
+                <Text style={{ marginTop: 2, fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t3 }}>{a.detail}</Text>
+              </View>
+            </View>
+          ))
+        )}
+        <Text style={{ marginTop: 12, fontWeight: '500', fontSize: 11, color: c.t3 }}>Change these in Bambuddy → Settings → Smart Plugs.</Text>
       </View>
+        </>
+      )}
+
+      {others.length > 0 && (
+        <>
+          <Text style={{ paddingHorizontal: 20, marginTop: 22, fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.t3, fontFamily: mono }}>OTHER SWITCHES</Text>
+          {others.map((p) => (
+            <PlugRow key={p.id} client={client} plug={p} />
+          ))}
+        </>
+      )}
+
       <View style={{ marginHorizontal: 20, marginTop: 14, paddingHorizontal: 16, paddingVertical: 13, borderRadius: 14, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <Feather name="zap" size={14} color={c.t3} />
         <Text style={{ flex: 1, fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t3 }}>

@@ -455,11 +455,22 @@ export class BambuddyClient {
   }
 
   // --- Smart plug ---
+  /** The printer's own plug. NOTE: by-printer returns a SINGLE plug, so only one plug may be bound
+   *  to a printer — bind anything else (AMS, peripherals) to no printer and reach it via listPlugs. */
   async getPlug(printerId: number): Promise<SmartPlug | null> {
     try {
       return await (await this.req(`/api/v1/smart-plugs/by-printer/${printerId}`)).json();
     } catch {
       return null;
+    }
+  }
+  /** Every plug Bambuddy knows about, printer-bound or not. */
+  async listPlugs(): Promise<SmartPlug[]> {
+    try {
+      const r = await (await this.req('/api/v1/smart-plugs/')).json();
+      return Array.isArray(r) ? r : (r?.items ?? []);
+    } catch {
+      return [];
     }
   }
   plugStatus(plugId: number): Promise<PlugStatus> {

@@ -215,10 +215,23 @@ export interface QueueItem {
 export interface SmartPlug {
   id: number;
   name?: string;
-  printer_id?: number;
+  printer_id?: number | null;
   plug_type?: string; // "homeassistant" | "mqtt" | "rest" | ...
   enabled?: boolean;
   last_state?: string; // "ON" | "OFF"
+  // Server-side automations. These switch the plug with no app involvement, so the app can only
+  // ever REPORT them — writes to /smart-plugs/{id} are admin-only and 403 with a scoped API key.
+  auto_on?: boolean;
+  auto_off?: boolean;
+  auto_off_persistent?: boolean;
+  off_delay_mode?: string; // "time" | "temperature"
+  off_delay_minutes?: number;
+  off_temp_threshold?: number;
+  auto_off_after_drying?: boolean;
+  off_delay_after_drying_minutes?: number;
+  schedule_enabled?: boolean;
+  schedule_on_time?: string | null; // "HH:MM"
+  schedule_off_time?: string | null;
 }
 
 export interface PlugEnergy {
