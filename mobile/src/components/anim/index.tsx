@@ -254,7 +254,7 @@ export function FadeRise({ children, delay = 0, dy = 11, duration = 340, style }
 
 // ---------------------------------------------------------------- Toggle
 /** iOS-style switch with an animated knob + track color (design: the auto-off toggle). */
-export function Toggle({ value, onChange, onColor = c.accent, offColor = c.s3 }: { value: boolean; onChange: (v: boolean) => void; onColor?: string; offColor?: string }) {
+export function Toggle({ value, onChange, onColor = c.accent, offColor = c.s3, disabled = false }: { value: boolean; onChange: (v: boolean) => void; onColor?: string; offColor?: string; disabled?: boolean }) {
   const p = useSharedValue(value ? 1 : 0);
   useEffect(() => {
     p.value = withTiming(value ? 1 : 0, { duration: 240, easing: SPRING });
@@ -263,7 +263,7 @@ export function Toggle({ value, onChange, onColor = c.accent, offColor = c.s3 }:
   const track = useAnimatedStyle(() => ({ backgroundColor: interpolateColor(p.value, [0, 1], [offColor, onColor]) }));
   const knob = useAnimatedStyle(() => ({ transform: [{ translateX: 3 + p.value * 21 }] }));
   return (
-    <Tap onPress={() => onChange(!value)} scale={0.92} style={{ width: 48, height: 30 }}>
+    <Tap onPress={() => onChange(!value)} disabled={disabled} scale={0.92} style={{ width: 48, height: 30, opacity: disabled ? 0.4 : 1 }}>
       <Animated.View style={[{ width: 48, height: 30, borderRadius: 15, justifyContent: 'center' }, track]}>
         <Animated.View style={[{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#fff' }, knob]} />
       </Animated.View>
