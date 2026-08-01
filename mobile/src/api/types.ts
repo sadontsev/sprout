@@ -212,6 +212,24 @@ export interface QueueItem {
   print_time_seconds?: number | null;
 }
 
+/** One point from GET /printer-sensor-history. `recorded_at` is NAIVE and in UTC. */
+export interface SensorPoint {
+  recorded_at?: string;
+  value?: number | null;
+  target?: number | null;
+}
+export interface SensorSeries {
+  sensor_kind?: string;
+  data?: SensorPoint[];
+  min_value?: number | null;
+  max_value?: number | null;
+  avg_value?: number | null;
+}
+export interface SensorHistory {
+  printer_id?: number;
+  series?: SensorSeries[];
+}
+
 export interface SmartPlug {
   id: number;
   name?: string;

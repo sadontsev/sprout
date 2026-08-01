@@ -17,6 +17,7 @@ import { printerProfile } from '@/printers/profile';
 import { reconcileSelection, initialSelectionState, type SelectionState } from '@/printers/selection';
 import { displayName } from '@/library/libraryBrowse';
 import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
+import { useCooldown } from '@/cooling/useCooldown';
 import { TabBar, type TabKey } from '@/components/TabBar';
 import { LibraryView, JobsView, AmsView, PowerView } from '@/components/TabScreens';
 import { CameraOverlay, UploadSheet, WizardOverlay, TexturizeSheet, StlViewerOverlay } from '@/components/Overlays';
@@ -144,6 +145,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   }, [alerts.map((a) => a.code).join(','), hmsCat.fetchedAt]);
 
   const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
+  const cooldown = useCooldown(client, printerId, status);
 
   // Fleet rows for the switcher: every printer with its live state (the shared WS carries all).
   const fleet: FleetEntry[] = useMemo(
@@ -389,7 +391,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
           mid-flight on a tab switch hits a reanimated-4 New-Arch teardown race (upstream #9402 /
           #9293: crash or whole-app freeze), so it stays mounted and is HIDDEN instead. */}
       <View style={{ flex: 1, display: tab === 'printer' ? 'flex' : 'none' }}>
-        <DashboardView vm={vm} alerts={alerts} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} printer={printer} fleet={fleet} />
+        <DashboardView vm={vm} alerts={alerts} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} printer={printer} fleet={fleet} cooldown={cooldown} />
       </View>
       {tab !== 'printer' && (
         <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>

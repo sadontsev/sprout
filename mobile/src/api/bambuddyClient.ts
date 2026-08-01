@@ -1,5 +1,5 @@
 import { File, UploadType } from 'expo-file-system';
-import type { Printer, PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse, PlatesResponse, PrinterFileList, PrinterFilePlates } from './types';
+import type { Printer, PrinterStatus, SpeedMode, LibraryFile, QueueItem, SmartPlug, PlugStatus, PrintLogPage, ArchiveStats, AppSettings, Spool, SlotAssignment, MaintenancePrinter, MaintenanceSummary, MakerWorldStatus, MakerWorldResolved, MakerWorldImportRequest, MakerWorldImportResponse, PlatesResponse, PrinterFileList, PrinterFilePlates, SensorHistory } from './types';
 
 export interface BambuddyClientConfig {
   /** e.g. https://bambuddy.example.com */
@@ -452,6 +452,17 @@ export class BambuddyClient {
   printLogThumbUrl(entryId: number, token: string | null, thumbnailPath?: string | null): string {
     if (!token || thumbnailPath === null) return '';
     return `${this.baseUrl}/api/v1/print-log/${entryId}/thumbnail?token=${encodeURIComponent(token)}`;
+  }
+
+  // --- Sensor history ---
+  /** Per-minute history for one sensor. `hours` is capped at 168 server-side.
+   *  Used for the plate-cooldown curve and for reading room temperature off the idle floor. */
+  async sensorHistory(printerId: number, kind: 'bed' | 'nozzle' | 'nozzle_2' | 'chamber', hours: number): Promise<SensorHistory | null> {
+    try {
+      return await (await this.req(`/api/v1/printer-sensor-history/${printerId}?hours=${hours}&kinds=${kind}`)).json();
+    } catch {
+      return null;
+    }
   }
 
   // --- Smart plug ---
