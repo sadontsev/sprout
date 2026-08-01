@@ -35,6 +35,11 @@ const dark = {
   thumb: '#0e1113',
   /** Supports accent (amber) — matches the layer-view support color. */
   supports: '#E8A23D',
+  /** Ring drawn around every filament colour swatch. Its job is to separate the swatch from the CARD
+   *  it sits on, so it is chosen for contrast against the SURFACES, not against the fill — a white
+   *  spool on a white card was invisible. >= 3:1 vs bg/s1/s2/s3/s4/sheet (min 4.18 vs s4 here).
+   *  c.line2 is only ~1.4:1, which is why swatches that already had a hairline still disappeared. */
+  swatchRing: '#8E9398',
 };
 
 const light: typeof dark = {
@@ -65,6 +70,8 @@ const light: typeof dark = {
   tabbar: 'rgba(244,246,248,0.8)',
   thumb: '#E4E7EA',
   supports: '#C77E14',
+  /** See dark.swatchRing. Light-theme minimum is 3.65:1 (vs s4). */
+  swatchRing: '#6E7378',
 };
 
 export const themes: Record<ThemeName, Palette> = { dark, light };

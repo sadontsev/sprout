@@ -90,12 +90,95 @@ export function fmtClock(ms: number): string {
   return `${h}:${String(m).padStart(2, '0')} ${ap}`;
 }
 
-/** Bambu tray colors are RGBA hex like "565656FF" / "00000000". Return #RRGGBB or null. */
-export function normColor(hex?: string): string | null {
+/** Bambu tray colors are RGBA hex like "565656FF". Return #RRGGBB, or null when there is no colour.
+ *
+ *  Alpha EXACTLY "00" is Bambu's "unset" sentinel, NOT a real colour: "00000000" used to come back
+ *  as "#000000", so a slot whose colour the printer does not know rendered as black filament — and
+ *  in the print wizard that black even beat the inventory spool's real colour. Any other alpha is a
+ *  genuine colour and keeps its RGB (the AMS reports e.g. "C9A38180").
+ *
+ *  Non-hex input returns null rather than a malformed string: one caller feeds raw MakerWorld values
+ *  straight into a React Native backgroundColor, where "#TRANSP" is an invalid colour. */
+export function normColor(hex?: string | null): string | null {
   if (!hex) return null;
-  const h = hex.replace('#', '');
-  if (h.length >= 6) return '#' + h.slice(0, 6).toUpperCase();
-  return null;
+  const h = hex.replace('#', '').trim();
+  if (!/^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(h)) return null;
+  if (h.length === 8 && h.slice(6) === '00') return null;
+  return '#' + h.slice(0, 6).toUpperCase();
+}
+
+const rgb = (hex: string): [number, number, number] => [
+  parseInt(hex.slice(1, 3), 16),
+  parseInt(hex.slice(3, 5), 16),
+  parseInt(hex.slice(5, 7), 16),
+];
+
+/** WCAG relative luminance of a #RRGGBB colour. */
+export function relLuminance(hex: string): number {
+  const [r, g, b] = rgb(hex).map((ch) => {
+    const v = ch / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG contrast ratio between two #RRGGBB colours, 1..21. */
+export function contrastRatio(a: string, b: string): number {
+  const [la, lb] = [relLuminance(a), relLuminance(b)];
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+/** Ink that stays readable ON a given fill. 0.179 is the exact luminance where black and white ink
+ *  tie: solve (L+0.05)/0.05 = 1.05/(L+0.05). Replaces a hard-coded '#fff' glyph that vanished on a
+ *  white swatch. */
+export function inkOn(hex?: string | null): string {
+  return hex && relLuminance(hex) > 0.179 ? '#0D1012' : '#FFFFFF';
+}
+
+/** A human name for a filament colour — "White", "Titan grey", "Pale beige".
+ *
+ *  The point is that a swatch alone cannot say "white": on a white card it is a hole, and a user
+ *  reading the row sees only "PETG". Derived from HSL rather than luminance because naming is about
+ *  hue and saturation, not perceived brightness. Used only as a FALLBACK — an inventory spool's own
+ *  color_name always wins, since a vendor name ("Titan Gray") beats anything computed. */
+export function colorName(hex?: string | null): string | null {
+  if (!hex || !/^#[0-9A-Fa-f]{6}$/.test(hex)) return null;
+  const [r, g, b] = rgb(hex);
+  const mx = Math.max(r, g, b);
+  const mn = Math.min(r, g, b);
+  const chroma = (mx - mn) / 255;
+  const L = (mx + mn) / 2 / 255;
+
+  if (chroma < 0.06) {
+    if (L >= 0.97) return 'White';
+    if (L >= 0.86) return 'Off-white';
+    if (L >= 0.65) return 'Light grey';
+    if (L >= 0.42) return 'Grey';
+    if (L >= 0.15) return 'Dark grey';
+    return 'Black';
+  }
+
+  const d = mx - mn;
+  let hue: number;
+  if (mx === r) hue = 60 * (((g - b) / d) % 6);
+  else if (mx === g) hue = 60 * ((b - r) / d + 2);
+  else hue = 60 * ((r - g) / d + 4);
+  if (hue < 0) hue += 360;
+
+  let base =
+    hue < 15 || hue >= 345 ? 'red'
+    : hue < 45 ? 'orange'
+    : hue < 70 ? 'yellow'
+    : hue < 160 ? 'green'
+    : hue < 200 ? 'teal'
+    : hue < 250 ? 'blue'
+    : hue < 290 ? 'purple'
+    : 'pink';
+  // Warm but washed-out reads as beige/brown, not "pale orange".
+  if (hue >= 15 && hue < 55 && chroma < 0.3) base = L >= 0.65 ? 'beige' : 'brown';
+  const qual = L >= 0.75 ? 'Pale ' : L <= 0.25 ? 'Dark ' : '';
+  const name = qual + base;
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 // ---- Nozzles / hotends (H2-series: a fixed Left toolhead + a swappable Right "vortex") ----
