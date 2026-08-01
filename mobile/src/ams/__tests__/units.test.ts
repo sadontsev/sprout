@@ -150,10 +150,23 @@ describe('extruder routing with a Filament Track Switch', () => {
     expect(units.map((u) => u.extruder)).toEqual([null, null, null]);
   });
 
-  it('still honours the map when NO switch is installed', () => {
-    const { units, routing } = presentAms(threeUnits);
+  it('honours the map only when it covers EVERY unit', () => {
+    const complete = { ...threeUnits, ams_extruder_map: { '0': 0, '1': 1, '128': 1 } } as PrinterStatus;
+    const { units, routing } = presentAms(complete);
     expect(routing).toBe('fixed');
-    expect(units.map((u) => u.extruder)).toEqual([0, null, 1]);
+    expect(units.map((u) => u.extruder)).toEqual([0, 1, 1]);
+  });
+
+  it('treats an INCOMPLETE map as dynamic, even with no fila_switch in the payload', () => {
+    // This is the live WebSocket case: the WS feed omits fila_switch entirely (REST carries it), so
+    // keying only on that field made the running app trust the stale map and paint every unit-0
+    // slot "-> Right". A map missing a unit cannot describe static wiring — Bambuddy omits exactly
+    // the units that report "no fixed extruder".
+    for (const fs of [undefined, { installed: false }, {}]) {
+      const st = { ...threeUnits, fila_switch: fs } as PrinterStatus;
+      expect(presentAms(st).routing).toBe('switch');
+      expect(presentAms(st).units.every((u) => u.extruder === null)).toBe(true);
+    }
   });
 
   it('leaves an unmapped unit null rather than defaulting it to extruder 0', () => {
@@ -161,11 +174,16 @@ describe('extruder routing with a Filament Track Switch', () => {
     expect(presentAms(threeUnits).units[1].extruder).toBeNull();
   });
 
-  it('treats a missing or false fila_switch as classic fixed wiring', () => {
-    for (const fs of [undefined, { installed: false }, {}]) {
-      const st = { ...threeUnits, fila_switch: fs } as PrinterStatus;
-      expect(presentAms(st).routing).toBe('fixed');
-    }
+  it('a single unmapped unit is enough to distrust the whole map', () => {
+    const oneMissing = {
+      connected: true,
+      ams: [
+        { id: 0, module_type: 'n3f', tray: [{ id: 0, tray_type: 'PLA' }] },
+        { id: 1, module_type: 'n3f', tray: [{ id: 0, tray_type: 'PLA' }] },
+      ],
+      ams_extruder_map: { '0': 0 },
+    } as unknown as PrinterStatus;
+    expect(presentAms(oneMissing).routing).toBe('switch');
   });
 });
 

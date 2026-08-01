@@ -875,7 +875,12 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
           // The LOCATION always leads. It used to be replaced by the spool's brand as soon as one was
           // known, so a loaded slot told you what was in it but not where it was — exactly backwards
           // when you are standing at the printer trying to find which unit to open.
-          const sub = [slotName, spool?.brand, spool?.slicer_filament_name].filter(Boolean).join(' · ');
+          // Drop a brand the preset name already repeats ("Bambu Lab · Bambu PETG Basic") — it cost
+          // the width that pushed the actually-useful filament name off the end of the line.
+          const brand = spool?.brand ?? '';
+          const preset = spool?.slicer_filament_name ?? '';
+          const brandRedundant = !!brand && !!preset && preset.toLowerCase().startsWith(brand.split(' ')[0].toLowerCase());
+          const sub = [slotName, brandRedundant ? '' : brand, preset].filter(Boolean).join(' · ');
           const isHt = vm.amsUnits.find((u) => u.id === t.unitId)?.kind === 'ht';
 
           return (
@@ -891,8 +896,9 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
                       </View>
                     )}
                     {/* Which nozzle THIS spool feeds. With a Filament Track Switch fitted the unit no
-                        longer has a fixed extruder, so this per-slot answer is the only true one. */}
-                    {!!extruderSide(t.extruder) && (
+                        longer has a fixed extruder, so this per-slot answer is the only true one.
+                        Never on an empty slot: there is no filament in it to feed anything. */}
+                    {!t.empty && !!extruderSide(t.extruder) && (
                       <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: c.s3 }}>
                         <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: c.t2, fontFamily: mono }}>→ {extruderSide(t.extruder).toUpperCase()}</Text>
                       </View>
@@ -1143,7 +1149,9 @@ function NozzleCard({ n, showMounted }: { n: NozzleCardVM; showMounted: boolean 
         <Feather name="chevron-down" size={14} color={n.colorHex ? '#fff' : c.t3} />
       </View>
       <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        {/* Wraps: on a half-width card "0.4 mm" + HIGH FLOW + ENGAGED overflows on one line, and the
+            last chip was being clipped at the card edge. */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5, rowGap: 4 }}>
           <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>{n.diameter || 'Nozzle'}</Text>
           {/* Flow rate is a first-class spec on the H2 series — a high-flow and a standard nozzle of
               the same diameter and material print very differently. It gets its own chip rather than
