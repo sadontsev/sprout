@@ -6,7 +6,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { GcodeViewerOverlay } from './Overlays';
 import { isSliced3mf, isPlayableVideo, isMediaFolder, mediaThumbPath, mediaLabel } from '@/library/printerFiles';
 import { isSlicedFile, filterFiles, toggleSelection, displayName, safeShareName, type TypeFilter } from '@/library/libraryBrowse';
-import type { AmsSlotVM } from '@/ams/units';
+import { extruderSide, type AmsSlotVM } from '@/ams/units';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -844,9 +844,17 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
                 <Text style={{ fontWeight: '600', fontSize: 10.5, color: c.t3, fontFamily: mono }}>{u.tempC.toFixed(1)}°</Text>
               </>
             )}
-            {u.extruder != null && vm.amsUnits.length > 1 && (
-              <Text style={{ fontWeight: '600', fontSize: 10, color: c.t3, fontFamily: mono }}>→ {u.extruder === 0 ? 'L' : 'R'}</Text>
-            )}
+            {/* Extruder 0 is the RIGHT/main head on the H2 series — this chip shipped inverted.
+                With a Filament Track Switch fitted no unit has a fixed extruder at all, so say that
+                rather than showing a stale binding for some units and nothing for the others. */}
+            {vm.amsUnits.length > 1 &&
+              (vm.amsRouting === 'switch' ? (
+                <Text style={{ fontWeight: '600', fontSize: 10, color: c.t3, fontFamily: mono }}>→ auto</Text>
+              ) : (
+                !!extruderSide(u.extruder) && (
+                  <Text style={{ fontWeight: '600', fontSize: 10, color: c.t3, fontFamily: mono }}>→ {extruderSide(u.extruder)}</Text>
+                )
+              ))}
           </View>
         ))}
 
@@ -864,7 +872,10 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
           const grams = spool ? spoolGramsRemaining(spool) : null;
           // Name the slot by its UNIT once there's more than one — "Slot 1" is ambiguous across units.
           const slotName = vm.amsUnits.length > 1 ? `${t.unitLabel} · Slot ${t.localId + 1}` : `Slot ${t.localId + 1}`;
-          const sub = spool ? [spool.brand, spool.slicer_filament_name].filter(Boolean).join(' · ') || slotName : slotName;
+          // The LOCATION always leads. It used to be replaced by the spool's brand as soon as one was
+          // known, so a loaded slot told you what was in it but not where it was — exactly backwards
+          // when you are standing at the printer trying to find which unit to open.
+          const sub = [slotName, spool?.brand, spool?.slicer_filament_name].filter(Boolean).join(' · ');
           const isHt = vm.amsUnits.find((u) => u.id === t.unitId)?.kind === 'ht';
 
           return (
@@ -877,6 +888,13 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
                     {t.active && (
                       <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: c.accentDim }}>
                         <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: c.accent, fontFamily: mono }}>ACTIVE</Text>
+                      </View>
+                    )}
+                    {/* Which nozzle THIS spool feeds. With a Filament Track Switch fitted the unit no
+                        longer has a fixed extruder, so this per-slot answer is the only true one. */}
+                    {!!extruderSide(t.extruder) && (
+                      <View style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, backgroundColor: c.s3 }}>
+                        <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: c.t2, fontFamily: mono }}>→ {extruderSide(t.extruder).toUpperCase()}</Text>
                       </View>
                     )}
                   </View>
@@ -1127,6 +1145,16 @@ function NozzleCard({ n, showMounted }: { n: NozzleCardVM; showMounted: boolean 
       <View style={{ flex: 1 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>{n.diameter || 'Nozzle'}</Text>
+          {/* Flow rate is a first-class spec on the H2 series — a high-flow and a standard nozzle of
+              the same diameter and material print very differently. It gets its own chip rather than
+              the subtitle because that line truncates on a half-width card. */}
+          {!!n.flow && (
+            <View style={{ paddingHorizontal: 5, paddingVertical: 1.5, borderRadius: 5, backgroundColor: n.flow === 'High flow' ? c.heatingDim : c.s3 }}>
+              <Text style={{ fontWeight: '600', fontSize: 7.5, letterSpacing: 0.4, color: n.flow === 'High flow' ? c.heating : c.t3, fontFamily: mono }}>
+                {n.flow === 'High flow' ? 'HIGH FLOW' : 'STANDARD'}
+              </Text>
+            </View>
+          )}
           {/* ENGAGED = physically in the toolhead now (rack id < 16 — Bambu Studio's own parsing).
               The colored chip is per-nozzle filament MEMORY (last filament run through it), so
               several docked nozzles legitimately show colors — only one can be ENGAGED. */}

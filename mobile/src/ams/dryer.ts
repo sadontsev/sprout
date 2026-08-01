@@ -142,7 +142,10 @@ export function presentDryer(status: PrinterStatus | null): DryerVM[] {
       .filter((m): m is string => !!m);
 
     return {
-      amsId: unit.id,
+      // Coerced, exactly as units.ts does: the WebSocket delivers ids as strings ('128') while REST
+      // sends numbers. Leaving it raw made `amsUnits.find(u => u.id === d.amsId)` miss, so the HT's
+      // dryer card fell back to a positional label and announced itself as "AMS 3".
+      amsId: asNum(unit.id) ?? 0,
       isHt,
       maxTemp,
       active,

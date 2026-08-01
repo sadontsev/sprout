@@ -317,6 +317,62 @@ test('fmtDuration + normColor + fmtHmsCode helpers', () => {
   expect(fmtHmsCode(null)).toBeNull();
 });
 
+describe('nozzle codes are STRUCTURED: H + flow letter + 2-digit material', () => {
+  const { nozzleTypeLabel, nozzleFlowLabel } = require('@/dashboard/present');
+
+  // Ground truth from the live H2C rack (2026-08-01): HS01 and HH01 are both 0.4mm/350C and differ
+  // only in the middle letter, which pins that letter as FLOW; HH05 is the owner's tungsten nozzle.
+  it('decodes the material from the digits, independent of flow', () => {
+    expect(nozzleTypeLabel('HS00')).toBe('Stainless');
+    expect(nozzleTypeLabel('HS01')).toBe('Hardened');
+    expect(nozzleTypeLabel('HH01')).toBe('Hardened'); // same material as HS01, different flow
+    expect(nozzleTypeLabel('HH05')).toBe('Tungsten Carbide');
+  });
+
+  it('decodes flow from the middle letter', () => {
+    expect(nozzleFlowLabel('HS01')).toBe('Standard flow');
+    expect(nozzleFlowLabel('HS00')).toBe('Standard flow');
+    expect(nozzleFlowLabel('HH01')).toBe('High flow');
+    expect(nozzleFlowLabel('HH05')).toBe('High flow');
+  });
+
+  it('still reports FLOW for a material it has never seen — the halves decode independently', () => {
+    // The whole point of parsing rather than table-lookup: a nozzle Bambu ships tomorrow.
+    expect(nozzleFlowLabel('HH09')).toBe('High flow');
+    expect(nozzleFlowLabel('HS42')).toBe('Standard flow');
+    expect(nozzleTypeLabel('HH09')).toBe('Type HH09'); // but never invents a material name
+  });
+
+  it('reports no flow when the code carries none', () => {
+    for (const t of ['hardened_steel', 'tungsten_carbide', 'TU00', '', null, undefined])
+      expect(nozzleFlowLabel(t)).toBe('');
+  });
+
+  it('surfaces flow on the toolhead view-model for both rack and no-rack machines', () => {
+    const dual: PrinterStatus = {
+      ...running,
+      nozzles: [{ nozzle_type: 'HH01', nozzle_diameter: '0.4' }, { nozzle_type: 'HH05', nozzle_diameter: '0.4' }],
+      nozzle_rack: [
+        { id: 0, nozzle_type: 'HH01', nozzle_diameter: '0.4', wear: 128, max_temp: 350, serial_number: '20D06A5A1504039' },
+        { id: 1, nozzle_type: 'HH05', nozzle_diameter: '0.4', wear: 0, max_temp: 0, serial_number: 'N/A' },
+      ],
+    };
+    const { toolheads } = presentNozzles(dual);
+    const right = toolheads.find((t: any) => t.side === 'right')!;
+    const left = toolheads.find((t: any) => t.side === 'left')!;
+    // rack id 0 = extruder 0 = RIGHT, id 1 = extruder 1 = LEFT (owner-verified).
+    expect(right.nozzles[0]).toMatchObject({ type: 'Hardened', flow: 'High flow' });
+    expect(left.nozzles[0]).toMatchObject({ type: 'Tungsten Carbide', flow: 'High flow' });
+    // The tungsten nozzle is chipless — it must survive, with no serial.
+    expect(left.nozzles[0].serial).toBe('');
+  });
+
+  it('carries flow through the no-rack (A1) path too', () => {
+    const a1: PrinterStatus = { ...running, nozzles: [{ nozzle_type: 'hardened_steel', nozzle_diameter: '0.4' }, { nozzle_type: '', nozzle_diameter: '' }], nozzle_rack: [] };
+    expect(presentNozzles(a1).toolheads[0].nozzles[0]).toMatchObject({ type: 'Hardened', flow: '' });
+  });
+});
+
 describe('nozzleTypeLabel — the tungsten nozzle has an unpublished code', () => {
   const { nozzleTypeLabel } = require('@/dashboard/present');
   it('maps the codes we know', () => {
