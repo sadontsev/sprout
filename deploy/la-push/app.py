@@ -24,6 +24,8 @@ import jwt  # PyJWT
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from cooldown import COOL_DEFAULT_C, COOL_MAX_C, COOL_MIN_C, READY, clamp_threshold, cool_step
+
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
 BAMBUDDY_API_KEY = os.environ["BAMBUDDY_API_KEY"]
@@ -205,10 +207,19 @@ PAUSE_REMINDERS_MIN = (10, 30, 60)
 _last_dry: dict[str, dict] = {}
 # _printers_cache: printerId -> name, refreshed from Bambuddy.
 _printers_cache: dict[int, str] = {}
+# _cool: printerId -> plate-cooldown tracker for the "safe to take the print off" banner.
+#   {"armed": the bed was hot during a print, so a crossing is meaningful,
+#    "fired": already announced for this print,
+#    "seen":  [[epoch, bedC], ...] trailing readings, for the plateau detector}
+# Like a pause, this is INVISIBLE to the _last_kind edge: the printer sits at FINISH (kind
+# "complete") for the whole cooldown, so nothing about `kind` changes when the plate becomes cool.
+_cool: dict[int, dict] = {}
+_cool_threshold = COOL_DEFAULT_C
+_cool_threshold_at = 0.0
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool
     try:
         data = json.loads(REG_FILE.read_text())
         _regs = data.get("regs", {})
@@ -219,13 +230,17 @@ def _load() -> None:
         _paused_at = {int(k): float(v) for k, v in data.get("paused_at", {}).items()}
         _paused_reminded = {int(k): int(v) for k, v in data.get("paused_reminded", {}).items()}
         _last_dry = data.get("last_dry", {})
+        _cool = {int(k): v for k, v in data.get("cool", {}).items()}
         _p2s_tokens = data.get("p2s", [])
         _p2s_dry_sent = data.get("p2s_dry_sent", {})
         _p2s_icons = data.get("p2s_icons", {})
         _p2s_pending = data.get("p2s_pending", {})
     except (FileNotFoundError, json.JSONDecodeError):
+        # NB: this unpack used to supply three values for five targets, so the very path that exists
+        # to survive a missing/corrupt state file raised ValueError instead.
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
-        _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}
+        _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}, {}, {}
+        _cool = {}
 
 
 def _save() -> None:
@@ -234,7 +249,8 @@ def _save() -> None:
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
                                     "p2s_icons": _p2s_icons, "p2s_pending": _p2s_pending,
                                     "last_paused": _last_paused,
-                                    "paused_at": _paused_at, "paused_reminded": _paused_reminded}))
+                                    "paused_at": _paused_at, "paused_reminded": _paused_reminded,
+                                    "cool": _cool}))
 
 
 # ---- APNs ----
@@ -314,6 +330,28 @@ async def _get_status(client: httpx.AsyncClient, printer_id: int) -> dict | None
         return r.json() if r.status_code == 200 else None
     except (httpx.HTTPError, json.JSONDecodeError):
         return None
+
+
+async def _bed_cooled_threshold(client: httpx.AsyncClient) -> float:
+    """The plate-cooled threshold, from Bambuddy's own `bed_cooled_threshold` setting.
+
+    Bambuddy already ships this setting (and a `bed_cooled` event type), so it is the single place a
+    user changes the number rather than a second copy living here. Cached for an hour; clamped to
+    the defensible band -- below ~30C the threshold collides with room temperature and can never be
+    reached, and above ~45C you are inviting someone to grab metal hot enough to burn (EN ISO
+    13732-1 puts bare metal at 48C for 10s of contact).
+    """
+    global _cool_threshold, _cool_threshold_at
+    if time.time() - _cool_threshold_at < 3600:
+        return _cool_threshold
+    try:
+        r = await client.get(f"{BAMBUDDY_URL}/api/v1/settings", headers={"X-API-Key": BAMBUDDY_API_KEY}, timeout=8)
+        if r.status_code == 200:
+            _cool_threshold = clamp_threshold(r.json().get("bed_cooled_threshold"), _cool_threshold)
+    except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError):
+        pass  # keep whatever we had; a settings blip must not change behaviour
+    _cool_threshold_at = time.time()
+    return _cool_threshold
 
 
 async def _list_printers(client: httpx.AsyncClient) -> dict[int, str]:
@@ -564,6 +602,33 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 await _notify(client, f"⏸️ {name} — still paused ({int(mins)} min)", f"{model} is waiting on you.")
                 _paused_reminded[pid] = sent + 1
                 _save()
+
+        # 2b) Plate cooled down enough to take the print off.
+        #
+        # Edge-triggered with an ARM step, so an already-cold idle printer never fires: the bed must
+        # have been hot DURING a print first. Fires once per print, then re-arms on the next one.
+        #
+        # The threshold alone is not enough. A plate approaches room temperature asymptotically and
+        # cannot cross it, so on a warm day a 35C target may never arrive and the user would simply
+        # never be told. The plateau branch covers that: once the bed stops falling, that IS as cool
+        # as it gets, and we say so in those words rather than claiming the plate hit the target.
+        if _device_tokens:
+            threshold = await _bed_cooled_threshold(client)
+            bed_now = float(fields.get("bed") or 0)
+            action, _cool[pid] = cool_step(kind == "live", bed_now, threshold, _cool.get(pid), now)
+            if action:
+                model = fields.get("name") or "your print"
+                # Deliberately "safe to flex", never "your print has released" — plenty of prints
+                # stay stuck at room temperature, and promising a pop invites someone to force it
+                # and tear the PEI coating off the steel.
+                if action == READY:
+                    await _notify(client, f"🧊 {name} — plate is cool",
+                                  f"Bed at {int(bed_now)}°C. Safe to flex the plate and lift {model} off.")
+                else:
+                    await _notify(client, f"🧊 {name} — plate has stopped cooling",
+                                  f"Settled at {int(bed_now)}°C, as cool as it will get today. Go ahead and flex the plate.")
+                print(f"[cool] printer {pid}: {action} at {int(bed_now)}C (threshold {threshold:g})", flush=True)
+            _save()
 
         if prev != kind:
             _last_kind[pid] = kind

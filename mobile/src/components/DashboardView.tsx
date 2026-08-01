@@ -6,6 +6,7 @@ import { Feather } from '@expo/vector-icons';
 import { c, mono, shadow1, type Palette } from '@/theme';
 import type { DashVM, DashKind } from '@/dashboard/present';
 import { alertSummary, type AlertVM } from '@/alerts/present';
+import type { CooldownVM } from '@/cooling/present';
 import type { Printer } from '@/api/types';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton, Pop, Breathe } from './anim';
 
@@ -93,6 +94,32 @@ function Label({ children }: { children: React.ReactNode }) {
   return <Text style={{ fontWeight: '600', fontSize: 10, color: c.t3, letterSpacing: 1, fontFamily: mono }}>{children}</Text>;
 }
 
+/** "Is the plate cool enough to grab yet" — the honest version. Shows the measured temperature and
+ *  what to do, never a claim that the print has released: plenty stay stuck at room temperature,
+ *  and over-promising invites someone to force it and tear the PEI coating off the plate. */
+function CooldownPanel({ vm }: { vm: CooldownVM }) {
+  const tint = vm.tone === 'ready' ? c.running : vm.tone === 'hot' ? c.heating : c.accent;
+  return (
+    <View style={{ marginTop: 16, padding: 15, borderRadius: 16, backgroundColor: c.s2, borderWidth: 1, borderColor: vm.phase === 'ready' ? c.running : c.line }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Feather name={vm.phase === 'ready' ? 'check-circle' : 'thermometer'} size={13} color={tint} />
+        <Text style={{ flex: 1, fontWeight: '700', fontSize: 14, color: c.t1 }}>{vm.label}</Text>
+        <Text style={{ fontWeight: '700', fontSize: 15, color: tint, fontVariant: ['tabular-nums'] }}>{Math.round(vm.bedC)}°C</Text>
+      </View>
+      <View style={{ marginTop: 11, height: 5, borderRadius: 3, backgroundColor: c.s3, overflow: 'hidden' }}>
+        <View style={{ width: `${Math.round(vm.progress * 100)}%`, height: 5, borderRadius: 3, backgroundColor: tint }} />
+      </View>
+      <Text style={{ marginTop: 10, fontWeight: '500', fontSize: 12, lineHeight: 17, color: c.t3 }}>{vm.detail}</Text>
+      {vm.caution && (
+        <View style={{ marginTop: 9, flexDirection: 'row', gap: 7 }}>
+          <Feather name="alert-triangle" size={12} color={c.heating} style={{ marginTop: 2 }} />
+          <Text style={{ flex: 1, fontWeight: '500', fontSize: 11, lineHeight: 16, color: c.heating }}>{vm.caution}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function DashboardView({
   vm,
   alerts,
@@ -102,6 +129,7 @@ export function DashboardView({
   speedIdx,
   printer,
   fleet,
+  cooldown,
 }: {
   vm: DashVM;
   /** Things needing attention, each with only the actions currently possible (alerts/present.ts). */
@@ -112,6 +140,8 @@ export function DashboardView({
   speedIdx: number;
   printer: Printer | null;
   fleet: FleetEntry[];
+  /** Plate-cooldown readout — when the print can actually be taken off. */
+  cooldown: CooldownVM;
 }) {
   const insets = useSafeAreaInsets();
   const showCamera = vm.kind === 'live' || vm.kind === 'idle' || vm.kind === 'complete' || vm.kind === 'error';
@@ -375,6 +405,7 @@ export function DashboardView({
                   <Text style={{ marginTop: 5, fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>{vm.heroSub || 'finished'}</Text>
                 </View>
               </View>
+              {cooldown.phase !== 'none' && <CooldownPanel vm={cooldown} />}
               {vm.awaitingPlateClear && (
                 <Tap onPress={h.onPlateCleared} style={{ marginTop: 18, height: 52, borderRadius: 15, backgroundColor: c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                   <Feather name="check-square" size={16} color={c.accentInk} />
