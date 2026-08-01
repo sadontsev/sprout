@@ -154,10 +154,21 @@ export function presentAms(status: PrinterStatus | null): { units: AmsUnitVM[]; 
   const raw = status?.ams ?? [];
   if (!raw.length) return { units: [], slots: [], routing: 'fixed' };
 
-  const routing: AmsRouting = status?.fila_switch?.installed === true ? 'switch' : 'fixed';
+  // Routing is only 'fixed' when the map is COMPLETE — an entry for every unit present.
+  //
+  // fila_switch alone is not a sufficient signal: it is absent from the WebSocket payload (verified
+  // live — REST carries it, the WS feed does not), and the app runs on the WebSocket. Keying solely
+  // on it meant the live app fell back to the stale map and painted every unit-0 slot "-> Right".
+  //
+  // An INCOMPLETE map is itself the tell. Bambuddy omits any unit whose info nibble reads 0xE, which
+  // means "no fixed extruder" — exactly what a switch-routed unit reports. So a map that covers some
+  // units but not others cannot be describing static wiring, whichever transport delivered it.
+  const mapped = status?.ams_extruder_map ?? {};
+  const everyUnitMapped = raw.every((u) => typeof mapped[String(asNum(u.id) ?? 0)] === 'number');
+  const routing: AmsRouting = status?.fila_switch?.installed === true || !everyUnitMapped ? 'switch' : 'fixed';
   // With a switch fitted the map is stale residue, not current routing — ignore it wholesale rather
   // than showing a binding for the units that happen to still have an entry.
-  const extMap = routing === 'switch' ? {} : (status?.ams_extruder_map ?? {});
+  const extMap = routing === 'switch' ? {} : mapped;
   // Count HTs with the SAME predicate used to classify them, or a unit that reports the 128+ id
   // without is_ams_ht is labelled 'AMS HT' while htTotal stays 0 — two units, one identical label.
   const isHt = (u: (typeof raw)[number]): boolean => u.is_ams_ht === true || (asNum(u.id) ?? 0) >= 128;
