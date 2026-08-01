@@ -880,7 +880,10 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
           const brand = spool?.brand ?? '';
           const preset = spool?.slicer_filament_name ?? '';
           const brandRedundant = !!brand && !!preset && preset.toLowerCase().startsWith(brand.split(' ')[0].toLowerCase());
-          const sub = [slotName, brandRedundant ? '' : brand, preset].filter(Boolean).join(' · ');
+          // Two lines, not one truncated one: the location is what you need when you're stood at
+          // the printer, and the spool name is what you need when you're choosing — cutting either
+          // to fit one line loses the more useful half depending on which way you slice it.
+          const spoolLine = [brandRedundant ? '' : brand, preset].filter(Boolean).join(' · ');
           const isHt = vm.amsUnits.find((u) => u.id === t.unitId)?.kind === 'ht';
 
           return (
@@ -904,7 +907,10 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
                       </View>
                     )}
                   </View>
-                  <Text numberOfLines={1} style={{ marginTop: 5, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{sub}</Text>
+                  <Text numberOfLines={1} style={{ marginTop: 5, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{slotName}</Text>
+                  {!!spoolLine && (
+                    <Text numberOfLines={2} style={{ marginTop: 2, fontWeight: '500', fontSize: 11, lineHeight: 15, color: c.t3 }}>{spoolLine}</Text>
+                  )}
                 </View>
                 {!t.empty && (
                   grams != null ? (
