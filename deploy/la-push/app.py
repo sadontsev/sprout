@@ -416,21 +416,37 @@ async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: st
     return True
 
 
-def dry_state(status: dict) -> dict | None:
-    """AMS drying card ContentState, or None when no cycle is active. Mirrors the app's
+def _f(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def drying_unit_ids(status: dict) -> list[int]:
+    """Ids of the units with an ACTIVE drying cycle. Mirrors the app's dryingUnitIds.
+
+    Three drying-capable units are now fitted (two AMS 2 Pro + an AMS HT), so concurrent cycles are
+    ordinary rather than theoretical — hence one card PER UNIT rather than per printer."""
+    return [int(_f(u.get("id"))) for u in (status.get("ams") or []) if _f(u.get("dry_time")) > 0]
+
+
+def dry_state(status: dict, ams_id: int | None = None) -> dict | None:
+    """One unit's drying card ContentState, or None when that unit is idle. Mirrors the app's
     toDryContentState: dry_time (minutes remaining) > 0 is THE active signal; the countdown itself
-    renders client-side from etaEpochMs, so pushes only carry temp/humidity drift and the end."""
+    renders client-side from etaEpochMs, so pushes only carry temp/humidity drift and the end.
+
+    `ams_id` selects the unit; omitted, it falls back to the first unit drying."""
     ams_list = status.get("ams") or []
 
-    def _f(v) -> float:
-        try:
-            return float(v or 0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    # Scan EVERY unit, not ams[0] — the H2C pairs an AMS 2 Pro (id 0) with an AMS HT (id 128), and a
-    # cycle on the HT produced no card. Mirrors the app's toDryContentState.
-    ams = next((u for u in ams_list if _f(u.get("dry_time")) > 0), None)
+    # Scan EVERY unit, not ams[0] — the H2C pairs two AMS 2 Pro with an AMS HT, and a cycle on the HT
+    # produced no card. Mirrors the app's toDryContentState.
+    if ams_id is not None:
+        ams = next((u for u in ams_list if int(_f(u.get("id"))) == ams_id), None)
+        if ams is None or _f(ams.get("dry_time")) <= 0:
+            return None
+    else:
+        ams = next((u for u in ams_list if _f(u.get("dry_time")) > 0), None)
     if not ams:
         return None
     unit_id = int(_f(ams.get("id")))
@@ -485,27 +501,34 @@ async def _tick(client: httpx.AsyncClient) -> None:
         reg = _regs.get(str(pid))
         name = (reg or {}).get("printerName") or _printers_cache.get(pid) or f"Printer {pid}"
 
-        # 1b) Drying card: independent lifecycle driven by ams.dry_time.
-        dreg = _regs.get(f"dry:{pid}")
-        if dreg:
+        # 1b) Drying cards: one per UNIT, each with its own lifecycle driven by that unit's
+        # dry_time. Keyed "dry:<pid>:<amsId>" — a per-printer key could only ever track one cycle,
+        # so a second unit's card was never updated and its completion never pushed.
+        for dkey in [k for k in list(_regs) if k.startswith(f"dry:{pid}:") or k == f"dry:{pid}"]:
+            dreg = _regs.get(dkey)
+            if not dreg:
+                continue
             dname = dreg.get("printerName") or name
-            ds = dry_state(status)
+            # Legacy per-printer registrations (no ams id) keep working: fall back to "any unit".
+            parts = dkey.split(":")
+            d_ams = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else None
+            ds = dry_state(status, d_ams)
             if ds is None:
                 end_cs = {**(dreg.get("lastState") or {}), "printerName": dname, "iconUri": dreg.get("iconUri", ""),
                           "dry": True, "stateLabel": "Done", "finished": True, "etaEpochMs": 0}
                 code = await _push_end(client, dreg, end_cs)
-                print(f"[end] dry printer {pid} -> {code}", flush=True)
-                _regs.pop(f"dry:{pid}", None)
+                print(f"[end] {dkey} -> {code}", flush=True)
+                _regs.pop(dkey, None)
                 _save()
             else:
                 dcs = {"printerName": dname, "iconUri": dreg.get("iconUri", ""), **ds}
                 if meaningful_change(dreg.get("lastState"), dcs) and (now - dreg.get("lastPush", 0) >= MIN_UPDATE_S):
                     prio = "10" if _urgent(dreg.get("lastState"), dcs) else "5"
                     code = await _push_update(client, dreg, dcs, prio)
-                    print(f"[update] dry printer {pid} prio {prio} -> {code}", flush=True)
+                    print(f"[update] {dkey} prio {prio} -> {code}", flush=True)
                     if code in (400, 410):
-                        print(f"[drop] dry printer {pid} -> {code}", flush=True)
-                        _regs.pop(f"dry:{pid}", None)
+                        print(f"[drop] {dkey} -> {code}", flush=True)
+                        _regs.pop(dkey, None)
                         _save()
                     else:
                         dreg["lastState"], dreg["lastPush"] = dcs, now
@@ -545,11 +568,19 @@ async def _tick(client: httpx.AsyncClient) -> None:
             else:
                 _p2s_pending.pop(str(pid), None)  # cycle over; the next print may start a card again
 
-            ds0 = dry_state(status)
-            if ds0 is not None:
-                await _remote_start(client, f"dry:{pid}", {"printerName": name, **ds0}, f"dry {pid}")
-            else:
-                _p2s_pending.pop(f"dry:{pid}", None)
+            # Push-to-start one card per DRYING UNIT, so a second concurrent cycle also gets a card
+            # when the app is closed.
+            drying = drying_unit_ids(status)
+            for a_id in drying:
+                ds0 = dry_state(status, a_id)
+                if ds0 is not None:
+                    await _remote_start(client, f"dry:{pid}:{a_id}", {"printerName": name, **ds0}, f"dry {pid}:{a_id}")
+            for k in [k for k in list(_p2s_pending) if k.startswith(f"dry:{pid}")]:
+                if k != f"dry:{pid}" or not drying:
+                    parts = k.split(":")
+                    kid = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else None
+                    if kid is None or kid not in drying:
+                        _p2s_pending.pop(k, None)
 
         # 2) Alert on a state transition (edge-triggered; the first observation is silent). _last_kind is
         # persisted, so a restart/crash mid-print still fires the finish/error edge on the next poll.
@@ -689,11 +720,14 @@ async def _require_key(x_api_key: str | None = Header(default=None)) -> None:
 
 
 class Register(BaseModel):
-    printer_id: int  # one card per printer PER KIND -> keyed printer_id ("print") / "dry:<id>"
+    # Card keys: "<printerId>" for the print card, "dry:<printerId>:<amsId>" for a drying card —
+    # one per DRYING UNIT, since several units can dry at once.
+    printer_id: int
     push_token: str
     printer_name: str = ""
     icon_uri: str = ""
     kind: str = "print"  # "print" | "dry" (AMS drying card)
+    ams_id: int | None = None  # required in practice for kind="dry"; absent = legacy client
 
 
 class DeviceReg(BaseModel):
@@ -794,7 +828,9 @@ async def register_device(r: DeviceReg, _: None = Depends(_require_key)) -> dict
 
 @app.post("/register")
 async def register(r: Register, _: None = Depends(_require_key)) -> dict:
-    key = str(r.printer_id) if r.kind != "dry" else f"dry:{r.printer_id}"
+    key = str(r.printer_id) if r.kind != "dry" else (
+        f"dry:{r.printer_id}:{r.ams_id}" if r.ams_id is not None else f"dry:{r.printer_id}"
+    )
     _regs[key] = {
         "printerId": r.printer_id, "pushToken": r.push_token, "printerName": r.printer_name,
         "iconUri": r.icon_uri, "kind": r.kind, "lastPush": 0, "lastState": None,

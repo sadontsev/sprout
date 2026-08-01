@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { addPushToStartTokenListener } from 'expo-widgets';
 import { Platform } from 'react-native';
 import { printActivity } from './PrintActivity';
-import { toContentState, toDryContentState, meaningfulChange, GENERIC_END, type PrintActivityProps, type LiveActivityExtras } from './contentState';
+import { toContentState, toDryContentState, dryingUnitIds, meaningfulChange, GENERIC_END, type PrintActivityProps, type LiveActivityExtras } from './contentState';
 import { nozzleIconUri } from './nozzleIcon';
 import type { LiveActivity } from 'expo-widgets';
 import type { PrinterStatus } from '@/api/types';
@@ -24,14 +24,15 @@ export type ActivityEntry = {
 
 /** Register a card's APNs push token with the la-push service (keyed by printer) so it keeps updating
  *  when the app is closed. Fire-and-forget — push is a bonus; foreground updates work regardless. */
-function registerPushToken(pushUrl: string, apiKey: string, printerId: number, printerName: string, pushToken: string, kind: 'print' | 'dry' = 'print'): void {
+function registerPushToken(pushUrl: string, apiKey: string, printerId: number, printerName: string, pushToken: string, kind: 'print' | 'dry' = 'print', amsId?: number): void {
   if (!pushToken) return;
   // X-API-Key gates la-push registration to holders of the Bambuddy key, so a stranger who knows the
   // URL can't register their token and receive this printer's notifications.
   fetch(`${pushUrl.replace(/\/+$/, '')}/register`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'X-API-Key': apiKey },
-    body: JSON.stringify({ printer_id: printerId, push_token: pushToken, printer_name: printerName, icon_uri: nozzleIconUri(), kind }),
+    // ams_id keys the drying card per UNIT server-side (dry:<pid>:<amsId>); omitted for print cards.
+    body: JSON.stringify({ printer_id: printerId, push_token: pushToken, printer_name: printerName, icon_uri: nozzleIconUri(), kind, ...(amsId != null ? { ams_id: amsId } : {}) }),
   }).catch(() => {});
 }
 
@@ -68,22 +69,26 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
   const instances = useRef(new Map<number, LiveActivity<PrintActivityProps>>());
   const lastPush = useRef(new Map<number, number>());
   const lastState = useRef(new Map<number, PrintActivityProps>());
-  const subs = useRef(new Map<number, { remove: () => void }>());
+  // Keyed by STRING so print ('<pid>') and drying ('<pid>:<amsId>') cards share one shape.
+  const subs = useRef(new Map<string, { remove: () => void }>());
   const adopted = useRef(false);
-  // Drying cards: a SECOND activity per printer (print + drying can run simultaneously).
-  const dryInstances = useRef(new Map<number, LiveActivity<PrintActivityProps>>());
-  const dryLastPush = useRef(new Map<number, number>());
-  const dryLastState = useRef(new Map<number, PrintActivityProps>());
-  const drySubs = useRef(new Map<number, { remove: () => void }>());
+  // Drying cards: one per DRYING UNIT, on top of the print card (they run simultaneously). Keyed
+  // "<printerId>:<amsId>" — three drying-capable units are fitted, so two concurrent cycles are
+  // ordinary, and a per-printer key showed only the first while the second silently never appeared.
+  const dryInstances = useRef(new Map<string, LiveActivity<PrintActivityProps>>());
+  const dryLastPush = useRef(new Map<string, number>());
+  const dryLastState = useRef(new Map<string, PrintActivityProps>());
+  const drySubs = useRef(new Map<string, { remove: () => void }>());
 
   // Grab the card's APNs push token (now + on rotation) and register it with la-push.
-  const wirePush = (printerId: number, printerName: string, inst: LiveActivity<PrintActivityProps>, kind: 'print' | 'dry' = 'print') => {
+  const wirePush = (printerId: number, printerName: string, inst: LiveActivity<PrintActivityProps>, kind: 'print' | 'dry' = 'print', amsId?: number) => {
     const sm = kind === 'dry' ? drySubs : subs;
-    if (!pushUrl || !apiKey || sm.current.has(printerId)) return;
+    const key = kind === 'dry' ? `${printerId}:${amsId}` : String(printerId);
+    if (!pushUrl || !apiKey || sm.current.has(key)) return;
     try {
-      inst.getPushToken().then((tok) => tok && registerPushToken(pushUrl, apiKey, printerId, printerName, tok, kind)).catch(() => {});
-      const sub = inst.addPushTokenListener((ev) => registerPushToken(pushUrl, apiKey, printerId, printerName, ev.pushToken, kind));
-      sm.current.set(printerId, sub);
+      inst.getPushToken().then((tok) => tok && registerPushToken(pushUrl, apiKey, printerId, printerName, tok, kind, amsId)).catch(() => {});
+      const sub = inst.addPushTokenListener((ev) => registerPushToken(pushUrl, apiKey, printerId, printerName, ev.pushToken, kind, amsId));
+      sm.current.set(key, sub);
     } catch {
       /* older expo-widgets / push disabled — foreground updates still work */
     }
@@ -203,8 +208,8 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
           instances.current.delete(e.printerId);
           lastState.current.delete(e.printerId);
           lastPush.current.delete(e.printerId);
-          subs.current.get(e.printerId)?.remove();
-          subs.current.delete(e.printerId);
+          subs.current.get(String(e.printerId))?.remove();
+          subs.current.delete(String(e.printerId));
         }
         continue;
       }
@@ -234,41 +239,47 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
       }
     }
 
-    // ---- Drying cards: independent lifecycle driven by ams.dry_time (>0 = active). ----
+    // ---- Drying cards: one per unit, lifecycle driven by that unit's ams.dry_time (>0 = active). ----
+    const liveDryKeys = new Set<string>();
     for (const e of entries) {
       if (!e.status) continue;
-      const dcs = toDryContentState(e.status, now, nozzleIconUri(), e.printerName);
-      const dinst = dryInstances.current.get(e.printerId);
-      if (!dcs) {
-        if (dinst) {
-          // Cycle over (or cancelled) -> end the card with a Done face.
-          dinst.end('default', { ...(dryLastState.current.get(e.printerId) ?? GENERIC_END), dry: true, stateLabel: 'Done', finished: true, etaEpochMs: 0 }, new Date(now)).catch(() => {});
-          dryInstances.current.delete(e.printerId);
-          dryLastState.current.delete(e.printerId);
-          dryLastPush.current.delete(e.printerId);
-          drySubs.current.get(e.printerId)?.remove();
-          drySubs.current.delete(e.printerId);
+      for (const amsId of dryingUnitIds(e.status)) {
+        const key = `${e.printerId}:${amsId}`;
+        liveDryKeys.add(key);
+        const dcs = toDryContentState(e.status, now, nozzleIconUri(), e.printerName, amsId);
+        if (!dcs) continue;
+        const dinst = dryInstances.current.get(key);
+        if (!dinst) {
+          try {
+            const ni = printActivity.start(dcs, 'bambu://');
+            dryInstances.current.set(key, ni);
+            dryLastState.current.set(key, dcs);
+            dryLastPush.current.set(key, now);
+            wirePush(e.printerId, e.printerName, ni, 'dry', amsId);
+          } catch {
+            /* disabled by user / not a dev build */
+          }
+          continue;
         }
-        continue;
-      }
-      if (!dinst) {
-        try {
-          const ni = printActivity.start(dcs, 'bambu://');
-          dryInstances.current.set(e.printerId, ni);
-          dryLastState.current.set(e.printerId, dcs);
-          dryLastPush.current.set(e.printerId, now);
-          wirePush(e.printerId, e.printerName, ni, 'dry');
-        } catch {
-          /* disabled by user / not a dev build */
+        const due = now - (dryLastPush.current.get(key) ?? 0) >= MIN_UPDATE_MS;
+        if (due && meaningfulChange(dryLastState.current.get(key) ?? null, dcs)) {
+          dinst.update(dcs).catch(() => {});
+          dryLastState.current.set(key, dcs);
+          dryLastPush.current.set(key, now);
         }
-        continue;
       }
-      const due = now - (dryLastPush.current.get(e.printerId) ?? 0) >= MIN_UPDATE_MS;
-      if (due && meaningfulChange(dryLastState.current.get(e.printerId) ?? null, dcs)) {
-        dinst.update(dcs).catch(() => {});
-        dryLastState.current.set(e.printerId, dcs);
-        dryLastPush.current.set(e.printerId, now);
-      }
+    }
+    // Any card whose unit is no longer drying -> end it with a Done face. Driven by set difference
+    // rather than per-entry, so a unit that vanishes from the payload entirely is still cleaned up.
+    for (const key of [...dryInstances.current.keys()]) {
+      if (liveDryKeys.has(key)) continue;
+      const inst = dryInstances.current.get(key)!;
+      inst.end('default', { ...(dryLastState.current.get(key) ?? GENERIC_END), dry: true, stateLabel: 'Done', finished: true, etaEpochMs: 0 }, new Date(now)).catch(() => {});
+      dryInstances.current.delete(key);
+      dryLastState.current.delete(key);
+      dryLastPush.current.delete(key);
+      drySubs.current.get(key)?.remove();
+      drySubs.current.delete(key);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, pushUrl, apiKey]);
