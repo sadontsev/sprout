@@ -1,4 +1,4 @@
-import { toContentState, meaningfulChange, GENERIC_END } from '../contentState';
+import { toContentState, toDryContentState, dryingUnitIds, meaningfulChange, GENERIC_END } from '../contentState';
 import { presentDashboard } from '../../dashboard/present';
 import type { PrinterStatus } from '../../api/types';
 
@@ -148,5 +148,55 @@ describe('laTint — lock-screen colours must not follow the app theme', () => {
   it('heating (a named sub-stage) is amber, steady printing is green', () => {
     expect(laTint(presentDashboard(status({ stg_cur_name: 'Auto bed leveling' }), 0))).toBe(LA_COLORS.heating);
     expect(laTint(presentDashboard(status(), 0))).toBe(LA_COLORS.running);
+  });
+});
+
+describe('concurrent drying cycles — one card per unit', () => {
+  const threeUnits = (dryTimes: Array<number | string>): PrinterStatus =>
+    ({
+      connected: true,
+      state: 'IDLE',
+      ams: [
+        { id: 0, module_type: 'n3f', dry_time: dryTimes[0], dry_target_temp: 55, dry_filament: 'PETG', temp: 40, humidity: 20, tray: [] },
+        { id: 1, module_type: 'n3f', dry_time: dryTimes[1], dry_target_temp: 55, dry_filament: 'PLA', temp: 38, humidity: 22, tray: [] },
+        { id: 128, module_type: 'n3s', is_ams_ht: true, dry_time: dryTimes[2], dry_target_temp: 85, dry_filament: 'PETG-CF', temp: 60, humidity: 12, tray: [] },
+      ],
+    }) as unknown as PrinterStatus;
+
+  it('reports every actively drying unit, not just the first', () => {
+    expect(dryingUnitIds(threeUnits([90, 0, 120]))).toEqual([0, 128]);
+    expect(dryingUnitIds(threeUnits([90, 45, 120]))).toEqual([0, 1, 128]);
+  });
+
+  it('treats only dry_time > 0 as active, and copes with WebSocket string values', () => {
+    expect(dryingUnitIds(threeUnits([0, 0, 0]))).toEqual([]);
+    expect(dryingUnitIds(threeUnits(['90', '0', '']))).toEqual([0]);
+    expect(dryingUnitIds(null)).toEqual([]);
+  });
+
+  it('builds a DISTINCT card per unit, each naming its own unit and filament', () => {
+    const st = threeUnits([90, 0, 120]);
+    const a = toDryContentState(st, 0, '', 'H2C', 0)!;
+    const b = toDryContentState(st, 0, '', 'H2C', 128)!;
+    expect(a.name).toContain('AMS 1');
+    expect(a.name).toContain('PETG');
+    expect(b.name).toContain('AMS HT');
+    expect(b.name).toContain('PETG-CF');
+    expect(a.name).not.toBe(b.name); // the two lock-screen cards must be tellable apart
+    expect(a.etaEpochMs).not.toBe(b.etaEpochMs);
+    expect(b.amsTarget).toBe(85); // the HT's higher ceiling, not unit 0's 55
+  });
+
+  it('returns null for a unit that is not drying, so no card is started for it', () => {
+    expect(toDryContentState(threeUnits([90, 0, 120]), 0, '', 'H2C', 1)).toBeNull();
+  });
+
+  it('returns null for a unit id that does not exist', () => {
+    expect(toDryContentState(threeUnits([90, 0, 120]), 0, '', 'H2C', 7)).toBeNull();
+  });
+
+  it('without an amsId still falls back to the first drying unit', () => {
+    // Back-compat for callers that only ask "is anything drying".
+    expect(toDryContentState(threeUnits([0, 45, 0]), 0, '', 'H2C')!.name).toContain('AMS 2');
   });
 });

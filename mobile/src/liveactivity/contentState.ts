@@ -123,21 +123,32 @@ export function toContentState(
   };
 }
 
-/** Pure: AMS drying status -> a drying-card ContentState, or null when no cycle is active.
- *  `dry_time` (minutes remaining) > 0 is THE active signal (dry_status is unreliable, and WS numbers
- *  can arrive as strings — verified live on the H2C). The countdown itself renders client-side from
- *  etaEpochMs (ActivityKit timer), so pushes are only needed for temp/humidity drift and the end. */
-export function toDryContentState(status: PrinterStatus, nowMs: number, iconUri = '', printerName = ''): PrintActivityProps | null {
-  // Scan EVERY unit, not ams[0]: the H2C runs an AMS 2 Pro (id 0) plus an AMS HT (id 128), and a
-  // cycle on the HT produced no card at all. The card names its unit so it's unambiguous which one
-  // is drying. NOTE: with two units drying at once this still shows the first — one card per unit
-  // needs the la-push registry keyed per unit too (dry:<pid>:<amsId>), which is a separate change.
+const dnum = (v: unknown): number => {
+  const n = typeof v === 'number' ? v : Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/** Ids of the units with an ACTIVE drying cycle, in payload order.
+ *
+ *  `dry_time` (minutes remaining) > 0 is THE active signal — dry_status stayed 0 mid-cycle on the
+ *  live H2C, and the WebSocket can deliver these as strings. Three drying-capable units are now
+ *  fitted, so concurrent cycles are ordinary rather than theoretical. */
+export function dryingUnitIds(status: PrinterStatus | null): number[] {
+  return (status?.ams ?? []).filter((u) => dnum(u.dry_time) > 0).map((u) => dnum(u.id));
+}
+
+/** Pure: one unit's drying status -> a drying-card ContentState, or null when that unit is idle.
+ *  The countdown renders client-side from etaEpochMs (ActivityKit timer), so pushes are only needed
+ *  for temp/humidity drift and the end.
+ *
+ *  `amsId` selects the unit. Omitted, it falls back to the first unit currently drying — kept so a
+ *  caller that only cares "is anything drying" still works. */
+export function toDryContentState(status: PrinterStatus, nowMs: number, iconUri = '', printerName = '', amsId?: number): PrintActivityProps | null {
+  // Scan EVERY unit, not ams[0]: the H2C runs two AMS 2 Pro plus an AMS HT, and a cycle on the HT
+  // produced no card at all. The card names its unit so it is unambiguous which one is drying.
   const units = status.ams ?? [];
-  const num = (v: unknown): number => {
-    const n = typeof v === 'number' ? v : Number(v ?? 0);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const ams = units.find((u) => num(u.dry_time) > 0) ?? units[0];
+  const num = dnum;
+  const ams = amsId != null ? units.find((u) => num(u.id) === amsId) : units.find((u) => num(u.dry_time) > 0) ?? units[0];
   if (!ams) return null;
   const unitId = num(ams.id);
   const isHt = ams.is_ams_ht === true || unitId >= 128;
