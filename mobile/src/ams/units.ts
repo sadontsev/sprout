@@ -66,7 +66,7 @@ export const extruderSide = (e: number | null | undefined): '' | 'Left' | 'Right
 export interface AmsSlotVM {
   // --- fields below match the legacy AmsTrayVM so existing consumers keep working unchanged ---
   label: string;
-  color: string;
+  color: string | null;
   pct: string;
   active: boolean;
   empty: boolean;
@@ -133,8 +133,6 @@ export function amsTrayRefs(status: PrinterStatus | null): AmsTrayRef[] {
     };
   });
 }
-
-const EMPTY_COLOR = 'transparent';
 
 /** Human label. Regular units are numbered from their own stable id (not array position, which the
  *  printer may reorder); HT units are named by kind, numbered only if there are several. */
@@ -208,7 +206,9 @@ export function presentAms(status: PrinterStatus | null): { units: AmsUnitVM[]; 
       const empty = !tray.tray_type;
       slots.push({
         label: empty ? 'Empty' : tray.tray_type ?? '',
-        color: empty ? EMPTY_COLOR : normColor(tray.tray_color) ?? '#3A3F45',
+        // null = colour unknown. The old '#3A3F45' fallback was a literal dark grey that never
+        // adapted to the light theme and, worse, claimed a colour we do not actually know.
+        color: empty ? null : normColor(tray.tray_color),
         pct: empty ? '—' : `${Math.round(asNum(tray.remain) ?? 0)}%`,
         active: !empty && trayNow != null && trayNow === globalId,
         empty,

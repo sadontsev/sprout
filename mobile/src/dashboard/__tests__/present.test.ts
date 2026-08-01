@@ -394,3 +394,102 @@ describe('nozzleTypeLabel — the tungsten nozzle has an unpublished code', () =
     expect(nozzleTypeLabel('')).toBe('');
   });
 });
+
+describe('normColor — Bambu\'s alpha-00 sentinel is NOT black', () => {
+  const { normColor } = require('@/dashboard/present');
+
+  it('treats alpha exactly 00 as "no colour", not as #000000', () => {
+    // This is what made an unknown-colour slot render as solid black filament, and in the print
+    // wizard that fake black even overrode the inventory spool's real colour.
+    expect(normColor('00000000')).toBeNull();
+    expect(normColor('FFFFFF00')).toBeNull();
+  });
+
+  it('keeps a genuine colour that merely has partial alpha', () => {
+    expect(normColor('C9A38180')).toBe('#C9A381'); // alpha 0x80 — a real colour
+    expect(normColor('565656FF')).toBe('#565656');
+    expect(normColor('161616FF')).toBe('#161616');
+  });
+
+  it('rejects junk instead of emitting a malformed colour', () => {
+    // One call site fed raw MakerWorld values straight into a React Native backgroundColor, where
+    // '#TRANSP' is an invalid colour.
+    for (const bad of ['transparent', '#GGGGGG', 'abc', '12345', null, undefined, ''])
+      expect(normColor(bad as never)).toBeNull();
+  });
+
+  it('accepts 6-digit and #-prefixed forms', () => {
+    expect(normColor('565656')).toBe('#565656');
+    expect(normColor('#565656')).toBe('#565656');
+  });
+});
+
+describe('swatch ring contrast — the guarantee the fix rests on', () => {
+  const { contrastRatio } = require('@/dashboard/present');
+  const { themes } = require('@/theme');
+
+  it('the ring clears 3:1 against EVERY surface a swatch can sit on, in both themes', () => {
+    // The ring separates the swatch from the CARD, so this is the only contrast that matters — and
+    // because it does not depend on the fill, it holds for colours nobody has tested.
+    for (const name of ['dark', 'light'] as const) {
+      const t = themes[name];
+      for (const surface of ['bg', 's1', 's2', 's3', 's4', 'sheet'] as const) {
+        const ratio = contrastRatio(t.swatchRing, t[surface]);
+        expect(ratio).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it('beats the old hairline, which was the reason bordered swatches still vanished', () => {
+    // c.line2 is ~12-13% alpha; composited over its own surface it is nowhere near 3:1.
+    for (const name of ['dark', 'light'] as const) {
+      const t = themes[name];
+      expect(contrastRatio(t.swatchRing, t.s1)).toBeGreaterThan(3);
+    }
+  });
+});
+
+describe('colorName — saying "white" in words, because a swatch cannot', () => {
+  const { colorName } = require('@/dashboard/present');
+
+  it('names the live filaments on this machine', () => {
+    expect(colorName('#FFFFFF')).toBe('White'); // the two AMS 1 spools that were invisible
+    expect(colorName('#000000')).toBe('Black');
+    expect(colorName('#565656')).toBe('Dark grey'); // L=0.34, genuinely below mid-grey
+    expect(colorName('#808080')).toBe('Grey');
+    expect(colorName('#DBC8B6')).toBe('Pale beige');
+  });
+
+  it('separates white from off-white and from light grey', () => {
+    expect(colorName('#F5F5F0')).toBe('Off-white');
+    expect(colorName('#C8C8C8')).toBe('Light grey');
+    expect(colorName('#3A3A3A')).toBe('Dark grey');
+  });
+
+  it('names saturated hues', () => {
+    expect(colorName('#C12E1F')).toBe('Red');
+    expect(colorName('#30D158')).toBe('Green');
+    expect(colorName('#0A84FF')).toBe('Blue');
+    expect(colorName('#F330F9')).toBe('Pink');
+  });
+
+  it('returns null for an unknown colour rather than inventing one', () => {
+    for (const bad of [null, undefined, '', '#GGG', 'white']) expect(colorName(bad as never)).toBeNull();
+  });
+});
+
+describe('inkOn — the glyph drawn on top of a swatch', () => {
+  const { inkOn } = require('@/dashboard/present');
+
+  it('goes dark on light fills and light on dark fills', () => {
+    // A hard-coded '#fff' chevron was invisible on a white nozzle chip.
+    expect(inkOn('#FFFFFF')).toBe('#0D1012');
+    expect(inkOn('#DBC8B6')).toBe('#0D1012');
+    expect(inkOn('#000000')).toBe('#FFFFFF');
+    expect(inkOn('#565656')).toBe('#FFFFFF');
+  });
+
+  it('defaults to light ink when there is no fill', () => {
+    expect(inkOn(null)).toBe('#FFFFFF');
+  });
+});

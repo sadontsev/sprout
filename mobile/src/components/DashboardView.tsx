@@ -9,6 +9,7 @@ import { alertSummary, type AlertVM } from '@/alerts/present';
 import type { CooldownVM } from '@/cooling/present';
 import type { Printer } from '@/api/types';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton, Pop, Breathe } from './anim';
+import { Swatch } from './Swatch';
 
 export interface DashHandlers {
   onSettings: () => void;
@@ -361,7 +362,7 @@ export function DashboardView({
                 contentContainerStyle={{ flexDirection: 'row', gap: 10, flexGrow: 1 }}>
                 {vm.ams.map((t, i) => (
                   <View key={`${t.unitId}:${t.localId}`} style={{ flex: vm.ams.length > 4 ? undefined : 1, minWidth: vm.ams.length > 4 ? 74 : undefined, paddingVertical: 11, paddingHorizontal: 8, borderRadius: 15, backgroundColor: c.s1, alignItems: 'center', gap: 8, borderWidth: t.active ? 1.5 : 1, borderColor: t.active ? c.accent : c.line }}>
-                    <View style={{ width: 32, height: 32, borderRadius: 9, backgroundColor: t.empty ? 'transparent' : t.color, borderWidth: t.empty ? 1 : 0, borderColor: c.line2, borderStyle: t.empty ? 'dashed' : 'solid' }} />
+                    <Swatch value={t.color} size={32} radius={9} empty={t.empty} />
                     <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 9.5, color: c.t2 }}>{t.label}</Text>
                     <Text style={{ fontWeight: '600', fontSize: 11, color: c.t1, fontFamily: mono, fontVariant: ['tabular-nums'] }}>{t.pct}</Text>
                     {t.active ? <PulseDot color={c.accent} size={5} period={2000} /> : <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: c.accent, opacity: 0 }} />}

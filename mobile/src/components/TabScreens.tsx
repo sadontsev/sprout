@@ -18,7 +18,8 @@ import { otherPlugs, plugAutomations, plugLabel } from '@/power/present';
 import { usePlugState } from '@/power/usePlugState';
 import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFile, PrinterFileList, PrinterFilePlates } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
-import { presentDashboard, presentNozzles, fmtDuration, normColor, asNum } from '@/dashboard/present';
+import { presentDashboard, presentNozzles, fmtDuration, normColor, colorName, inkOn, asNum } from '@/dashboard/present';
+import { Swatch } from './Swatch';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, ExtrudeBar, Spark, Breathe, Toggle, FadeRise } from './anim';
 
 function fmtBytes(n?: number): string {
@@ -866,9 +867,12 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
         {vm.ams.map((t) => {
           const spool = spoolForSlot(t);
           const swatch = spool ? (normColor(spool.rgba ?? undefined) ?? t.color) : t.color;
+          // Name the colour in words too. A swatch cannot say "white" — on a white card it is a
+          // hole — and the row otherwise read just "PETG". A vendor's own name always wins.
+          const named = spool?.color_name ?? colorName(swatch);
           const title = spool
-            ? (spool.color_name ? `${spool.color_name} ${spool.material}` : spool.material)
-            : (t.empty ? 'Empty slot' : t.label);
+            ? (spool.color_name ? `${spool.color_name} ${spool.material}` : [colorName(swatch), spool.material].filter(Boolean).join(' '))
+            : (t.empty ? 'Empty slot' : [named, t.label].filter(Boolean).join(' '));
           const grams = spool ? spoolGramsRemaining(spool) : null;
           // Name the slot by its UNIT once there's more than one — "Slot 1" is ambiguous across units.
           const slotName = vm.amsUnits.length > 1 ? `${t.unitLabel} · Slot ${t.localId + 1}` : `Slot ${t.localId + 1}`;
@@ -889,7 +893,7 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
           return (
             <View key={t.globalId} style={{ padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: t.active ? 1.5 : 1, borderColor: t.active ? c.accent : c.line, ...shadow1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                <View style={{ width: 46, height: 46, borderRadius: 12, backgroundColor: t.empty ? 'transparent' : swatch, borderWidth: t.empty ? 1 : 0, borderColor: c.line2, borderStyle: t.empty ? 'dashed' : 'solid' }} />
+                <Swatch value={swatch} size={46} radius={12} empty={t.empty} />
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Text numberOfLines={1} style={{ fontWeight: '700', fontSize: 16, color: c.t1, flexShrink: 1 }}>{title}</Text>
@@ -1151,9 +1155,7 @@ function NozzleCard({ n, showMounted }: { n: NozzleCardVM; showMounted: boolean 
   const highlight = showMounted && n.engaged; // spotlight the nozzle physically in the head
   return (
     <View style={{ width: '47%', flexGrow: 1, padding: 13, borderRadius: 15, backgroundColor: c.s1, borderWidth: highlight ? 1.5 : 1, borderColor: highlight ? c.accent : c.line, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
-      <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: n.colorHex ?? c.s3, borderWidth: n.colorHex ? 0 : 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
-        <Feather name="chevron-down" size={14} color={n.colorHex ? '#fff' : c.t3} />
-      </View>
+      <Swatch value={n.colorHex} size={30} radius={8} ink={<Feather name="chevron-down" size={14} color={inkOn(n.colorHex)} />} />
       <View style={{ flex: 1 }}>
         {/* Wraps: on a half-width card "0.4 mm" + HIGH FLOW + ENGAGED overflows on one line, and the
             last chip was being clipped at the card edge. */}
@@ -1586,7 +1588,7 @@ function HistoryRow({ entry, client, camToken, sym, onReprint }: { entry: PrintL
           </View>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
-          {swatch && <View style={{ width: 11, height: 11, borderRadius: 3, backgroundColor: swatch, borderWidth: 1, borderColor: c.line2 }} />}
+          {swatch && <Swatch value={swatch} size={11} radius={3} />}
           <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>{relTime(entry.started_at)}</Text>
           {facts.length > 0 && <Text style={{ fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>· {facts.join(' · ')}</Text>}
           {cost != null && cost > 0 && (

@@ -6,12 +6,13 @@ import Animated, { SlideInDown, FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { amsTrayRefs } from '@/ams/units';
+import { Swatch } from './Swatch';
 import * as DocumentPicker from 'expo-document-picker';
 import { c, mono, shadow1 } from '@/theme';
 import { apiErrorDetail, type BambuddyClient } from '@/api/bambuddyClient';
 import type { TexturizeClient, TexturizeTexture, TexturizeMappingMode } from '@/api/texturizeClient';
 import type { LibraryFile, Printer, PrinterStatus, MakerWorldResolved, MWInstance, PlatesResponse, FileMetadata, SlotAssignment } from '@/api/types';
-import { presentDashboard, normColor } from '@/dashboard/present';
+import { presentDashboard, normColor, colorName } from '@/dashboard/present';
 import { buildPlateReview, fmtSeconds } from '@/library/plateReview';
 import { displayName } from '@/library/libraryBrowse';
 import { loadedFilaments, catalogFilaments, type LoadedFilament } from '@/library/filamentMatch';
@@ -589,7 +590,7 @@ export function MakerWorldSheet({ client, onClose, onBack, onImported }: { clien
                               </Text>
                               <View style={{ flexDirection: 'row', gap: 3 }}>
                                 {fils.slice(0, 4).map((f, k) => (
-                                  <View key={k} style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: f.color || c.s4, borderWidth: 1, borderColor: c.line2 }} />
+                                  <Swatch key={k} value={normColor(f.color ?? undefined)} size={9} radius={5} />
                                 ))}
                               </View>
                             </View>
@@ -877,7 +878,7 @@ export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlat
         <View style={{ marginTop: 14, borderRadius: 14, backgroundColor: c.s2, overflow: 'hidden' }}>
           {vm.filaments.map((f, i) => (
             <View key={f.slot} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: c.line }}>
-              <View style={{ width: 22, height: 22, borderRadius: 7, backgroundColor: normColor(f.color ?? undefined) ?? c.s4, borderWidth: 1, borderColor: c.line2 }} />
+              <Swatch value={normColor(f.color ?? undefined)} size={22} radius={7} />
               <Text style={{ flex: 1, fontWeight: '600', fontSize: 13, color: c.t1 }}>{f.type}</Text>
               <Text style={{ fontWeight: '500', fontSize: 12, color: c.t3, fontFamily: mono }}>
                 {f.grams != null ? `${f.grams.toFixed(1)} g` : ''}{f.meters != null ? `  ·  ${f.meters.toFixed(2)} m` : ''}
@@ -1280,9 +1281,9 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
                         onPress={() => { if (f.preset) { setFilament(f.preset); setSlot(f.slot); } }}
                         disabled={!f.preset}
                         style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 13, backgroundColor: c.s2, borderWidth: sel ? 1.5 : 0, borderColor: c.accent, opacity: f.preset ? 1 : 0.5 }}>
-                        <View style={{ width: 30, height: 30, borderRadius: 9, backgroundColor: f.colorHex ?? c.s4, borderWidth: 1, borderColor: c.line2 }} />
+                        <Swatch value={f.colorHex} size={30} radius={9} />
                         <View style={{ flex: 1 }}>
-                          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{f.colorName ? `${f.colorName} · ${f.material}` : f.material}</Text>
+                          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{(() => { const n = f.colorName ?? colorName(f.colorHex); return n ? `${n} · ${f.material}` : f.material; })()}</Text>
                           <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11, color: c.t3, fontFamily: mono }}>Slot {f.slot + 1}{f.preset ? '' : ' · no matching profile'}</Text>
                         </View>
                         {sel && <Feather name="check" size={16} color={c.accent} />}
@@ -1465,10 +1466,10 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
                   const multi = new Set(trays.map((x) => x.unitId)).size > 1;
                   return (
                     <Tap key={t.globalId} onPress={() => !empty && setSlot(t.globalId)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 13, borderRadius: 13, backgroundColor: c.s2, opacity: empty ? 0.4 : 1, borderWidth: slot === t.globalId ? 1.5 : 0, borderColor: c.accent }}>
-                      <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: empty ? 'transparent' : normColor(t.trayColor) ?? c.s4, borderWidth: empty ? 1 : 0, borderColor: c.line2, borderStyle: 'dashed' }} />
+                      <Swatch value={normColor(t.trayColor)} size={28} radius={8} empty={empty} />
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>
-                          {multi ? `${t.unitLabel} · Slot ${t.localId + 1}` : `Slot ${t.localId + 1}`} · {empty ? 'Empty' : t.trayType}
+                          {multi ? `${t.unitLabel} · Slot ${t.localId + 1}` : `Slot ${t.localId + 1}`} · {empty ? 'Empty' : [colorName(normColor(t.trayColor)), t.trayType].filter(Boolean).join(' ')}
                         </Text>
                       </View>
                       {slot === t.globalId && <Feather name="check" size={16} color={c.accent} />}
