@@ -79,8 +79,28 @@ export interface PrinterStatus {
       drying_time?: number | string;
     }>;
   }>;
-  /** Active tray index across the AMS (Bambu `tray_now`; 255 = none/external). */
+  /** Active tray index across the AMS (Bambu `tray_now`; 255 = none/external). NOTE: on H2-series
+   *  firmware this can degenerate to a LOCAL slot (0-3), which is ambiguous once more than one
+   *  4-slot unit is fitted — see amsRouting() before treating it as a global id. */
   tray_now?: number;
+  /** Which extruder each AMS unit feeds, keyed by unit id. Bambuddy derives this from each unit's
+   *  `info` bits and SKIPS units reporting 0xE ("no fixed extruder"). It is merge-only and never
+   *  pruned, so entries can be stale residue. Do NOT trust it when `fila_switch.installed` — see
+   *  amsRouting() in src/ams/units.ts. */
+  ams_extruder_map?: Record<string, number>;
+  /** Filament Track Switch: routes AMS units to either extruder dynamically, which is why
+   *  FTS-routed units never appear in ams_extruder_map.
+   *  `in_slots` is per inlet, packed (ams_id << 8) | slot, -1 when empty.
+   *  `out_extruders` is the extruder each outlet feeds (0xE = none). */
+  fila_switch?: {
+    installed?: boolean;
+    in_slots?: number[];
+    out_extruders?: number[];
+    stat?: number;
+    info?: number;
+  };
+  ams_exists?: boolean;
+  ams_filament_backup?: boolean;
   hms_errors?: HmsError[];
   print_error?: number;
   /** 1 Silent | 2 Standard | 3 Sport | 4 Ludicrous — the printer's real speed mode. */

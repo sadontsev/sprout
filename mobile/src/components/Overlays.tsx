@@ -5,6 +5,7 @@ import { WebView } from 'react-native-webview';
 import Animated, { SlideInDown, FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { amsTrayRefs } from '@/ams/units';
 import * as DocumentPicker from 'expo-document-picker';
 import { c, mono, shadow1 } from '@/theme';
 import { apiErrorDetail, type BambuddyClient } from '@/api/bambuddyClient';
@@ -1036,14 +1037,17 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
       Alert.alert('Wrong printer', `This file was sliced for ${slicedFor}. Reslice it for ${printer?.name ?? 'this printer'} before printing.`);
       return;
     }
-    if (slot < 0 || slot > 3) {
+    if (!trays.some((t) => t.globalId === slot && t.trayType)) {
       Alert.alert('Pick a slot', 'Choose which AMS slot to print from first.');
       return;
     }
     setStarting(true);
     try {
-      const mapping = Array(4).fill(-1);
-      mapping[slot] = 0;
+      // ams_mapping is Bambu's own print-command field: indexed by FILAMENT, valued by GLOBAL tray
+      // id (Bambuddy decodes it with gid>=254 -> external, >=128 -> HT, else gid//4, gid%4). The old
+      // `Array(4).fill(-1); mapping[slot] = 0` had index and value swapped, so it debited the wrong
+      // spool and could not address anything past the first unit at all.
+      const mapping = [slot];
       await client.enqueue({
         printer_id: printerId,
         library_file_id: result?.library_file_id ?? file.id,
@@ -1079,7 +1083,9 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
     7: 'Review, then send it to the queue',
   };
 
-  const trays = status?.ams?.[0]?.tray ?? [];
+  // Every tray across EVERY unit. This used to be `status.ams[0].tray`, which made 5 of the 9 slots
+  // on a three-unit machine invisible and unprintable.
+  const trays = amsTrayRefs(status);
   // Filaments actually loaded in the AMS, mapped to slicer presets (drops support material).
   const loaded: LoadedFilament[] = presets ? loadedFilaments(trays, assigns, presets.allFilaments, token, nozzle).filter((f) => !f.isSupport) : [];
 
@@ -1087,6 +1093,7 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
   const loadedKey = loaded.map((f) => `${f.slot}:${f.preset?.id ?? ''}`).join(',');
   useEffect(() => {
     if (defaultedRef.current || !presets) return;
+    // f.slot is the GLOBAL id, which is the same space as tray_now.
     const active = loaded.find((f) => f.slot === (status?.tray_now ?? -1) && f.preset) ?? loaded.find((f) => f.preset);
     if (active?.preset) {
       setFilament(active.preset);
@@ -1451,16 +1458,20 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
             <>
               <L>AMS SLOT</L>
               <View style={{ gap: 9 }}>
-                {[0, 1, 2, 3].map((i) => {
-                  const tray = trays[i];
-                  const empty = !tray?.tray_type;
+                {/* One row per REAL tray across every unit — the list was hardcoded to four rows,
+                    which on a three-unit machine showed AMS 1 only and labelled them ambiguously. */}
+                {trays.map((t) => {
+                  const empty = !t.trayType;
+                  const multi = new Set(trays.map((x) => x.unitId)).size > 1;
                   return (
-                    <Tap key={i} onPress={() => !empty && setSlot(i)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 13, borderRadius: 13, backgroundColor: c.s2, opacity: empty ? 0.4 : 1, borderWidth: slot === i ? 1.5 : 0, borderColor: c.accent }}>
-                      <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: empty ? 'transparent' : normColor(tray?.tray_color) ?? c.s4, borderWidth: empty ? 1 : 0, borderColor: c.line2, borderStyle: 'dashed' }} />
+                    <Tap key={t.globalId} onPress={() => !empty && setSlot(t.globalId)} style={{ flexDirection: 'row', alignItems: 'center', gap: 13, padding: 13, borderRadius: 13, backgroundColor: c.s2, opacity: empty ? 0.4 : 1, borderWidth: slot === t.globalId ? 1.5 : 0, borderColor: c.accent }}>
+                      <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: empty ? 'transparent' : normColor(t.trayColor) ?? c.s4, borderWidth: empty ? 1 : 0, borderColor: c.line2, borderStyle: 'dashed' }} />
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Slot {i + 1} · {empty ? 'Empty' : tray?.tray_type}</Text>
+                        <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>
+                          {multi ? `${t.unitLabel} · Slot ${t.localId + 1}` : `Slot ${t.localId + 1}`} · {empty ? 'Empty' : t.trayType}
+                        </Text>
                       </View>
-                      {slot === i && <Feather name="check" size={16} color={c.accent} />}
+                      {slot === t.globalId && <Feather name="check" size={16} color={c.accent} />}
                     </Tap>
                   );
                 })}

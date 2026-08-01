@@ -174,3 +174,18 @@ test('dryDefaultFor: exact type, base-type prefix, then generic', () => {
   expect(dryDefaultFor('PLA-CF')).toEqual(DRY_DEFAULTS.PLA);
   expect(dryDefaultFor('WEIRDIUM')).toEqual({ temp: 55, hours: 8 }); // generic
 });
+
+describe('amsId is normalized like the rest of the topology', () => {
+  it('coerces a string unit id from the WebSocket, so the unit-label join still matches', () => {
+    // The dryer card looks its unit up with `amsUnits.find(u => u.id === d.amsId)`; units.ts coerces
+    // its ids, so leaving this one raw made every WS-delivered id miss and mislabel the card.
+    const ws = {
+      connected: true,
+      supports_drying: true,
+      ams: [{ id: '128', module_type: 'n3s', is_ams_ht: true, dry_time: '42', tray: [{ id: 0, tray_type: 'PETG-CF' }] }],
+    } as unknown as PrinterStatus;
+    const [d] = presentDryer(ws);
+    expect(d.amsId).toBe(128);
+    expect(typeof d.amsId).toBe('number');
+  });
+});

@@ -1,4 +1,5 @@
 import { normColor } from '@/dashboard/present';
+import type { AmsTrayRef } from '@/ams/units';
 import type { Preset, NozzleSize } from '@/library/presetSelect';
 
 export type FilamentPreset = Preset;
@@ -18,7 +19,11 @@ export interface AssignmentLike {
 
 /** A filament actually loaded in an AMS tray, mapped to a slicer preset + its real color. */
 export interface LoadedFilament {
-  slot: number; // AMS tray id (0-based)
+  /** GLOBAL tray id — what tray_now, ams/load and ams_mapping VALUES all speak. NOT a local index:
+   *  with three units fitted, local ids collide three ways. */
+  slot: number;
+  unitLabel: string; // "AMS 2"
+  localId: number; // position inside its unit, for display ("Slot 3")
   material: string; // tray_type, e.g. "PETG-CF"
   colorHex: string | null;
   colorName: string | null;
@@ -89,9 +94,12 @@ export function matchFilamentPreset(
   return null;
 }
 
-/** Build the loaded-filament options from AMS trays, enriched by inventory assignments + presets. */
+/** Build the loaded-filament options from AMS trays, enriched by inventory assignments + presets.
+ *
+ *  Takes tray REFS (unit-aware) rather than one unit's tray array: it used to be handed
+ *  `status.ams[0].tray`, so every unit after the first was invisible to the print wizard. */
 export function loadedFilaments(
-  trays: AmsTray[],
+  trays: AmsTrayRef[],
   assignments: AssignmentLike[],
   presets: FilamentPreset[],
   token = '@BBL A1',
@@ -99,13 +107,20 @@ export function loadedFilaments(
 ): LoadedFilament[] {
   const out: LoadedFilament[] = [];
   for (const t of trays) {
-    if (!t.tray_type) continue; // empty slot
-    const asg = assignments.find((a) => a.tray_id === t.id);
+    if (!t.trayType) continue; // empty slot
+    // Match on BOTH ids. Matching tray_id alone made AMS 2 slot 0 inherit AMS 1 slot 0's spool —
+    // wrong brand and colour, and a wrong slicer preset driving the slice. ams_id is optional on the
+    // assignment, so a legacy record with no unit still matches its tray as before.
+    const asg =
+      assignments.find((a) => a.tray_id === t.localId && a.ams_id === t.unitId) ??
+      assignments.find((a) => a.tray_id === t.localId && a.ams_id == null);
     const slicerName = asg?.spool?.slicer_filament_name ?? null;
-    const material = t.tray_type;
-    const colorHex = normColor(t.tray_color) ?? (asg?.spool?.rgba ? normColor(asg.spool.rgba) : null);
+    const material = t.trayType;
+    const colorHex = normColor(t.trayColor) ?? (asg?.spool?.rgba ? normColor(asg.spool.rgba) : null);
     out.push({
-      slot: t.id,
+      slot: t.globalId,
+      unitLabel: t.unitLabel,
+      localId: t.localId,
       material,
       colorHex,
       colorName: asg?.spool?.color_name ?? null,

@@ -1,5 +1,5 @@
 import { c } from '../theme';
-import { presentAms, type AmsUnitVM, type AmsSlotVM } from '../ams/units';
+import { presentAms, type AmsUnitVM, type AmsSlotVM, type AmsRouting } from '../ams/units';
 import type { PrinterStatus } from '../api/types';
 
 export type DashKind = 'connecting' | 'offline' | 'idle' | 'live' | 'complete' | 'error';
@@ -57,6 +57,8 @@ export interface DashVM {
   ams: AmsSlotVM[];
   /** The units those slots belong to — grouping, capacity, drying ceiling, fed extruder. */
   amsUnits: AmsUnitVM[];
+  /** 'switch' when a Filament Track Switch routes units dynamically, so no unit has a fixed extruder. */
+  amsRouting: AmsRouting;
 }
 
 const round = (n: number | undefined | null): number => Math.round(Number(n ?? 0)) || 0;
@@ -102,7 +104,8 @@ export function normColor(hex?: string): string | null {
 export interface RackNozzleVM {
   key: string;
   diameter: string; // "0.4 mm"
-  type: string; // "Hardened" | "Stainless"
+  type: string; // "Hardened" | "Stainless" | "Tungsten Carbide" — MATERIAL only
+  flow: string; // "High flow" | "Standard flow" | '' when the code says nothing about flow
   colorHex: string | null; // per-nozzle filament MEMORY (last filament run through it), not "threaded now"
   serial: string; // short tail of the RFID serial, '' for chipless nozzles (sn "N/A")
   mounted: boolean; // has filament memory — a docked vortex nozzle keeps its color chip
@@ -117,29 +120,66 @@ export interface ToolheadVM {
   nozzles: RackNozzleVM[];
 }
 
+/**
+ * H2-series nozzle codes are structured, not opaque: `H` + flow + a two-digit MATERIAL id.
+ *
+ *   HS00  standard flow, stainless steel      HS01  standard flow, hardened steel
+ *   HH01  high flow,     hardened steel       HH05  high flow,     tungsten carbide
+ *
+ * Decoded from the live H2C rack + owner ground truth (2026-08-01): HS01 and HH01 are both 0.4 mm
+ * / 350 °C and differ only in the middle letter, which pins that letter as flow rather than
+ * material; HH05 is the owner's tungsten nozzle. Treating the parts separately means a nozzle Bambu
+ * ships tomorrow still reports its flow correctly instead of falling back to a raw code.
+ */
+const NOZZLE_MATERIAL: Record<string, string> = {
+  '00': 'Stainless',
+  '01': 'Hardened',
+  '05': 'Tungsten Carbide',
+};
+/** Long-form codes some machines (A1) report instead of the H2 short codes. */
 const NOZZLE_TYPE_LABEL: Record<string, string> = {
-  HS01: 'Hardened',
-  HS00: 'Stainless',
   hardened_steel: 'Hardened',
   stainless_steel: 'Stainless',
   tungsten_carbide: 'Tungsten Carbide',
   hardened_tungsten: 'Hardened Tungsten',
 };
 
+const H2_CODE = /^H([SH])(\d{2})$/;
+
 /**
- * Human label for a nozzle type code. The map can't be exhaustive — Bambu adds codes with new
- * hardware (a tungsten nozzle is arriving and its code isn't published), and the old `?? code`
- * fallback printed a raw `HS02` next to cards reading "Hardened", which reads like a material name.
- * So: known code -> label; snake_case -> Title Case; anything else -> "Type <code>", which at least
- * reads as a machine code. Never returns a bare unknown token.
+ * Human label for a nozzle type code — the MATERIAL only; flow is reported separately by
+ * {@link nozzleFlowLabel} so the two facts can be shown independently.
+ *
+ * The map can't be exhaustive — Bambu adds codes with new hardware — and a bare `?? code` fallback
+ * printed a raw `HS02` next to cards reading "Hardened", which reads like a material name. So:
+ * structured code -> material; snake_case -> Title Case; anything else -> "Type <code>", which at
+ * least reads as a machine code. Never returns a bare unknown token.
  */
 export function nozzleTypeLabel(t?: string | null): string {
   if (!t) return '';
+  const m = H2_CODE.exec(t);
+  if (m) {
+    const material = NOZZLE_MATERIAL[m[2]];
+    if (material) return material;
+    return `Type ${t}`; // known shape, unknown material — don't invent one
+  }
   const known = NOZZLE_TYPE_LABEL[t];
   if (known) return known;
   if (t.includes('_')) return t.split('_').map((w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)).join(' ');
   return `Type ${t}`;
 }
+
+/**
+ * "High flow" | "Standard flow" | '' — decoded from the code's flow letter, which is readable even
+ * when the material digits are not. Empty when the code carries no flow information at all (A1's
+ * long-form names), so callers can simply omit the chip.
+ */
+export function nozzleFlowLabel(t?: string | null): string {
+  const m = t ? H2_CODE.exec(t) : null;
+  if (!m) return '';
+  return m[1] === 'H' ? 'High flow' : 'Standard flow';
+}
+
 const nozzleType = (t?: string): string => nozzleTypeLabel(t);
 const nozzleDia = (d?: string | number): string => {
   const n = asNum(d);
@@ -173,6 +213,7 @@ export function presentNozzles(status: PrinterStatus | null): { toolheads: Toolh
         key: String(r.id),
         diameter: nozzleDia(r.nozzle_diameter),
         type: nozzleType(r.nozzle_type),
+        flow: nozzleFlowLabel(r.nozzle_type),
         colorHex: mounted ? normColor(r.filament_color) : null,
         serial: chipless ? '' : r.serial_number!.slice(-4),
         mounted,
@@ -209,12 +250,13 @@ export function presentNozzles(status: PrinterStatus | null): { toolheads: Toolh
       const spec = dual ? info[1 - i] : info[i];
       const diameter = nozzleDia(spec?.nozzle_diameter);
       const type = nozzleType(spec?.nozzle_type);
+      const flow = nozzleFlowLabel(spec?.nozzle_type);
       return {
         side: dual ? (i === 0 ? 'left' : 'right') : 'single',
         label: dual ? (i === 0 ? 'Left' : 'Right') : 'Nozzle',
         active: n.active,
         swappable: false,
-        nozzles: diameter || type ? [{ key: `m${i}`, diameter, type, colorHex: null, serial: '', mounted: n.active, engaged: n.active }] : [],
+        nozzles: diameter || type ? [{ key: `m${i}`, diameter, type, flow, colorHex: null, serial: '', mounted: n.active, engaged: n.active }] : [],
       };
     })
     .filter((t) => t.nozzles.length > 0);
@@ -261,6 +303,7 @@ function base(): DashVM {
     awaitingPlateClear: false,
     ams: [],
     amsUnits: [],
+    amsRouting: 'fixed',
   };
 }
 
@@ -332,7 +375,7 @@ export function presentDashboard(status: PrinterStatus | null, nowMs = 0): DashV
   // ALL units, not just ams[0] — the H2C already runs an AMS 2 Pro (id 0) alongside an AMS HT
   // (id 128). presentAms also owns the tray-id math: `active` compares tray_now to the GLOBAL id,
   // where this used to compare it to a local index (right only by luck for unit 0).
-  const { units: amsUnits, slots: ams } = presentAms(status);
+  const { units: amsUnits, slots: ams, routing: amsRouting } = presentAms(status);
 
   const speedIdx = status.speed_level && status.speed_level >= 1 && status.speed_level <= 4 ? status.speed_level : 2;
   const hmsCount = status.hms_errors?.length ?? 0;
@@ -365,6 +408,7 @@ export function presentDashboard(status: PrinterStatus | null, nowMs = 0): DashV
     awaitingPlateClear: status.awaiting_plate_clear === true,
     ams,
     amsUnits,
+    amsRouting,
   };
 
   // A real failure: the backend's print_error, or an explicit failed state. An hms_errors entry

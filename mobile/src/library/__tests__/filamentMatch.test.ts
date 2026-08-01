@@ -1,4 +1,15 @@
-import { matchFilamentPreset, loadedFilaments, type FilamentPreset, type AmsTray, type AssignmentLike } from '../filamentMatch';
+import { matchFilamentPreset, loadedFilaments, type FilamentPreset, type AssignmentLike } from '../filamentMatch';
+import type { AmsTrayRef } from '@/ams/units';
+
+/** Build a unit-0 tray ref, matching the pre-multi-unit fixtures (global id === local id there). */
+const ref = (localId: number, trayType?: string, trayColor?: string, unitId = 0): AmsTrayRef => ({
+  unitId,
+  unitLabel: unitId >= 128 ? 'AMS HT' : `AMS ${unitId + 1}`,
+  localId,
+  globalId: unitId >= 128 ? unitId : unitId * 4 + localId,
+  trayType,
+  trayColor,
+});
 
 const PRESETS: FilamentPreset[] = [
   { id: 'a', name: 'Bambu PLA Basic @BBL A1' },
@@ -50,11 +61,11 @@ describe('matchFilamentPreset with the H2C token', () => {
 
 describe('loadedFilaments', () => {
   // Real AMS shape: tray 0 support, 1 PETG-CF (gray), 2 PLA (black), 3 empty.
-  const TRAYS: AmsTray[] = [
-    { id: 0, tray_type: 'PLA-S', tray_color: '00000000', remain: 100 },
-    { id: 1, tray_type: 'PETG-CF', tray_color: '565656FF', remain: 100 },
-    { id: 2, tray_type: 'PLA', tray_color: '000000FF', remain: 100 },
-    { id: 3, tray_type: undefined, tray_color: undefined, remain: 0 },
+  const TRAYS: AmsTrayRef[] = [
+    ref(0, 'PLA-S', '00000000'),
+    ref(1, 'PETG-CF', '565656FF'),
+    ref(2, 'PLA', '000000FF'),
+    ref(3, undefined, undefined),
   ];
   const ASSIGNS: AssignmentLike[] = [
     { tray_id: 1, spool: { material: 'PETG-CF', color_name: 'Titan Gray', rgba: '565656FF', slicer_filament_name: 'Bambu PETG-CF' } },
@@ -135,9 +146,52 @@ describe('loadedFilaments — nozzle size', () => {
       { id: 'bare', name: 'Bambu PETG HF @BBL H2C' },
       { id: 'six', name: 'Bambu PETG HF @BBL H2C 0.6 nozzle' },
     ];
-    const trays: AmsTray[] = [{ id: 0, tray_type: 'PETG', tray_color: '000000FF' }];
+    const trays: AmsTrayRef[] = [ref(0, 'PETG', '000000FF')];
     const asg: AssignmentLike[] = [];
     expect(loadedFilaments(trays, asg, P, '@BBL H2C', '0.6')[0].preset?.id).toBe('six');
     expect(loadedFilaments(trays, asg, P, '@BBL H2C', '0.4')[0].preset?.id).toBe('bare');
+  });
+});
+
+describe('loadedFilaments across MULTIPLE AMS units', () => {
+  const P: FilamentPreset[] = [
+    { id: 'petg', name: 'Bambu PETG-CF @BBL H2C', filament_type: 'PETG' } as FilamentPreset,
+    { id: 'pla', name: 'Bambu PLA Basic @BBL H2C', filament_type: 'PLA' } as FilamentPreset,
+  ];
+  // Two AMS 2 Pro units + an HT, as fitted. Each unit has a local tray 0 — they must not collide.
+  const TRAYS = [ref(0, 'PETG-CF', '565656FF', 0), ref(0, 'PLA', '000000FF', 1), ref(0, 'PETG-CF', 'FFFFFFFF', 128)];
+
+  it('emits GLOBAL tray ids, so slots stay addressable across units', () => {
+    const out = loadedFilaments(TRAYS, [], P, '@BBL H2C', '0.4');
+    expect(out.map((f) => f.slot)).toEqual([0, 4, 128]);
+    expect(out.map((f) => f.unitLabel)).toEqual(['AMS 1', 'AMS 2', 'AMS HT']);
+    expect(out.every((f) => f.localId === 0)).toBe(true); // all local 0 — the collision case
+  });
+
+  it('binds an inventory spool to the RIGHT unit, not merely the right tray number', () => {
+    // Before this, matching on tray_id alone gave AMS 2 and the HT the AMS 1 spool: wrong brand,
+    // wrong colour name, and a wrong slicer preset that then drove the slice.
+    const asg: AssignmentLike[] = [
+      { ams_id: 0, tray_id: 0, spool: { color_name: 'Titan Gray', slicer_filament_name: 'Bambu PETG-CF' } },
+      { ams_id: 1, tray_id: 0, spool: { color_name: 'Jet Black', slicer_filament_name: 'Bambu PLA Basic' } },
+    ];
+    const out = loadedFilaments(TRAYS, asg, P, '@BBL H2C', '0.4');
+    expect(out[0].colorName).toBe('Titan Gray');
+    expect(out[1].colorName).toBe('Jet Black');
+    expect(out[2].colorName).toBeNull(); // HT has no assignment — must not inherit one
+  });
+
+  it('still matches a legacy assignment that carries no ams_id', () => {
+    const legacy: AssignmentLike[] = [{ tray_id: 0, spool: { color_name: 'Legacy' } }];
+    const out = loadedFilaments(TRAYS, legacy, P, '@BBL H2C', '0.4');
+    expect(out[0].colorName).toBe('Legacy');
+  });
+
+  it('prefers an exact unit match over a legacy unit-less one', () => {
+    const mixed: AssignmentLike[] = [
+      { tray_id: 0, spool: { color_name: 'Legacy' } },
+      { ams_id: 1, tray_id: 0, spool: { color_name: 'Exact' } },
+    ];
+    expect(loadedFilaments(TRAYS, mixed, P, '@BBL H2C', '0.4')[1].colorName).toBe('Exact');
   });
 });
