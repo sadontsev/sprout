@@ -93,6 +93,9 @@
               ]
             }
           }
+        ],
+        "UIBackgroundModes": [
+          "audio"
         ]
       },
       "runtimeVersion": {
