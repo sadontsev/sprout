@@ -18,7 +18,7 @@ import { otherPlugs, plugAutomations, plugLabel } from '@/power/present';
 import { usePlugState } from '@/power/usePlugState';
 import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFile, PrinterFileList, PrinterFilePlates } from '@/api/types';
 import { spoolGramsRemaining } from '@/api/types';
-import { presentDashboard, presentNozzles, fmtDuration, normColor, colorName, inkOn, asNum } from '@/dashboard/present';
+import { presentDashboard, presentNozzles, fmtDuration, normColor, colorName, inkOn, asNum, type DashVM } from '@/dashboard/present';
 import { Swatch } from './Swatch';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, ExtrudeBar, Spark, Breathe, Toggle, FadeRise } from './anim';
 
@@ -860,9 +860,13 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
         ))}
 
       </View>
-      {dryers.map((d, i) => (
-        <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryers.length > 1 ? (vm.amsUnits.find((u) => u.id === d.amsId)?.label ?? `AMS ${i + 1}`) : null} />
+      {/* A RUNNING cycle gets its own card — you need its countdown and Stop. Idle units collapse
+          into one row: three units meant three identical "Dry damp spools right in the AMS." cards
+          pushing the actual filament off the screen. */}
+      {dryers.filter((d) => d.active).map((d, i) => (
+        <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryerLabel(vm, d.amsId, i)} />
       ))}
+      <IdleDryers dryers={dryers.filter((d) => !d.active)} vm={vm} client={client} printerId={printerId} />
       <View style={{ paddingHorizontal: 20, paddingTop: 18, gap: 12 }}>
         {vm.ams.map((t) => {
           const spool = spoolForSlot(t);
@@ -954,6 +958,40 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
 }
 
 // ---------------- AMS DRYER ----------------
+/** Unit name for a dryer card; falls back to a positional label if the unit isn't in the VM. */
+function dryerLabel(vm: DashVM, amsId: number, i: number): string | null {
+  return vm.amsUnits.length > 1 ? (vm.amsUnits.find((u) => u.id === amsId)?.label ?? `AMS ${i + 1}`) : null;
+}
+
+/** The idle dryers, behind one row.
+ *
+ *  Each idle unit used to render its own collapsed card, all with identical copy, so a three-unit
+ *  machine spent most of the first screen telling you three times that you can dry filament. One
+ *  unit still renders directly — wrapping a single card in a disclosure is just a wasted tap. */
+function IdleDryers({ dryers, vm, client, printerId }: { dryers: DryerVM[]; vm: DashVM; client: BambuddyClient; printerId: number }) {
+  const [open, setOpen] = useState(false);
+  if (dryers.length === 0) return null;
+  if (dryers.length === 1) return <DryerCard d={dryers[0]} client={client} printerId={printerId} unitLabel={dryerLabel(vm, dryers[0].amsId, 0)} />;
+
+  const names = dryers.map((d, i) => dryerLabel(vm, d.amsId, i) ?? `AMS ${i + 1}`).join(' · ');
+  return (
+    <View style={{ marginHorizontal: 20, marginTop: 14, borderRadius: 16, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line }}>
+      <Tap onPress={() => setOpen(!open)} style={{ padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Feather name="wind" size={17} color={c.t2} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>Filament drying</Text>
+          <Text numberOfLines={1} style={{ marginTop: 3, fontWeight: '500', fontSize: 11.5, color: c.t3 }}>{dryers.length} units ready · {names}</Text>
+        </View>
+        <Feather name={open ? 'chevron-up' : 'chevron-down'} size={18} color={c.t3} />
+      </Tap>
+      {open &&
+        dryers.map((d, i) => (
+          <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryerLabel(vm, d.amsId, i)} />
+        ))}
+    </View>
+  );
+}
+
 // Handy-style drying: pick a loaded filament -> its recommended temp/time (from the RFID/preset,
 // with per-type fallbacks), adjust, optional spool rotation; live cycle detail + Stop while running.
 function DryerCard({ d, client, printerId, unitLabel }: { d: DryerVM; client: BambuddyClient; printerId: number; unitLabel: string | null }) {

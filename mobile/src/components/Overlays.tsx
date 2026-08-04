@@ -32,6 +32,8 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
   // deadline hit, or no stream URL ever materialized because the token mint kept failing).
   const [phase, setPhase] = useState<'connecting' | 'live' | 'failed'>('connecting');
   const [reloadKey, setReloadKey] = useState(0);
+  const [landscape, setLandscape] = useState(false);
+  const { width: winW, height: winH } = useWindowDimensions();
 
   // Re-arm to "connecting" whenever a fresh stream URL arrives (token (re)mint) or we manually retry.
   useEffect(() => { setPhase('connecting'); }, [streamUrl, reloadKey]);
@@ -85,8 +87,17 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
   // full warm-up deadline of spinning.
   const failedView = phase === 'failed' || (!live && vm.kind === 'offline');
 
+  // Landscape without touching the native orientation. The app is portrait-locked in app.json
+  // (Info.plist), and expo-screen-orientation is not installed, so true auto-rotate needs a native
+  // rebuild. A manual toggle also keeps working when the phone's own rotation lock is ON, which
+  // auto-rotate would not. Rotating the whole overlay — chrome included — means you turn the phone
+  // and everything reads the right way up.
+  const landscapeStyle = landscape
+    ? { width: winH, height: winW, left: (winW - winH) / 2, top: (winH - winW) / 2, transform: [{ rotate: '90deg' }] }
+    : { inset: 0 };
+
   return (
-    <View style={{ position: 'absolute', inset: 0, backgroundColor: '#060708', zIndex: 70 } as any}>
+    <View style={{ position: 'absolute', backgroundColor: '#060708', zIndex: 70, ...landscapeStyle } as any}>
       {streamUrl && (
         <WebView
           key={streamUrl}
@@ -129,6 +140,11 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
         </View>
       )}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+        <Tap
+          onPress={() => setLandscape((v) => !v)}
+          style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+          <Feather name={landscape ? 'smartphone' : 'rotate-cw'} size={17} color="#fff" />
+        </Tap>
         <Tap onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="chevron-down" size={22} color="#fff" />
         </Tap>
