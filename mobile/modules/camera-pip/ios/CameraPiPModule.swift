@@ -18,7 +18,7 @@ public final class CameraPiPModule: Module {
     }
 
     View(CameraPiPView.self) {
-      Events("onLive", "onError", "onPipStart", "onPipStop")
+      Events("onLive", "onError", "onPipStart", "onPipStop", "onStats", "onAudio")
 
       /// The MJPEG URL, token included. Changing it hot-swaps the network task WITHOUT tearing down
       /// the display layer — the token refreshes hourly, and rebuilding the layer would take the

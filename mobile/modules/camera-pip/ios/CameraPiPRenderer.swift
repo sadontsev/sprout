@@ -31,10 +31,18 @@ final class PiPBackgroundKeepAlive {
 
         let fmt = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
         guard let silence = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 44_100) else { return }
-        silence.frameLength = silence.frameCapacity        // zero-filled == silence
+        silence.frameLength = silence.frameCapacity
+        // NOT pure zeros: a completely silent graph can be optimised away, and an app that is not
+        // genuinely rendering audio gets suspended despite the background mode — which freezes the
+        // PiP window on its last frame. This is ~-90 dBFS: inaudible, but real output.
+        if let ch = silence.floatChannelData?[0] {
+            for i in 0..<Int(silence.frameLength) {
+                ch[i] = (i % 2 == 0 ? 1.0 : -1.0) * 0.00003
+            }
+        }
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: fmt)
-        engine.mainMixerNode.outputVolume = 0
+        engine.mainMixerNode.outputVolume = 0.01
         try engine.start()
         player.scheduleBuffer(silence, at: nil, options: [.loops])
         player.play()
@@ -92,6 +100,10 @@ final class CameraPiPRenderer: NSObject, MJPEGStreamClientDelegate,
     /// which is throttled or stopped once the app is backgrounded.
     private var makeStreamURL: (@escaping (Result<URL, Error>) -> Void) -> Void = { $0(.failure(URLError(.badURL))) }
 
+    /// Diagnostic: total frames handed to the display layer. A PiP window frozen on one frame is
+    /// ambiguous — either frames stopped arriving (app suspended) or they arrive and are not
+    /// rendered. This counter tells the two apart without a device log.
+    private var frameCount = 0
     private var epoch: Int64 = 0
     private var retryAttempt = 0
     private var stopped = true
@@ -142,7 +154,15 @@ final class CameraPiPRenderer: NSObject, MJPEGStreamClientDelegate,
             try keepAlive.activate()
             return
         }
-        try keepAlive.activate()                    // audio session first, or PiP silently no-ops
+        do {
+            try keepAlive.activate()                // audio session first, or PiP silently no-ops
+            emit("audio", ["ok": true])
+        } catch {
+            // Not fatal for STARTING PiP, but without it the app suspends when backgrounded and the
+            // window freezes on its last frame.
+            pipLog.error("keep-alive audio session failed: \(error.localizedDescription, privacy: .public)")
+            emit("audio", ["ok": false, "message": error.localizedDescription])
+        }
         let source = AVPictureInPictureController.ContentSource(
             sampleBufferDisplayLayer: displayLayer, playbackDelegate: self)
         let c = AVPictureInPictureController(contentSource: source)
@@ -190,7 +210,13 @@ final class CameraPiPRenderer: NSObject, MJPEGStreamClientDelegate,
 
     // ---- MJPEGStreamClientDelegate (called on the network queue) ----
 
-    func streamDidReceiveFrame(_ jpeg: Data) { gate.offer(jpeg) }
+    func streamDidReceiveFrame(_ jpeg: Data) {
+        frameCount += 1
+        if frameCount % 20 == 0 {
+            emit("stats", ["frames": frameCount, "pip": pip?.isPictureInPictureActive == true])
+        }
+        gate.offer(jpeg)
+    }
 
     func streamDidBecomeLive() {
         retryAttempt = 0

@@ -12,6 +12,8 @@ public final class CameraPiPView: ExpoView {
   private let onError = EventDispatcher()
   private let onPipStart = EventDispatcher()
   private let onPipStop = EventDispatcher()
+  private let onStats = EventDispatcher()
+  private let onAudio = EventDispatcher()
 
   private var url: URL?
   private var active = false
@@ -28,6 +30,8 @@ public final class CameraPiPView: ExpoView {
       case "error": self.onError(body)
       case "pipStart": self.onPipStart(body)
       case "pipStop": self.onPipStop(body)
+      case "stats": self.onStats(body)
+      case "audio": self.onAudio(body)
       default: break
       }
     }
