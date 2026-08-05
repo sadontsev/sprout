@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import { WebView } from 'react-native-webview';
 import Animated, { SlideInDown, FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialIcons } from '@expo/vector-icons';
 import { amsTrayRefs } from '@/ams/units';
 import { Swatch } from './Swatch';
 import * as DocumentPicker from 'expo-document-picker';
@@ -154,7 +154,9 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
           <Tap
             onPress={() => pipRef.current?.startPiP().catch(() => {})}
             style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
-            <Feather name="minimize" size={17} color="#fff" />
+            {/* The real PiP glyph. Feather has no equivalent, and "minimize" (arrows inward) read
+                as a generic square that gave no hint what it did. */}
+            <MaterialIcons name="picture-in-picture-alt" size={17} color="#fff" />
           </Tap>
         )}
         <Tap onPress={retry} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>

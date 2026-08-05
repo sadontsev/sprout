@@ -136,6 +136,12 @@ final class CameraPiPRenderer: NSObject, MJPEGStreamClientDelegate,
     /// background (Apple DTS, forums thread 793010).
     func enablePiP() throws {
         guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
+        assert(Thread.isMainThread, "AVPictureInPictureController is main-thread-only")
+        // Idempotent: repeated taps must not build a second controller over the same layer.
+        if pip != nil {
+            try keepAlive.activate()
+            return
+        }
         try keepAlive.activate()                    // audio session first, or PiP silently no-ops
         let source = AVPictureInPictureController.ContentSource(
             sampleBufferDisplayLayer: displayLayer, playbackDelegate: self)
