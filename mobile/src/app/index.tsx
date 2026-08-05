@@ -243,20 +243,23 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   }, [speedOverride]);
   const speedIdx = speedOverride ?? vm.speedIdx;
 
-  // Live MJPEG camera stream — mints a token only while the fullscreen camera is open.
+  // Live MJPEG camera stream. The token must outlive the overlay: Picture-in-Picture keeps playing
+  // after the fullscreen view closes, and letting the token lapse would kill the floating window.
   const cameraOpen = overlay === 'camera';
-  const { streamUrl, remint } = useCameraStream(client, printerId, cameraOpen, 10);
+  const [pipActive, setPipActive] = useState(false);
+  const { streamUrl, remint } = useCameraStream(client, printerId, cameraOpen || pipActive, 10);
 
   // Dashboard snapshot tile (1 frame / 2s). Paused while the fullscreen stream is open (the two
   // would contend for the single on-demand camera) and while the dashboard tab is hidden (it
   // stays mounted — see the render below — so the interval would otherwise poll unseen).
   const [tick, setTick] = useState(0);
+  // ...and while PiP is up, for the same reason: there is exactly one on-demand camera.
   useEffect(() => {
-    if (cameraOpen || tab !== 'printer') return;
+    if (cameraOpen || pipActive || tab !== 'printer') return;
     const id = setInterval(() => setTick((t) => t + 1), 2000);
     return () => clearInterval(id);
-  }, [cameraOpen, tab]);
-  const snapshotUri = camToken && !cameraOpen ? `${client.snapshotUrl(printerId, camToken)}&_t=${tick}` : null;
+  }, [cameraOpen, pipActive, tab]);
+  const snapshotUri = camToken && !cameraOpen && !pipActive ? `${client.snapshotUrl(printerId, camToken)}&_t=${tick}` : null;
 
   // Maintenance due/warning rollup for the dashboard chip — scoped to the SELECTED printer.
   const [maintAlert, setMaintAlert] = useState<{ due: number; warn: number }>({ due: 0, warn: 0 });
@@ -404,8 +407,13 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
 
       <TabBar active={tab} onTab={setTab} />
 
-      {overlay === 'camera' && (
-        <CameraOverlay streamUrl={streamUrl} snapshotUrl={camToken ? client.snapshotUrl(printerId, camToken) : null} status={status} cameraHint={profile.cameraHint} onClose={() => setOverlay(null)} onRefresh={remint} />
+      {/* Stays MOUNTED while Picture-in-Picture is up, merely hidden: unmounting it would tear down
+          the AVSampleBufferDisplayLayer and take the floating window with it. Same reason the
+          dashboard stays mounted across tab switches. */}
+      {(overlay === 'camera' || pipActive) && (
+        <View style={{ position: 'absolute', inset: 0, zIndex: 70, display: overlay === 'camera' ? 'flex' : 'none' } as any} pointerEvents={overlay === 'camera' ? 'auto' : 'none'}>
+          <CameraOverlay streamUrl={streamUrl} snapshotUrl={camToken ? client.snapshotUrl(printerId, camToken) : null} status={status} cameraHint={profile.cameraHint} onClose={() => setOverlay(null)} onRefresh={remint} onPipChange={setPipActive} />
+        </View>
       )}
       {overlay === 'upload' && (
         <UploadSheet client={client} onClose={() => setOverlay(null)} onUploaded={() => setLibKey((k) => k + 1)} />

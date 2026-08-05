@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator, Alert, TextInput, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { WebView } from 'react-native-webview';
@@ -21,11 +21,11 @@ import { stlViewerHtml } from '@/library/stlViewerHtml';
 import { selectProcess, pickDefaultQuality, mountedNozzles, defaultNozzle, printerPresetNameFor, type Preset, type NozzleSize } from '@/library/presetSelect';
 import { buildProcessDelta, buildFilamentDelta, hasProcessOverrides, hasFilamentOverrides, overrideCount, INFILL_PATTERNS, TOP_PATTERNS, SUPPORT_STYLES, type SliceOverrides } from '@/library/sliceOverrides';
 import { printerProfile, slicedForMatchesPrinter } from '@/printers/profile';
-import { mjpegHtml, streamOrigin } from './mjpegHtml';
+import { CameraPiPView, isPictureInPictureSupported, type CameraPiPViewRef } from '../../modules/camera-pip/src';
 import { Tap, RollingNumber, HeatBar, FadeRise } from './anim';
 
 // ---------------- CAMERA FULLSCREEN ----------------
-export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onClose, onRefresh }: { streamUrl: string | null; snapshotUrl?: string | null; status: PrinterStatus | null; cameraHint?: string; onClose: () => void; onRefresh: () => void }) {
+export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onClose, onRefresh, onPipChange }: { streamUrl: string | null; snapshotUrl?: string | null; status: PrinterStatus | null; cameraHint?: string; onClose: () => void; onRefresh: () => void; onPipChange?: (active: boolean) => void }) {
   const insets = useSafeAreaInsets();
   const vm = presentDashboard(status, Date.now());
   // connecting = minting token / camera warming up; live = ≥1 frame decoded; failed = gave up (warm-up
@@ -34,6 +34,10 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
   const [reloadKey, setReloadKey] = useState(0);
   const [landscape, setLandscape] = useState(false);
   const { width: winW, height: winH } = useWindowDimensions();
+  const pipRef = useRef<CameraPiPViewRef>(null);
+  // Gate the button: PiP is unavailable on some devices, and a control that silently does nothing
+  // is worse than no control.
+  const pipSupported = useMemo(() => isPictureInPictureSupported(), []);
 
   // Re-arm to "connecting" whenever a fresh stream URL arrives (token (re)mint) or we manually retry.
   useEffect(() => { setPhase('connecting'); }, [streamUrl, reloadKey]);
@@ -41,7 +45,7 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
   // Safety net: if no stream URL ever arrives (mintCameraToken rejecting/hanging), no WebView mounts to
   // report 'failed', so surface the recoverable failed card instead of an endless spinner.
   useEffect(() => {
-    if (streamUrl) return; // a mounted WebView reports its own outcome via onMessage
+    if (streamUrl) return; // the mounted native view reports its own outcome via onLive/onError
     const id = setTimeout(() => setPhase((p) => (p === 'connecting' ? 'failed' : p)), 8000);
     return () => clearTimeout(id);
   }, [streamUrl, reloadKey]);
@@ -68,20 +72,7 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
   // reloadKey re-arms the effects above (so a retry that yields the same/no token still shows feedback)
   // but is intentionally NOT in the WebView key — keying the WebView on streamUrl alone means a fresh
   // token triggers exactly one remount/warm-up instead of two (sync reloadKey bump + async new URL).
-  const retry = () => { onRefresh(); setReloadKey((k) => k + 1); setFps(null); };
-  // Delivered frame rate, measured in-page (see mjpegHtml) — the honest "is it actually smooth"
-  // number, shown next to the LIVE badge. Null until the first 1s sample (or if measuring failed).
-  const [fps, setFps] = useState<number | null>(null);
-  const onMessage = (data: string) => {
-    if (data.startsWith('fps:')) {
-      const n = Number(data.slice(4));
-      if (Number.isFinite(n)) setFps(n);
-      return;
-    }
-    if (data === 'frame') setPhase('live');
-    else if (data === 'failed') setPhase('failed');
-    else setPhase((p) => (p === 'live' ? p : 'connecting')); // 'connecting' | 'retry'
-  };
+  const retry = () => { onRefresh(); setReloadKey((k) => k + 1); };
   const live = phase === 'live';
   // A known-offline printer won't ever produce a frame — show the actionable card now, not after a
   // full warm-up deadline of spinning.
@@ -98,21 +89,19 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
 
   return (
     <View style={{ position: 'absolute', backgroundColor: '#060708', zIndex: 70, ...landscapeStyle } as any}>
-      {streamUrl && (
-        <WebView
-          key={streamUrl}
-          // baseUrl makes the document SAME-ORIGIN with the stream so the in-page fps counter can
-          // read the <img> pixels (Bambuddy sends no CORS headers — see streamOrigin).
-          source={{ html: mjpegHtml(streamUrl), baseUrl: streamOrigin(streamUrl) ?? undefined }}
-          originWhitelist={['*']}
-          style={{ flex: 1, backgroundColor: '#060708' }}
-          scrollEnabled={false}
-          javaScriptEnabled
-          mediaPlaybackRequiresUserAction={false}
-          allowsInlineMediaPlayback
-          onMessage={(e) => onMessage(e.nativeEvent.data)}
-        />
-      )}
+      {/* Native sample-buffer view, not a WebView: an <img> can never enter Picture-in-Picture.
+          NOT keyed on streamUrl — the token refreshes hourly and remounting would destroy the
+          display layer, taking any active PiP window down with it. The view hot-swaps internally. */}
+      <CameraPiPView
+        ref={pipRef}
+        url={streamUrl}
+        active
+        style={{ flex: 1, backgroundColor: '#060708' }}
+        onLive={() => setPhase('live')}
+        onError={(e) => { if (!e.nativeEvent.retryable) setPhase('failed'); }}
+        onPipStart={() => onPipChange?.(true)}
+        onPipStop={() => onPipChange?.(false)}
+      />
       {!live && (
         <View pointerEvents={failedView ? 'auto' : 'none'} style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 } as any}>
           {failedView ? (
@@ -153,6 +142,13 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
           <Text style={{ fontWeight: '600', fontSize: 13, color: '#fff' }}>{vm.stateLabel}</Text>
           <Text style={{ marginLeft: 'auto', fontWeight: '600', fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: mono }}>{vm.progressInt}% · L{vm.layer}</Text>
         </View>
+        {pipSupported && (
+          <Tap
+            onPress={() => pipRef.current?.startPiP().catch(() => {})}
+            style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
+            <Feather name="minimize" size={17} color="#fff" />
+          </Tap>
+        )}
         <Tap onPress={retry} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="refresh-cw" size={18} color="#fff" />
         </Tap>
@@ -162,9 +158,6 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: 'rgba(22,24,27,0.55)' }}>
             <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.running }} />
             <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: '#fff' }}>LIVE</Text>
-            {fps != null && (
-              <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: 'rgba(255,255,255,0.55)', fontFamily: mono }}>· {fps} fps</Text>
-            )}
           </View>
         </View>
       )}
