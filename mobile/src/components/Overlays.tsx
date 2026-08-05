@@ -128,11 +128,19 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
           )}
         </View>
       )}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, paddingTop: insets.top + 10, paddingHorizontal: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 11 }}>
+      <View
+        style={{
+          position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', gap: 11,
+          paddingTop: landscape ? 12 : insets.top + 10,
+          paddingBottom: 16,
+          // Rotated, the notch/Dynamic Island runs down what is now the left edge.
+          paddingLeft: (landscape ? insets.top : 0) + 16,
+          paddingRight: 16,
+        }}>
         <Tap
           onPress={() => setLandscape((v) => !v)}
           style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
-          <Feather name={landscape ? 'smartphone' : 'rotate-cw'} size={17} color="#fff" />
+          <Feather name={landscape ? 'smartphone' : 'monitor'} size={17} color="#fff" />
         </Tap>
         <Tap onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(22,24,27,0.6)', alignItems: 'center', justifyContent: 'center' }}>
           <Feather name="chevron-down" size={22} color="#fff" />
