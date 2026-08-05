@@ -18,6 +18,11 @@ export interface CameraPiPViewProps extends ViewProps {
   onError?: (e: { nativeEvent: CameraPiPErrorEvent }) => void;
   onPipStart?: () => void;
   onPipStop?: (e: { nativeEvent: { error?: string } }) => void;
+  /** Diagnostic heartbeat: total frames enqueued, and whether PiP is currently active. */
+  onStats?: (e: { nativeEvent: { frames: number; pip: boolean } }) => void;
+  /** Whether the background keep-alive audio session took. Without it the app suspends when
+   *  backgrounded and the PiP window freezes on its last frame. */
+  onAudio?: (e: { nativeEvent: { ok: boolean; message?: string } }) => void;
 }
 
 export interface CameraPiPViewRef {
