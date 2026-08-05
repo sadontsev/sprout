@@ -33,14 +33,20 @@ public final class CameraPiPModule: Module {
         view.setActive(active)
       }
 
+      // .runOnQueue(.main) is NOT optional here. Expo runs AsyncFunction bodies on a background
+      // queue by default, and every call below is main-thread-only UIKit/AVKit —
+      // AVPictureInPictureController construction, the CALayer it wraps, and
+      // startPictureInPicture() itself. Off-main this traps, which is what tapping the button did.
       AsyncFunction("startPiP") { (view: CameraPiPView) in
         try view.renderer.enablePiP()
         view.renderer.startPiP()
       }
+      .runOnQueue(.main)
 
       AsyncFunction("stopPiP") { (view: CameraPiPView) in
         view.renderer.stopPiP()
       }
+      .runOnQueue(.main)
     }
   }
 }
