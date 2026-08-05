@@ -273,6 +273,15 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
     private var task: URLSessionDataTask?
     private var parser: MultipartMJPEGParser?
     private var sawFirstFrame = false
+    // URLSession DE-MULTIPLEXES multipart/x-mixed-replace by itself: every part arrives as its own
+    // didReceive-response callback carrying that PART's Content-Type, and the bytes that follow are
+    // the part body alone — boundary framing never reaches the delegate. So the parser below only
+    // ever runs on platforms/paths that hand us the raw stream; on the normal path these two fields
+    // do the work. (Rejecting the second callback as "not multipart" is exactly how this first
+    // failed: the stream connected, then instantly errored on its own first frame.)
+    private var partBuffer = Data()
+    private var partExpected: Int?
+    private var demultiplexed = false
     private var firstFrameDeadline: DispatchWorkItem?
     private let firstFrameTimeout: TimeInterval
 
@@ -381,6 +390,28 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
             return
         }
         let ct = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+
+        // Subsequent callbacks on the SAME task are parts, not a new response.
+        if parser != nil || demultiplexed {
+            flushPart()
+            demultiplexed = true
+            if ct.hasPrefix("image/") {
+                partExpected = http.expectedContentLength > 0 ? Int(http.expectedContentLength) : nil
+                partBuffer.removeAll(keepingCapacity: true)
+            } else {
+                // THE WARM-UP CHECK: HTTP 200, correct multipart headers, but the only part is a
+                // text/plain error. Without this the UI waits forever on a healthy-looking socket.
+                partExpected = nil
+                if !sawFirstFrame {
+                    completionHandler(.cancel)
+                    fail(.backendMessage("camera unavailable (\(ct.isEmpty ? "no content-type" : ct))"))
+                    return
+                }
+            }
+            completionHandler(.allow)
+            return
+        }
+
         guard ct.contains("multipart/x-mixed-replace"),
               let b = MultipartMJPEGParser.boundary(fromContentType: ct) else {
             completionHandler(.cancel); fail(.notMultipart(ct.isEmpty ? "(no Content-Type)" : ct)); return
@@ -389,7 +420,37 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
         completionHandler(.allow)
     }
 
+    /// Emit whatever part body has accumulated. Called when the next part starts and at completion.
+    private func flushPart() {
+        guard !partBuffer.isEmpty else { return }
+        let jpeg = partBuffer
+        partBuffer.removeAll(keepingCapacity: true)
+        partExpected = nil
+        emitFrame(jpeg)
+    }
+
+    private func emitFrame(_ jpeg: Data) {
+        if !sawFirstFrame {
+            sawFirstFrame = true
+            firstFrameDeadline?.cancel(); firstFrameDeadline = nil
+            delegate?.streamDidBecomeLive()
+        }
+        delegate?.streamDidReceiveFrame(jpeg)
+    }
+
     func urlSession(_ s: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        if demultiplexed {
+            partBuffer.append(data)
+            // Content-Length lets a frame be emitted the moment it is complete rather than waiting
+            // for the next part's headers — a whole frame-interval of latency at 10 fps.
+            if let n = partExpected, partBuffer.count >= n {
+                let jpeg = partBuffer.prefix(n)
+                partBuffer.removeAll(keepingCapacity: true)
+                partExpected = nil
+                emitFrame(Data(jpeg))
+            }
+            return
+        }
         guard parser != nil else { return }
         let events: [MJPEGParseEvent]
         do { events = try parser!.consume(data) } catch { fail(.parse(error)); return }
@@ -397,12 +458,7 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
         for e in events {
             switch e {
             case .frame(let jpeg):
-                if !sawFirstFrame {
-                    sawFirstFrame = true
-                    firstFrameDeadline?.cancel(); firstFrameDeadline = nil
-                    delegate?.streamDidBecomeLive()
-                }
-                delegate?.streamDidReceiveFrame(jpeg)
+                emitFrame(jpeg)
 
             case .nonImagePart(let ct, let body):
                 // THE WARM-UP CHECK. HTTP 200, well-formed multipart, one text/plain part.
