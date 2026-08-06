@@ -120,3 +120,26 @@ describe('plugLabel', () => {
     expect(plugLabel(null)).toBe('Smart plug');
   });
 });
+
+describe('listing every socket, not just the peripherals', () => {
+  // All three sockets are on one physical strip (a P304M). Excluding the printer's own socket from
+  // the list made it look absent, even though it drives the big control above.
+  const strip: SmartPlug[] = [
+    { id: 2, name: 'H2C Printer Plug', printer_id: 2 },
+    { id: 3, name: 'AMS 2 Pro Plug' },
+    { id: 4, name: 'AMS HT Plug' },
+  ];
+
+  it('passing null keeps the printer plug in the list', () => {
+    expect(otherPlugs(strip, null).map((p) => p.id)).toEqual([2, 3, 4]);
+  });
+
+  it('still excludes it when a caller genuinely wants only the others', () => {
+    expect(otherPlugs(strip, 2).map((p) => p.id)).toEqual([3, 4]);
+  });
+
+  it('drops a disabled socket either way — a deleted HA entity can never report', () => {
+    const withDead = [...strip, { id: 1, name: '3D Printer Plug', enabled: false }];
+    expect(otherPlugs(withDead, null).map((p) => p.id)).toEqual([2, 3, 4]);
+  });
+});

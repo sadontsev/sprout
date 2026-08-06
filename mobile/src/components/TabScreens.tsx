@@ -1268,7 +1268,7 @@ function NozzlesSection({ status }: { status: PrinterStatus | null }) {
 // ---------------- POWER ----------------
 /** One peripheral plug (AMS, dryer, room AC…). Polls a little slower than the printer's own plug —
  *  these are background devices, not the thing you're watching. */
-function PlugRow({ client, plug }: { client: BambuddyClient; plug: SmartPlug }) {
+function PlugRow({ client, plug, isPrinter = false }: { client: BambuddyClient; plug: SmartPlug; isPrinter?: boolean }) {
   const { on, reachable, watts, set } = usePlugState(client, plug, 8000);
   const name = plugLabel(plug);
   const armed = plugAutomations(plug);
@@ -1286,7 +1286,14 @@ function PlugRow({ client, plug }: { client: BambuddyClient; plug: SmartPlug }) 
   return (
     <View style={{ marginHorizontal: 20, marginTop: 10, padding: 16, borderRadius: 18, backgroundColor: c.s1, borderWidth: 1, borderColor: c.line, flexDirection: 'row', alignItems: 'center', gap: 14 }}>
       <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{name}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          <Text numberOfLines={1} style={{ fontWeight: '600', fontSize: 14, color: c.t1, flexShrink: 1 }}>{name}</Text>
+          {isPrinter && (
+            <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: c.accentDim }}>
+              <Text style={{ fontWeight: '600', fontSize: 8.5, letterSpacing: 0.5, color: c.accent, fontFamily: mono }}>PRINTER</Text>
+            </View>
+          )}
+        </View>
         <View style={{ marginTop: 5, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
           {reachable ? (
             <PulseDot color={on ? c.running : c.idle} size={6} period={2400} />
@@ -1327,7 +1334,10 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
   };
 
   const { on, reachable, watts, kwh, set: setPlugOn } = usePlugState(client, plug);
-  const others = useMemo(() => otherPlugs(allPlugs, plug?.id ?? null), [allPlugs, plug?.id]);
+  // Every socket, the printer's included. It used to be excluded because it already has the big
+  // control above — but that made the printer's own plug look absent from the list of plugs, when
+  // in fact all of these are sockets on one strip. Passing null keeps them all.
+  const sockets = useMemo(() => otherPlugs(allPlugs, null), [allPlugs]);
   const automations = useMemo(() => plugAutomations(plug), [plug]);
 
   const applyPlug = (next: boolean) => {
@@ -1363,8 +1373,8 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
     projCost = (elapsedMin + remainMin) * kwhPerMin * price;
   }
 
-  // Only truly empty when the printer has no plug AND there are no peripheral plugs to show.
-  if (plug === null && !others.length) {
+  // Only truly empty when the printer has no plug AND there are no other sockets to show.
+  if (plug === null && !sockets.length) {
     return (
       <Page title="Power" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}>
         <Empty icon="power" title="No smart plug linked" body="Link the printer's plug in Bambuddy (Settings → Smart Plugs) to control power here." />
@@ -1473,11 +1483,11 @@ export function PowerView({ client, printerId, status }: { client: BambuddyClien
         </>
       )}
 
-      {others.length > 0 && (
+      {sockets.length > 1 && (
         <>
-          <Text style={{ paddingHorizontal: 20, marginTop: 22, fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.t3, fontFamily: mono }}>OTHER SWITCHES</Text>
-          {others.map((p) => (
-            <PlugRow key={p.id} client={client} plug={p} />
+          <Text style={{ paddingHorizontal: 20, marginTop: 22, fontWeight: '600', fontSize: 10, letterSpacing: 1, color: c.t3, fontFamily: mono }}>ALL SOCKETS</Text>
+          {sockets.map((p) => (
+            <PlugRow key={p.id} client={client} plug={p} isPrinter={p.id === plug?.id} />
           ))}
         </>
       )}
