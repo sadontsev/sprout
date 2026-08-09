@@ -49,6 +49,11 @@ targets:
           UIColorName: LaunchBackground
         # Portrait-locked, like the RN build: every screen is laid out for it, and the fullscreen
         # camera does its own rotation. Allowing native landscape too would rotate twice.
+        #
+        # UIRequiresFullScreen is REQUIRED alongside this: App Store Connect rejects a bundle that
+        # declares fewer than all four orientations without opting out of iPad multitasking
+        # ("you need to include all of the ... orientations"), even for an iPhone-only app.
+        UIRequiresFullScreen: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         # PiP keeps the app alive via a near-silent audio session — see CameraPiPRenderer.
