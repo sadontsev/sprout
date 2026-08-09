@@ -247,6 +247,13 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   // after the fullscreen view closes, and letting the token lapse would kill the floating window.
   const cameraOpen = overlay === 'camera';
   const [pipActive, setPipActive] = useState(false);
+  // Never let this latch on: it keeps the camera token alive and the overlay mounted.
+  useEffect(() => {
+    if (overlay !== 'camera' && !pipActive) return;
+    if (overlay === 'camera') return;
+    const t = setTimeout(() => setPipActive(false), 30_000);
+    return () => clearTimeout(t);
+  }, [overlay, pipActive]);
   const { streamUrl, remint } = useCameraStream(client, printerId, cameraOpen || pipActive, 10);
 
   // Dashboard snapshot tile (1 frame / 2s). Paused while the fullscreen stream is open (the two
@@ -255,11 +262,13 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
   const [tick, setTick] = useState(0);
   // ...and while PiP is up, for the same reason: there is exactly one on-demand camera.
   useEffect(() => {
-    if (cameraOpen || pipActive || tab !== 'printer') return;
+    if (cameraOpen || tab !== 'printer') return;
     const id = setInterval(() => setTick((t) => t + 1), 2000);
     return () => clearInterval(id);
-  }, [cameraOpen, pipActive, tab]);
-  const snapshotUri = camToken && !cameraOpen && !pipActive ? `${client.snapshotUrl(printerId, camToken)}&_t=${tick}` : null;
+  }, [cameraOpen, tab]);
+  // Deliberately NOT gated on pipActive. It was, and a pipActive that never cleared froze this tile
+  // on a cached frame — the URL only changes with `tick`, so pausing the poller pauses the picture.
+  const snapshotUri = camToken && !cameraOpen ? `${client.snapshotUrl(printerId, camToken)}&_t=${tick}` : null;
 
   // Maintenance due/warning rollup for the dashboard chip — scoped to the SELECTED printer.
   const [maintAlert, setMaintAlert] = useState<{ due: number; warn: number }>({ due: 0, warn: 0 });

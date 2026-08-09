@@ -38,8 +38,12 @@ class TestShouldStart(unittest.TestCase):
         # 199 cards for one print.
         self.assertFalse(should_start(True, "a412", "a412", False))
 
-    def test_starts_again_for_a_DIFFERENT_print(self):
-        self.assertTrue(should_start(True, "a413", "a412", False))
+    def test_does_NOT_start_when_the_identity_merely_CHANGES_mid_print(self):
+        # Bambuddy assigns the archive id shortly after printing starts, so identity legitimately
+        # goes from the subtask name to "a125" during one print. Comparing values started a second
+        # card — observed live. Only leaving the live state may re-arm.
+        self.assertFalse(should_start(True, "a125", "nSide changed. Mounting…", False))
+        self.assertFalse(should_start(True, "a413", "a412", False))
 
     def test_never_starts_when_a_card_is_already_registered(self):
         self.assertFalse(should_start(True, "a412", None, True))
@@ -63,6 +67,16 @@ class TestShouldStart(unittest.TestCase):
                 starts += 1
             started_for = next_started_for(active, identity, started_for)
         self.assertEqual(starts, 2)
+
+    def test_a_print_whose_identity_churns_still_gets_exactly_one(self):
+        # The real sequence: no archive id yet -> subtask name -> archive id.
+        seq = [("unknown", True)] * 3 + [("nSide changed…", True)] * 20 + [("a125", True)] * 200
+        started_for, starts = None, 0
+        for identity, active in seq:
+            if should_start(active, identity, started_for, False):
+                starts += 1
+            started_for = next_started_for(active, identity, started_for)
+        self.assertEqual(starts, 1)
 
     def test_going_idle_re_arms_even_for_the_SAME_identity(self):
         # A reprint of the same archive is a new print and deserves a card.

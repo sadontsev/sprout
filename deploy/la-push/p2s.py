@@ -51,21 +51,33 @@ def should_start(active: bool, identity: str, started_for: str | None, has_card:
     """Whether to push-to-start a card now.
 
     active      the thing the card is about is happening (printing, or this unit is drying)
-    identity    identity of that print/cycle
-    started_for identity we last started a card for, on this key (None = never)
+    identity    identity of that print/cycle (recorded for diagnosis; see below)
+    started_for what we recorded when we last started on this key (None = not this session)
     has_card    a registered card already exists for this key (the app adopted one)
+
+    Arming is per LIVE SESSION, not per identity value. Identity is deliberately NOT compared:
+    it is not stable early in a print. Bambuddy assigns the archive id a little after printing
+    begins, so the identity legitimately changes from the subtask name to "a125" mid-print — and
+    comparing values treated that as a new print and started a SECOND card. Observed live:
+
+        [p2s] start print 2 [nSide changed. Mounting for top left…]
+        [p2s] start print 2 [a125]
+
+    Only leaving the live state re-arms a start (see next_started_for), which is exactly once per
+    print because every print passes through FINISH before the next one begins.
     """
     if not active or has_card:
         return False
-    return started_for != identity
+    return started_for is None
 
 
 def next_started_for(active: bool, identity: str, started_for: str | None) -> str | None:
-    """The value to persist after a tick. Clears once the print/cycle ends, so the NEXT one starts a
-    card again — that is the only thing that re-arms a start."""
+    """The value to persist after a tick. Clearing on leaving the live state is the ONLY thing that
+    re-arms a start. The value itself is just the latest identity, kept for logs — the arming
+    decision never compares it (see should_start)."""
     if not active:
         return None
-    return identity if started_for is None or started_for == identity else identity
+    return identity
 
 
 def prune(started: dict[str, Any], live_keys: set[str]) -> dict[str, Any]:
