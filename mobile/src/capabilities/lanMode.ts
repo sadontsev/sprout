@@ -29,7 +29,6 @@ export type ActionId =
   | 'stop'
   | 'light'
   | 'speed'
-  | 'dismissHms'
   | 'amsLoad'
   | 'amsUnload'
   | 'dryStart'
@@ -51,7 +50,6 @@ const BLOCKED: ReadonlySet<ActionId> = new Set<ActionId>([
   'pause',
   'resume',
   'speed',
-  'dismissHms',
   'amsLoad',
   'amsUnload',
   'dryStart',
@@ -100,3 +98,9 @@ export const LAN_HELP_BODY = [
   '',
   'Then update the access code in Bambuddy, and this app will be able to control the printer again.',
 ].join('\n');
+
+/** The one visual treatment for a locked control. Dimming (not hiding) keeps the UI stable and
+ *  discoverable: the button stays where it was, and tapping it explains itself. */
+export const LOCKED_OPACITY = 0.4;
+export const lockedStyle = (locked: boolean): { opacity: number } | null =>
+  locked ? { opacity: LOCKED_OPACITY } : null;

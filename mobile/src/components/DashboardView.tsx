@@ -7,7 +7,8 @@ import { c, mono, shadow1, type Palette } from '@/theme';
 import type { DashVM, DashKind } from '@/dashboard/present';
 import { alertSummary, type AlertVM } from '@/alerts/present';
 import type { CooldownVM } from '@/cooling/present';
-import { isBlocked, LAN_BANNER_BODY, LAN_BANNER_TITLE, LAN_HELP_BODY, LAN_HELP_TITLE, type LanMode } from '@/capabilities/lanMode';
+import { LAN_BANNER_BODY, LAN_BANNER_TITLE, LAN_HELP_BODY, LAN_HELP_TITLE, type LanMode } from '@/capabilities/lanMode';
+import { useLockedAction } from '@/capabilities/useLockedAction';
 import type { Printer } from '@/api/types';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton, Pop, Breathe } from './anim';
 import { Swatch } from './Swatch';
@@ -41,7 +42,6 @@ export interface FleetEntry {
 // Bambu print-speed modes (design: the speed popover). Dot colors are palette KEYS resolved at
 // render — the live `c` object mutates on theme switch, so captured values would go stale.
 /** Dim a control the printer will refuse, so the lock is visible before it is tapped. */
-const lockedStyle = (locked: boolean) => (locked ? { opacity: 0.4 } : null);
 
 const SPEEDS: { i: number; name: string; hint: string; dot: keyof Palette }[] = [
   { i: 1, name: 'Silent', hint: '50%', dot: 'paused' },
@@ -158,6 +158,9 @@ export function DashboardView({
   useEffect(() => { if (!snapshotUri) setCamLoaded(false); }, [snapshotUri]);
   const [speedOpen, setSpeedOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const lock = useLockedAction(lanMode);
+  // A popover left open when the printer drops out of Developer Mode would strand enabled-looking rows.
+  useEffect(() => { if (lock.blocked('speed')) setSpeedOpen(false); }, [lock]);
 
   const summary = alertSummary(alerts);
   const printerName = printer?.name ?? 'Printer';
@@ -306,8 +309,8 @@ export function DashboardView({
 
             {/* controls */}
             <View style={{ marginHorizontal: 20, marginTop: 18, flexDirection: 'row', gap: 12 }}>
-              <Tap onPress={h.onPauseResume} style={{ flex: 2, height: 58, borderRadius: 17, backgroundColor: c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, ...lockedStyle(isBlocked(vm.isPaused ? 'resume' : 'pause', lanMode)) }}>
-                <Feather name={vm.isPaused ? 'play' : 'pause'} size={17} color={c.t1} />
+              <Tap onPress={h.onPauseResume} style={{ flex: 2, height: 58, borderRadius: 17, backgroundColor: c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, ...lock.style(vm.isPaused ? 'resume' : 'pause') }}>
+                <Feather name={lock.blocked(vm.isPaused ? 'resume' : 'pause') ? 'lock' : vm.isPaused ? 'play' : 'pause'} size={17} color={c.t1} />
                 <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>{vm.isPaused ? 'Resume' : 'Pause'}</Text>
               </Tap>
               <Tap onPress={h.onStop} style={{ flex: 1, height: 58, borderRadius: 17, backgroundColor: c.errorDim, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
@@ -324,8 +327,8 @@ export function DashboardView({
                 <Text style={{ fontWeight: '600', fontSize: 12, color: vm.lightOn ? c.accent : c.t1, opacity: 0.7, fontFamily: mono }}>{vm.lightOn ? 'ON' : 'OFF'}</Text>
               </Tap>
               <View style={{ flex: 1, zIndex: speedOpen ? 30 : 0 } as any}>
-                <Tap onPress={() => setSpeedOpen((o) => !o)} style={{ width: '100%', height: 54, borderRadius: 16, backgroundColor: speedOpen ? c.s4 : c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
-                  <Feather name="zap" size={17} color={c.t1} />
+                <Tap onPress={lock.press('speed', () => setSpeedOpen((o) => !o))} style={{ width: '100%', height: 54, borderRadius: 16, backgroundColor: speedOpen ? c.s4 : c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, ...lock.style('speed') }}>
+                  <Feather name={lock.blocked('speed') ? 'lock' : 'zap'} size={17} color={c.t1} />
                   <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>{SPEEDS.find((s) => s.i === speedIdx)?.name ?? vm.speedLabel}</Text>
                   <Feather name="chevrons-up" size={13} color={c.t3} />
                 </Tap>
@@ -433,7 +436,8 @@ export function DashboardView({
                   <Text style={{ fontWeight: '600', fontSize: 16, color: c.accentInk }}>Plate cleared — continue queue</Text>
                 </Tap>
               )}
-              <Tap onPress={h.onPrintAgain} style={{ marginTop: vm.awaitingPlateClear ? 10 : 18, height: 52, borderRadius: 15, backgroundColor: vm.awaitingPlateClear ? c.s3 : c.accent, alignItems: 'center', justifyContent: 'center' }}>
+              <Tap onPress={h.onPrintAgain} style={{ marginTop: vm.awaitingPlateClear ? 10 : 18, height: 52, borderRadius: 15, backgroundColor: vm.awaitingPlateClear ? c.s3 : c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, ...lock.style('printAgain') }}>
+                {lock.blocked('printAgain') && <Feather name="lock" size={15} color={vm.awaitingPlateClear ? c.t1 : c.accentInk} />}
                 <Text style={{ fontWeight: '600', fontSize: 16, color: vm.awaitingPlateClear ? c.t1 : c.accentInk }}>Print again</Text>
               </Tap>
             </View>
@@ -460,7 +464,8 @@ export function DashboardView({
             </View>
             </FadeRise>
             <View style={{ marginHorizontal: 20, marginTop: 14, flexDirection: 'row', gap: 12 }}>
-              <Tap onPress={h.onPauseResume} style={{ flex: 2, height: 54, borderRadius: 16, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', ...lockedStyle(isBlocked(vm.isPaused ? 'resume' : 'pause', lanMode)) }}>
+              <Tap onPress={h.onPauseResume} style={{ flex: 2, height: 54, borderRadius: 16, backgroundColor: c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, ...lock.style('resume') }}>
+                {lock.blocked('resume') && <Feather name="lock" size={15} color={c.accentInk} />}
                 <Text style={{ fontWeight: '600', fontSize: 16, color: c.accentInk }}>Resume print</Text>
               </Tap>
               <Tap onPress={h.onStop} style={{ flex: 1, height: 54, borderRadius: 16, backgroundColor: c.errorDim, alignItems: 'center', justifyContent: 'center' }}>

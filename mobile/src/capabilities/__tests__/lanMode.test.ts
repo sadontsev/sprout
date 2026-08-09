@@ -1,4 +1,7 @@
-import { blockedActions, isBlocked, lanModeFrom, type ActionId } from '../lanMode';
+import { readdirSync, readFileSync } from 'fs';
+import { join } from 'path';
+
+import { blockedActions, isBlocked, lanModeFrom, lockedStyle, LOCKED_OPACITY, type ActionId } from '../lanMode';
 import type { PrinterStatus } from '@/api/types';
 
 const st = (developer_mode?: boolean | null): PrinterStatus => ({ developer_mode } as unknown as PrinterStatus);
@@ -17,7 +20,7 @@ describe('lanModeFrom — tri-state, because absence is not "off"', () => {
 });
 
 describe('isBlocked', () => {
-  const blocked: ActionId[] = ['pause', 'resume', 'speed', 'dismissHms', 'amsLoad', 'amsUnload', 'dryStart', 'dryStop', 'startPrint', 'printAgain'];
+  const blocked: ActionId[] = ['pause', 'resume', 'speed', 'amsLoad', 'amsUnload', 'dryStart', 'dryStop', 'startPrint', 'printAgain'];
   const allowed: ActionId[] = ['stop', 'light', 'camera', 'plug', 'plateCleared', 'maintenance', 'queueRemove'];
 
   it('blocks every print.* command when Developer Mode is off', () => {
@@ -49,5 +52,35 @@ describe('isBlocked', () => {
 
   it('the light is allowed — it is system/ledctrl, not a print command', () => {
     expect(isBlocked('light', 'off')).toBe(false);
+  });
+});
+
+describe('lockedStyle', () => {
+  it('dims a locked control and leaves an available one untouched', () => {
+    expect(lockedStyle(true)).toEqual({ opacity: LOCKED_OPACITY });
+    expect(lockedStyle(false)).toBeNull();
+  });
+
+  it('returns null (not {opacity:1}) so it can be spread without clobbering a style', () => {
+    // `{...lockedStyle(false)}` must be a no-op; an {opacity:1} would override a caller's own opacity
+    // (e.g. the dryer buttons' `opacity: busy ? 0.5 : 1`).
+    expect({ opacity: 0.5, ...lockedStyle(false) }).toEqual({ opacity: 0.5 });
+    expect({ opacity: 0.5, ...lockedStyle(true) }).toEqual({ opacity: LOCKED_OPACITY });
+  });
+});
+
+describe('every blocked action is acknowledged by the UI', () => {
+  // The bug this guards: an action gated in the handler but whose button still looks tappable.
+  // Any ActionId we refuse must be named by at least one component, so adding one to BLOCKED
+  // without giving it a visual treatment fails here rather than shipping a dead-looking button.
+  const roots = [join(__dirname, '../../components'), join(__dirname, '../../app')];
+  const sources = roots
+    .flatMap((d) => readdirSync(d).map((f) => join(d, f)))
+    .filter((f) => f.endsWith('.tsx'))
+    .map((f) => readFileSync(f, 'utf8'))
+    .join('\n');
+
+  it.each(blockedActions('off'))('%s is referenced by a component', (action) => {
+    expect(sources).toContain(`'${action}'`);
   });
 });
