@@ -14,6 +14,8 @@ import { c, mono, shadow1 } from '@/theme';
 import { apiErrorDetail, type BambuddyClient } from '@/api/bambuddyClient';
 import type { TexturizeClient } from '@/api/texturizeClient';
 import { presentDryer, DRY_MIN_TEMP, DRY_MAX_HOURS, type DryerVM } from '@/ams/dryer';
+import { LOCKED_OPACITY, type LanMode } from '@/capabilities/lanMode';
+import { useLockedAction } from '@/capabilities/useLockedAction';
 import { otherPlugs, plugAutomations, plugLabel } from '@/power/present';
 import { usePlugState } from '@/power/usePlugState';
 import type { Printer, LibraryFile, QueueItem, PrinterStatus, SmartPlug, PrintLogEntry, ArchiveStats, AppSettings, SlotAssignment, MaintenanceItem, MaintenancePrinter, PrinterFile, PrinterFileList, PrinterFilePlates } from '@/api/types';
@@ -788,7 +790,8 @@ function QueueSection({ client, status, printerId, printers, onBrowse }: { clien
 }
 
 // ---------------- AMS ----------------
-export function AmsView({ client, status, printerId, amsLabel }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; amsLabel: string }) {
+export function AmsView({ client, status, printerId, amsLabel, lanMode }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; amsLabel: string; lanMode: LanMode }) {
+  const lock = useLockedAction(lanMode);
   const vm = presentDashboard(status, Date.now());
   // Units + slots come from presentAms via the view-model — no ams[0] anywhere in this screen.
   const dryers = presentDryer(status);
@@ -864,9 +867,9 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
           into one row: three units meant three identical "Dry damp spools right in the AMS." cards
           pushing the actual filament off the screen. */}
       {dryers.filter((d) => d.active).map((d, i) => (
-        <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryerLabel(vm, d.amsId, i)} />
+        <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryerLabel(vm, d.amsId, i)} lanMode={lanMode} />
       ))}
-      <IdleDryers dryers={dryers.filter((d) => !d.active)} vm={vm} client={client} printerId={printerId} />
+      <IdleDryers dryers={dryers.filter((d) => !d.active)} vm={vm} client={client} printerId={printerId} lanMode={lanMode} />
       <View style={{ paddingHorizontal: 20, paddingTop: 18, gap: 12 }}>
         {vm.ams.map((t) => {
           const spool = spoolForSlot(t);
@@ -933,8 +936,8 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
               </View>
               {!t.empty ? (
                 <View style={{ marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end' }}>
-                  <Tap onPress={() => client.amsUnload(printerId).catch((e) => Alert.alert('Unload failed', String(e)))} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3 }}>
-                    <Text style={{ fontWeight: '600', fontSize: 12, color: c.t1 }}>Unload</Text>
+                  <Tap onPress={lock.press('amsUnload', () => void client.amsUnload(printerId).catch((e) => Alert.alert('Unload failed', String(e))))} style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: c.s3, ...lock.style('amsUnload') }}>
+                    <Text style={{ fontWeight: '600', fontSize: 12, color: c.t1 }}>{lock.blocked('amsUnload') ? ' Unload' : 'Unload'}</Text>
                   </Tap>
                 </View>
               ) : (
@@ -942,7 +945,8 @@ export function AmsView({ client, status, printerId, amsLabel }: { client: Bambu
                 // Bambuddy documents ams/load for tray ids 0-15 only, so the HT's button stays hidden
                 // until it's confirmed on hardware; reads and drying are unaffected.
                 !isHt && (
-                  <Tap onPress={() => client.amsLoad(printerId, t.globalId).catch((e) => Alert.alert('Load failed', String(e)))} style={{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, alignItems: 'center', justifyContent: 'center' }}>
+                  <Tap onPress={lock.press('amsLoad', () => void client.amsLoad(printerId, t.globalId).catch((e) => Alert.alert('Load failed', String(e))))} style={{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1, borderColor: c.line2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, ...lock.style('amsLoad') }}>
+                    {lock.blocked('amsLoad') && <Feather name="lock" size={13} color={c.accent} />}
                     <Text style={{ fontWeight: '600', fontSize: 13, color: c.accent }}>Load filament</Text>
                   </Tap>
                 )
@@ -968,10 +972,10 @@ function dryerLabel(vm: DashVM, amsId: number, i: number): string | null {
  *  Each idle unit used to render its own collapsed card, all with identical copy, so a three-unit
  *  machine spent most of the first screen telling you three times that you can dry filament. One
  *  unit still renders directly — wrapping a single card in a disclosure is just a wasted tap. */
-function IdleDryers({ dryers, vm, client, printerId }: { dryers: DryerVM[]; vm: DashVM; client: BambuddyClient; printerId: number }) {
+function IdleDryers({ dryers, vm, client, printerId, lanMode }: { dryers: DryerVM[]; vm: DashVM; client: BambuddyClient; printerId: number; lanMode: LanMode }) {
   const [open, setOpen] = useState(false);
   if (dryers.length === 0) return null;
-  if (dryers.length === 1) return <DryerCard d={dryers[0]} client={client} printerId={printerId} unitLabel={dryerLabel(vm, dryers[0].amsId, 0)} />;
+  if (dryers.length === 1) return <DryerCard d={dryers[0]} client={client} printerId={printerId} unitLabel={dryerLabel(vm, dryers[0].amsId, 0)} lanMode={lanMode} />;
 
   const names = dryers.map((d, i) => dryerLabel(vm, d.amsId, i) ?? `AMS ${i + 1}`).join(' · ');
   return (
@@ -986,7 +990,7 @@ function IdleDryers({ dryers, vm, client, printerId }: { dryers: DryerVM[]; vm: 
       </Tap>
       {open &&
         dryers.map((d, i) => (
-          <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryerLabel(vm, d.amsId, i)} />
+          <DryerCard key={d.amsId} d={d} client={client} printerId={printerId} unitLabel={dryerLabel(vm, d.amsId, i)} lanMode={lanMode} />
         ))}
     </View>
   );
@@ -994,7 +998,8 @@ function IdleDryers({ dryers, vm, client, printerId }: { dryers: DryerVM[]; vm: 
 
 // Handy-style drying: pick a loaded filament -> its recommended temp/time (from the RFID/preset,
 // with per-type fallbacks), adjust, optional spool rotation; live cycle detail + Stop while running.
-function DryerCard({ d, client, printerId, unitLabel }: { d: DryerVM; client: BambuddyClient; printerId: number; unitLabel: string | null }) {
+function DryerCard({ d, client, printerId, unitLabel, lanMode }: { d: DryerVM; client: BambuddyClient; printerId: number; unitLabel: string | null; lanMode: LanMode }) {
+  const lock = useLockedAction(lanMode);
   const [open, setOpen] = useState(false);
   const [selType, setSelType] = useState<string | null>(null);
   // Manual ± tweaks are KEYED to the filament type they were made for. The options list is live
@@ -1075,7 +1080,7 @@ function DryerCard({ d, client, printerId, unitLabel }: { d: DryerVM; client: Ba
             Drying {d.filament || 'filament'}
             {unitLabel ? <Text style={{ fontSize: 12, fontWeight: '600', color: c.t3 }}> · {unitLabel}</Text> : null}
           </Text>
-          <Tap onPress={stop} disabled={busy} style={{ paddingHorizontal: 15, paddingVertical: 8, borderRadius: 11, backgroundColor: c.s3, opacity: busy ? 0.5 : 1 }}>
+          <Tap onPress={lock.press('dryStop', stop)} disabled={busy} style={{ paddingHorizontal: 15, paddingVertical: 8, borderRadius: 11, backgroundColor: c.s3, opacity: busy ? 0.5 : 1, ...lock.style('dryStop') }}>
             <Text style={{ fontWeight: '600', fontSize: 13, color: c.t1 }}>Stop</Text>
           </Tap>
         </View>
@@ -1151,10 +1156,11 @@ function DryerCard({ d, client, printerId, unitLabel }: { d: DryerVM; client: Ba
             </View>
           ))}
           <Tap
-            onPress={start}
+            onPress={lock.press('dryStart', start)}
             disabled={busy || d.blockers.length > 0 || !d.options.length}
-            style={{ height: 46, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: c.accent, opacity: busy || d.blockers.length > 0 || !d.options.length ? 0.45 : 1 }}
+            style={{ height: 46, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: c.accent, opacity: lock.blocked('dryStart') ? LOCKED_OPACITY : busy || d.blockers.length > 0 || !d.options.length ? 0.45 : 1 }}
           >
+            {lock.blocked('dryStart') && <Feather name="lock" size={14} color={c.accentInk} />}
             <Text style={{ fontWeight: '700', fontSize: 14, color: c.accentInk }}>
               Start drying — {effTemp}° for {effHours}h
             </Text>
@@ -1652,7 +1658,8 @@ function HistoryRow({ entry, client, camToken, sym, onReprint }: { entry: PrintL
 }
 
 // The history half of the Jobs tab — "what happened". Owns its own polling; no Page wrapper.
-function HistorySection({ client, camToken, printerId }: { client: BambuddyClient; camToken: string | null; printerId: number }) {
+function HistorySection({ client, camToken, printerId, lanMode }: { client: BambuddyClient; camToken: string | null; printerId: number; lanMode: LanMode }) {
+  const lock = useLockedAction(lanMode);
   const [entries, setEntries] = useState<PrintLogEntry[] | null>(null);
   const [stats, setStats] = useState<ArchiveStats | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -1672,6 +1679,9 @@ function HistorySection({ client, camToken, printerId }: { client: BambuddyClien
 
   const reprint = (e: PrintLogEntry) => {
     if (e.archive_id == null) return;
+    // The row is a list item, not a button — dimming the whole history would read as broken, so
+    // this one explains itself on tap instead of going grey.
+    lock.press('printAgain', () =>
     Alert.alert('Print again?', `“${e.print_name || `Print ${e.id}`}” goes back into the queue.`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -1679,7 +1689,7 @@ function HistorySection({ client, camToken, printerId }: { client: BambuddyClien
         onPress: () =>
           client.reprint(e.archive_id!, printerId).then(() => Alert.alert('Queued', 'The job is back in the queue.')).catch((err) => Alert.alert('Couldn’t reprint', String(err))),
       },
-    ]);
+    ]))();
   };
 
   return (
@@ -1708,7 +1718,8 @@ function HistorySection({ client, camToken, printerId }: { client: BambuddyClien
 // ---------------- JOBS (queue + history merged — one print timeline) ----------------
 // One tab that reads top-to-bottom as the printer's job timeline: what's printing NOW, what's UP
 // NEXT (with queue actions), then the HISTORY archive (stats + reprint). Frees a tab slot.
-export function JobsView({ client, status, printerId, printers, camToken, onBrowse }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; printers: Printer[]; camToken: string | null; onBrowse: () => void }) {
+export function JobsView({ client, status, printerId, printers, camToken, onBrowse, lanMode }: { client: BambuddyClient; status: PrinterStatus | null; printerId: number; printers: Printer[]; camToken: string | null; onBrowse: () => void; lanMode: LanMode }) {
+  const lock = useLockedAction(lanMode);
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const refresh = () => {
@@ -1720,7 +1731,7 @@ export function JobsView({ client, status, printerId, printers, camToken, onBrow
   return (
     <Page title="Jobs" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.t3} />}>
       <QueueSection key={`q${refreshKey}`} client={client} status={status} printerId={printerId} printers={printers} onBrowse={onBrowse} />
-      <HistorySection key={`h${refreshKey}`} client={client} camToken={camToken} printerId={printerId} />
+      <HistorySection key={`h${refreshKey}`} client={client} camToken={camToken} printerId={printerId} lanMode={lanMode} />
     </Page>
   );
 }

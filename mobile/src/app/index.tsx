@@ -423,8 +423,8 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       {tab !== 'printer' && (
         <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>
           {tab === 'library' && <LibraryView key={libKey} client={client} texClient={texClient} camToken={camToken} printerId={printerId} plate={profile.plate} onUpload={() => setOverlay('upload')} onPick={setWizardFile} onTexturize={texClient ? setTexturizeFile : undefined} onView3D={openStl} />}
-          {tab === 'jobs' && <JobsView client={client} status={status} printerId={printerId} printers={printers ?? []} camToken={camToken} onBrowse={() => setTab('library')} />}
-          {tab === 'ams' && <AmsView client={client} status={status} printerId={printerId} amsLabel={profile.amsLabel} />}
+          {tab === 'jobs' && <JobsView client={client} status={status} printerId={printerId} printers={printers ?? []} camToken={camToken} onBrowse={() => setTab('library')} lanMode={lanMode} />}
+          {tab === 'ams' && <AmsView client={client} status={status} printerId={printerId} amsLabel={profile.amsLabel} lanMode={lanMode} />}
           {tab === 'power' && <PowerView client={client} printerId={printerId} status={status} />}
         </FadeRise>
       )}
@@ -449,6 +449,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       {viewStl && <StlViewerOverlay client={client} fileId={viewStl.fileId} name={viewStl.name} onClose={() => setViewStl(null)} />}
       {wizardFile && (
         <WizardOverlay
+          lanMode={lanMode}
           client={client}
           file={wizardFile}
           camToken={camToken}

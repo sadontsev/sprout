@@ -23,6 +23,8 @@ import { buildProcessDelta, buildFilamentDelta, hasProcessOverrides, hasFilament
 import { printerProfile, slicedForMatchesPrinter } from '@/printers/profile';
 import { CameraPiPView, isPictureInPictureSupported, type CameraPiPViewRef } from '../../modules/camera-pip/src';
 import { Tap, RollingNumber, HeatBar, FadeRise } from './anim';
+import { LOCKED_OPACITY, type LanMode } from '@/capabilities/lanMode';
+import { useLockedAction } from '@/capabilities/useLockedAction';
 
 // ---------------- CAMERA FULLSCREEN ----------------
 export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onClose, onRefresh, onPipChange }: { streamUrl: string | null; snapshotUrl?: string | null; status: PrinterStatus | null; cameraHint?: string; onClose: () => void; onRefresh: () => void; onPipChange?: (active: boolean) => void }) {
@@ -914,7 +916,8 @@ export function PlateReview({ client, fileId, camToken, plateIndex, onSelectPlat
   );
 }
 
-export function WizardOverlay({ client, file, camToken, status, printerId, printer, onClose, onStarted, onTexturize, onView3D }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; printer: Printer | null; onClose: () => void; onStarted: () => void; onTexturize?: (f: LibraryFile) => void; onView3D?: (f: LibraryFile) => void }) {
+export function WizardOverlay({ client, file, camToken, status, printerId, printer, onClose, onStarted, onTexturize, onView3D, lanMode }: { client: BambuddyClient; file: LibraryFile; camToken: string | null; status: PrinterStatus | null; printerId: number; printer: Printer | null; onClose: () => void; onStarted: () => void; onTexturize?: (f: LibraryFile) => void; onView3D?: (f: LibraryFile) => void; lanMode: LanMode }) {
+  const lock = useLockedAction(lanMode);
   const insets = useSafeAreaInsets();
   const profile = printerProfile(printer);
   const token = profile.presetToken; // "@BBL A1" / "@BBL H2C" — preset-name suffix for this machine
@@ -1130,9 +1133,10 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
 
   const footer = (() => {
     if (step === 4) return null;
-    if (step === 7) return { label: starting ? 'Starting…' : 'Start print', bg: c.accent, fg: c.accentInk, onPress: start };
-    if (step === 5) return { label: 'Looks good', bg: c.accent, fg: c.accentInk, onPress: next };
-    return { label: 'Continue', bg: c.s3, fg: c.t1, onPress: next };
+    // Slicing and uploading work fine without Developer Mode; only the final "go" is refused.
+    if (step === 7) return { label: starting ? 'Starting…' : 'Start print', bg: c.accent, fg: c.accentInk, onPress: lock.press('startPrint', start), locked: lock.blocked('startPrint') };
+    if (step === 5) return { label: 'Looks good', bg: c.accent, fg: c.accentInk, onPress: next, locked: false };
+    return { label: 'Continue', bg: c.s3, fg: c.t1, onPress: next, locked: false };
   })();
 
   const L = ({ children }: { children: React.ReactNode }) => <Text style={{ fontWeight: '600', fontSize: 11, letterSpacing: 1, color: c.t3, fontFamily: mono, marginBottom: 12 }}>{children}</Text>;
@@ -1528,7 +1532,8 @@ export function WizardOverlay({ client, file, camToken, status, printerId, print
                 <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>Back</Text>
               </Tap>
             )}
-            <Tap onPress={footer.onPress} disabled={starting} style={{ flex: 1, height: 52, borderRadius: 15, backgroundColor: footer.bg, alignItems: 'center', justifyContent: 'center' }}>
+            <Tap onPress={footer.onPress} disabled={starting} style={{ flex: 1, height: 52, borderRadius: 15, backgroundColor: footer.bg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: footer.locked ? LOCKED_OPACITY : 1 }}>
+              {footer.locked && <Feather name="lock" size={15} color={footer.fg} />}
               <Text style={{ fontWeight: '600', fontSize: 16, color: footer.fg }}>{footer.label}</Text>
             </Tap>
           </View>
