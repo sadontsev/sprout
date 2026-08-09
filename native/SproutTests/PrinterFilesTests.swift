@@ -1,4 +1,5 @@
 import XCTest
+@testable import Sprout
 
 final class PrinterFilesTests: XCTestCase {
 
@@ -76,6 +77,13 @@ final class PrinterFilesTests: XCTestCase {
 
     func testMediaThumbPathHandlesRootLevelFiles() {
         XCTAssertEqual(PrinterFiles.mediaThumbPath("/video.mp4"), "/thumbnail/video.jpg")
+    }
+
+    /// The split is the LAST slash and then the LAST dot, so an extension-looking directory name
+    /// never gets mistaken for the file's own extension.
+    func testMediaThumbPathSplitsOnTheFinalSegmentOnly() {
+        XCTAssertEqual(PrinterFiles.mediaThumbPath("/a.mp4/b"), "/a.mp4/b")
+        XCTAssertEqual(PrinterFiles.mediaThumbPath("/a/b.mp4/c.txt"), "/a/b.mp4/thumbnail/c.jpg")
     }
 
     func testMediaThumbPathLeavesMalformedPathsAlone() {

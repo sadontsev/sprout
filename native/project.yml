@@ -122,11 +122,10 @@ targets:
     platform: iOS
     sources:
       - path: SproutTests
-      - path: Shared
-      - path: Sprout/Domain
-      - path: Sprout/Api
-      - path: Sprout/Camera
-        includes: ["MJPEGParser.swift"]
+    # Hosted by the app rather than recompiling its sources, so `@testable import Sprout` sees the
+    # one real build of every type instead of a duplicate set.
+    dependencies:
+      - target: Sprout
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu.tests
