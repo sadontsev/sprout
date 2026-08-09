@@ -282,3 +282,33 @@ describe('smart plugs', () => {
     expect(JSON.parse(opts.body)).toEqual({ action: 'off' });
   });
 });
+
+describe('the two endpoints that were wrong', () => {
+  test('clearPlate acknowledges the plate — NOT the queue-failure gate', async () => {
+    // queueResume clears the previous-FAILURE gate and restores skipped items; it never cleared
+    // awaiting_plate_clear, so "Plate is clear" appeared to work and changed nothing.
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    await client.clearPlate(2);
+    const [url, opts] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe('https://x/api/v1/printers/2/clear-plate');
+    expect(opts.method).toBe('POST');
+  });
+
+  test('queueResume still exists and is a DIFFERENT endpoint', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+    await client.queueResume(2);
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe('https://x/api/v1/queue/printer/2/resume');
+  });
+
+  test('reprint queues the archive instead of calling the removed reprint route', async () => {
+    // POST /archives/{id}/reprint answers 410: "Direct archive reprint has been removed. Create a
+    // print queue item with POST /queue/." The queue takes an archive_id directly.
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ id: 9 }) });
+    await client.reprint(412, 2);
+    const [url, opts] = fetchMock.mock.calls.at(-1)!;
+    expect(url).toBe('https://x/api/v1/queue/');
+    expect(opts.method).toBe('POST');
+    expect(JSON.parse(opts.body)).toMatchObject({ printer_id: 2, archive_id: 412 });
+    expect(url).not.toContain('reprint');
+  });
+});

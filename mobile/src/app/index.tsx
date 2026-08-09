@@ -356,7 +356,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
     },
     onAlerts: () => setAlertsOpen(true),
     onPlateCleared: () =>
-      client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', String(e))),
+      client.clearPlate(printerId).then(() => Alert.alert('Plate confirmed clear', 'The next queued job can start.')).catch((e) => Alert.alert('Couldn’t confirm the plate', apiErrorDetail(e))),
     onPrintAgain: () => {
       const archiveId = status?.current_archive_id;
       if (archiveId == null) {
@@ -382,7 +382,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       if (act.id === 'stop') return client.stop(printerId).catch((e) => Alert.alert('Couldn’t stop', apiErrorDetail(e)));
       if (act.id === 'clearHms') return client.clearHms(printerId).catch((e) => Alert.alert('Couldn’t clear', apiErrorDetail(e)));
       if (act.id === 'plateCleared')
-        return client.queueResume(printerId).then(() => Alert.alert('Queue resumed', 'Next job can start.')).catch((e) => Alert.alert('Couldn’t resume queue', apiErrorDetail(e)));
+        return client.clearPlate(printerId).then(() => Alert.alert('Plate confirmed clear', 'The next queued job can start.')).catch((e) => Alert.alert('Couldn’t confirm the plate', apiErrorDetail(e)));
       if (act.id === 'lookup' && act.urls?.length) {
         // The wiki is per model FAMILY and each family has its own code namespace, so the right page
         // can't be known from the code alone. Walk the candidates (this machine's family first) and
