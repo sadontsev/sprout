@@ -308,13 +308,6 @@ enum StlSource: Equatable {
     /// An arbitrary same-origin path (e.g. a texturize preview parked on the slicer sidecar), with
     /// optional auth headers for the in-page fetch.
     case direct(origin: String, path: String, name: String, headers: [String: String])
-
-    var name: String {
-        switch self {
-        case .library(_, let name): name
-        case .direct(_, _, let name, _): name
-        }
-    }
 }
 
 /// Builds the self-contained STL viewer page: raw WebGL, perspective orbit, flat-shaded mesh.
@@ -634,7 +627,7 @@ struct StlViewerOverlay: View {
     /// Library names arrive percent-encoded often enough that the raw string is unreadable; a
     /// malformed escape decodes to nil, in which case the raw name is still better than nothing.
     private var title: String {
-        let raw = [file.printName, file.filename].compactMap(\.self).first { !$0.isEmpty } ?? "file-\(file.id)"
+        let raw = [file.printName ?? "", file.filename].first { !$0.isEmpty } ?? "file-\(file.id)"
         return raw.removingPercentEncoding ?? raw
     }
 }

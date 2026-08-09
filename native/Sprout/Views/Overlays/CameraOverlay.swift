@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// Chrome colours for the fullscreen camera. Deliberately theme-INDEPENDENT: the video behind them
@@ -33,12 +34,12 @@ struct CameraOverlay: View {
 
     /// Identity of one connection attempt. When it changes, the phase, the fast-fail probe and the
     /// warm-up deadline all re-arm together.
-    private struct Attempt: Equatable {
+    private struct Attempt: Equatable, Sendable {
         let token: String?
         let reload: Int
     }
 
-    /// No stream URL means no native view mounts, so nothing else would ever report an outcome.
+    /// With no stream URL no native view mounts, so nothing else would ever report an outcome.
     private static let noTokenDeadline: Duration = .seconds(8)
     /// Wall-clock budget for the first frame. Bounded by time rather than by a retry count, so a
     /// slow warm-up and a fast-erroring dead camera converge on the same deadline.
@@ -91,11 +92,11 @@ struct CameraOverlay: View {
 
             GeometryReader { geo in
                 let ins = geo.safeAreaInsets
-                // The reader is laid out INSIDE the safe area, which is exactly why it is used: it
-                // still reports the real insets, which the rotated chrome needs. The surface is then
-                // sized to the full screen and shifted back over the insets — SwiftUI does not clip
-                // a view to its layout bounds, so this paints edge to edge without `ignoresSafeArea`
-                // zeroing out the numbers.
+                // The reader is laid out INSIDE the safe area, which is exactly why it is used here:
+                // it still reports the real insets, which the rotated chrome needs. The surface is
+                // then sized to the whole screen and shifted back over the insets — SwiftUI does not
+                // clip a view to its layout bounds, so this paints edge to edge without
+                // `ignoresSafeArea()` zeroing out the numbers we still have to read.
                 let full = CGSize(
                     width: geo.size.width + ins.leading + ins.trailing,
                     height: geo.size.height + ins.top + ins.bottom
@@ -106,7 +107,7 @@ struct CameraOverlay: View {
                 // the phone and everything reads the right way up.
                 let surface = landscape ? CGSize(width: full.height, height: full.width) : full
 
-                surfaceBody(surface: surface, insets: ins)
+                surfaceBody(insets: ins)
                     .frame(width: surface.width, height: surface.height)
                     .clipped()
                     .rotationEffect(.degrees(landscape ? 90 : 0))
@@ -123,7 +124,7 @@ struct CameraOverlay: View {
             phase = .connecting
             let limit = token == nil ? Self.noTokenDeadline : Self.warmUpDeadline
             try? await Task.sleep(for: limit)
-            // A cancelled sleep means the attempt was superseded, not that it timed out.
+            // A cancelled sleep means the attempt was superseded, not that it ran out of time.
             guard !Task.isCancelled else { return }
             if phase == .connecting { phase = .failed }
         }
@@ -131,12 +132,12 @@ struct CameraOverlay: View {
             if isLive { phase = .live }
         }
         .onChange(of: model.cameraToken) { _, _ in
-            // The shared token just rotated; drop the manual one so both paths do not fight.
+            // The shared token just rotated; drop the manual one so the two do not fight.
             localToken = nil
         }
     }
 
-    private func surfaceBody(surface: CGSize, insets: EdgeInsets) -> some View {
+    private func surfaceBody(insets: EdgeInsets) -> some View {
         ZStack {
             Chrome.bg
 
@@ -147,8 +148,8 @@ struct CameraOverlay: View {
 
             if !live {
                 stateCard
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, 36)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     // Connecting is informational; only the failed card owns touches.
                     .allowsHitTesting(failedView)
             }
@@ -164,7 +165,6 @@ struct CameraOverlay: View {
             if showDiagnostics {
                 diagnosticsPanel
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.opacity)
             }
         }
     }
@@ -189,9 +189,9 @@ struct CameraOverlay: View {
                     .foregroundStyle(Chrome.muted)
                     .multilineTextAlignment(.center)
                     .padding(.top, 12)
-                errorLine(prefix: "REPORTED", color: Chrome.faint)
+                errorLine(prefix: "REPORTED")
                 HStack(spacing: 10) {
-                    Tap(action: retry) {
+                    Tap { retry() } content: {
                         Text("Retry")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.white)
@@ -202,7 +202,7 @@ struct CameraOverlay: View {
                                     .fill(Color.white.opacity(0.08))
                             )
                     }
-                    Tap(action: runDiagnostics) {
+                    Tap { runDiagnostics() } content: {
                         Text("Diagnose")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(Chrome.label)
@@ -230,7 +230,7 @@ struct CameraOverlay: View {
                     .foregroundStyle(Chrome.faint)
                     .multilineTextAlignment(.center)
                     .padding(.top, 10)
-                errorLine(prefix: "RETRYING", color: Chrome.faint)
+                errorLine(prefix: "RETRYING")
             }
         }
     }
@@ -242,13 +242,14 @@ struct CameraOverlay: View {
     }
 
     /// The renderer's typed error, verbatim. It is the one place a 401 (expired token) is
-    /// distinguishable from "still warming up" — a distinction the old WebView could not make.
+    /// distinguishable from "still warming up" — a distinction the old WebView could not make, and
+    /// the reason the error is shown even while the stream is still being retried.
     @ViewBuilder
-    private func errorLine(prefix: String, color: Color) -> some View {
+    private func errorLine(prefix: String) -> some View {
         if let message = pip.lastError {
             Text("\(prefix) · \(message)")
                 .font(.mono(10.5, weight: .regular))
-                .foregroundStyle(color)
+                .foregroundStyle(Chrome.faint)
                 .multilineTextAlignment(.center)
                 .lineLimit(3)
                 .padding(.top, 10)
@@ -262,17 +263,19 @@ struct CameraOverlay: View {
             chip(landscape ? "iphone" : "display", size: 17) {
                 withAnimation(Motion.standard(0.3)) { landscape.toggle() }
             }
-            chip("chevron.down", size: 22, action: close)
+            chip("chevron.down", size: 22) { close() }
 
             statusPill
 
+            // Gate the button on real support: a control that silently does nothing is worse than
+            // no control.
             if pip.isPictureInPictureSupported {
-                // The real PiP glyph. A generic "minimize" square gave no hint what it did.
+                // The real PiP glyph — a generic "minimize" square gives no hint what it does.
                 chip(pip.pipActive ? "pip.exit" : "pip.enter", size: 17) {
                     if pip.pipActive { pip.stopPiP() } else { pip.startPiP() }
                 }
             }
-            chip("arrow.clockwise", size: 18, action: retry)
+            chip("arrow.clockwise", size: 18) { retry() }
         }
         .padding(.top, landscape ? 12 : insets.top + 10)
         .padding(.bottom, 16)
@@ -300,9 +303,7 @@ struct CameraOverlay: View {
         .padding(.horizontal, 13)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Chrome.pill)
-        )
+        .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Chrome.pill))
     }
 
     private func chip(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
@@ -337,8 +338,8 @@ struct CameraOverlay: View {
 
     // MARK: - Diagnostics
 
-    /// Drawn INSIDE the rotated surface rather than presented as a sheet, so it turns with the
-    /// video in landscape instead of appearing sideways.
+    /// Drawn INSIDE the rotated surface rather than presented as a sheet, so it turns with the video
+    /// in landscape instead of arriving sideways.
     private var diagnosticsPanel: some View {
         ZStack {
             Color.black.opacity(0.55)
@@ -353,16 +354,22 @@ struct CameraOverlay: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         diagRow("Frames decoded", "\(pip.frameCount)")
-                        Text("Zero frames means nothing ever arrived over the wire. A rising count on a black screen means the transport is fine and the decode or display path is not — the two look identical from the outside.")
+                        // The single most useful number here, which is why it leads.
+                        Text("Zero frames means nothing ever arrived over the wire. A rising count on a black screen means the transport is fine and the decode or display path is not — from the outside the two look identical.")
                             .font(.system(size: 11))
                             .lineSpacing(2)
                             .foregroundStyle(Chrome.muted)
                         diagRow("Stream", phaseLabel)
                         diagRow("Last error", pip.lastError ?? "none")
                         diagRow("Picture in Picture", pipLabel)
-                        diagRow("Keep-alive audio", pip.audioKeepAliveOK ? "armed" : "not armed — PiP will freeze when backgrounded")
+                        diagRow("Keep-alive audio", pip.audioKeepAliveOK
+                                ? "armed"
+                                : "not armed — PiP freezes when backgrounded")
 
-                        Rectangle().fill(Chrome.hairline).frame(height: 1).padding(.vertical, 2)
+                        Rectangle()
+                            .fill(Chrome.hairline)
+                            .frame(height: 1)
+                            .padding(.vertical, 2)
 
                         Text("SERVER PROBE")
                             .font(.mono(10, weight: .regular))
@@ -372,7 +379,9 @@ struct CameraOverlay: View {
                         if diagnosing {
                             HStack(spacing: 8) {
                                 ProgressView().progressViewStyle(.circular).tint(Chrome.muted)
-                                Text("Probing…").font(.system(size: 12)).foregroundStyle(Chrome.muted)
+                                Text("Probing…")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Chrome.muted)
                             }
                         }
                         if let diagnosisError {
@@ -386,7 +395,10 @@ struct CameraOverlay: View {
                             diagRow("Overall", d.overallStatus ?? "—")
                             diagRow("Summary", d.summaryCode ?? "—")
                             ForEach(Array((d.stages ?? []).enumerated()), id: \.offset) { _, stage in
-                                diagRow(stage.name, [stage.status, stage.code].compactMap { $0 }.joined(separator: " · "))
+                                diagRow(
+                                    stage.name,
+                                    [stage.status, stage.code].compactMap { $0 }.joined(separator: " · ")
+                                )
                             }
                         }
 
@@ -404,7 +416,7 @@ struct CameraOverlay: View {
                 .padding(.top, 14)
 
                 HStack(spacing: 10) {
-                    Tap(action: retry) {
+                    Tap { retry() } content: {
                         Text("Retry stream")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.white)
@@ -429,12 +441,8 @@ struct CameraOverlay: View {
             }
             .padding(18)
             .frame(maxWidth: 420)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Chrome.panel)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Chrome.hairline)
-            )
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Chrome.panel))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Chrome.hairline))
             .padding(20)
         }
     }
@@ -444,6 +452,7 @@ struct CameraOverlay: View {
             Text(label)
                 .font(.system(size: 12))
                 .foregroundStyle(Chrome.muted)
+                .lineLimit(2)
                 .frame(width: 118, alignment: .leading)
             Text(value)
                 .font(.mono(12, weight: .regular))
@@ -468,23 +477,25 @@ struct CameraOverlay: View {
     // MARK: - Actions
 
     private func close() {
-        // Dismissing tears down the hosting view, and with it the display layer that the floating
-        // window renders from. Shut PiP down deliberately rather than leaving a frozen window behind.
+        // Dismissing tears down the hosting view, and with it the display layer the floating window
+        // renders from. Shut PiP down deliberately rather than leave a frozen window behind.
         if pip.pipActive { pip.stopPiP() }
         dismiss()
     }
 
     /// Bumping `reloadKey` re-arms the probe and the deadline immediately, so a retry that yields the
     /// same token still gives visible feedback. It is deliberately NOT part of the video view's
-    /// identity — only a genuinely new URL restarts the stream, so one retry costs one warm-up.
+    /// identity — only a genuinely new URL restarts the stream, so one retry costs one warm-up
+    /// rather than two.
     private func retry() {
         pip.lastError = nil
         reloadKey += 1
         guard let client = model.client else { return }
-        let id = model.printerId
         Task {
+            // A rejected token is the one failure the renderer will not retry through, so a manual
+            // retry always mints a fresh one. Keep the old token if the mint fails — a stale token
+            // still beats no stream at all.
             if let fresh = try? await client.mintCameraToken() { localToken = fresh }
-            _ = id
         }
     }
 
@@ -509,16 +520,15 @@ struct CameraOverlay: View {
     /// Fast-fail probe. A camera whose liveview is switched off rejects the SNAPSHOT endpoint
     /// deterministically (HTTP 503 in ~60 ms) while its `/stream` answers 200 with a multipart body
     /// whose only part is a text/plain error — no frame ever decodes, so without this the overlay
-    /// would sit on "waking…" for the entire warm-up deadline.
+    /// would sit on "waking…" for the entire warm-up deadline, which is to say forever as far as
+    /// anyone waiting is concerned.
     ///
     /// Only a clean HTTP error short-circuits: a probe NETWORK failure proves nothing about the
     /// stream path and is ignored.
     private func probeSnapshot() async {
         guard let url = snapshotUrl else { return }
         do {
-            // Headers are all this needs; dropping the byte stream cancels the transfer before the
-            // JPEG body is pulled down.
-            let (_, response) = try await URLSession.shared.bytes(for: URLRequest(url: url))
+            let (_, response) = try await URLSession.shared.data(from: url)
             guard !Task.isCancelled, let http = response as? HTTPURLResponse else { return }
             if http.statusCode >= 400, phase != .live { phase = .failed }
         } catch {

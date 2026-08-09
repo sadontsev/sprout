@@ -36,6 +36,7 @@ final class AppModel {
         didSet {
             guard printerId != oldValue else { return }
             status?.printerId = printerId
+            cooldown?.start(printerId: printerId)
             persist { $0.printerId = self.printerId; $0.printerName = self.printer?.name }
             Task { await refreshLanMode() }
         }
@@ -52,6 +53,11 @@ final class AppModel {
 
     private(set) var lanMode: LanMode = .unknown
 
+    // MARK: Derived surfaces
+
+    private(set) var cooldown: CooldownStore?
+    private(set) var liveActivity: LiveActivityController?
+
     // MARK: UI state
 
     var tab: TabKey = .printer
@@ -62,6 +68,7 @@ final class AppModel {
     /// it is a pure function over a value type.
     var vm: DashVM { Dash.present(status?.status) }
 
+    private var derivedTask: Task<Void, Never>?
     private var cameraTokenTask: Task<Void, Never>?
     private var fleetTask: Task<Void, Never>?
     private var lanTask: Task<Void, Never>?
@@ -97,14 +104,23 @@ final class AppModel {
         status = store
         store.start()
 
+        let cool = CooldownStore(client: c)
+        cooldown = cool
+        cool.start(printerId: printerId)
+
+        liveActivity = LiveActivityController(config: cfg)
+
         startFleetRefresh()
         startCameraTokenRefresh()
+        startDerivedRefresh()
         await refreshLanMode()
         startLanModeRefresh()
     }
 
     func signOut() {
         status?.stop()
+        cooldown?.stop()
+        derivedTask?.cancel()
         cameraTokenTask?.cancel()
         fleetTask?.cancel()
         lanTask?.cancel()
@@ -150,6 +166,30 @@ final class AppModel {
             return 0
         }
         return misses + 1
+    }
+
+    /// Recompute the cooldown readout and reconcile Live Activity cards against live status.
+    ///
+    /// One loop rather than an observer on `status`: both consumers are cheap but neither wants to
+    /// run on every socket frame, and a fixed cadence is easier to reason about than change-driven
+    /// re-entry.
+    private func startDerivedRefresh() {
+        derivedTask?.cancel()
+        derivedTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let s = self.status?.status
+                let material = self.vm.ams.first { $0.active }?.label
+                self.cooldown?.update(status: s, vmKind: self.vm.kind, material: material)
+                await self.liveActivity?.sync(
+                    printerId: self.printerId,
+                    printerName: self.printer?.name ?? "",
+                    vm: self.vm,
+                    status: s
+                )
+                try? await Task.sleep(for: .seconds(4))
+            }
+        }
     }
 
     // MARK: - Camera token

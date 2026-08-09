@@ -33,10 +33,13 @@ final class LiveActivityController {
     }
 
     // MARK: - Content mapping
+    //
+    // These are pure functions over value types, so they are `nonisolated`: they carry no instance
+    // state, and forcing callers onto the main actor to compute a struct would be noise.
 
     /// Theme-independent tint for a print card, derived from the semantic state rather than a themed
     /// colour, so the same print looks identical whoever built the card.
-    static func tint(_ vm: DashVM) -> String {
+    nonisolated static func tint(_ vm: DashVM) -> String {
         if vm.kind == .error { return LAColors.error }
         if vm.isPaused { return LAColors.paused }
         if vm.kind == .idle || vm.kind == .offline || vm.kind == .connecting { return LAColors.idle }
@@ -44,7 +47,7 @@ final class LiveActivityController {
         return vm.stateColor == .heating ? LAColors.heating : LAColors.running
     }
 
-    private static let symbols: [String: String] = [
+    nonisolated private static let symbols: [String: String] = [
         "Printing": "printer.fill",
         "Heating": "thermometer.medium",
         "Paused": "pause.circle.fill",
@@ -53,7 +56,7 @@ final class LiveActivityController {
     ]
 
     /// Pure: view-model + raw status → the flat content state the card renders.
-    static func content(
+    nonisolated static func content(
         vm: DashVM,
         status: PrinterStatus,
         now: Date = Date(),
@@ -100,7 +103,7 @@ final class LiveActivityController {
     /// `dryTime` (minutes remaining) > 0 is THE active signal — `dryStatus` stayed 0 mid-cycle on the
     /// live machine. Three drying-capable units are fitted, so concurrent cycles are ordinary rather
     /// than theoretical.
-    static func dryingUnitIds(_ status: PrinterStatus?) -> [Int] {
+    nonisolated static func dryingUnitIds(_ status: PrinterStatus?) -> [Int] {
         (status?.ams ?? []).filter { ($0.dryTime?.double ?? 0) > 0 }.map(\.id)
     }
 
@@ -108,7 +111,7 @@ final class LiveActivityController {
     ///
     /// Scans EVERY unit, not `ams[0]`: a cycle on the HT produced no card at all. The card names its
     /// unit so it is unambiguous which one is drying.
-    static func dryContent(_ status: PrinterStatus, amsId: Int, now: Date = Date(), printerName: String = "", iconUri: String = "") -> PrintActivityAttributes.ContentState? {
+    nonisolated static func dryContent(_ status: PrinterStatus, amsId: Int, now: Date = Date(), printerName: String = "", iconUri: String = "") -> PrintActivityAttributes.ContentState? {
         let units = status.ams ?? []
         guard let ams = units.first(where: { $0.id == amsId }) else { return nil }
         let mins = ams.dryTime?.double ?? 0
@@ -142,7 +145,7 @@ final class LiveActivityController {
     ///
     /// Temps and ETA are on the card, so without them a heat-up that doesn't advance progress or
     /// layer never updates and the card shows cold temperatures for minutes.
-    static func meaningfulChange(from a: PrintActivityAttributes.ContentState?, to b: PrintActivityAttributes.ContentState) -> Bool {
+    nonisolated static func meaningfulChange(from a: PrintActivityAttributes.ContentState?, to b: PrintActivityAttributes.ContentState) -> Bool {
         guard let a else { return true }
         return abs(a.progress - b.progress) >= 1
             || a.layer != b.layer
@@ -207,15 +210,19 @@ final class LiveActivityController {
 
     private func upsert(printerId: Int, amsId: Int?, content: PrintActivityAttributes.ContentState, ended: Bool) async {
         let k = key(printerId: printerId, amsId: amsId)
-        let existing = Activity<PrintActivityAttributes>.activities.first {
-            $0.attributes.printerId == printerId && $0.attributes.amsId == amsId
-        }
 
         guard Self.meaningfulChange(from: lastContent[k], to: content) else { return }
         if let last = lastUpdate[k], Date().timeIntervalSince(last) < Self.throttle, !ended { return }
 
-        if let existing {
-            await existing.update(ActivityContent(state: content, staleDate: nil))
+        // Updated inside the loop rather than through a captured optional: an `Activity` bound to a
+        // local cannot cross into the nonisolated `update`, but a fresh loop binding can.
+        var updated = false
+        for activity in Activity<PrintActivityAttributes>.activities
+        where activity.attributes.printerId == printerId && activity.attributes.amsId == amsId {
+            await activity.update(ActivityContent(state: content, staleDate: nil))
+            updated = true
+        }
+        if updated {
             lastContent[k] = content
             lastUpdate[k] = Date()
             return

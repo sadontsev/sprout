@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 // MARK: - File kinds
 
-private enum UploadKind {
+private enum UploadFileKind {
     /// What the document browser will let you pick.
     ///
     /// Built with `UTType(tag:tagClass:conformingTo:)` rather than `UTType(filenameExtension:)`
@@ -24,7 +24,7 @@ private enum UploadKind {
 /// implicitly `Sendable`, so the callback can hold *this* and hop.
 @MainActor
 @Observable
-private final class UploadProgress {
+private final class UploadProgressBox {
     /// 0...1.
     var fraction: Double = 0
     var percent: Int { Int((fraction * 100).rounded()) }
@@ -37,7 +37,7 @@ private final class UploadProgress {
 /// Deliberately narrower than `BambuddyError.detail`, which falls back to the raw body: a proxy's
 /// HTML error page is not something to put in front of a person, so callers keep their own wording
 /// when there is no structured detail.
-private func apiDetail(_ error: Error) -> String? {
+private func uploadApiDetail(_ error: Error) -> String? {
     guard let e = error as? BambuddyError,
           let data = e.body.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -59,7 +59,7 @@ private func apiDetail(_ error: Error) -> String? {
 ///
 /// Free function, not a method, so it can run off the main actor: copying tens of megabytes is not
 /// something to do while the sheet is trying to animate.
-private func stageForUpload(_ picked: URL) throws -> URL {
+private func stageUploadCopy(_ picked: URL) throws -> URL {
     let scoped = picked.startAccessingSecurityScopedResource()
     defer { if scoped { picked.stopAccessingSecurityScopedResource() } }
 
@@ -90,7 +90,7 @@ struct UploadSheet: View {
     @State private var showMakerWorld = false
     @State private var picking = false
     @State private var busy = false
-    @State private var progress = UploadProgress()
+    @State private var progress = UploadProgressBox()
     @State private var uploadError: String?
     @State private var scrimIn = false
 
@@ -111,7 +111,7 @@ struct UploadSheet: View {
         .ignoresSafeArea(.container)
         .presentationBackground(.clear)
         .onAppear { withAnimation(.easeOut(duration: 0.22)) { scrimIn = true } }
-        .fileImporter(isPresented: $picking, allowedContentTypes: UploadKind.all) { (result: Result<URL, any Error>) in
+        .fileImporter(isPresented: $picking, allowedContentTypes: UploadFileKind.all) { (result: Result<URL, any Error>) in
             switch result {
             case .success(let url):
                 startUpload(url)
@@ -159,7 +159,7 @@ struct UploadSheet: View {
 
     private var addFilePanel: some View {
         VStack(spacing: 0) {
-            Grabber()
+            UploadSheetGrabber()
                 .padding(.bottom, 16)
 
             Text("Add a file")
@@ -172,7 +172,7 @@ struct UploadSheet: View {
                 picking = true
             } content: {
                 HStack(spacing: 13) {
-                    IconTile(symbol: "folder")
+                    UploadSourceTile(symbol: "folder")
                     Text(busy ? "Uploading… \(progress.percent)%" : "From Files")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(c.t1)
@@ -199,7 +199,7 @@ struct UploadSheet: View {
             }
 
             if let uploadError {
-                ErrorCard(text: uploadError)
+                UploadErrorCard(text: uploadError)
                     .padding(.top, 12)
             }
 
@@ -207,7 +207,7 @@ struct UploadSheet: View {
                 showMakerWorld = true
             } content: {
                 HStack(spacing: 13) {
-                    IconTile(symbol: "globe")
+                    UploadSourceTile(symbol: "globe")
                     VStack(alignment: .leading, spacing: 2) {
                         Text("From MakerWorld")
                             .font(.system(size: 15, weight: .semibold))
@@ -242,7 +242,7 @@ struct UploadSheet: View {
 
     private var disconnected: some View {
         VStack(spacing: 0) {
-            Grabber().padding(.bottom, 16)
+            UploadSheetGrabber().padding(.bottom, 16)
             Text("Not connected")
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(c.t1)
@@ -285,7 +285,7 @@ struct UploadSheet: View {
         Task {
             do {
                 let staged = try await Task.detached(priority: .userInitiated) {
-                    try stageForUpload(picked)
+                    try stageUploadCopy(picked)
                 }.value
                 defer { try? FileManager.default.removeItem(at: staged.deletingLastPathComponent()) }
 
@@ -299,7 +299,7 @@ struct UploadSheet: View {
                 close()
             } catch {
                 busy = false
-                uploadError = "Upload failed — " + (apiDetail(error) ?? error.localizedDescription)
+                uploadError = "Upload failed — " + (uploadApiDetail(error) ?? error.localizedDescription)
             }
         }
     }
@@ -330,13 +330,15 @@ private struct MakerWorldPanel: View {
     @State private var picked: MWInstance?
     @State private var err: String?
     @State private var importing = false
+    /// Measured height of the scroll's content — see `body` for why the scroll needs it.
+    @State private var contentHeight: CGFloat = 0
 
     private var alreadyImported: Bool { !(resolved?.alreadyImportedLibraryIds?.isEmpty ?? true) }
     private var trimmedUrl: String { url.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         VStack(spacing: 0) {
-            Grabber()
+            UploadSheetGrabber()
                 .padding(.bottom, 12)
 
             header
@@ -347,14 +349,20 @@ private struct MakerWorldPanel: View {
                 VStack(alignment: .leading, spacing: 0) {
                     linkField
                     if let err {
-                        ErrorCard(text: err).padding(.top, 12)
+                        UploadErrorCard(text: err).padding(.top, 12)
                     }
                     if let resolved {
                         designBlock(resolved)
                     }
                 }
                 .padding(.bottom, 6)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
             }
+            // A ScrollView takes every point it is offered, and the card is allowed 88 % of the
+            // screen — so without this cap an unresolved link sat in a near-full-height sheet of
+            // empty space. Capping at the measured content height lets the card hug what is in it
+            // and only start scrolling once the design block makes it taller than the 88 %.
+            .frame(maxHeight: contentHeight > 0 ? contentHeight : nil)
             .scrollDismissesKeyboard(.interactively)
             .scrollIndicators(.hidden)
 
@@ -422,7 +430,7 @@ private struct MakerWorldPanel: View {
 
     private var linkField: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("MODEL LINK")
+            UploadSectionLabel("MODEL LINK")
 
             HStack(spacing: 10) {
                 TextField(
@@ -478,11 +486,16 @@ private struct MakerWorldPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 14)
 
-        Text(byline(design))
-            .font(.mono(12, weight: .medium))
-            .foregroundStyle(c.t3)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 5)
+        // MakerWorld sometimes returns a design with no creator and no download count; an empty
+        // line would still take a row's height under the title.
+        let byline = byline(design)
+        if !byline.isEmpty {
+            Text(byline)
+                .font(.mono(12, weight: .medium))
+                .foregroundStyle(c.t3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 5)
+        }
 
         if alreadyImported {
             HStack(spacing: 7) {
@@ -508,7 +521,7 @@ private struct MakerWorldPanel: View {
                 .padding(.top, 18)
         } else {
             VStack(alignment: .leading, spacing: 0) {
-                SectionLabel("PROFILE" + (r.instances.count > 1 ? "  ·  \(r.instances.count)" : ""))
+                UploadSectionLabel("PROFILE" + (r.instances.count > 1 ? "  ·  \(r.instances.count)" : ""))
                 VStack(spacing: 9) {
                     ForEach(r.instances) { inst in
                         profileRow(inst)
@@ -586,7 +599,7 @@ private struct MakerWorldPanel: View {
                     }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(inst.title?.isEmpty == false ? inst.title! : "Default profile")
+                    Text(instanceTitle(inst))
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(c.t1)
                         .lineLimit(1)
@@ -638,8 +651,7 @@ private struct MakerWorldPanel: View {
             .contentShape(.rect)
         }
         .padding(.top, 14)
-        .accessibilityHint(allowed ? "" : "Sign in to Bambu Cloud on your Bambuddy server to import")
-        .accessibilityLabel(Text(verbatim: importLabel(allowed: allowed)) + Text(verbatim: " — model \(r.modelId)"))
+        .accessibilityLabel("\(importLabel(allowed: allowed)), model \(r.modelId)")
     }
 
     private func importLabel(allowed: Bool) -> String {
@@ -664,7 +676,7 @@ private struct MakerWorldPanel: View {
                 resolved = r
                 picked = r.instances.first
             } catch {
-                err = apiDetail(error) ?? "Couldn’t resolve that link. Paste a makerworld.com model URL."
+                err = uploadApiDetail(error) ?? "Couldn’t resolve that link. Paste a makerworld.com model URL."
             }
         }
     }
@@ -695,7 +707,7 @@ private struct MakerWorldPanel: View {
                 onClose()
             } catch {
                 importing = false
-                err = "Import failed — " + (apiDetail(error) ?? error.localizedDescription)
+                err = "Import failed — " + (uploadApiDetail(error) ?? error.localizedDescription)
             }
         }
     }
@@ -717,8 +729,13 @@ private struct MakerWorldPanel: View {
         i.instanceFilaments ?? i.extention?.modelInfo?.plates?.first?.filaments ?? []
     }
 
+    private func instanceTitle(_ i: MWInstance) -> String {
+        guard let t = i.title, !t.isEmpty else { return "Default profile" }
+        return t
+    }
+
     private func metaLine(seconds: Double?, grams: Double?, needAms: Bool) -> String {
-        var s = ""
+        var s: String
         if let seconds, seconds > 0 {
             s = "\(Int((seconds / 60).rounded())) min"
         } else {
@@ -747,7 +764,7 @@ private struct MakerWorldPanel: View {
 
 /// The bottom sheet's drag handle. Decorative only — the sheet is dismissed by the backdrop or
 /// Cancel, so it carries no gesture and is hidden from assistive tech.
-private struct Grabber: View {
+private struct UploadSheetGrabber: View {
     @Environment(\.palette) private var c
 
     var body: some View {
@@ -759,7 +776,7 @@ private struct Grabber: View {
 }
 
 /// A 36 pt accent tile behind a row's glyph.
-private struct IconTile: View {
+private struct UploadSourceTile: View {
     let symbol: String
     @Environment(\.palette) private var c
 
@@ -776,7 +793,7 @@ private struct IconTile: View {
 }
 
 /// The one failure card used by both panels.
-private struct ErrorCard: View {
+private struct UploadErrorCard: View {
     let text: String
     @Environment(\.palette) private var c
 
@@ -797,7 +814,7 @@ private struct ErrorCard: View {
 }
 
 /// Small uppercase section heading.
-private struct SectionLabel: View {
+private struct UploadSectionLabel: View {
     let text: String
     @Environment(\.palette) private var c
 

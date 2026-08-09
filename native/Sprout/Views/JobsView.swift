@@ -479,7 +479,7 @@ private struct HistorySection: View {
                 EmptyState(
                     icon: "clock",
                     title: "No prints yet",
-                    body: "Once you finish a print it's archived here with its stats, filament, and cost."
+                    message: "Once you finish a print it's archived here with its stats, filament, and cost."
                 )
             }
             if let entries, !entries.isEmpty {
@@ -878,7 +878,8 @@ private struct LoadFailedCard: View {
 private struct EmptyState: View {
     let icon: String
     let title: String
-    let body: String
+    // Not `body`: that name is the View protocol requirement.
+    let message: String
 
     @Environment(\.palette) private var c
 
@@ -894,7 +895,7 @@ private struct EmptyState: View {
                     .font(.system(size: 20, weight: .bold))
                     .tracking(-0.3)
                     .foregroundStyle(c.t1)
-                Text(body)
+                Text(message)
                     .font(.system(size: 13, weight: .medium))
                     .lineSpacing(19 - 13)
                     .multilineTextAlignment(.center)

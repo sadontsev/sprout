@@ -12,9 +12,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A **personal iOS app** to control + monitor a Chinese-market **Bambu Lab A1** 3D printer (the official Bambu Handy app can't drive that unit). It's an **Expo SDK 56 / React Native 0.85** app (`mobile/`) that is a polished client of a **self-hosted Bambuddy backend** (FastAPI, ~505 endpoints). Distribution is **local/TestFlight for one user** — there is no CI, and the app is **built locally with Xcode**, not EAS.
 
 Monorepo layout:
-- `mobile/` — the Expo app (where ~all work happens). Has its own `mobile/AGENTS.md`: **read the exact v56 docs at https://docs.expo.dev/versions/v56.0.0/ before writing Expo code** — SDK 56 APIs differ from older muscle memory.
+- `mobile/` — the Expo app. Has its own `mobile/AGENTS.md`: **read the exact v56 docs at https://docs.expo.dev/versions/v56.0.0/ before writing Expo code** — SDK 56 APIs differ from older muscle memory.
+- `native/` — a **native SwiftUI reimplementation** of the same app, built to be compared against the RN one. Same bundle id, so the two ship as different TestFlight builds of one app record. See `docs/native-rewrite/00-overview.md`.
 - `deploy/` — docker-compose for the Bambuddy backend + Bambu Studio / OrcaSlicer sidecars (run on the home server `homeserver.local`). See `deploy/README.md`.
 - `docs/phase0-results.md` — validated backend facts (URLs, auth, A1 preset names). Secrets are **not** here.
+- `docs/native-rewrite/` — the extracted behavioural specification of the RN app, one file per subsystem. It is the source of truth for the port and the reference for anything ambiguous in either app.
+
+## The native app (`native/`)
+
+```bash
+cd native && xcodegen generate     # project.yml is the source; Sprout.xcodeproj is GITIGNORED
+DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
+  xcodebuild -project native/Sprout.xcodeproj -scheme Sprout \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
+./native/scripts-archive.sh        # archive + export an .ipa for TestFlight
+```
+
+- **`Sprout.xcodeproj` is generated and gitignored** — the same discipline `mobile/ios` follows. Hand-editing it in Xcode does not survive. All project config lives in `native/project.yml`.
+- Swift 6 with `SWIFT_STRICT_CONCURRENCY: complete`. The camera renderer needed real changes to pass it: its event payload became a typed `Sendable` enum, and the stream-URL provider a concrete error, because `[String: Any]` and `any Error` cannot cross the network→main hop.
+- A property named `body` on a `View` collides with the protocol requirement. Two ported screens hit this; call it `message`.
+- Bare-slash regex literals may not begin or end with a space — write `\s`.
+- **`PrintActivityAttributes.ContentState` field names are a wire format.** la-push pushes that JSON over APNs, so renaming a property breaks remote Live Activity updates without breaking the build.
+- The Keychain schema differs from `expo-secure-store`'s, so settings do **not** migrate between the two apps — the base URL and API key are re-entered once.
 
 ## Commands (run from `mobile/`)
 
