@@ -35,10 +35,8 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
   const [landscape, setLandscape] = useState(false);
   const { width: winW, height: winH } = useWindowDimensions();
   const pipRef = useRef<CameraPiPViewRef>(null);
-  // Diagnostics for the frozen-PiP question: if `frames` keeps climbing while the window is stuck,
-  // frames are arriving and it is a rendering problem; if it stalls, the app is being suspended.
-  const [stats, setStats] = useState<{ frames: number; pip: boolean } | null>(null);
-  const [audioOk, setAudioOk] = useState<boolean | null>(null);
+  // The native view still EMITS onStats/onAudio — only the on-screen readout is gone. Re-surfacing
+  // it for the unresolved frozen-PiP question is a one-line JS change over OTA, with no rebuild.
   // Gate the button: PiP is unavailable on some devices, and a control that silently does nothing
   // is worse than no control.
   const pipSupported = useMemo(() => isPictureInPictureSupported(), []);
@@ -105,8 +103,6 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
         onError={(e) => { if (!e.nativeEvent.retryable) setPhase('failed'); }}
         onPipStart={() => onPipChange?.(true)}
         onPipStop={() => onPipChange?.(false)}
-        onStats={(e) => setStats(e.nativeEvent)}
-        onAudio={(e) => setAudioOk(e.nativeEvent.ok)}
       />
       {!live && (
         <View pointerEvents={failedView ? 'auto' : 'none'} style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 36 } as any}>
@@ -174,11 +170,6 @@ export function CameraOverlay({ streamUrl, snapshotUrl, status, cameraHint, onCl
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: 'rgba(22,24,27,0.55)' }}>
             <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.running }} />
             <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: '#fff' }}>LIVE</Text>
-            {stats != null && (
-              <Text style={{ fontWeight: '600', fontSize: 10, letterSpacing: 0.5, color: 'rgba(255,255,255,0.55)', fontFamily: mono }}>
-                · {stats.frames} frames{stats.pip ? ' · pip' : ''}{audioOk === false ? ' · audio FAILED' : ''}
-              </Text>
-            )}
           </View>
         </View>
       )}
