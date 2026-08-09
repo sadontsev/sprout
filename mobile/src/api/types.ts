@@ -110,6 +110,10 @@ export interface PrinterStatus {
   /** True after FINISH until the user confirms the plate is clear (gates the queue). */
   awaiting_plate_clear?: boolean;
   door_open?: boolean;
+  /** LAN Developer Mode. false = the firmware REJECTS every command Bambuddy sends (status still
+   *  flows, so nothing looks wrong). Absent on the WebSocket feed — fetch via REST, and treat
+   *  undefined as "not yet known", never as off. See src/capabilities/lanMode.ts. */
+  developer_mode?: boolean | null;
   wifi_signal?: number; // dBm
   active_extruder?: number;
   supports_drying?: boolean;

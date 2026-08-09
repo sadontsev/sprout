@@ -18,6 +18,8 @@ import { reconcileSelection, initialSelectionState, type SelectionState } from '
 import { displayName } from '@/library/libraryBrowse';
 import { DashboardView, type DashHandlers, type FleetEntry } from '@/components/DashboardView';
 import { useCooldown } from '@/cooling/useCooldown';
+import { useLanMode } from '@/capabilities/useLanMode';
+import { isBlocked, LAN_BLOCKED_HINT, type ActionId } from '@/capabilities/lanMode';
 import { TabBar, type TabKey } from '@/components/TabBar';
 import { LibraryView, JobsView, AmsView, PowerView } from '@/components/TabScreens';
 import { CameraOverlay, UploadSheet, WizardOverlay, TexturizeSheet, StlViewerOverlay } from '@/components/Overlays';
@@ -146,6 +148,16 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
 
   const vm = useMemo(() => presentDashboard(status, Date.now()), [status]);
   const cooldown = useCooldown(client, printerId, status);
+  // Whether the printer accepts commands at all. Fetched over REST — the WS feed omits the field.
+  const lanMode = useLanMode(client, printerId);
+  /** Refuse a blocked action loudly instead of firing a command the printer silently discards. */
+  const guard = (action: ActionId, run: () => void) => () => {
+    if (isBlocked(action, lanMode)) {
+      Alert.alert('Printer controls are locked', LAN_BLOCKED_HINT);
+      return;
+    }
+    run();
+  };
 
   // Fleet rows for the switcher: every printer with its live state (the shared WS carries all).
   const fleet: FleetEntry[] = useMemo(
@@ -324,14 +336,17 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
     onTab: (t) => setTab(t as TabKey),
     onSelectPrinter: selectPrinter,
     onLight: () => client.setLight(printerId, !vm.lightOn).catch((e) => Alert.alert('Light failed', String(e))),
-    onPauseResume: () =>
-      (vm.isPaused ? client.resume(printerId) : client.pause(printerId)).catch((e) => Alert.alert('Action failed', String(e))),
+    // Stop is deliberately NOT guarded — see lanMode.ts. A dead Stop on a failing print is worse
+    // than one that might not land.
+    onPauseResume: guard(vm.isPaused ? 'resume' : 'pause', () =>
+      void (vm.isPaused ? client.resume(printerId) : client.pause(printerId)).catch((e) => Alert.alert('Action failed', String(e)))),
     onStop: () =>
       Alert.alert('Stop print?', 'This cancels the current job. It can’t be undone.', [
         { text: 'Keep printing', style: 'cancel' },
         { text: 'Stop', style: 'destructive', onPress: () => client.stop(printerId).catch((e) => Alert.alert('Stop failed', String(e))) },
       ]),
     onSpeedSet: (i: number) => {
+      if (isBlocked('speed', lanMode)) { Alert.alert('Printer controls are locked', LAN_BLOCKED_HINT); return; }
       const mode = i as 1 | 2 | 3 | 4;
       setSpeedOverride(mode);
       client.setSpeed(printerId, mode).catch((e) => {
@@ -403,7 +418,7 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
           mid-flight on a tab switch hits a reanimated-4 New-Arch teardown race (upstream #9402 /
           #9293: crash or whole-app freeze), so it stays mounted and is HIDDEN instead. */}
       <View style={{ flex: 1, display: tab === 'printer' ? 'flex' : 'none' }}>
-        <DashboardView vm={vm} alerts={alerts} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} printer={printer} fleet={fleet} cooldown={cooldown} />
+        <DashboardView vm={vm} alerts={alerts} snapshotUri={snapshotUri} h={handlers} maintAlert={maintAlert} speedIdx={speedIdx} printer={printer} fleet={fleet} cooldown={cooldown} lanMode={lanMode} />
       </View>
       {tab !== 'printer' && (
         <FadeRise key={tab} dy={8} duration={300} style={{ flex: 1 }}>

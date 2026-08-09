@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
+import { View, Text, ScrollView, Pressable, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -7,6 +7,7 @@ import { c, mono, shadow1, type Palette } from '@/theme';
 import type { DashVM, DashKind } from '@/dashboard/present';
 import { alertSummary, type AlertVM } from '@/alerts/present';
 import type { CooldownVM } from '@/cooling/present';
+import { isBlocked, LAN_BANNER_BODY, LAN_BANNER_TITLE, LAN_HELP_BODY, LAN_HELP_TITLE, type LanMode } from '@/capabilities/lanMode';
 import type { Printer } from '@/api/types';
 import { Tap, RollingNumber, PulseDot, ProgressRing, HeatBar, Confetti, FadeRise, Skeleton, Pop, Breathe } from './anim';
 import { Swatch } from './Swatch';
@@ -39,6 +40,9 @@ export interface FleetEntry {
 
 // Bambu print-speed modes (design: the speed popover). Dot colors are palette KEYS resolved at
 // render — the live `c` object mutates on theme switch, so captured values would go stale.
+/** Dim a control the printer will refuse, so the lock is visible before it is tapped. */
+const lockedStyle = (locked: boolean) => (locked ? { opacity: 0.4 } : null);
+
 const SPEEDS: { i: number; name: string; hint: string; dot: keyof Palette }[] = [
   { i: 1, name: 'Silent', hint: '50%', dot: 'paused' },
   { i: 2, name: 'Standard', hint: '100%', dot: 'running' },
@@ -131,6 +135,7 @@ export function DashboardView({
   printer,
   fleet,
   cooldown,
+  lanMode,
 }: {
   vm: DashVM;
   /** Things needing attention, each with only the actions currently possible (alerts/present.ts). */
@@ -143,6 +148,8 @@ export function DashboardView({
   fleet: FleetEntry[];
   /** Plate-cooldown readout — when the print can actually be taken off. */
   cooldown: CooldownVM;
+  /** 'off' means the printer rejects every command; the controls that need it are dimmed. */
+  lanMode: LanMode;
 }) {
   const insets = useSafeAreaInsets();
   const showCamera = vm.kind === 'live' || vm.kind === 'idle' || vm.kind === 'complete' || vm.kind === 'error';
@@ -299,7 +306,7 @@ export function DashboardView({
 
             {/* controls */}
             <View style={{ marginHorizontal: 20, marginTop: 18, flexDirection: 'row', gap: 12 }}>
-              <Tap onPress={h.onPauseResume} style={{ flex: 2, height: 58, borderRadius: 17, backgroundColor: c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
+              <Tap onPress={h.onPauseResume} style={{ flex: 2, height: 58, borderRadius: 17, backgroundColor: c.s3, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, ...lockedStyle(isBlocked(vm.isPaused ? 'resume' : 'pause', lanMode)) }}>
                 <Feather name={vm.isPaused ? 'play' : 'pause'} size={17} color={c.t1} />
                 <Text style={{ fontWeight: '600', fontSize: 16, color: c.t1 }}>{vm.isPaused ? 'Resume' : 'Pause'}</Text>
               </Tap>
@@ -389,6 +396,19 @@ export function DashboardView({
           </>
         )}
 
+        {lanMode === 'off' && (
+          <Tap
+            onPress={() => Alert.alert(LAN_HELP_TITLE, LAN_HELP_BODY)}
+            style={{ marginHorizontal: 20, marginTop: 14, padding: 15, borderRadius: 16, backgroundColor: c.heatingDim, borderWidth: 1, borderColor: c.heating, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Feather name="lock" size={16} color={c.heating} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: '700', fontSize: 14, color: c.t1 }}>{LAN_BANNER_TITLE}</Text>
+              <Text style={{ marginTop: 3, fontWeight: '500', fontSize: 11.5, lineHeight: 16, color: c.t3 }}>{LAN_BANNER_BODY}</Text>
+            </View>
+            <Feather name="chevron-right" size={18} color={c.t3} />
+          </Tap>
+        )}
+
         {/* ---- COMPLETE ---- */}
         {vm.kind === 'complete' && (
           <View style={{ marginHorizontal: 20, marginTop: 18 }}>
@@ -440,7 +460,7 @@ export function DashboardView({
             </View>
             </FadeRise>
             <View style={{ marginHorizontal: 20, marginTop: 14, flexDirection: 'row', gap: 12 }}>
-              <Tap onPress={h.onPauseResume} style={{ flex: 2, height: 54, borderRadius: 16, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}>
+              <Tap onPress={h.onPauseResume} style={{ flex: 2, height: 54, borderRadius: 16, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', ...lockedStyle(isBlocked(vm.isPaused ? 'resume' : 'pause', lanMode)) }}>
                 <Text style={{ fontWeight: '600', fontSize: 16, color: c.accentInk }}>Resume print</Text>
               </Tap>
               <Tap onPress={h.onStop} style={{ flex: 1, height: 54, borderRadius: 16, backgroundColor: c.errorDim, alignItems: 'center', justifyContent: 'center' }}>
