@@ -66,10 +66,18 @@ final class FilamentColorTests: XCTestCase {
         XCTAssertEqual(FilamentColor.name("#0A84FF"), "Blue")
     }
 
-    /// Warm but washed-out should read as beige/brown, not "pale orange".
+    /// Warm but washed-out should read as beige/brown, not "pale orange". The light/dark split is at
+    /// L = 0.65, and the Pale/Dark qualifiers at 0.75 and 0.25 — so all three bands are covered.
     func testWashedOutWarmsBecomeBeigeOrBrown() {
-        XCTAssertEqual(FilamentColor.name("#E8DCC8"), "Beige")
-        XCTAssertEqual(FilamentColor.name("#5A4A38"), "Dark brown")
+        XCTAssertEqual(FilamentColor.name("#E8DCC8"), "Pale beige")
+        XCTAssertEqual(FilamentColor.name("#C6B89E"), "Beige")
+        XCTAssertEqual(FilamentColor.name("#5A4A38"), "Brown")
+        XCTAssertEqual(FilamentColor.name("#3A2E22"), "Dark brown")
+    }
+
+    /// A saturated warm keeps its hue name — the beige/brown rule is for washed-out ones only.
+    func testSaturatedWarmStaysOrange() {
+        XCTAssertEqual(FilamentColor.name("#FF7A00"), "Orange")
     }
 
     func testNameRejectsMalformedInput() {
