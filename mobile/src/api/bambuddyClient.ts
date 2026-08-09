@@ -185,7 +185,15 @@ export class BambuddyClient {
   async clearHms(printerId: number): Promise<void> {
     await this.req(`/api/v1/printers/${printerId}/hms/clear`, { method: 'POST' });
   }
-  /** Confirm the plate is clear so the queue can dispatch the next job. */
+  /** Acknowledge the plate is clear, so the scheduler may dispatch the next job.
+   *
+   *  This is NOT queueResume — that clears the previous-FAILURE gate and restores skipped items,
+   *  which is a different thing entirely and left `awaiting_plate_clear` set. Sends no MQTT, so it
+   *  works without LAN Developer Mode. */
+  async clearPlate(printerId: number): Promise<void> {
+    await this.req(`/api/v1/printers/${printerId}/clear-plate`, { method: 'POST' });
+  }
+  /** Clear the previous-failure gate and restore skipped queue items. Distinct from clearPlate(). */
   async queueResume(printerId: number): Promise<void> {
     await this.req(`/api/v1/queue/printer/${printerId}/resume`, { method: 'POST' });
   }
@@ -207,8 +215,13 @@ export class BambuddyClient {
     await this.req(`/api/v1/printers/${printerId}/drying/stop?ams_id=${amsId}`, { method: 'POST' });
   }
   /** Queue a past print (archive) again on the given printer. */
+  /** Re-print a finished job by queueing it again.
+   *
+   *  POST /archives/{id}/reprint is GONE — Bambuddy answers 410 with "Direct archive reprint has
+   *  been removed. Create a print queue item with POST /queue/." The queue accepts an archive_id
+   *  directly, so no library-file lookup is needed (archives do not expose one anyway). */
   async reprint(archiveId: number, printerId: number): Promise<void> {
-    await this.req(`/api/v1/archives/${archiveId}/reprint?printer_id=${printerId}`, { method: 'POST' });
+    await this.enqueue({ printer_id: printerId, archive_id: archiveId, use_ams: true });
   }
   /** Server config incl. electricity price (energy_cost_per_kwh) + currency. Read works with the
    *  API key; writes are admin-JWT only. */
