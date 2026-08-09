@@ -25,6 +25,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from cooldown import COOL_DEFAULT_C, COOL_MAX_C, COOL_MIN_C, READY, clamp_threshold, cool_step
+from p2s import dry_identity, next_started_for, print_identity, prune, should_start
 
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
@@ -188,6 +189,14 @@ _p2s_icons: dict[str, str] = {}
 #      app's reconcile sees an unknown token, /adopt answers known:false, and the app ends it.
 _p2s_pending: dict[str, float] = {}
 P2S_PENDING_TTL = 600.0
+# _p2s_started: registry key -> the print/cycle identity we last push-to-started a card for.
+#
+# This is what makes duplication impossible. The TTL above only governs which pending token /sync
+# may bind; it must NEVER be what decides whether to start another card. It used to be, and because
+# a remotely-started card cannot be adopted while the app is closed, the claim expired every 10
+# minutes and a fresh card was started — 199 of them for one print, with three left stacked on the
+# lock screen. Now a card is started once per identity, and only a NEW print re-arms it.
+_p2s_started: dict[str, str] = {}
 # _last_kind: printerId -> last-seen kind, for edge-triggered notifications. Persisted (in REG_FILE) so a
 # restart/crash mid-print doesn't lose the live->complete/error edge and silently drop the alert.
 _last_kind: dict[int, str] = {}
@@ -219,7 +228,7 @@ _cool_threshold_at = 0.0
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started
     try:
         data = json.loads(REG_FILE.read_text())
         _regs = data.get("regs", {})
@@ -235,19 +244,20 @@ def _load() -> None:
         _p2s_dry_sent = data.get("p2s_dry_sent", {})
         _p2s_icons = data.get("p2s_icons", {})
         _p2s_pending = data.get("p2s_pending", {})
+        _p2s_started = data.get("p2s_started", {})
     except (FileNotFoundError, json.JSONDecodeError):
         # NB: this unpack used to supply three values for five targets, so the very path that exists
         # to survive a missing/corrupt state file raised ValueError instead.
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
         _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}, {}, {}
-        _cool = {}
+        _cool, _p2s_started = {}, {}
 
 
 def _save() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind,
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
-                                    "p2s_icons": _p2s_icons, "p2s_pending": _p2s_pending,
+                                    "p2s_icons": _p2s_icons, "p2s_pending": _p2s_pending, "p2s_started": _p2s_started,
                                     "last_paused": _last_paused,
                                     "paused_at": _paused_at, "paused_reminded": _paused_reminded,
                                     "cool": _cool}))
@@ -403,7 +413,11 @@ def _pending_key() -> str | None:
 
 async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: str) -> bool:
     """Push-to-start one card, unless another start is still awaiting adoption. Returns True if sent."""
-    if not _p2s_tokens or key in _regs or _pending_key() is not None:
+    # NOTE: deliberately does NOT gate on _pending_key(). That claim expires, and using an expiring
+    # claim as the "may I start?" test is exactly what produced hundreds of duplicate cards. The
+    # caller decides via should_start(); this only refuses when there is nothing to push to, or the
+    # card already exists.
+    if not _p2s_tokens or key in _regs:
         return False
     for tok in list(_p2s_tokens):
         code = await _push_start(client, tok, {**cs, "iconUri": _p2s_icons.get(tok, cs.get("iconUri", ""))})
@@ -563,24 +577,41 @@ async def _tick(client: httpx.AsyncClient) -> None:
             # one. Edge-triggering meant a mid-print restart, or a card the user swiped away, could
             # never be recovered — you had to wait for the next print. _remote_start still enforces
             # "no existing card for this key" and the single-outstanding rule.
-            if kind == "live":
-                await _remote_start(client, str(pid), {"printerName": name, **fields}, f"print {pid}")
-            else:
-                _p2s_pending.pop(str(pid), None)  # cycle over; the next print may start a card again
+            # ONE card per print, keyed by the print's identity — not one per expiring claim.
+            key = str(pid)
+            ident = print_identity(status, fields)
+            if should_start(kind == "live", ident, _p2s_started.get(key), key in _regs):
+                await _remote_start(client, key, {"printerName": name, **fields}, f"print {pid} [{ident}]")
+            nxt = next_started_for(kind == "live", ident, _p2s_started.get(key))
+            if nxt != _p2s_started.get(key):
+                if nxt is None:
+                    _p2s_started.pop(key, None)
+                    _p2s_pending.pop(key, None)  # print over; the next one may start a card again
+                else:
+                    _p2s_started[key] = nxt
+                _save()
 
             # Push-to-start one card per DRYING UNIT, so a second concurrent cycle also gets a card
             # when the app is closed.
             drying = drying_unit_ids(status)
+            units = {int(_f(u.get("id"))): u for u in (status.get("ams") or [])}
+            live_dry_keys = set()
             for a_id in drying:
                 ds0 = dry_state(status, a_id)
-                if ds0 is not None:
-                    await _remote_start(client, f"dry:{pid}:{a_id}", {"printerName": name, **ds0}, f"dry {pid}:{a_id}")
-            for k in [k for k in list(_p2s_pending) if k.startswith(f"dry:{pid}")]:
-                if k != f"dry:{pid}" or not drying:
-                    parts = k.split(":")
-                    kid = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else None
-                    if kid is None or kid not in drying:
-                        _p2s_pending.pop(k, None)
+                if ds0 is None:
+                    continue
+                dkey = f"dry:{pid}:{a_id}"
+                live_dry_keys.add(dkey)
+                dident = dry_identity(a_id, units.get(a_id) or {})
+                if should_start(True, dident, _p2s_started.get(dkey), dkey in _regs):
+                    await _remote_start(client, dkey, {"printerName": name, **ds0}, f"dry {pid}:{a_id}")
+                _p2s_started[dkey] = dident
+            # Forget cycles that ended, so the NEXT cycle on that unit starts a card again.
+            for k in [k for k in list(_p2s_started) if k.startswith(f"dry:{pid}:")]:
+                if k not in live_dry_keys:
+                    _p2s_started.pop(k, None)
+                    _p2s_pending.pop(k, None)
+            _save()
 
         # 2) Alert on a state transition (edge-triggered; the first observation is silent). _last_kind is
         # persisted, so a restart/crash mid-print still fires the finish/error edge on the next poll.
