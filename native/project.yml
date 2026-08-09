@@ -47,10 +47,10 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen:
           UIColorName: LaunchBackground
+        # Portrait-locked, like the RN build: every screen is laid out for it, and the fullscreen
+        # camera does its own rotation. Allowing native landscape too would rotate twice.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
         # PiP keeps the app alive via a near-silent audio session — see CameraPiPRenderer.
         UIBackgroundModes:
           - audio
