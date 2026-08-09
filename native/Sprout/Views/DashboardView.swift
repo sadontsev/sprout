@@ -45,6 +45,8 @@ struct DashboardView: View {
                 if let summary = Alerts.summary(alerts) { alertChip(summary) }
                 hero
                 if showCamera { cameraTile }
+                // Only after a print, and only when the model is willing to say something honest.
+                if let cool = model.cooldown?.vm, cool.phase != .none { CooldownCard(vm: cool) }
 
                 switch vm.kind {
                 case .live: liveBlock
@@ -424,9 +426,11 @@ struct DashboardView: View {
     private var controlsRow1: some View {
         HStack(spacing: 12) {
             let action: ActionId = vm.isPaused ? .resume : .pause
+            // Read the flag here, on the main actor, rather than inside the sendable closure.
+            let paused = vm.isPaused
             Tap(action: lock.press(action) {
-                model.perform(vm.isPaused ? "Resume" : "Pause") { client, id in
-                    vm.isPaused ? try await client.resume(id) : try await client.pause(id)
+                model.perform(paused ? "Resume" : "Pause") { client, id in
+                    paused ? try await client.resume(id) : try await client.pause(id)
                 }
             }) {
                 HStack(spacing: 9) {
