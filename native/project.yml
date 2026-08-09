@@ -1,0 +1,148 @@
+name: Sprout
+options:
+  bundleIdPrefix: com.mvks5
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  generateEmptyDirectories: false
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: <YOUR_TEAM_ID>
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "7"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_MODULE_VERIFIER: NO
+
+targets:
+  Sprout:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sprout
+      - path: Shared
+    dependencies:
+      - target: SproutWidget
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu
+        PRODUCT_NAME: Sprout
+        INFOPLIST_FILE: Sprout/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sprout/Resources/Sprout.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_PREVIEWS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+    info:
+      path: Sprout/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Sprout
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # PiP keeps the app alive via a near-silent audio session — see CameraPiPRenderer.
+        UIBackgroundModes:
+          - audio
+        ITSAppUsesNonExemptEncryption: false
+        LSSupportsOpeningDocumentsInPlace: false
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        NSPhotoLibraryAddUsageDescription: Save printed-model snapshots and timelapses to your photo library.
+        NSLocalNetworkUsageDescription: Sprout talks to your self-hosted Bambuddy server, which may be on your local network.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.mvks5.bambu
+            CFBundleURLSchemes: [bambu]
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: 3MF Model
+            LSHandlerRank: Owner
+            LSItemContentTypes: [com.bambulab.3mf]
+          - CFBundleTypeName: Bambu Sliced 3MF
+            LSHandlerRank: Owner
+            LSItemContentTypes: [com.bambulab.gcode-3mf]
+          - CFBundleTypeName: G-code
+            LSHandlerRank: Owner
+            LSItemContentTypes: [com.bambulab.gcode]
+          - CFBundleTypeName: STL Model
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.standard-tesselated-geometry-format]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.bambulab.3mf
+            UTTypeDescription: 3MF Model
+            UTTypeConformsTo: [public.data, public.zip-archive]
+            UTTypeTagSpecification:
+              public.filename-extension: [3mf]
+              public.mime-type: [model/3mf, application/vnd.ms-package.3dmanufacturing-3dmodel+xml]
+          - UTTypeIdentifier: com.bambulab.gcode-3mf
+            UTTypeDescription: Bambu Sliced 3MF
+            UTTypeConformsTo: [com.bambulab.3mf]
+            UTTypeTagSpecification:
+              public.filename-extension: [gcode.3mf]
+          - UTTypeIdentifier: com.bambulab.gcode
+            UTTypeDescription: G-code
+            UTTypeConformsTo: [public.text, public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [gcode]
+              public.mime-type: [text/x.gcode]
+
+  SproutWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SproutWidget
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu.LiveActivity
+        PRODUCT_NAME: SproutWidget
+        INFOPLIST_FILE: SproutWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: SproutWidget/SproutWidget.entitlements
+        SKIP_INSTALL: YES
+    info:
+      path: SproutWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Sprout
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  SproutTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SproutTests
+      - path: Shared
+      - path: Sprout/Domain
+      - path: Sprout/Api
+      - path: Sprout/Camera
+        includes: ["MJPEGParser.swift"]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Sprout:
+    build:
+      targets:
+        Sprout: all
+        SproutWidget: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - SproutTests
+    archive:
+      config: Release

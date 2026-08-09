@@ -1,0 +1,607 @@
+import Foundation
+
+/// A number that may arrive as a JSON number OR a JSON string.
+///
+/// Bambuddy's WebSocket feed stringifies numerics (`"30.4"`) where REST sends `30.4`. The RN app
+/// coerced these at every read site with `asNum()`; doing it in the decoder means the rest of the
+/// app only ever sees `Double?` and can't crash on a string.
+struct LooseNumber: Codable, Hashable, Sendable, ExpressibleByFloatLiteral, ExpressibleByIntegerLiteral {
+    let value: Double?
+
+    init(_ value: Double?) { self.value = value }
+    init(floatLiteral value: Double) { self.value = value }
+    init(integerLiteral value: Int) { self.value = Double(value) }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() {
+            value = nil
+        } else if let d = try? c.decode(Double.self) {
+            value = d
+        } else if let s = try? c.decode(String.self) {
+            value = Double(s)
+        } else if let b = try? c.decode(Bool.self) {
+            value = b ? 1 : 0
+        } else {
+            value = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(value)
+    }
+
+    var double: Double? { value }
+    var int: Int? { value.flatMap { $0.isFinite ? Int($0) : nil } }
+}
+
+/// A printer registered in Bambuddy (GET /printers/).
+struct Printer: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var name: String
+    var model: String       // "A1" | "H2C" | ...
+    var nozzleCount: Int?   // 2 on the H2-series dual-extruder machines
+    var location: String?
+    var isActive: Bool?
+    var serialNumber: String?
+    var ipAddress: String?
+}
+
+/// One HMS (health-management-system) record from the printer. Present even mid-print for benign
+/// notices — presence alone does NOT mean the print failed.
+struct HmsError: Codable, Hashable, Sendable {
+    var code: String?
+    var attr: LooseNumber?
+    var module: LooseNumber?
+    var severity: LooseNumber?
+    var fullCode: String?   // e.g. "0500050000010007"
+}
+
+struct Temperatures: Codable, Hashable, Sendable {
+    var nozzle: LooseNumber?
+    var nozzleTarget: LooseNumber?
+    var nozzleHeating: Bool?
+    /// Second extruder on dual-nozzle machines (H2-series).
+    var nozzle2: LooseNumber?
+    var nozzle2Target: LooseNumber?
+    var nozzle2Heating: Bool?
+    var bed: LooseNumber?
+    var bedTarget: LooseNumber?
+    var bedHeating: Bool?
+    /// Enclosed machines only.
+    var chamber: LooseNumber?
+    var chamberTarget: LooseNumber?
+    var chamberHeating: Bool?
+}
+
+struct AmsTray: Codable, Hashable, Sendable, Identifiable {
+    let id: Int
+    var trayType: String?
+    var trayColor: String?
+    var remain: LooseNumber?
+    var trayUuid: String?
+    /// Recommended drying temp (°C) / time (hours) from the filament's RFID/preset; 0 = no data.
+    var dryingTemp: LooseNumber?
+    var dryingTime: LooseNumber?
+}
+
+struct AmsUnitRaw: Codable, Hashable, Sendable, Identifiable {
+    let id: Int
+    var humidity: LooseNumber?
+    var temp: LooseNumber?
+    /// AMS-HT dries to 85 °C; the AMS 2 Pro tops out at 65 °C.
+    var isAmsHt: Bool?
+    var moduleType: String?     // e.g. "n3f" (AMS 2 Pro)
+    /// Minutes REMAINING in the drying cycle. `> 0` is THE "actively drying" signal — verified live:
+    /// `dryStatus` stayed 0 mid-cycle, so it must NOT be used as the active flag.
+    var dryTime: LooseNumber?
+    var dryStatus: LooseNumber?
+    var drySubStatus: LooseNumber?
+    /// Target °C — cached by Bambuddy only for cycles it started itself; nil when the cycle was
+    /// started elsewhere (printer screen / Bambu Handy).
+    var dryTargetTemp: LooseNumber?
+    var dryFilament: String?
+    /// Why the AMS refuses to dry (codes 0-8) — decode via `DryBlockers`.
+    var drySfReason: [LooseNumber]?
+    /// Short serial tail is the only way to tell two identical AMS 2 Pro units apart.
+    var serialNumber: String?
+    var tray: [AmsTray]?
+}
+
+/// Filament Track Switch: routes AMS units to either extruder dynamically, which is why FTS-routed
+/// units never appear in `amsExtruderMap`.
+struct FilaSwitch: Codable, Hashable, Sendable {
+    var installed: Bool?
+    /// Per inlet, packed `(ams_id << 8) | slot`, -1 when empty.
+    var inSlots: [Int]?
+    /// The extruder each outlet feeds (0xE = none).
+    var outExtruders: [Int]?
+    var stat: LooseNumber?
+    var info: LooseNumber?
+}
+
+struct NozzleInfo: Codable, Hashable, Sendable {
+    var nozzleType: String?
+    var nozzleDiameter: String?
+}
+
+/// H2-series swappable-nozzle store. Empty slots carry serial "N/A" / maxTemp 0.
+struct NozzleRackSlot: Codable, Hashable, Sendable, Identifiable {
+    let id: Int
+    var nozzleType: String?         // "HS01" | "HS00" | ...
+    var nozzleDiameter: LooseNumber?
+    var wear: LooseNumber?
+    var maxTemp: LooseNumber?
+    var serialNumber: String?       // "N/A" when the slot is empty
+    var filamentColor: String?      // RGBA hex of the filament last paired to this nozzle
+    var filamentId: String?
+    var filamentType: String?
+}
+
+/// The subset of Bambuddy's printer status the app consumes.
+struct PrinterStatus: Codable, Hashable, Sendable {
+    var id: Int?
+    var name: String?
+    var connected: Bool = false
+    var state: String = ""          // RUNNING | PAUSE | IDLE | FINISH | FAILED | ...
+    var progress: LooseNumber?      // %
+    var remainingTime: LooseNumber? // minutes
+    var layerNum: LooseNumber?
+    var totalLayers: LooseNumber?
+    var subtaskName: String?
+    var chamberLight: Bool?
+    var temperatures: Temperatures?
+    var ams: [AmsUnitRaw]?
+    /// Active tray index across the AMS (Bambu `tray_now`; 255 = none/external). NOTE: on H2-series
+    /// firmware this can degenerate to a LOCAL slot (0-3), which is ambiguous once more than one
+    /// 4-slot unit is fitted — see `AmsTopology.routing` before treating it as a global id.
+    var trayNow: LooseNumber?
+    /// Which extruder each AMS unit feeds, keyed by unit id. Bambuddy derives this from each unit's
+    /// `info` bits and SKIPS units reporting 0xE ("no fixed extruder"). It is merge-only and never
+    /// pruned, so entries can be stale residue. Do NOT trust it when `filaSwitch.installed`.
+    var amsExtruderMap: [String: Int]?
+    var filaSwitch: FilaSwitch?
+    var amsExists: Bool?
+    var amsFilamentBackup: Bool?
+    var hmsErrors: [HmsError]?
+    var printError: LooseNumber?
+    /// 1 Silent | 2 Standard | 3 Sport | 4 Ludicrous — the printer's real speed mode.
+    var speedLevel: LooseNumber?
+    /// Human-readable sub-stage while printing, e.g. "Changing filament", "Auto bed leveling".
+    var stgCurName: String?
+    /// True after FINISH until the user confirms the plate is clear (gates the queue).
+    var awaitingPlateClear: Bool?
+    var doorOpen: Bool?
+    /// LAN Developer Mode. false = the firmware REJECTS every command Bambuddy sends (status still
+    /// flows, so nothing looks wrong). Absent on the WebSocket feed — fetch via REST, and treat
+    /// nil as "not yet known", never as off. See `LanMode`.
+    var developerMode: Bool?
+    var wifiSignal: LooseNumber?
+    var activeExtruder: LooseNumber?
+    var supportsDrying: Bool?
+    var supportsDryingWhilePrinting: Bool?
+    var supportsChamberHeater: Bool?
+    /// Archive of the current/most recent print — reprint target.
+    var currentArchiveId: Int?
+    /// The nozzle(s) mounted on the toolhead now — index 0 = nozzle/left, 1 = nozzle_2/right.
+    var nozzles: [NozzleInfo]?
+    var nozzleRack: [NozzleRackSlot]?
+}
+
+enum SpeedMode: Int, Codable, CaseIterable, Sendable {
+    case silent = 1, standard = 2, sport = 3, ludicrous = 4
+}
+
+// MARK: - Library
+
+struct FileMetadata: Codable, Hashable, Sendable {
+    var totalLayers: LooseNumber?
+    var layerHeight: LooseNumber?
+    var nozzleDiameter: LooseNumber?
+    var nozzleTemperature: LooseNumber?
+    var bedType: String?
+    var slicedForModel: String?
+    var filamentType: String?
+    var filamentColor: String?
+    var filamentUsedMm: LooseNumber?
+    var filamentUsedG: LooseNumber?
+    var printTimeSeconds: LooseNumber?
+    var filamentSlots: [FilamentSlot]?
+
+    struct FilamentSlot: Codable, Hashable, Sendable {
+        var slotId: Int?
+        var usedG: LooseNumber?
+        var type: String?
+        var color: String?
+    }
+}
+
+struct LibraryFile: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var filename: String
+    var fileType: String?           // stl | 3mf | gcode.3mf
+    var fileSize: LooseNumber?
+    var thumbnailPath: String?
+    var slicedForModel: String?
+    var printTimeSeconds: LooseNumber?
+    var filamentUsedGrams: LooseNumber?
+    var printName: String?
+    /// Present on GET /library/files/{id} (detail), not on the list. Slicer-baked stats.
+    var metadata: FileMetadata?
+}
+
+/// One entry in the printer's onboard storage (SD card) listing.
+struct PrinterFile: Codable, Hashable, Sendable, Identifiable {
+    var name: String
+    var isDirectory: Bool
+    var size: LooseNumber?
+    var path: String
+    var mtime: String?
+    var id: String { path }
+}
+
+struct PrinterFileList: Codable, Hashable, Sendable {
+    var path: String
+    var files: [PrinterFile]
+}
+
+/// A filament a plate/slot consumes (from /plates or file metadata).
+struct PlateFilament: Codable, Hashable, Sendable {
+    var slotId: Int?
+    var type: String?           // "PLA" | "PETG-CF" | ...
+    var color: String?          // "#RRGGBB"
+    var usedGrams: LooseNumber?
+    var usedMeters: LooseNumber?
+}
+
+/// One build plate inside a sliced .gcode.3mf.
+struct PlateInfo: Codable, Hashable, Sendable, Identifiable {
+    var index: Int              // 1-based
+    var name: String?
+    var objects: [String]?
+    var objectCount: Int?
+    var hasThumbnail: Bool?
+    var thumbnailUrl: String?
+    var printTimeSeconds: LooseNumber?
+    var filamentUsedGrams: LooseNumber?
+    var filaments: [PlateFilament]?
+    var id: Int { index }
+}
+
+struct PlatesResponse: Codable, Hashable, Sendable {
+    var fileId: Int?
+    var filename: String?
+    var plates: [PlateInfo]
+    var isMultiPlate: Bool?
+    var embeddedPrinter: String?
+    var embeddedProcess: String?
+}
+
+struct PrinterFilePlates: Codable, Hashable, Sendable {
+    var printerId: Int?
+    var path: String?
+    var filename: String?
+    var plates: [PlateInfo]
+}
+
+// MARK: - Queue
+
+struct QueueItem: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var status: String          // pending | printing | completed | failed | ...
+    var position: Int?
+    var printerId: Int?
+    var printerName: String?
+    var libraryFileName: String?
+    var archiveName: String?
+    var libraryFileThumbnail: String?
+    var archiveThumbnail: String?
+    var printTimeSeconds: LooseNumber?
+}
+
+// MARK: - Sensor history
+
+/// One point from GET /printer-sensor-history. `recordedAt` is NAIVE and in UTC.
+struct SensorPoint: Codable, Hashable, Sendable {
+    var recordedAt: String?
+    var value: LooseNumber?
+    var target: LooseNumber?
+}
+
+struct SensorSeries: Codable, Hashable, Sendable {
+    var sensorKind: String?
+    var data: [SensorPoint]?
+    var minValue: LooseNumber?
+    var maxValue: LooseNumber?
+    var avgValue: LooseNumber?
+}
+
+struct SensorHistory: Codable, Hashable, Sendable {
+    var printerId: Int?
+    var series: [SensorSeries]?
+}
+
+// MARK: - Smart plugs
+
+struct SmartPlug: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var name: String?
+    var printerId: Int?
+    var plugType: String?       // "homeassistant" | "mqtt" | "rest" | ...
+    var enabled: Bool?
+    var lastState: String?      // "ON" | "OFF"
+    // Server-side automations. These switch the plug with no app involvement, so the app can only
+    // ever REPORT them — writes to /smart-plugs/{id} are admin-only and 403 with a scoped API key.
+    var autoOn: Bool?
+    var autoOff: Bool?
+    var autoOffPersistent: Bool?
+    var offDelayMode: String?   // "time" | "temperature"
+    var offDelayMinutes: LooseNumber?
+    var offTempThreshold: LooseNumber?
+    var autoOffAfterDrying: Bool?
+    var offDelayAfterDryingMinutes: LooseNumber?
+    var scheduleEnabled: Bool?
+    var scheduleOnTime: String?     // "HH:MM"
+    var scheduleOffTime: String?
+}
+
+struct PlugEnergy: Codable, Hashable, Sendable {
+    var power: LooseNumber?     // live draw, watts
+    var voltage: LooseNumber?
+    var current: LooseNumber?
+    var today: LooseNumber?     // kWh consumed today
+    var yesterday: LooseNumber?
+    var total: LooseNumber?
+}
+
+struct PlugStatus: Codable, Hashable, Sendable {
+    var state: String?          // "ON" | "OFF"
+    var reachable: Bool?
+    var deviceName: String?
+    var energy: PlugEnergy?
+}
+
+// MARK: - Maintenance
+
+struct MaintenanceItem: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var printerId: Int?
+    var maintenanceTypeName: String
+    var maintenanceTypeIcon: String?    // Lucide name e.g. "Droplet","Flame"
+    var enabled: Bool?
+    var intervalHours: LooseNumber?
+    var intervalType: String?
+    var currentHours: LooseNumber?
+    var hoursSinceMaintenance: LooseNumber?
+    var hoursUntilDue: LooseNumber?     // negative when overdue
+    var daysUntilDue: LooseNumber?
+    var isDue: Bool?
+    var isWarning: Bool?
+    var lastPerformedAt: String?
+}
+
+struct MaintenancePrinter: Codable, Hashable, Sendable {
+    var printerId: Int?
+    var printerName: String?
+    var printerModel: String?
+    var totalPrintHours: LooseNumber?
+    var maintenanceItems: [MaintenanceItem]
+    var dueCount: Int?
+    var warningCount: Int?
+}
+
+struct MaintenanceSummary: Codable, Hashable, Sendable {
+    var totalDue: Int?
+    var totalWarning: Int?
+    var printersWithIssues: [Issue]?
+
+    struct Issue: Codable, Hashable, Sendable {
+        var printerId: Int
+        var printerName: String?
+        var dueCount: Int?
+        var warningCount: Int?
+    }
+}
+
+// MARK: - Inventory
+
+struct Spool: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var material: String            // "PETG-CF", "Support for PLA", "PLA"
+    var subtype: String?
+    var colorName: String?          // "Titan Gray", "Clear"
+    var rgba: String?               // "565656FF" — 8-digit hex, alpha last
+    var brand: String?
+    var labelWeight: LooseNumber?   // grams on the label
+    var weightUsed: LooseNumber?    // grams consumed
+    var slicerFilament: String?     // preset code, e.g. "GFG50"
+    var slicerFilamentName: String? // display name, e.g. "Bambu PETG-CF"
+    var trayUuid: String?           // RFID UUID; nil for unrecognized spools
+    var costPerKg: LooseNumber?
+    var nozzleTempMin: LooseNumber?
+    var nozzleTempMax: LooseNumber?
+    var storageLocation: String?
+    var lastUsed: String?
+
+    /// Grams of filament remaining on a spool (never negative).
+    var gramsRemaining: Double {
+        max(0, (labelWeight?.double ?? 0) - (weightUsed?.double ?? 0))
+    }
+}
+
+struct SlotAssignment: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var spoolId: Int?
+    var printerId: Int?
+    var printerName: String?
+    var amsId: Int          // AMS unit id -> status.ams[k].id
+    var trayId: Int         // tray index -> status.ams[k].tray[i].id
+    var fingerprintColor: String?
+    var fingerprintType: String?
+    var configured: Bool?
+    var pendingConfig: Bool?
+    var amsLabel: String?
+    var spool: Spool        // full embedded spool
+}
+
+// MARK: - Settings & history
+
+/// Subset of GET /api/v1/settings/ the app reads. Writes are admin-JWT only.
+struct AppSettings: Codable, Hashable, Sendable {
+    var energyCostPerKwh: LooseNumber?  // e.g. 0.24
+    var currency: String?               // ISO code, e.g. "GBP" | "USD" | "EUR"
+    var energyTrackingMode: String?
+    var defaultFilamentCost: LooseNumber?
+}
+
+struct PrintLogEntry: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var archiveId: Int?
+    var printName: String?
+    var printerName: String?
+    var printerId: Int?
+    var status: String                  // completed | failed | cancelled | ...
+    var startedAt: String?              // naive local ISO, e.g. "2026-06-28T15:07:35.681213"
+    var completedAt: String?
+    var durationSeconds: LooseNumber?
+    var filamentType: String?           // may be comma-joined: "PETG-CF, PLA"
+    var filamentColor: String?          // may be comma-joined: "#565656,#000000"
+    var filamentUsedGrams: LooseNumber?
+    var cost: LooseNumber?
+    var energyKwh: LooseNumber?
+    var energyCost: LooseNumber?
+    var failureReason: String?
+    var thumbnailPath: String?
+    var createdAt: String?
+}
+
+struct PrintLogPage: Codable, Hashable, Sendable {
+    var items: [PrintLogEntry]
+    var total: Int?
+}
+
+struct ArchiveStats: Codable, Hashable, Sendable {
+    var totalPrints: Int?
+    var successfulPrints: Int?
+    var failedPrints: Int?
+    var cancelledPrints: Int?
+    var totalPrintTimeHours: LooseNumber?
+    var totalFilamentGrams: LooseNumber?
+    var totalCost: LooseNumber?
+    var printsByFilamentType: [String: Int]?
+    var printsByPrinter: [String: Int]?
+    var totalEnergyKwh: LooseNumber?
+    var totalEnergyCost: LooseNumber?
+    var energyDataWarmingUp: Bool?
+}
+
+// MARK: - MakerWorld
+
+struct MakerWorldStatus: Codable, Hashable, Sendable {
+    var hasCloudToken: Bool?
+    var canDownload: Bool?
+}
+
+struct MWFilament: Codable, Hashable, Sendable {
+    var type: String?
+    var color: String?
+    var usedG: String?
+}
+
+/// One printable profile/instance. `id` → instance_id, `profileId` → profile_id on import.
+struct MWInstance: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var profileId: Int?
+    var title: String?
+    var cover: String?
+    var needAms: Bool?
+    var prediction: LooseNumber?    // print time, seconds (best-effort)
+    var weight: LooseNumber?        // grams (best-effort)
+    var instanceFilaments: [MWFilament]?
+    var extention: Extention?
+
+    struct Extention: Codable, Hashable, Sendable {
+        var modelInfo: ModelInfo?
+        struct ModelInfo: Codable, Hashable, Sendable {
+            var plates: [Plate]?
+            struct Plate: Codable, Hashable, Sendable {
+                var prediction: LooseNumber?
+                var weight: LooseNumber?
+                var filaments: [MWFilament]?
+            }
+        }
+    }
+}
+
+struct MWDesign: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    var title: String?
+    var coverUrl: String?
+    var summary: String?
+    var downloadCount: Int?
+    var likeCount: Int?
+    var tags: [String]?
+    var designCreator: Creator?
+
+    struct Creator: Codable, Hashable, Sendable {
+        var name: String?
+        var handle: String?
+        var avatar: String?
+    }
+}
+
+struct MakerWorldResolved: Codable, Hashable, Sendable {
+    var modelId: Int
+    var profileId: Int?
+    var design: MWDesign
+    var instances: [MWInstance]
+    var alreadyImportedLibraryIds: [Int]?
+}
+
+struct MakerWorldImportRequest: Codable, Hashable, Sendable {
+    var modelId: Int
+    var profileId: Int?
+    var instanceId: Int?
+    var folderId: Int?
+}
+
+struct MakerWorldImportResponse: Codable, Hashable, Sendable {
+    var libraryFileId: Int
+    var filename: String?
+    var wasExisting: Bool?
+}
+
+// MARK: - Slicing
+
+struct SliceJob: Codable, Hashable, Sendable {
+    var id: Int?
+    var status: String?
+    var progress: LooseNumber?
+    var errorMessage: String?
+    var libraryFileId: Int?
+    var printTimeSeconds: LooseNumber?
+    var filamentUsedG: LooseNumber?
+    var filamentUsedMm: LooseNumber?
+}
+
+struct CameraDiagnosis: Codable, Hashable, Sendable {
+    var proto: String?
+    var port: Int?
+    var overallStatus: String?
+    var summaryCode: String?
+    var stages: [Stage]?
+
+    struct Stage: Codable, Hashable, Sendable {
+        var name: String
+        var status: String
+        var code: String?
+    }
+
+    // NOTE: keys here are matched AFTER the decoder's snake_case conversion, so they stay camelCase.
+    // Only `protocol` needs remapping, because it is a Swift keyword.
+    enum CodingKeys: String, CodingKey {
+        case proto = "protocol"
+        case port, overallStatus, summaryCode, stages
+    }
+}
