@@ -2,6 +2,18 @@ import ActivityKit
 import Foundation
 import Observation
 
+/// What this build calls itself when it registers with la-push.
+///
+/// The RN app and this one ship as different TestFlight builds of the SAME bundle id and both talk to
+/// one la-push, but their Live-Activity wire shapes are incompatible: expo-widgets' ContentState is
+/// `Codable{name, props}` with the fields serialized into `props`, ours is flat, and push-to-start
+/// names a different attributes type (`PrintActivityAttributes` + `{printerId, amsId}`, not
+/// `LiveActivityAttributes` + `{}`). The server cannot tell from a push token which app sent it, and
+/// getting it wrong is invisible from both ends — APNs answers 200 and the card simply never updates
+/// or never appears. So every registration says who it came from; omitting the field means "expo",
+/// which is what keeps the already-installed RN build working untouched.
+private let laPushClient = "native"
+
 /// Builds Live Activity content from live status, and owns the app's side of the card lifecycle.
 ///
 /// Two ownership modes, and exactly one owner at a time:
@@ -399,6 +411,8 @@ final class LiveActivityController {
     struct StartRegistration: Encodable, Equatable {
         let pushToken: String
         let iconUri: String
+        /// Constant, so it stays out of the memberwise init and cannot be forgotten at a call site.
+        let client = laPushClient
     }
 
     /// `POST /register` — binds one card's APNs update token so the server can push into it.
@@ -411,6 +425,8 @@ final class LiveActivityController {
         /// a drying card registered as a print overwrites the print card's registration instead.
         let kind: String
         let amsId: Int?
+        /// Constant, so it stays out of the memberwise init and cannot be forgotten at a call site.
+        let client = laPushClient
     }
 
     /// Pure: what a card says about itself → the body la-push wants.

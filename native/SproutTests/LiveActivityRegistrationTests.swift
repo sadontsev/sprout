@@ -66,6 +66,9 @@ final class LiveActivityRegistrationTests: XCTestCase {
         XCTAssertEqual(json["icon_uri"] as? String, "file:///nozzle.png")
         XCTAssertEqual(json["kind"] as? String, "print")
         XCTAssertNil(json["ams_id"] as? Int, "a print card carries no AMS unit")
+        // Without this the server falls back to the RN app's wire shape — a `{name, props}` content
+        // state this app cannot decode — and every push is accepted by APNs and dropped on device.
+        XCTAssertEqual(json["client"] as? String, "native")
     }
 
     /// The server keys drying cards `dry:<printerId>:<amsId>` off `kind` + `ams_id`. Registering a
@@ -105,6 +108,9 @@ final class LiveActivityRegistrationTests: XCTestCase {
         ))
         XCTAssertEqual(json["push_token"] as? String, "p2s")
         XCTAssertEqual(json["icon_uri"] as? String, "")
+        // Decides the push-to-start attributes type. Wrong (or absent) means the server starts a
+        // `LiveActivityAttributes` card, which this app never renders — no card at all.
+        XCTAssertEqual(json["client"] as? String, "native")
     }
 
     // MARK: - Change gating

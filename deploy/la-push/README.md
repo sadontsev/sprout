@@ -12,7 +12,8 @@ The pushed ContentState must match `PrintActivityProps` in
 
 ```bash
 mkdir -p /home/max/docker/la-push && cd /home/max/docker/la-push
-# copy app.py Dockerfile docker-compose.yml requirements.txt here
+# copy app.py clients.py cooldown.py p2s.py Dockerfile docker-compose.yml requirements.txt here
+# (every *.py the Dockerfile COPYs — a missing module fails at import, after the build succeeds)
 printf 'BAMBUDDY_API_KEY=%s\n' "$(tr -d '[:space:]' < ~/.config/bambu-phase0/bb_apikey)" > .env   # gitignored
 docker compose up -d --build
 curl -s localhost:8911/health
@@ -29,9 +30,20 @@ A push against the wrong gateway fails silently (Apple returns `BadDeviceToken`)
 
 ## Endpoints
 
-- `GET  /health` → `{ok, registrations, apns_host}`
-- `POST /register` `{printer_id, activity_id, push_token, printer_name?, icon_uri?}`
+- `GET  /health` → `{ok, registrations, apns_host, cards_by_client, start_tokens_by_client}`
+- `POST /register` `{printer_id, activity_id, push_token, printer_name?, icon_uri?, client?}`
 - `POST /unregister?activity_id=…`
+
+## Two clients
+
+The RN app (`mobile/`) and the native SwiftUI app (`native/`) ship as different TestFlight builds of
+the same bundle id and both register here. Their Live-Activity wire shapes are incompatible — a
+wrapped `{name, props}` content state and `LiveActivityAttributes` for expo-widgets, a flat content
+state and `PrintActivityAttributes{printerId, amsId}` for the native app — and a mismatch is
+**silent**: APNs returns 200 and the card never updates (or never appears). So `/register` and
+`/register-start` take `client: "expo" | "native"`, defaulting to `"expo"` for the installed RN
+build, which does not send the field. `GET /health` reports the split, which is the only way to see a
+native build that registered as expo without picking up the phone. Shapes live in `clients.py`.
 
 ## Exposure
 
