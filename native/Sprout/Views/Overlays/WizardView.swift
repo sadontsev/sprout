@@ -1000,20 +1000,24 @@ struct WizardView: View {
         requirements = fetched
     }
 
-    /// `ams_mapping` for this print: indexed by the 3MF's FILAMENT SLOT, valued by global tray id.
+    /// The filament slots this print has to bind to trays. `[1]` when the requirements could not be
+    /// fetched — never `[]`, which `AmsMapping.isComplete` reads as "unknown" rather than "satisfied".
+    private var mappedSlots: [Int] {
+        let ids = requirements?.usedSlotIds ?? []
+        return ids.isEmpty ? [1] : ids
+    }
+
+    /// Slot → chosen global tray id.
     ///
-    /// A one-element array addresses slot 1. That is right for the common case and silently wrong for
-    /// a plate whose lone filament is slot 2 or 3 — measured on a real multi-plate file — where the
-    /// chosen tray would be bound to a filament the plate never uses while its real one is left for
-    /// the firmware to guess. Pad with `-1` (Bambu's "unmapped" sentinel) so the tray lands at the
-    /// index the plate actually asks for.
-    ///
-    /// Unknown requirements fall back to the single-element form, which is what shipped before.
-    private func amsMapping(tray: Int) -> [Int] {
-        guard let sole = requirements?.soleUsedSlot, sole > 1 else { return [tray] }
-        var mapping = Array(repeating: -1, count: sole)
-        mapping[sole - 1] = tray
-        return mapping
+    /// Still a one-entry dictionary derived from the single `slot` the mapping step offers: step 6 is
+    /// not yet N-wide, and a multi-filament print is refused before it gets here. The array builder
+    /// underneath already handles N, so making the step N-wide is a UI change rather than a wire one.
+    private var trayBySlot: [Int: Int] { [mappedSlots[0]: slot] }
+
+    /// `ams_mapping` for this print. The array's semantics — index is the filament slot, value is the
+    /// global tray id — live on `AmsMapping.build`, which is pure and tested.
+    private func amsMapping() -> [Int] {
+        AmsMapping.build(usedSlots: mappedSlots, trays: trayBySlot)
     }
 
     /// Says the limitation out loud instead of mapping filament 1 and quietly abandoning the rest.
@@ -1368,7 +1372,7 @@ struct WizardView: View {
         let libraryFileId = result?.libraryFileId ?? file.id
         let printerId = model.printerId
         let plate = selectedPlate
-        let mapping = amsMapping(tray: slot)
+        let mapping = amsMapping()
         Task {
             do {
                 // `ams_mapping` is Bambu's own print-command field: indexed by FILAMENT, valued by
