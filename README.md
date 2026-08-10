@@ -120,14 +120,17 @@ No Node, no prebuild — the Xcode project is generated from `native/project.yml
 
 ```bash
 brew install xcodegen
-cd native && xcodegen generate        # Sprout.xcodeproj is generated and GITIGNORED
+cd native
+cp .env-local.example .env-local      # set DEVELOPMENT_TEAM=<your Apple team id>; gitignored
+set -a && . ./.env-local && set +a    # xcodegen reads it from the environment
+xcodegen generate                     # Sprout.xcodeproj is generated and GITIGNORED
 xcodebuild -project Sprout.xcodeproj -scheme Sprout -configuration Release \
   -destination 'generic/platform=iOS' -allowProvisioningUpdates \
-  DEVELOPMENT_TEAM=<YOUR_TEAM_ID> CODE_SIGN_STYLE=Automatic build
+  DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" CODE_SIGN_STYLE=Automatic build
 ./scripts-archive.sh                  # archive + export an .ipa for TestFlight
 ```
 
-Set `DEVELOPMENT_TEAM` and the bundle id in `native/project.yml`. Tests:
+The bundle id lives in `native/project.yml`; the team id never does. Tests:
 
 ```bash
 xcodebuild -project native/Sprout.xcodeproj -scheme Sprout \
@@ -136,7 +139,9 @@ xcodebuild -project native/Sprout.xcodeproj -scheme Sprout \
 
 ## Secrets
 
-No credentials live in this repo — and the test suite uses synthetic fixtures only.
+No credentials live in this repo — and the test suite uses synthetic fixtures only. Your Apple
+team id is read from `DEVELOPMENT_TEAM` (`native/.env-local`, gitignored) rather than committed,
+and `mobile/app.json` ships `YOUR_TEAM_ID` as a placeholder you replace locally.
 Real secrets (API key, printer access code, APNs `.p8`, admin password) belong on your
 server, referenced via gitignored `.env` files and mounted paths. `.gitignore` already
 excludes `.env*` (except `.env.example`), `*.p8`, and `*.key`.

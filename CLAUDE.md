@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-> **Note for anyone who isn't the owner:** the device UDID `<YOUR_DEVICE_UDID>` and
-> Apple team `<YOUR_TEAM_ID>` are the owner's; `<your-server>`/`<your-server>` and `*.example.com`
-> stand in for whatever box/domains run your backend. Substitute your own device/team/hosts;
-> the commands and gotchas transfer as-is. Start with [README.md](README.md) for setup.
+> **Placeholders, not values.** `<YOUR_TEAM_ID>`, `<YOUR_DEVICE_UDID>`, `<your-server>`/
+> `<your-server>` and `*.example.com` stand in for your own. Nothing identifying is committed:
+> the team id comes from `DEVELOPMENT_TEAM` (see `native/.env-local.example`), and secrets live on
+> your server. Start with [README.md](README.md) for setup.
 
 A **personal iOS app** to control + monitor a Chinese-market Bambu Lab printer — currently an **H2C** (dual-nozzle, 9 addressable AMS trays); the codebase still carries A1-era notes where they were written. The official Bambu Handy app can't drive these units. It is a polished client of a **self-hosted Bambuddy backend** (FastAPI, ~548 endpoints). Distribution is **local/TestFlight for one user** — there is no CI, and both apps are **built locally with Xcode**, not EAS.
 
@@ -104,7 +104,7 @@ Why each non-obvious flag/step matters (forgetting these costs build cycles):
 - `-destination 'generic/platform=iOS'`, **never** `id=<UDID>` — with the UDID destination a LOCKED phone fails the build instantly at destination resolution ("needs to be unlocked to enable development services"), and piping to `tail`/`grep` hides it (pipeline exit is 0 while the `.app` stays stale). Verify with `grep "BUILD SUCCEEDED"` on the log, not the exit code.
 - `DEVELOPER_DIR=…Xcode-beta…` — stable Xcode can't mount the iOS-27 developer disk image.
 - `ENABLE_USER_SCRIPT_SANDBOXING=NO` — Xcode 27's script sandbox otherwise fails the "Bundle React Native code" phase with `EPERM unlink main.jsbundle` on rebuilds.
-- `DEVELOPMENT_TEAM=<YOUR_TEAM_ID>` (+ `ios.appleTeamId` in app.json) — `expo prebuild` does not write a team into the project; the app and the Live Activity widget extension both need it for automatic signing.
+- `DEVELOPMENT_TEAM` (+ `ios.appleTeamId` in app.json) — `expo prebuild` does not write a team into the project; the app and the Live Activity widget extension both need it for automatic signing.
 - Diagnosing a launch crash: pull native crash reports over USB with `idevicecrashreport -e -k /tmp/x`; the crash time is in the **filename** (`Bambu-YYYY-MM-DD-HHMMSS.ips`), not the copy time. `idevicescreenshot` does **not** work on iOS 27.
 
 ### Archive + ship to TestFlight (a DIFFERENT toolchain from the device build)
@@ -119,7 +119,7 @@ xcodebuild -exportArchive -archivePath /tmp/Bambu.xcarchive \
   -exportOptionsPlist ExportOptions.plist -exportPath /tmp/export -allowProvisioningUpdates
 xcrun altool --upload-app -f /tmp/export/Bambu.ipa -t ios --apiKey <KEY_ID> --apiIssuer <ISSUER_ID>
 ```
-ExportOptions.plist: `method=app-store-connect`, `teamID=<YOUR_TEAM_ID>`, `signingStyle=automatic`, `destination=export`.
+`native/ExportOptions.template.plist` is rendered to a temp file by `scripts-archive.sh` with your `DEVELOPMENT_TEAM` — xcodebuild does not expand variables inside an export plist, so it cannot be committed with the id in it. `method=app-store-connect`, `signingStyle=automatic`, `destination=export`.
 
 - **Use a RELEASE Xcode to archive — never `Xcode-beta`.** App Store Connect rejects the upload outright: *"Unsupported SDK or Xcode version… you need to use the latest Release Candidates (RC)."* The beta is required ONLY for installing to a device on iOS 27 (developer disk image); it is the wrong toolchain for shipping. The two workflows genuinely need different `DEVELOPER_DIR` values.
 - **`/Applications/Xcode.app` (26.6) does not work** — `xcodebuild -showsdks` lists iOS 26.5, but the iOS *platform component* is not installed, so every destination is ineligible (`iOS 26.5 is not installed… download from Xcode > Settings > Components`) and you get `Found no destinations for the scheme`. `Xcode-26.3.0.app` has a working platform. Check with `-showdestinations` before burning a build.
