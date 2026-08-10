@@ -49,9 +49,9 @@ print("EMPTY-BODY probes. 404 = no such route. 400/422 = the route EXISTS.\n")
 
 print("-- add a design to a collection --")
 for method, path in (
-    ("POST", "/design-service/favorites/9100001/designs"),
-    ("PUT", "/design-service/favorites/9100001/designs"),
-    ("POST", "/design-service/my/favorites/9100001/designs"),
+    ("POST", "/design-service/favorites/<COLLECTION_ID>/designs"),
+    ("PUT", "/design-service/favorites/<COLLECTION_ID>/designs"),
+    ("POST", "/design-service/my/favorites/<COLLECTION_ID>/designs"),
     ("POST", "/design-service/design/1286770/favorite"),
     ("POST", "/design-service/design/1286770/collect"),
     ("POST", "/design-service/my/favorites/design"),
@@ -70,7 +70,7 @@ for method, path in (
 
 print("\n-- remove (needed before any add can be tested safely) --")
 for method, path in (
-    ("DELETE", "/design-service/favorites/9100001/designs"),
+    ("DELETE", "/design-service/favorites/<COLLECTION_ID>/designs"),
     ("DELETE", "/design-service/design/1286770/favorite"),
 ):
     status, body = probe(method, path, t)

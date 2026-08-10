@@ -9,7 +9,7 @@ options:
 
 settings:
   base:
-    DEVELOPMENT_TEAM: <YOUR_TEAM_ID>
+    DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}   # export it, or put it in native/.env-local (gitignored)
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete

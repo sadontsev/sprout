@@ -3,3 +3,7 @@ Sprout.xcodeproj/
 *.xcworkspace/
 DerivedData/
 build/
+
+# Your team id and other local build settings — never committed.
+.env-local
+ExportOptions.plist
