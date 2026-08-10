@@ -913,9 +913,13 @@ private struct MakerWorldPanel: View {
                 // whose `/gcode` answers 404 and whose embedded profile targets someone else's
                 // machine. So the wizard opens at its first step and slices, exactly as it would for
                 // any unsliced upload.
-                let file = try? await client.getFileDetail(res.libraryFileId)
-                onClose()
-                if let file { model.overlay = .wizard(file) }
+                // Replacing the overlay rather than closing and reopening it: `onClose` sets it to
+                // nil, and going nil → .wizard in the same turn flashes an empty frame.
+                if let file = try? await client.getFileDetail(res.libraryFileId) {
+                    model.overlay = .wizard(file)
+                } else {
+                    onClose()
+                }
             } catch {
                 importing = false
                 failure = mwFailure(.importing, error)
