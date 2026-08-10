@@ -134,6 +134,39 @@ makes empty folders nothing can be put into.
 > protected Default Collection. Any other id would have destroyed real data. `deploy/spikes/` carries
 > that warning and no longer probes `DELETE`.
 
+## Sharing someone else's build
+
+If you install a TestFlight build signed by **someone else's** Apple team and point it at your own
+Bambuddy and your own la-push, you get most of the app — but **not push**, and the reason is not
+fixable by configuration.
+
+| | works? | why |
+|---|---|---|
+| Everything through Bambuddy | ✅ | your server, your API key |
+| MakerWorld search / browse | ✅ | anonymous calls straight to `api.bambulab.com` |
+| **MakerWorld collections** | ✅ | plain authenticated HTTP to *your* la-push; `_require_key` validates the key against *your* Bambuddy. No Apple involvement |
+| **Live Activities / push banners** | ❌ | see below |
+
+la-push signs its APNs JWT with `iss = APNS_TEAM_ID` / `kid = APNS_KEY_ID` and sends
+`apns-topic: <the installed app's bundle id>.push-type.liveactivity`. **Apple checks that the signing
+key's team owns that topic.** Your key does not own someone else's bundle id, so you get
+`403 InvalidProviderToken`; change `APNS_TOPIC` to a bundle id you *do* own and you get
+`400 TopicDisallowed`, because the installed app is not that bundle. The only way round it is being
+given that team's `.p8`, which is a credential for their entire team's push — don't ask for it, and
+don't hand yours out.
+
+**So configure it like this:** Settings → turn **off** "Live Activity via server", and set
+**Push server URL** to your own la-push. Collections keep working; lock-screen cards simply update
+only while the app is open.
+
+> Those two settings used to fight each other: the app read the push toggle to decide whether
+> collections existed, so turning push off removed the Collections tab. Fixed in build 13 — see
+> `ConfigRules.laPushUrl` vs `resolvePushUrl`.
+
+For real push, build the app yourself under your own team — the repo takes `DEVELOPMENT_TEAM` from
+the environment for exactly this reason (`native/.env-local.example`). Then your bundle id, your
+APNs key and your la-push all belong to you and everything above turns green.
+
 ## Two clients
 
 The RN app (`mobile/`) and the native SwiftUI app (`native/`) ship as different TestFlight builds of
