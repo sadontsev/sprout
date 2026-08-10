@@ -358,6 +358,13 @@ private struct MakerWorldPanel: View {
     @State private var activeNav: String?
     /// The query the visible hits belong to — paging has to repeat it, and the field may have moved on.
     @State private var activeQuery: String?
+
+    // The owner's own MakerWorld collections, served by their la-push — see `CollectionsClient`.
+    @State private var collections: [MakerWorldCollection] = []
+    /// True while the folder list is what the panel is showing.
+    @State private var showingCollections = false
+    /// The folder whose designs are in the grid, if any.
+    @State private var activeCollection: MakerWorldCollection?
     /// Measured height of the scroll's content — see `body` for why the scroll needs it.
     @State private var contentHeight: CGFloat = 0
 
@@ -554,11 +561,13 @@ private struct MakerWorldPanel: View {
             .accessibilityElement(children: .combine)
         }
 
-        if !navs.isEmpty {
+        if !navs.isEmpty || collectionsClient.isAvailable {
             browseChips
         }
 
-        if !hits.isEmpty {
+        if showingCollections {
+            collectionsList
+        } else if !hits.isEmpty {
             resultsGrid
         } else if hits.isEmpty, !searching, activeQuery != nil || activeNav != nil, searchError == nil {
             Text("Nothing on MakerWorld matched that.")
@@ -576,6 +585,32 @@ private struct MakerWorldPanel: View {
             UploadSectionLabel("BROWSE")
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
+                    // First, because it is the only one that is the owner's own. Shown only when a
+                    // push server is configured — without one there is nothing holding the Bambu
+                    // Cloud token, so the chip would lead somewhere that cannot answer.
+                    if collectionsClient.isAvailable {
+                        let on = showingCollections || activeCollection != nil
+                        Tap(action: openCollections) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "bookmark")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("My collections")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundStyle(on ? c.accent : c.t2)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 8)
+                            .background(RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .fill(on ? c.accentDim : c.s2))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .stroke(c.accent, lineWidth: on ? 1.5 : 0)
+                            }
+                            .contentShape(.rect)
+                        }
+                        .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
+                    }
+
                     ForEach(navs) { nav in
                         let on = activeNav == nav.key
                         Tap { browse(nav) } content: {
@@ -600,6 +635,89 @@ private struct MakerWorldPanel: View {
             .scrollIndicators(.hidden)
         }
         .padding(.top, 18)
+    }
+
+    /// The owner's collection folders. A list rather than a grid: these are containers with a count,
+    /// and the count is the thing worth reading.
+    @ViewBuilder
+    private var collectionsList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            UploadSectionLabel("MY COLLECTIONS" + (collections.isEmpty ? "" : "  ·  \(collections.count)"))
+            if searching {
+                HStack(spacing: 10) {
+                    ProgressView().tint(c.t3)
+                    Text("Reading your collections…")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(c.t3)
+                }
+                .padding(.vertical, 12)
+            } else if collections.isEmpty, searchError == nil {
+                // Only reachable when la-push actually answered with an empty list. A missing token
+                // or a refused request raises instead, so this line never stands in for "signed out".
+                Text("You haven’t collected anything on MakerWorld yet.")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(c.t3)
+                    .padding(.top, 4)
+            } else {
+                VStack(spacing: 9) {
+                    ForEach(collections) { folder in
+                        collectionRow(folder)
+                    }
+                }
+            }
+        }
+        .padding(.top, 18)
+    }
+
+    private func collectionRow(_ folder: MakerWorldCollection) -> some View {
+        // An empty folder opens to nothing, so it says so instead of pretending to be a way forward.
+        let empty = folder.count == 0
+        return Tap(disabled: empty) { openCollection(folder) } content: {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(c.thumb)
+                    .frame(width: 52, height: 52)
+                    .overlay {
+                        Group {
+                            if let url = client.makerworldThumbUrl(folder.cover) {
+                                AsyncImage(url: url) { image in
+                                    image.resizable().aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    Color.clear
+                                }
+                            } else {
+                                Image(systemName: "bookmark")
+                                    .font(.system(size: 17, weight: .medium))
+                                    .foregroundStyle(c.t3)
+                            }
+                        }
+                        .frame(width: 52, height: 52)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(folder.title)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(c.t1)
+                        .lineLimit(1)
+                    Text(empty ? "Empty" : "\(folder.count) model\(folder.count == 1 ? "" : "s")")
+                        .font(.mono(11.5, weight: .medium))
+                        .foregroundStyle(c.t3)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if !empty {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(c.t3)
+                }
+            }
+            .padding(11)
+            .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.s2))
+            .opacity(empty ? 0.55 : 1)
+            .contentShape(.rect)
+        }
+        .accessibilityLabel("\(folder.title), \(empty ? "empty" : "\(folder.count) models")")
     }
 
     private var resultsGrid: some View {
@@ -632,7 +750,9 @@ private struct MakerWorldPanel: View {
     }
 
     private var gridLabel: String {
-        let name = activeNav.flatMap { key in navs.first { $0.key == key }?.name } ?? activeQuery
+        let name = activeCollection?.title
+            ?? activeNav.flatMap { key in navs.first { $0.key == key }?.name }
+            ?? activeQuery
         let scope = (name?.uppercased()).map { "  ·  \($0)" } ?? ""
         // The API's own total, not the number loaded — saying "20" for a 7 076-hit search would be a
         // smaller lie but a lie.
@@ -1121,10 +1241,64 @@ private struct MakerWorldPanel: View {
         }
     }
 
+    /// The owner's own collections, from their la-push. Built from the same config the Live Activity
+    /// registration uses, so there is one answer to "where is my push server".
+    private var collectionsClient: CollectionsClient {
+        CollectionsClient(baseUrl: model.config.flatMap(ConfigRules.resolvePushUrl),
+                          apiKey: model.config?.apiKey ?? "")
+    }
+
+    private func openCollections() {
+        guard !searching, !importing else { return }
+        showingCollections = true
+        activeCollection = nil
+        activeNav = nil
+        activeQuery = nil
+        hits = []
+        hitTotal = nil
+        searchError = nil
+        searching = true
+        Task {
+            defer { searching = false }
+            do {
+                collections = try await collectionsClient.collections()
+            } catch {
+                // The server's own sentence — it names which machine to go and look at.
+                searchError = error.localizedDescription
+                showingCollections = false
+            }
+        }
+    }
+
+    private func openCollection(_ folder: MakerWorldCollection) {
+        guard !searching, !importing else { return }
+        showingCollections = false
+        activeCollection = folder
+        activeNav = nil
+        activeQuery = nil
+        hits = []
+        hitTotal = nil
+        searchError = nil
+        searching = true
+        Task {
+            defer { searching = false }
+            do {
+                let page = try await collectionsClient.designs(in: folder.id)
+                guard activeCollection?.id == folder.id else { return }
+                hits = page.hits ?? []
+                hitTotal = page.total
+            } catch {
+                searchError = error.localizedDescription
+            }
+        }
+    }
+
     private func search(_ query: String) {
         guard !searching, !importing else { return }
         searching = true
         searchError = nil
+        showingCollections = false
+        activeCollection = nil
         activeNav = nil
         activeQuery = query
         hits = []
@@ -1146,6 +1320,8 @@ private struct MakerWorldPanel: View {
         guard !searching, !importing else { return }
         searching = true
         searchError = nil
+        showingCollections = false
+        activeCollection = nil
         activeQuery = nil
         activeNav = nav.key
         hits = []
@@ -1173,7 +1349,9 @@ private struct MakerWorldPanel: View {
             defer { loadingMore = false }
             do {
                 let page: MWSearchPage
-                if let nav = activeNav {
+                if let folder = activeCollection {
+                    page = try await collectionsClient.designs(in: folder.id, offset: offset)
+                } else if let nav = activeNav {
                     page = try await searchClient.browse(navKey: nav, offset: offset)
                 } else if let q = activeQuery {
                     page = try await searchClient.search(q, offset: offset)

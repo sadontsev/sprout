@@ -18,6 +18,24 @@ services:
       # dropped (observed live: every card died silently). Export APNS_HOST for sandbox dev builds.
       APNS_HOST: ${APNS_HOST:-api.push.apple.com}
       DATA_DIR: /data
+      # Bambuddy's SQLite, for the MakerWorld collection endpoints only. Every collection endpoint on
+      # api.bambulab.com is Bearer-gated, that bearer is the whole Bambu account, and it must not
+      # reach the phone — so it is read here, on the machine that already has it. Re-read per request
+      # so a token Bambuddy refreshes is picked up at once.
+      BAMBUDDY_DB: /bambuddy/bambuddy.db
     volumes:
       - <secrets-dir>/apns_key.p8:/keys/apns_key.p8:ro
       - ./data:/data
+      # READ-ONLY, deliberately: this service must never be able to write another app's database.
+      - bambuddy_data:/bambuddy:ro
+
+volumes:
+  # Bambuddy's own volume, joined from outside its compose project. The name is the one docker
+  # compose generated for it — `bambuddy_bambuddy_data`, project prefix and all — NOT the bare
+  # `bambuddy_data`, which also exists on this host and is an empty leftover. Mounting the empty one
+  # fails silently: no database, so collections report "can't see Bambuddy's database" forever.
+  # Verify with `docker volume ls | grep bambuddy` and
+  # `docker inspect bambuddy --format '{{range .Mounts}}{{.Name}}{{end}}'`.
+  bambuddy_data:
+    external: true
+    name: bambuddy_bambuddy_data

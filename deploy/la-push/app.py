@@ -29,6 +29,7 @@ import jwt  # PyJWT
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+import makerworld as mw
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, COOL_MAX_C, COOL_MIN_C, READY, clamp_threshold, cool_step
 from p2s import dry_identity, next_started_for, print_identity, prune, should_start
@@ -927,3 +928,33 @@ async def unregister(printer_id: int, _: None = Depends(_require_key)) -> dict:
     _regs.pop(str(printer_id), None)
     _save()
     return {"ok": True}
+
+
+# MARK: - MakerWorld collections
+#
+# The only part of this service that is not about push. It is here because it needs the Bambu Cloud
+# bearer, that bearer must not reach the phone, and this is the one machine that already has it and
+# that the app already trusts. See makerworld.py for why the token stays put.
+#
+# Both endpoints are gated on the same Bambuddy API key as everything else, so nobody who merely
+# knows the public URL can read the owner's collections.
+
+
+@app.get("/makerworld/collections")
+async def makerworld_collections(_: None = Depends(_require_key)) -> dict:
+    try:
+        return {"collections": await mw.list_collections()}
+    except mw.CollectionsUnavailable as e:
+        # The reason is the payload. "Couldn't load collections" would send the owner looking at the
+        # wrong machine — the fix is usually a Bambu Cloud sign-in on Bambuddy, not anything here.
+        raise HTTPException(status_code=e.status, detail=e.message) from e
+
+
+@app.get("/makerworld/collections/{collection_id}/designs")
+async def makerworld_collection_designs(
+    collection_id: int, offset: int = 0, limit: int = 20, _: None = Depends(_require_key)
+) -> dict:
+    try:
+        return await mw.collection_designs(collection_id, offset=offset, limit=min(max(limit, 1), 50))
+    except mw.CollectionsUnavailable as e:
+        raise HTTPException(status_code=e.status, detail=e.message) from e
