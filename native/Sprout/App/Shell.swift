@@ -3,6 +3,8 @@ import SwiftUI
 /// Config gate → tab host → overlays. The single place that decides what the app is showing.
 struct Shell: View {
     @Environment(\.palette) private var c
+    /// The device's scheme, used only when the preference is `system`.
+    @Environment(\.colorScheme) private var scheme
     @State private var model = AppModel()
     @State private var showSettings = false
 
@@ -19,6 +21,8 @@ struct Shell: View {
                 main
             }
         }
+        .environment(\.palette, Palette.forScheme(model.theme.colorScheme ?? scheme))
+        .preferredColorScheme(model.theme.colorScheme)
         .task { await model.load() }
         .sheet(isPresented: $showSettings) {
             SettingsView(model: model, isOnboarding: false)
