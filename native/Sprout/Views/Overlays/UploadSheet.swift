@@ -344,6 +344,20 @@ private struct MakerWorldPanel: View {
     @State private var importing = false
     @State private var recent: [MakerWorldRecentImport] = []
     @State private var licenceExpanded = false
+
+    // Search and browse talk to MakerWorld DIRECTLY, through their own client — see
+    // `MakerWorldSearchClient` for why none of this shares Bambuddy's transport.
+    private let searchClient = MakerWorldSearchClient()
+    @State private var hits: [MWSearchHit] = []
+    @State private var hitTotal: Int?
+    @State private var searching = false
+    @State private var loadingMore = false
+    @State private var searchError: String?
+    @State private var navs: [MWNav] = []
+    /// The browse category currently listed, or nil when the grid is showing a text search.
+    @State private var activeNav: String?
+    /// The query the visible hits belong to — paging has to repeat it, and the field may have moved on.
+    @State private var activeQuery: String?
     /// Measured height of the scroll's content — see `body` for why the scroll needs it.
     @State private var contentHeight: CGFloat = 0
 
@@ -370,8 +384,8 @@ private struct MakerWorldPanel: View {
                     }
                     if let resolved {
                         designBlock(resolved)
-                    } else if !recent.isEmpty {
-                        recentBlock
+                    } else {
+                        discoverBlock
                     }
                 }
                 .padding(.bottom, 6)
@@ -396,6 +410,12 @@ private struct MakerWorldPanel: View {
         .task {
             // A cold panel with an empty text field says nothing about what this screen is for.
             recent = await client.recentMakerWorldImports()
+        }
+        .task {
+            // MakerWorld's own taxonomy rather than a hardcoded copy — the categories are theirs to
+            // change. A failure here is silent on purpose: browse simply does not appear, and the
+            // field above it still searches and still opens links.
+            navs = MakerWorldSearch.browsable((try? await searchClient.navs()) ?? [])
         }
     }
 
@@ -455,9 +475,17 @@ private struct MakerWorldPanel: View {
         }
     }
 
+    /// One field, two jobs — see `MakerWorldSearch.Intent`.
+    ///
+    /// Pasting a link must stay a first-class way in, permanently: search rides an undocumented
+    /// endpoint that Bambu can gate at any time, and the day it does, search is removed rather than
+    /// worked around. Making the link a *mode of the same field* means it cannot decay into a
+    /// fallback nobody maintains. The button says which of the two will happen.
+    private var intent: MakerWorldSearch.Intent { MakerWorldSearch.intent(for: url) }
+
     private var linkField: some View {
         VStack(alignment: .leading, spacing: 0) {
-            UploadSectionLabel("MODEL LINK")
+            UploadSectionLabel("SEARCH OR PASTE A LINK")
 
             HStack(spacing: 10) {
                 TextField(
@@ -468,26 +496,26 @@ private struct MakerWorldPanel: View {
                     // rendered this placeholder as a blue tappable link and ignored `foregroundStyle`
                     // entirely. Settings' fields escape it only by accident: they pass a String
                     // variable, which picks the verbatim overload.
-                    prompt: Text(verbatim: "https://makerworld.com/en/models/…").foregroundStyle(c.t3)
+                    prompt: Text(verbatim: "benchy, or a makerworld.com link").foregroundStyle(c.t3)
                 )
                 .font(.system(size: 14))
                 .foregroundStyle(c.t1)
                 .tint(c.accent)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .keyboardType(.URL)
-                .submitLabel(.go)
-                .onSubmit(resolve)
+                .keyboardType(.webSearch)
+                .submitLabel(.search)
+                .onSubmit(submit)
                 .padding(.horizontal, 14)
                 .frame(height: 48)
                 .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.s2))
 
-                Tap(disabled: resolving || trimmedUrl.isEmpty, action: resolve) {
+                Tap(disabled: resolving || searching || trimmedUrl.isEmpty, action: submit) {
                     Group {
-                        if resolving {
+                        if resolving || searching {
                             ProgressView().tint(c.accentInk)
                         } else {
-                            Text("Resolve")
+                            Text(intent.buttonLabel)
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(c.accentInk)
                         }
@@ -500,6 +528,184 @@ private struct MakerWorldPanel: View {
                 .opacity(trimmedUrl.isEmpty ? 0.4 : 1)
             }
         }
+    }
+
+    // MARK: Discover — browse, search results, recents
+
+    /// What fills the panel before a model has been resolved.
+    @ViewBuilder
+    private var discoverBlock: some View {
+        if let searchError {
+            // Not an `UploadErrorCard`: this is MakerWorld failing, not the owner's own server, and
+            // conflating the two would send them looking at the wrong machine.
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(c.t3)
+                Text(searchError)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .lineSpacing(3)
+                    .foregroundStyle(c.t2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(13)
+            .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.s2))
+            .padding(.top, 14)
+            .accessibilityElement(children: .combine)
+        }
+
+        if !navs.isEmpty {
+            browseChips
+        }
+
+        if !hits.isEmpty {
+            resultsGrid
+        } else if hits.isEmpty, !searching, activeQuery != nil || activeNav != nil, searchError == nil {
+            Text("Nothing on MakerWorld matched that.")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(c.t3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 18)
+        } else if hits.isEmpty, activeQuery == nil, activeNav == nil, !recent.isEmpty {
+            recentBlock
+        }
+    }
+
+    private var browseChips: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            UploadSectionLabel("BROWSE")
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(navs) { nav in
+                        let on = activeNav == nav.key
+                        Tap { browse(nav) } content: {
+                            Text(nav.name ?? nav.key)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(on ? c.accent : c.t2)
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 8)
+                                .background(RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(on ? c.accentDim : c.s2))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                        .stroke(c.accent, lineWidth: on ? 1.5 : 0)
+                                }
+                                .contentShape(.rect)
+                        }
+                        .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
+                    }
+                }
+                .padding(.horizontal, 1)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(.top, 18)
+    }
+
+    private var resultsGrid: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            UploadSectionLabel(gridLabel)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                      spacing: 10) {
+                ForEach(hits) { hit in
+                    resultTile(hit)
+                }
+            }
+
+            if MakerWorldSearch.hasMore(loaded: hits.count, total: hitTotal) {
+                Tap(disabled: loadingMore, action: loadMore) {
+                    HStack(spacing: 8) {
+                        if loadingMore { ProgressView().tint(c.t3) }
+                        Text(loadingMore ? "Loading…" : "Load more")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(c.t2)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.s2))
+                    .contentShape(.rect)
+                }
+                .padding(.top, 10)
+            }
+        }
+        .padding(.top, 18)
+    }
+
+    private var gridLabel: String {
+        let name = activeNav.flatMap { key in navs.first { $0.key == key }?.name } ?? activeQuery
+        let scope = (name?.uppercased()).map { "  ·  \($0)" } ?? ""
+        // The API's own total, not the number loaded — saying "20" for a 7 076-hit search would be a
+        // smaller lie but a lie.
+        let count = hitTotal.map { "  ·  \(MakerWorldSearch.compact($0))" } ?? ""
+        return "RESULTS\(scope)\(count)"
+    }
+
+    /// One grid tile. Everything on it comes from a field the hit actually carries — a search hit is
+    /// a thin projection, and the design's proposed "not printable" marker had no field behind it.
+    private func resultTile(_ hit: MWSearchHit) -> some View {
+        Tap { open(hit) } content: {
+            VStack(alignment: .leading, spacing: 0) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(c.thumb)
+                    // 4:3 rather than square: MakerWorld covers are landscape and many have the
+                    // model's name set into the image, which a square centre-crop cuts in half.
+                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                    .overlay {
+                        // Through Bambuddy's proxy, so browsing does not put this phone's IP in
+                        // MakerWorld's CDN logs for every tile on screen.
+                        if let url = client.makerworldThumbUrl(hit.cover) {
+                            AsyncImage(url: url) { image in
+                                image.resizable().aspectRatio(contentMode: .fill)
+                            } placeholder: {
+                                Color.clear
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(alignment: .topLeading) {
+                        if MakerWorldSearch.isAdult(hit) {
+                            Text("18+")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(.black.opacity(0.65)))
+                                .padding(7)
+                        }
+                    }
+
+                Text(hit.title ?? "Model \(hit.id)")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(c.t1)
+                    .lineLimit(2, reservesSpace: true)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 8)
+
+                if let creator = hit.designCreator?.name?.nonEmpty {
+                    Text("@\(creator)")
+                        .font(.mono(10.5, weight: .medium))
+                        .foregroundStyle(c.t3)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 2)
+                }
+
+                let stats = MakerWorldSearch.stats(hit)
+                if !stats.isEmpty {
+                    Text(stats)
+                        .font(.mono(10.5, weight: .medium))
+                        .foregroundStyle(c.t3)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 2)
+                }
+            }
+            .contentShape(.rect)
+        }
+        .accessibilityLabel("\(hit.title ?? "Model \(hit.id)"), \(MakerWorldSearch.stats(hit))")
     }
 
     // MARK: Resolved design
@@ -901,8 +1107,97 @@ private struct MakerWorldPanel: View {
 
     // MARK: Actions
 
-    private func resolve() {
-        let u = trimmedUrl
+    /// Dispatch on what is actually in the field. The button already said which this would be.
+    private func submit() {
+        switch intent {
+        case .idle:
+            return
+        case .resolve(let id):
+            // Normalised through the model id rather than passed through verbatim, so a locale path,
+            // a slug or a `#profileId-` fragment all reach `resolve` in the one shape it parses.
+            resolve(MakerWorldSearch.modelUrl(id: id))
+        case .search(let query):
+            search(query)
+        }
+    }
+
+    private func search(_ query: String) {
+        guard !searching, !importing else { return }
+        searching = true
+        searchError = nil
+        activeNav = nil
+        activeQuery = query
+        hits = []
+        hitTotal = nil
+        Task {
+            defer { searching = false }
+            do {
+                let page = try await searchClient.search(query)
+                guard activeQuery == query else { return }   // a newer query won
+                hits = page.hits ?? []
+                hitTotal = page.total
+            } catch {
+                searchError = error.localizedDescription
+            }
+        }
+    }
+
+    private func browse(_ nav: MWNav) {
+        guard !searching, !importing else { return }
+        searching = true
+        searchError = nil
+        activeQuery = nil
+        activeNav = nav.key
+        hits = []
+        hitTotal = nil
+        Task {
+            defer { searching = false }
+            do {
+                let page = try await searchClient.browse(navKey: nav.key)
+                guard activeNav == nav.key else { return }
+                hits = page.hits ?? []
+                hitTotal = page.total
+            } catch {
+                searchError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Paging is by offset, and this endpoint's ordering is not stable between calls — the same query
+    /// returned a different leading hit seconds apart — so the page is MERGED rather than appended.
+    private func loadMore() {
+        guard !loadingMore, !searching else { return }
+        let offset = hits.count
+        loadingMore = true
+        Task {
+            defer { loadingMore = false }
+            do {
+                let page: MWSearchPage
+                if let nav = activeNav {
+                    page = try await searchClient.browse(navKey: nav, offset: offset)
+                } else if let q = activeQuery {
+                    page = try await searchClient.search(q, offset: offset)
+                } else {
+                    return
+                }
+                hits = MakerWorldSearch.merge(hits, page.hits ?? [])
+                if let total = page.total { hitTotal = total }
+            } catch {
+                searchError = error.localizedDescription
+            }
+        }
+    }
+
+    /// A tapped tile enters the SAME detail flow a pasted link does. Search adds an entry point, not
+    /// a second flow — the licence, the profile picker and the import gate all live in one place.
+    private func open(_ hit: MWSearchHit) {
+        url = MakerWorldSearch.modelUrl(id: hit.id)
+        resolve(url)
+    }
+
+    private func resolve() { resolve(trimmedUrl) }
+
+    private func resolve(_ u: String) {
         // `!importing` matters: swapping the design out from under an in-flight import left the
         // failure card offering "Open on MakerWorld" for whichever model happened to be on screen,
         // and handed the wizard off for a model the panel was no longer showing.
