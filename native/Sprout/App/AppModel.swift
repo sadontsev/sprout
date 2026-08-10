@@ -59,6 +59,14 @@ final class AppModel {
     private(set) var cooldown: CooldownStore?
     private(set) var liveActivity: LiveActivityController?
 
+    /// Appearance preference. Applied at the root, so a change re-themes the whole tree at once.
+    var theme: ThemePreference = .system {
+        didSet {
+            guard theme != oldValue else { return }
+            persist { $0.theme = self.theme.rawValue }
+        }
+    }
+
     // MARK: UI state
 
     var tab: TabKey = .printer
@@ -79,6 +87,7 @@ final class AppModel {
     func load() async {
         let stored = SecureConfig.load()
         config = stored
+        theme = ThemePreference.from(stored?.theme)
         configLoaded = true
         if let stored, stored.isComplete { await connect(stored) }
     }

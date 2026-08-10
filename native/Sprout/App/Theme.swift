@@ -108,6 +108,38 @@ struct Palette: Sendable, Equatable {
     }
 }
 
+/// The user's appearance choice. Stored as a raw string in the Keychain config, so the cases are
+/// the persisted values — renaming one silently resets everyone's preference to `system`.
+enum ThemePreference: String, CaseIterable, Sendable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    /// nil means "follow the device", which is what `preferredColorScheme(nil)` expects.
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+
+    /// Anything unrecognised — including a value written by the RN build, which used the same key —
+    /// falls back to following the system rather than guessing.
+    static func from(_ raw: String?) -> ThemePreference {
+        guard let raw, let v = ThemePreference(rawValue: raw.lowercased()) else { return .system }
+        return v
+    }
+}
+
 extension Color {
     init(hex: UInt32, opacity: Double = 1) {
         self.init(

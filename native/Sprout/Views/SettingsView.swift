@@ -34,6 +34,7 @@ struct SettingsView: View {
                     if isOnboarding { intro }
                     connection
                     if let error { errorBox(error) }
+                    appearance
                     advanced
                     primaryButton
                     if !isOnboarding { signOutButton }
@@ -93,6 +94,39 @@ struct SettingsView: View {
                 Text("That doesn't look like a Bambuddy key — they start with bb_ .")
                     .font(.system(size: 11))
                     .foregroundStyle(c.heating)
+            }
+        }
+    }
+
+    private var appearance: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("APPEARANCE")
+            // A segmented control rather than a toggle: "System" is a real third state, not the
+            // absence of a choice, and collapsing it into on/off is what forces people to re-pick
+            // every time the device flips at sunset.
+            HStack(spacing: 6) {
+                ForEach(ThemePreference.allCases) { option in
+                    let on = model.theme == option
+                    Tap {
+                        withAnimation(Motion.standard(0.22)) { model.theme = option }
+                    } content: {
+                        Text(option.label)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(on ? c.accentInk : c.t2)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 40)
+                            .background(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(on ? c.accent : c.s1)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .stroke(on ? .clear : c.line)
+                            )
+                    }
+                    .accessibilityLabel(option.label)
+                    .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
+                }
             }
         }
     }
