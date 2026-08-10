@@ -409,6 +409,13 @@ final class BambuddyClient: Sendable {
     func listFiles() async throws -> [LibraryFile] { try await get("/api/v1/library/files") }
     func getFileDetail(_ fileId: Int) async throws -> LibraryFile { try await get("/api/v1/library/files/\(fileId)") }
     func getPlates(_ fileId: Int) async throws -> PlatesResponse { try await get("/api/v1/library/files/\(fileId)/plates") }
+
+    /// Which filament slots a file's plate needs. The exact question behind "can this print be mapped
+    /// to the trays" — asked of the file that will actually be printed, after any slice.
+    func filamentRequirements(_ fileId: Int, plate: Int? = nil) async throws -> FilamentRequirements {
+        let q = plate.map { "?plate_id=\($0)" } ?? ""
+        return try await get("/api/v1/library/files/\(fileId)/filament-requirements\(q)")
+    }
     func getGcode(_ fileId: Int) async throws -> String {
         let data = try await send(request("/api/v1/library/files/\(fileId)/gcode"), path: "gcode")
         return String(data: data, encoding: .utf8) ?? ""

@@ -662,6 +662,34 @@ struct MakerWorldImportResponse: Codable, Hashable, Sendable {
     var profileId: Int?
 }
 
+/// `GET /api/v1/library/files/{id}/filament-requirements`.
+///
+/// One entry per filament slot the sliced file asks for — the join key between what the file needs
+/// and what is in the trays. `nozzleId` is the extruder the slicer assigned the slot to, and exists
+/// only after a slice: a raw project 3MF reports no `tray_info_idx` and no `nozzle_id`.
+struct FilamentRequirements: Codable, Hashable, Sendable {
+    var filaments: [Requirement]?
+
+    struct Requirement: Codable, Hashable, Sendable, Identifiable {
+        var slotId: Int?
+        var type: String?
+        var color: String?
+        var usedGrams: LooseNumber?
+        var trayInfoIdx: String?
+        var usedInPlate: Bool?
+        var nozzleId: Int?
+
+        var id: Int { slotId ?? 0 }
+    }
+
+    /// How many slots this print actually consumes. Slots the chosen plate does not use are excluded
+    /// — a four-plate file can list filaments no single plate needs.
+    var usedSlotCount: Int {
+        let used = (filaments ?? []).filter { $0.usedInPlate ?? true }
+        return max(used.count, 1)
+    }
+}
+
 /// `GET /api/v1/cloud/status`. A `403` means the API key has no cloud scope — a different condition
 /// from "not signed in", with a different remedy. See `MakerWorldAccess`.
 struct CloudStatus: Codable, Hashable, Sendable {

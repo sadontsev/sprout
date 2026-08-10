@@ -49,6 +49,12 @@ struct WizardView: View {
 
     // MARK: Nested surfaces & alerts
 
+    /// How many filament slots the file about to be printed actually needs, once known.
+    ///
+    /// `nil` while unasked. Anything above 1 is a capability the enqueue cannot express: `ams_mapping`
+    /// is sent as a one-element array, so filaments 2..n would be left unmapped and the printer would
+    /// guess. That is stated on the mapping step and blocks Start rather than being silently wrong.
+    @State private var requiredSlots: Int?
     @State private var viewLayers: LayerTarget?
     @State private var show3D = false
     @State private var alert: WizardAlert?
@@ -943,6 +949,9 @@ struct WizardView: View {
     private var stepMapFilament: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionLabel("AMS SLOT")
+            if let needed = requiredSlots, needed > 1 {
+                multiFilamentNotice(needed)
+            }
             if trays.isEmpty {
                 Text("No AMS trays reported yet. Load filament in the printer, then come back.")
                     .font(.system(size: 12, weight: .medium))
@@ -963,6 +972,51 @@ struct WizardView: View {
                     .padding(.top, 13)
             }
         }
+        // Asked of the file that will actually be enqueued, and re-asked if the plate changes —
+        // a four-plate file can need three filaments on one plate and one on another.
+        .task(id: "\(printFileId)-\(selectedPlate)") { await loadRequiredSlots() }
+    }
+
+    /// The file the enqueue will reference: the slice output when there is one, else the original.
+    private var printFileId: Int { result?.libraryFileId ?? file.id }
+
+    /// Best-effort. A failure leaves `requiredSlots` nil and the gate open — blocking every print on
+    /// a network blip would be worse than the gap it guards, and the guard is an improvement on the
+    /// previous behaviour of never asking at all.
+    private func loadRequiredSlots() async {
+        guard let client = model.client else { return }
+        requiredSlots = (try? await client.filamentRequirements(printFileId, plate: selectedPlate))?
+            .usedSlotCount
+    }
+
+    /// Says the limitation out loud instead of mapping filament 1 and quietly abandoning the rest.
+    ///
+    /// The enqueue sends `ams_mapping` as a one-element array, which is right for a single-material
+    /// print and silently wrong for this one — filaments 2..n arrive unmapped and the firmware picks
+    /// whatever it likes. A stated "not in this build" is the only honest option until the mapping
+    /// step can carry a row per slot.
+    private func multiFilamentNotice(_ needed: Int) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(c.heating)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("This print needs \(needed) filaments")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(c.t1)
+                Text("Sprout can only map one, so it can’t start this print — the other \(needed - 1) "
+                     + "would go to whichever spool the printer happened to choose. Slice a "
+                     + "single-material plate, or start it from Bambu Studio.")
+                    .font(.system(size: 12, weight: .medium))
+                    .lineSpacing(3)
+                    .foregroundStyle(c.t2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(13)
+        .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.heatingDim))
+        .padding(.bottom, 14)
+        .accessibilityElement(children: .combine)
     }
 
     private func trayRow(_ t: AmsTrayRef, multi: Bool) -> some View {
@@ -1271,6 +1325,15 @@ struct WizardView: View {
         }
         guard trays.contains(where: { $0.globalId == slot && !($0.trayType ?? "").isEmpty }) else {
             alert = WizardAlert(title: "Pick a slot", message: "Choose which AMS slot to print from first.")
+            return
+        }
+        // The enqueue can express exactly one mapped filament. Sending it for a multi-material print
+        // would start a print whose other filaments are assigned by the firmware at random.
+        if let needed = requiredSlots, needed > 1 {
+            alert = WizardAlert(
+                title: "Needs \(needed) filaments",
+                message: "Sprout can only map one filament to a tray, so it can’t start this print correctly. Slice a single-material plate, or start it from Bambu Studio."
+            )
             return
         }
         starting = true

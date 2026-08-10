@@ -1070,3 +1070,122 @@ drawn around work that cannot be tested yet (R-2), one hard blocker was declared
 adjacent endpoint that has the field (R-3), and the two most confident sentences in the TL;DR rest
 on a credential the author never verified the app uses (R-7). Fix R-1, R-2 and R-7 before anyone
 writes code; R-3 changes what Phase 3 even contains.
+
+---
+
+# Implementation notes — what the probes settled (2026-08-10)
+
+> **Third pass.** Phase 1a and 1b are built. Everything below was measured against the live server
+> while building, and it changes several conclusions above. Where this section and anything earlier
+> disagree, this section wins — it is the only part that was tested end to end rather than reasoned
+> from a payload.
+
+## Spikes now closed
+
+| # | Answer |
+|---|---|
+| **S-1** | **Closed — imports are never sliced.** Imported models 40146 and 1400373. Both land as `file_type: "3mf"`, `GET /library/files/{id}/gcode` → **404**, `sliced_for_model: "A1"` / `"A1 Mini"`. §5's "always re-slice" is confirmed, and `LibraryFileCaps.hasGcode` answers correctly for them without change. |
+| **S-4** | **Closed, and the news is bad for the proxy.** File 44 reports `print_time_seconds: 1895` while `/gcode` answers 404. So `print_time_seconds != null` is **confirmed unsafe** as a "has toolpaths" signal, exactly as §5.1 feared. No fast path may be built on it. |
+| **S-6** | **Closed — deleted, as R-7 asked.** The app holds key 4 (`claude-native-test`, `can_access_cloud = 1`). Live: `GET /cloud/status` → `200 {"is_authenticated":true}`, `GET /makerworld/status` → `can_download: true`. **Imports work today**, so the TL;DR's "currently tells the owner to fix the wrong thing" never reproduced for the owner. The `cloudReadable` predicate is implemented, so the question is now answered at runtime on every launch. |
+| **S-7** | **Closed — and it splits the difference between §4.2 and R-1.** See below. |
+
+## S-7: importability is not predictable from the payload
+
+This was the load-bearing disagreement, so it was tested rather than argued. On model 40146:
+
+```
+profile 35438952 (has a design.instances record) → 200, library_file_id 44
+profile 40144192 (no record)                     → 200, library_file_id 45
+profile 21931235 (no record)                     → 400  "Bambu Lab API unexpected status 400"
+profile 21931374 (no record)                     → 400
+profile 21936041 (no record)                     → 400
+profile 22111064 (no record, AND the model's own defaultInstanceId) → 400
+profile 22435442 (no record)                     → 400
+```
+
+**Neither earlier position survives intact.**
+
+- §4.2 and Phase 1 item 1 said build rows from `design.instances[]`. That would hide profile
+  40144192, which downloads fine. **R-1 is right that the hits are the row set.**
+- R-1 said the 51 metadata-less hits are "real, named, **importable** profiles… with valid
+  profileIds the import endpoint accepts". That was asserted, not tested — it *was* S-7 — and 5 of 6
+  answered `400`. **The doc's instinct that those rows are second-class is right.**
+
+So the implemented behaviour is: **list every hit, pre-select only a described one.** The rows that
+publish no metadata stay visible and selectable, because one of them does import and hiding it would
+hide real capability; but `MakerWorld.preselect` skips `defaultInstanceId` when that profile has no
+record, because on this model MakerWorld's own default pick answers `400` — pre-selecting it would
+have made the default action a guaranteed failure. A `400` **at import** now reads "MakerWorld has no
+downloadable file for this profile, try another", not "that isn't a MakerWorld link": same status,
+different question, on either side of the import.
+
+Note this is *not* the recurring bug. The affordance is not gated on a proxy — it is left open
+precisely because the exact capability is unknowable before the attempt (`modelIsGettable`, §3.1),
+and the attempt now explains itself.
+
+## Three things the design did not anticipate
+
+1. **`filament-requirements` must be asked per plate.** Unfiltered, the 3-material seed tray reports
+   **6** slots, every one `used_in_plate: true`. With `?plate_id=N` it reports **1**. Asking without
+   the filter would block a perfectly printable plate.
+
+2. **A multi-material *model* is usually not a multi-material *print*.** All four plates of that
+   profile are single-material — the three filaments are spread across plates, not mixed within one:
+
+   ```
+   plate 1 → slot 1 (PLA)   plate 2 → slot 2 (PLA)
+   plate 3 → slot 1 (PLA)   plate 4 → slot 3 (PETG)
+   ```
+
+   So `materialCnt: 3` on the profile row describes the profile, and §6②'s row text should not be
+   read as "this print needs 3 spools". The per-plate answer is the one that gates anything.
+
+3. **Slicing renumbers, and stale metadata is returned for the plates it did not touch.** Slicing
+   plate 2 of file 46 produced file 47, whose `?plate_id=2` correctly reports one slot with
+   `used_grams: 33.0`, `tray_info_idx: "GFA00"` and `nozzle_id: 1` — while `?plate_id=1` on the same
+   output returns the source's stale 6-slot list. The wizard is safe because it always asks about the
+   pair *(file it will enqueue, plate it will enqueue)*, which by construction is the plate that was
+   sliced. Anything that asks a different pair will get a wrong answer.
+
+## What is built, and what is deliberately not
+
+**Phase 1a — shipped.** Rows joined from hits with an explicit "MakerWorld publishes no details for
+this profile" empty state; the three-way access gate with three remedies; licence chip with
+MakerWorld's own prose disclosed verbatim, remix attribution and the obligation line under the import
+button; paid/points/exclusive cautions *before* the download; per-failure copy with **Open on
+MakerWorld**; `folder_id`/`profile_id` decoded; recent imports as the cold-start state.
+`MWLicence` parses CC clauses as tokens after a test caught the substring match reading the
+**"STANDARD"** in "Standard Digital File License" as a `-ND` clause.
+
+**Phase 1b — shipped.** A successful import fetches the library file and opens
+`overlay = .wizard(file)` directly, so the flow ends at a print rather than at the Files list. No
+second print path: the LAN gate, wrong-printer guard, plate review and enqueue all stay where they
+are.
+
+**Phase 1c — not built, and now blocked honestly.** The enqueue still sends a one-element
+`ams_mapping`. The wizard asks `filament-requirements` for the exact (file, plate) it will enqueue,
+and when that needs more than one slot the mapping step says so and **Start refuses with the
+reason** — rather than mapping filament 1 and letting the firmware guess the rest. This is a
+pre-existing gap for any multi-material file, not a MakerWorld one; it is now visible instead of
+silent. The remaining work is §10 item 6 and is unchanged.
+
+**Still open:** R-3's `POST /queue/ {manual_start} → PATCH {nozzle_mapping} → POST /start` spike, and
+all of Phase 2 (search).
+
+## Corrections to earlier sections
+
+- **§3.1's "~90 days"** is wrong, as R-4 established. The shipped copy says *"Bambuddy treats a
+  sign-in as valid for 30 days"*, which is Bambuddy's own window and the one the user experiences.
+- **§4.2's nozzle-diameter caution** is not implemented, per R-6: every import is re-sliced for this
+  printer, so the source profile's nozzle diameter has no bearing on whether it prints.
+- **§4.2's "Made for H2C" badge** is not implemented either, for the same reason R-6 gives — it was
+  true for 36 of 37 profiles. `MWProfileDetail.marked(for:)` exists and is tested, but nothing renders
+  it as a positive badge.
+- **§5's third line of evidence** is wrong (R-8) and did not need to be right: evidence 1 and 2 are
+  now confirmed live.
+
+## Test artefacts left on the server
+
+Library files **44, 45** (Benchy profiles), **46** (seed tray) and **47** (46's plate 2 sliced for the
+H2C), plus slice job 1. All in the auto-created `MakerWorld` folder. Safe to delete; kept because they
+are the only multi-plate and multi-material files in the library to test the wizard against.

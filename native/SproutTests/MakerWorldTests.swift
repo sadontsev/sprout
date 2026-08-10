@@ -515,6 +515,64 @@ final class MakerWorldTests: XCTestCase {
         XCTAssertTrue(MakerWorld.failure(step: .importing, status: 502, detail: nil).message.contains("download"))
     }
 
+    // MARK: - Filament requirements (the wizard's multi-material gate)
+
+    private func requirements(_ json: String) throws -> FilamentRequirements {
+        try BambuddyClient.decoder.decode(FilamentRequirements.self, from: Data(json.utf8))
+    }
+
+    /// Live shape, `GET /library/files/47/filament-requirements?plate_id=2` on a Sprout-sliced
+    /// MakerWorld import.
+    func testASingleMaterialPlateReportsOneSlot() throws {
+        let r = try requirements(#"""
+        {"file_id":47,"plate_id":2,"filaments":[{"slot_id":1,"type":"PLA","color":"#646941",
+        "used_grams":33.0,"used_meters":10.89,"tray_info_idx":"GFA00","used_in_plate":true,"nozzle_id":1}]}
+        """#)
+        XCTAssertEqual(r.usedSlotCount, 1)
+        XCTAssertEqual(r.filaments?.first?.nozzleId, 1, "the extruder the slicer chose — only present after a slice")
+        XCTAssertEqual(r.filaments?.first?.trayInfoIdx, "GFA00")
+    }
+
+    /// The case the gate exists for. `ams_mapping` is sent as a one-element array, so slots 2 and 3
+    /// would reach the printer unmapped.
+    func testAMultiMaterialPlateReportsEverySlotItUses() throws {
+        let r = try requirements(#"""
+        {"file_id":46,"plate_id":1,"filaments":[
+          {"slot_id":1,"type":"PLA","used_in_plate":true},
+          {"slot_id":2,"type":"PLA","used_in_plate":true},
+          {"slot_id":3,"type":"PETG","used_in_plate":true}]}
+        """#)
+        XCTAssertEqual(r.usedSlotCount, 3)
+    }
+
+    /// A four-plate file lists filaments no single plate needs. Counting the whole file would block a
+    /// perfectly printable single-material plate — measured: this exact file reports 6 slots
+    /// unfiltered and 1 per plate.
+    func testSlotsTheChosenPlateDoesNotUseAreNotCounted() throws {
+        let r = try requirements(#"""
+        {"file_id":46,"plate_id":2,"filaments":[
+          {"slot_id":1,"type":"PLA","used_in_plate":false},
+          {"slot_id":2,"type":"PLA","used_in_plate":true},
+          {"slot_id":3,"type":"PETG","used_in_plate":false},
+          {"slot_id":4,"type":"PETG","used_in_plate":false}]}
+        """#)
+        XCTAssertEqual(r.usedSlotCount, 1)
+    }
+
+    /// A missing flag means "no per-plate information", not "unused" — dropping those would report
+    /// one slot for a print that needs several, which is the failure the gate must not have.
+    func testAMissingUsedInPlateFlagCountsAsUsed() throws {
+        let r = try requirements(#"""
+        {"filaments":[{"slot_id":1,"type":"PLA"},{"slot_id":2,"type":"PETG"}]}
+        """#)
+        XCTAssertEqual(r.usedSlotCount, 2)
+    }
+
+    func testAnEmptyOrAbsentRequirementListNeverReportsZeroSlots() throws {
+        XCTAssertEqual(try requirements(#"{"filaments":[]}"#).usedSlotCount, 1)
+        XCTAssertEqual(try requirements(#"{"file_id":9}"#).usedSlotCount, 1)
+    }
+
     // MARK: - Misc
 
     func testWebUrlIsTheCanonicalModelPage() {
