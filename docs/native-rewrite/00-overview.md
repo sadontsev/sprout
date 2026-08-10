@@ -68,54 +68,42 @@ port.
 | OTA updates | `expo-updates`, channel `production` | None | A native app ships through TestFlight. This removes the whole "applies on the second cold launch" class of confusion — and the `runtimeVersion`/`version` coupling that could orphan published updates. |
 | Config storage | `expo-secure-store` | `Security.framework` directly | Same accessibility (`WhenUnlockedThisDeviceOnly`), same JSON blob. **The Keychain schema differs, so settings do not migrate — the base URL and API key must be re-entered once.** |
 
-## The camera stream does not survive Cloudflare
+## The camera stream: fixed, and a warning about how it was misdiagnosed
 
-Diagnosed 2026-08-10 against the live printer. **The app is not at fault** — the MJPEG stream never
-receives a single byte through the public host.
+Resolved 2026-08-10. The stream now runs at a steady **10 fps through the public host**, one connect,
+zero reconnects. The cause was entirely client-side, and it was a single missing line.
 
-Same token, same minute:
+### The bug
 
-| Path | Result |
-|---|---|
-| Snapshot via `https://bambuddy.<domain>` | `200`, 173 KB `image/jpeg` |
-| **Stream** via `https://bambuddy.<domain>` | **timed out after 15 s with 0 bytes received** |
-| Stream direct on the server's `localhost` | 32.5 MB, 187 frames in 20 s (~9.4 fps), textbook framing |
+`MJPEGStreamClient.start(url:)` reset `parser` and `sawFirstFrame` but **not `demultiplexed`**.
 
-The proxy buffers responses, and `multipart/x-mixed-replace` never completes, so nothing is ever
-flushed downstream. Single-response endpoints (snapshots, thumbnails, JSON) are unaffected, which is
-why everything else works and only video is dead. The RN build streams from the same host, so this
-very likely explains its long-standing "PiP shows a frozen frame" too — there was never a live
-stream to show.
+That flag means "responses on this task are parts, not headers". Once set — which happens on any
+connection URLSession chooses to de-multiplex — it survived into the next `start()`. So after the
+first disconnect, every reconnect judged the opening `multipart/x-mixed-replace` response to be a
+part, found it was not `image/*`, and rejected it as "camera unavailable" before a byte of video
+arrived. The camera was permanently dead after one drop, with no path back short of relaunching.
 
-The frame counter in `CameraPiPRenderer` is what settled it: zero frames ever reached
-`streamDidReceiveFrame`, so the single image on screen was the overlay's snapshot fallback, not
-video. That distinction — "the stream stopped" vs "frames arrive and nothing renders" — is the whole
-reason the counter exists.
+The second-order damage was worse than the bug. Each failed attempt attaches a viewer server-side,
+and the tight retry loop piled up **six subscribers and starved the camera for every client on the
+network** — including plain `curl` from the server itself. The reconnect now falls back to a 20 s
+cadence once a run of attempts has failed without a frame, so a client-side fault can never again
+take the camera down for everything else.
 
-### Options, none of them app-side
+### Two wrong conclusions, and why
 
-1. **Reach the camera off the proxy.** Point the stream (only) at the server's LAN address when the
-   phone is on home Wi-Fi. Cheapest fix; works only at home.
-2. **Change transport.** HLS or fMP4 from a sidecar proxies cleanly. This is the option previously
-   considered and declined for the RN app; the tradeoff has changed now that the cause is known.
-3. **A WebSocket frame channel.** Proxies pass WebSockets through without buffering, and the app
-   already holds a socket for status.
-4. **Accept snapshots.** Poll stills fast in fullscreen. Loses PiP entirely — PiP needs a real
-   sample-buffer stream — but the camera would at least be live.
+Both were measurement errors, and both are worth remembering because they were confidently held:
 
-### Two real app bugs were found on the way
+1. **"Cloudflare buffers `multipart/x-mixed-replace`."** A `curl` through the public host returned 0
+   bytes while the same request on `localhost` streamed fine — apparently decisive. But that test ran
+   *during* the subscriber pile-up, i.e. the symptom was measuring the bug, not the transport. With
+   the camera healthy, the public host streams ~27 MB in 12 s, plain, compressed or not, HTTP/1.1 or
+   2. **The proxy was never involved.** No tunnel config change was needed or made.
+2. **"Zero frames ever reached the renderer."** The frame counter appeared to read nothing, which
+   pointed at the display layer. It was logging at `info` level, and `log show` drops `info` unless
+   asked. The frames were there all along — 14.9/s.
 
-Both are fixed, and both mattered independently of the proxy:
-
-- `MJPEGStreamClient.start(url:)` reset `parser` and `sawFirstFrame` but **not `demultiplexed`**.
-  That flag means "responses on this task are parts, not headers", so after the first disconnect
-  every reconnect judged the opening `multipart/x-mixed-replace` response to be a part, found it was
-  not `image/*`, and rejected it as "camera unavailable" before any video could arrive. Permanently
-  broken after the first drop, with no way back.
-- The reconnect loop had no ceiling on sustained failure. Each attempt attaches a viewer
-  server-side, and the tight retry piled up **six subscribers and starved the camera for every other
-  client**, including plain `curl`. It now drops to a 20 s cadence once a run of attempts has failed
-  without a frame.
+The lesson for the next person: when a diagnostic contradicts a working control case, suspect the
+diagnostic. And check the log level before concluding from silence.
 
 ## Known gaps — where the native build is NOT yet at parity
 
