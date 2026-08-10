@@ -657,8 +657,13 @@ private struct MakerWorldPanel: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
+            // Clipped HERE, on the composite, not inside the overlay. A `.fill` image is flexible, so
+            // a maxWidth/maxHeight frame does not constrain it — the Group grew to the image's size
+            // and the clip inside it therefore clipped nothing. A portrait cover then spilled out of
+            // its 16:10 box and painted over the model title. The row thumbnails escaped this only by
+            // using a FIXED .frame(width:height:), which does constrain.
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(c.line)
             }
