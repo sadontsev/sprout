@@ -56,17 +56,38 @@ app works; you only lose closed-app Live-Activity updates and the status banners
 ```bash
 # on your server
 cp -r deploy/la-push ~/docker/la-push && cd ~/docker/la-push
-# put the .p8 where docker-compose.yml mounts it (default: a path OUTSIDE the repo)
-# fill .env:
+cp .env.example .env            # then fill it in — every APNS_* below is REQUIRED
 #   BAMBUDDY_API_KEY=bb_...            (scoped key, can_read_status is enough)
-#   APNS_KEY_ID=XXXXXXXXXX             (from step 1)
+#   APNS_KEY_ID=XXXXXXXXXX             (from step 1 — YOURS, not the repo owner's)
 #   APNS_TEAM_ID=YYYYYYYYYY
-#   APNS_TOPIC=<bundle-id>.push-type.liveactivity
-#   APNS_BUNDLE_ID=<bundle-id>         (alert topic; defaults to APNS_TOPIC minus the suffix)
-#   APNS_HOST=api.sandbox.push.apple.com   # see "sandbox vs production" below
+#   APNS_TOPIC=<your-bundle-id>.push-type.liveactivity
+#   APNS_KEY_FILE=/path/to/your/apns_key.p8   (defaults to ~/.config/bambu-phase0/apns_key.p8)
+#   APNS_HOST=api.sandbox.push.apple.com      # see "sandbox vs production" below
+# Leave APNS_BUNDLE_ID OUT unless your bundle id is not APNS_TOPIC minus the suffix — an
+# EMPTY value defeats the derived default and sends an empty alert topic.
 docker compose up -d --build
 curl -s localhost:8911/health   # {"ok":true,"registrations":0,"devices":0,...}
 ```
+
+The `APNS_*` values use compose's fail-hard `${VAR:?}` form, so a missing one aborts the deploy
+rather than failing at the first push. They were hardcoded literals for a while: anyone else
+deploying signed with **their** `.p8` while claiming the original owner's key id and team, and
+APNs answered `403 InvalidProviderToken` / `400 TopicDisallowed` — the first and third rows of
+the troubleshooting table below, whose stated cause then sends you looking in the wrong place.
+
+**One more mount.** `docker-compose.yml` also attaches Bambuddy's data volume read-only, for the
+native app's MakerWorld **collections** endpoints — see
+[deploy/la-push/README.md](../../deploy/la-push/README.md#makerworld-collections). The volume is
+declared `external`, so it must already exist under the expected name:
+
+```bash
+docker inspect bambuddy --format '{{range .Mounts}}{{.Name}}{{end}}'   # e.g. bambuddy_bambuddy_data
+# if yours differs, set BAMBUDDY_VOLUME=<that name> in .env
+```
+
+Compose **refuses to start** when an external volume is missing (`external volume "…" not found`),
+so a wrong name is loud here. If you do not want collections at all, comment out the
+`bambuddy_data:` volume entry and `BAMBUDDY_DB` — everything else works without them.
 
 Expose port 8911 to the phone the same way you exposed Bambuddy (Tailscale / tunnel / LAN),
 at a hostname matching the `bambuddy.` → `lapush.` convention (e.g.
