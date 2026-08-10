@@ -114,22 +114,31 @@ struct CameraOverlay: View {
                     .position(x: full.width / 2 - ins.leading, y: full.height / 2 - ins.top)
             }
         }
-        // Re-arm on a fresh token (re-mint) or a manual retry. Both tasks assign `.connecting`
+        // Re-arm on a fresh token (re-mint) or a manual retry. Both tasks settle the phase
         // synchronously before their first suspension, so the order they run in cannot matter.
         .task(id: attempt) {
-            phase = .connecting
+            settle(orElse: .connecting)
             await probeSnapshot()
         }
         .task(id: attempt) {
-            phase = .connecting
+            settle(orElse: .connecting)
             let limit = token == nil ? Self.noTokenDeadline : Self.warmUpDeadline
             try? await Task.sleep(for: limit)
             // A cancelled sleep means the attempt was superseded, not that it ran out of time.
             guard !Task.isCancelled else { return }
-            if phase == .connecting { phase = .failed }
+            // Settle rather than fail outright: the stream may have come up during the wait without
+            // there being an edge left to observe.
+            if phase == .connecting { settle(orElse: .failed) }
         }
         .onChange(of: pip.isLive) { _, isLive in
             if isLive { phase = .live }
+        }
+        .onChange(of: streamUrl) { _, _ in
+            // A different URL makes the renderer drop the connection and warm up again, so the
+            // "a frame has decoded" latch has to be cleared here: the renderer only ever sets it
+            // TRUE, and without this reset the next connection's first frame is not a change, so
+            // `onChange(of: pip.isLive)` would never fire again for the life of the overlay.
+            pip.isLive = false
         }
         .onChange(of: model.cameraToken) { _, _ in
             // The shared token just rotated; drop the manual one so the two do not fight.
@@ -475,6 +484,16 @@ struct CameraOverlay: View {
     }
 
     // MARK: - Actions
+
+    /// The phase must be a FUNCTION of the current stream state, never just the edge that got us
+    /// here. `CameraPiPModel.isLive` is a latch the renderer only ever raises, so `onChange` fires at
+    /// most once per connection — and Retry re-arms the phase whether or not anything about the
+    /// stream changed. Reading the flag directly at every re-arm is what keeps a stream that is
+    /// still delivering frames from sitting on "CONNECTING…" and then painting "NO SIGNAL" over
+    /// moving video, with every further Retry reproducing it.
+    private func settle(orElse fallback: Phase) {
+        phase = pip.isLive ? .live : fallback
+    }
 
     private func close() {
         // Dismissing tears down the hosting view, and with it the display layer the floating window

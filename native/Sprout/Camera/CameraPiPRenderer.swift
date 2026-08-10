@@ -17,7 +17,11 @@ import os
 ///
 /// Info.plist must carry UIBackgroundModes = ["audio"] ("Audio, AirPlay, and Picture in
 /// Picture") or PiP will not even start.
-final class PiPBackgroundKeepAlive {
+///
+/// `@unchecked Sendable`: `started`, the engine and the player are main-queue state. `activate()` and
+/// `deactivate()` are only ever called from `enablePiP` and the PiP delegate callbacks, all of which
+/// are main-thread-only by AVKit contract, and the interruption notification hops onto main below.
+final class PiPBackgroundKeepAlive: @unchecked Sendable {
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -67,7 +71,17 @@ final class PiPBackgroundKeepAlive {
     @objc private func handleInterruption(_ n: Notification) {
         guard let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
-        guard type == .ended, started else { return }
+        guard type == .ended else { return }
+        // AVFoundation posts this on an unspecified thread. AVAudioEngine is not thread-safe and
+        // `started` is a plain Bool, so re-arming here directly could restart the engine while
+        // `deactivate()` was stopping it on main — leaving an active audio session (and its
+        // background-execution assertion) behind with no PiP window.
+        DispatchQueue.main.async { [weak self] in self?.resumeAfterInterruption() }
+    }
+
+    /// Main queue only.
+    private func resumeAfterInterruption() {
+        guard started else { return }
         do {
             try AVAudioSession.sharedInstance().setActive(true, options: [])
             if !engine.isRunning { try engine.start() }
@@ -97,6 +111,12 @@ typealias StreamURLProvider = @Sendable (@escaping @Sendable (Result<URL, Stream
 /// not `Sendable`, so the compiler could not check that hop.
 enum CameraEvent: Sendable {
     case live
+    /// A new connection attempt has begun, or the stream was torn down — nothing on screen is a live
+    /// feed any more. Without this the UI's "live" flag was a write-once latch: after a reconnect or
+    /// the 45-minute camera-token rotation the next `.live` was no longer a *change*, so a view
+    /// driving its state machine off that change waited for an edge that could never come again and
+    /// decayed to "NO SIGNAL" over moving video.
+    case connecting
     case error(message: String, retryable: Bool)
     case pipStart
     case pipStop(error: String?)
@@ -107,9 +127,39 @@ enum CameraEvent: Sendable {
     case audio(ok: Bool, message: String?)
 }
 
-// `@unchecked Sendable`: every mutation is funnelled onto the main queue by `connect`/`emit`, and
-// the AVKit objects it owns are main-thread-only by contract. The delegate callbacks that arrive on
-// the network queue only append to the frame gate, which is internally synchronised.
+/// The reconnect cadence, as pure arithmetic so the ceiling is covered by a test rather than by a
+/// comment. It is not a tuning knob: a tight retry loop once piled up six subscribers on the
+/// on-demand camera and starved it for every other client on the network, so the calm cadence after
+/// a run of frameless attempts is the thing that stops a client-side fault taking the camera down
+/// for everything else.
+enum CameraReconnectPolicy {
+    /// Attempts up to and including this one use the fast exponential cadence.
+    static let fastAttempts = 5
+    static let firstDelay: TimeInterval = 0.4
+    static let growth = 1.6
+    static let fastCeiling: TimeInterval = 5.0
+    static let calmDelay: TimeInterval = 20.0
+
+    /// `attempt` is 1-based: 1 is the first reconnect after a failure.
+    static func delay(forAttempt attempt: Int) -> TimeInterval {
+        let n = max(1, attempt)
+        // Fast at first, because the camera self-terminates ~7 s after its last viewer and a slow
+        // retry guarantees paying the cold warm-up again.
+        guard n <= fastAttempts else { return calmDelay }
+        return min(firstDelay * pow(growth, Double(n - 1)), fastCeiling)
+    }
+}
+
+// `@unchecked Sendable`, on one rule: THE RENDERER'S CONTROL STATE IS MAIN-QUEUE ONLY.
+//
+//  * `stopped`, `retryAttempt`, `epoch`, `frameCount`, `pendingReconnect`, `pip` and `makeStreamURL`
+//    are read and written on the main queue and nowhere else. Every `MJPEGStreamClientDelegate`
+//    callback arrives on the stream client's own queue and hops here before touching any of them —
+//    they used to mutate `retryAttempt` and read the main-thread-only `AVPictureInPictureController`
+//    in place.
+//  * `builder` and every `displayLayer` sample-buffer call belong to `decodeQueue`. The two
+//    AVSampleBufferDisplayLayer notifications arrive on an unspecified thread and hop there.
+//  * `gate` is the one deliberately shared object, and it is internally locked.
 final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientDelegate,
                                AVPictureInPictureControllerDelegate,
                                AVPictureInPictureSampleBufferPlaybackDelegate {
@@ -137,6 +187,10 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
     private var retryAttempt = 0
     private var stopped = true
     private var probeDeadline: Date?
+    /// Held so a queued reconnect can be cancelled. `epoch` cannot stand in for this: the stale timer
+    /// calls `connect()`, which bumps `epoch` itself before capturing it, so it always passes its own
+    /// staleness check.
+    private var pendingReconnect: DispatchWorkItem?
 
     /// Outbound events to JS. The renderer otherwise only logs, and a PiP that silently fails to
     /// start is indistinguishable from one the user simply hasn't noticed — so every terminal state
@@ -148,6 +202,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
         displayLayer.videoGravity = .resizeAspect
         // No controlTimebase: every frame carries DisplayImmediately instead.
         gate = LatestFrameGate(queue: decodeQueue) { [weak self] jpeg in self?.decodeAndEnqueue(jpeg) }
+        client.setDelegate(self)
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(layerFailedToDecode(_:)),
@@ -157,7 +212,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
             name: .AVSampleBufferDisplayLayerRequiresFlushToResumeDecodingDidChange, object: displayLayer)
     }
 
-    // ---- public API ----
+    // ---- public API (main queue only) ----
 
     func start(urlProvider: @escaping StreamURLProvider) {
         makeStreamURL = urlProvider
@@ -166,11 +221,30 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
         connect()
     }
 
-    func stop() {
+    func stop() { teardown(clearImage: true) }
+
+    /// `clearImage: false` is for a PiP *pause*: the floating window is expected to hold its last
+    /// frame there, and `flushAndRemoveImage` would leave it black.
+    private func teardown(clearImage: Bool) {
         stopped = true
+        cancelPendingReconnect()
         client.stop()
         gate.reset()
-        displayLayer.flushAndRemoveImage()
+        // `emit`, not `deliver`: `stop()` also runs from the hosting view's deinit, and the event sink
+        // asserts main-actor isolation.
+        emit(.connecting)
+        if clearImage {
+            // On the decode queue, not main: `flushAndRemoveImage` and `enqueue` are the same
+            // serialised API, and flushing from main while a frame was mid-decode left the layer
+            // holding the very frame the teardown existed to remove.
+            decodeQueue.async { [weak self] in self?.displayLayer.flushAndRemoveImage() }
+        }
+    }
+
+    deinit {
+        // The client's URLSession holds the client as its delegate, so nothing else can ever release
+        // it, its ephemeral session or its queue — one leaked set per camera session otherwise.
+        client.invalidate()
     }
 
     /// MUST be called while the app is in the foreground: PiP cannot be started from the
@@ -209,8 +283,14 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
 
     private func connect() {
         guard !stopped else { return }
+        cancelPendingReconnect()
         epoch &+= 1
         let myEpoch = epoch
+        // A new attempt means nothing on screen is a live feed any more. Emitted on every attempt so
+        // the UI's live flag describes the CURRENT connection instead of latching on the first frame
+        // it ever saw. It is ordered before any `.live` this attempt can produce: both cross the same
+        // main-queue hop, and this one is submitted first.
+        emit(.connecting)
         makeStreamURL { [weak self] result in
             // Re-capture weakly INSIDE the hop: the provider may answer on any queue, so the value
             // that crosses to main has to be one the compiler can prove is safe to send.
@@ -218,7 +298,6 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
                 guard let self, !self.stopped, self.epoch == myEpoch else { return }
                 switch result {
                 case .success(let url):
-                    self.client.delegate = self
                     self.probeDeadline = Date().addingTimeInterval(1.5)   // passthrough self-check window
                     self.client.start(url: url)
                 case .failure(let e):
@@ -235,18 +314,35 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
     private func scheduleReconnect() {
         guard !stopped else { return }
         retryAttempt += 1
-        // Fast at first, because the camera self-terminates ~7 s after its last viewer and a slow
-        // retry guarantees paying the warm-up again. But every attempt attaches a viewer upstream,
-        // and a tight loop piled up six of them and starved the camera for everyone — so once a run
-        // of attempts has failed without a single frame, drop to a much calmer cadence.
-        let base = min(0.4 * pow(1.6, Double(retryAttempt - 1)), 5.0)
-        let delay = retryAttempt > 5 ? 20.0 : base
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.connect() }
+        // A queued reconnect MUST be cancellable. With the 20 s ceiling, one scheduled just before
+        // the user closed the camera would fire long after they had reopened it and tear down the
+        // healthy connection that had replaced it — the picture drops and pays the warm-up again for
+        // no reason.
+        cancelPendingReconnect()
+        let item = DispatchWorkItem { [weak self] in self?.connect() }
+        pendingReconnect = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + CameraReconnectPolicy.delay(forAttempt: retryAttempt),
+                                      execute: item)
     }
 
-    // ---- MJPEGStreamClientDelegate (called on the network queue) ----
+    private func cancelPendingReconnect() {
+        pendingReconnect?.cancel()
+        pendingReconnect = nil
+    }
+
+    // ---- MJPEGStreamClientDelegate ----
+    //
+    // All three arrive on the stream client's own serial queue and hop to main before touching any
+    // renderer state. `MJPEGStreamError` carries an `any Error`, so it cannot cross the hop itself —
+    // its message and retryability are read on the client's queue and only those cross.
 
     func streamDidReceiveFrame(_ jpeg: Data) {
+        gate.offer(jpeg)                  // internally locked: the one thing that stays off main
+        DispatchQueue.main.async { [weak self] in self?.noteFrame() }
+    }
+
+    /// Main queue only.
+    private func noteFrame() {
         frameCount += 1
         // Logged sparsely, but it is the measurement that separates "the stream stopped" from
         // "frames arrive and nothing renders" — the two look identical on screen.
@@ -255,31 +351,41 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
             pipLog.info("camera frames=\(self.frameCount, privacy: .public) rate=\(String(format: "%.1f", Double(self.frameCount) / max(dt, 0.001)), privacy: .public)/s")
         }
         if frameCount % 20 == 0 {
-            emit(.stats(frames: frameCount, pipActive: pip?.isPictureInPictureActive == true))
+            deliver(.stats(frames: frameCount, pipActive: pip?.isPictureInPictureActive == true))
         }
-        gate.offer(jpeg)
     }
 
     func streamDidBecomeLive() {
-        retryAttempt = 0
         pipLog.info("camera stream live")
-        emit(.live)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.retryAttempt = 0
+            self.deliver(.live)
+        }
     }
 
+    /// Main queue only.
+    private func deliver(_ event: CameraEvent) { onEvent?(event) }
+
     private func emit(_ event: CameraEvent) {
-        DispatchQueue.main.async { [weak self] in self?.onEvent?(event) }
+        DispatchQueue.main.async { [weak self] in self?.deliver(event) }
     }
 
     func streamDidFail(_ error: MJPEGStreamError) {
         pipLog.error("camera stream failed: \(error.localizedDescription, privacy: .public)")
         // Typed, not just a string: the native client can see what WebKit hid — notably a 401 from
         // an expired token, which the WebView could not distinguish from "still warming up".
-        emit(.error(message: error.localizedDescription, retryable: error.isRetryable))
-        guard !stopped else { return }
-        // While PiP is up, ALWAYS reconnect: a dead socket means the camera shuts down 7 s later
-        // and the floating window freezes with no way for the user to intervene.
-        if error.isRetryable || pip?.isPictureInPictureActive == true {
-            scheduleReconnect()
+        let message = error.localizedDescription
+        let retryable = error.isRetryable
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.deliver(.error(message: message, retryable: retryable))
+            guard !self.stopped else { return }
+            // While PiP is up, ALWAYS reconnect: a dead socket means the camera shuts down 7 s later
+            // and the floating window freezes with no way for the user to intervene.
+            if retryable || self.pip?.isPictureInPictureActive == true {
+                self.scheduleReconnect()
+            }
         }
     }
 
@@ -299,28 +405,45 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
     @objc private func layerFailedToDecode(_ n: Notification) {
         let err = n.userInfo?[AVSampleBufferDisplayLayerFailedToDecodeNotificationErrorKey] as? NSError
         let reason = err.map { "\($0.domain) \($0.code)" } ?? "unknown"
-        if builder.strategy == .passthrough {
-            builder.demoteToImageIO(reason: reason)
-            displayLayer.flush()
-        } else {
-            pipLog.error("display layer decode failure: \(reason, privacy: .public)")
-            displayLayer.flush()
+        // AVFoundation posts this on an unspecified thread. `builder` is decode-queue confined — the
+        // same confinement `subsampleFactor` already honours — and the demotion assigns
+        // `formatDescription = nil`, which would release the CMVideoFormatDescription the decode
+        // queue is holding halfway through `passthroughBuffer`. Hop, don't lock.
+        decodeQueue.async { [weak self] in
+            guard let self else { return }
+            if self.builder.strategy == .passthrough {
+                self.builder.demoteToImageIO(reason: reason)
+            } else {
+                pipLog.error("display layer decode failure: \(reason, privacy: .public)")
+            }
+            self.displayLayer.flush()
         }
     }
 
     @objc private func layerRequiresFlushChanged(_ n: Notification) {
-        if displayLayer.requiresFlushToResumeDecoding {
+        // Same unspecified posting thread, and `flush` has to be serialised against `enqueue`.
+        decodeQueue.async { [weak self] in
+            guard let self, self.displayLayer.requiresFlushToResumeDecoding else { return }
             // Happens when the system revokes video decoder resources — observed after the
             // device has been locked with PiP up for a while. Flushing resets status from
             // .failed back to .unknown so the next enqueue renders.
-            displayLayer.flush()
+            self.displayLayer.flush()
         }
     }
 
     // ---- AVPictureInPictureSampleBufferPlaybackDelegate ----
 
     func pictureInPictureController(_ c: AVPictureInPictureController, setPlaying playing: Bool) {
-        if playing { if stopped { start(urlProvider: makeStreamURL) } } else { client.stop() }
+        // `stopped` IS the transport state — `pictureInPictureControllerIsPlaybackPaused` below
+        // returns it — so the pause branch has to set it. It used to just cancel the task: `stopped`
+        // stayed false, so the resume branch found nothing to restart, the cancelled task produced no
+        // `streamDidFail` (URLError.cancelled returns early) and therefore no reconnect, and the
+        // window sat frozen on its last frame while the transport control claimed it was playing.
+        if playing {
+            if stopped { start(urlProvider: makeStreamURL) }
+        } else {
+            teardown(clearImage: false)
+        }
         c.invalidatePlaybackState()
     }
 

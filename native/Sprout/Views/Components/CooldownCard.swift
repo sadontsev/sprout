@@ -33,13 +33,17 @@ final class CooldownStore {
         samples = []
         ambientC = nil
         task = Task { [weak self] in
-            guard let self else { return }
             // Seed from server history so opening the app mid-cooldown still produces an ETA
             // instead of waiting 20 minutes to accumulate its own points.
-            await self.refreshAmbient(printerId)
-            // One ambient re-read per N curve passes, rather than a second timer.
+            await self?.refreshAmbient(printerId)
+            // `self` is re-acquired on EVERY pass and never held across a sleep. Binding it once
+            // outside the loop turns the weak capture into a strong one for the loop's whole life —
+            // and since the loop only exits on cancellation, and the task is owned by the very
+            // object it pins, nothing could ever release it. Replacing this store then leaked a
+            // poller that kept calling the server with a stale client forever.
             var pass = 0
             while !Task.isCancelled {
+                guard let self else { return }
                 await self.refreshCurve(printerId)
                 pass += 1
                 if pass % Self.ambientEveryNPasses == 0 { await self.refreshAmbient(printerId) }

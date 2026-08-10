@@ -24,13 +24,12 @@ struct PrintActivityWidget: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if let eta = context.state.etaDate {
-                        Text(timerInterval: Date()...eta, countsDown: true)
-                            .font(.caption.monospacedDigit())
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: 64)
-                            .foregroundStyle(tint)
-                    }
+                    CountdownSlot(
+                        countdown: context.state.countdown(),
+                        font: .caption.monospacedDigit(),
+                        maxWidth: 64
+                    )
+                    .foregroundStyle(tint)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text(context.state.name)
@@ -57,11 +56,18 @@ struct PrintActivityWidget: Widget {
             } compactLeading: {
                 Image(systemName: context.state.symbol).foregroundStyle(tint)
             } compactTrailing: {
-                if context.state.dry == true, let eta = context.state.etaDate {
-                    Text(timerInterval: Date()...eta, countsDown: true)
-                        .font(.caption2.monospacedDigit())
-                        .frame(maxWidth: 44)
-                        .foregroundStyle(tint)
+                // Drying cards pin progress to 0, so a percentage says nothing about them — they get
+                // the countdown instead. Resolved once so the visibility check and the text that
+                // follows it read the same clock.
+                let countdown = context.state.countdown()
+                if context.state.dry == true, countdown != .hidden {
+                    CountdownSlot(
+                        countdown: countdown,
+                        font: .caption2.monospacedDigit(),
+                        maxWidth: 44,
+                        compact: true
+                    )
+                    .foregroundStyle(tint)
                 } else {
                     Text("\(context.state.progress)%")
                         .font(.caption2.monospacedDigit())
@@ -72,6 +78,38 @@ struct PrintActivityWidget: Widget {
             }
             .keylineTint(tint)
         }
+    }
+}
+
+/// The one place a countdown is rendered, shared by the lock-screen card, the expanded Dynamic
+/// Island and the compact one.
+///
+/// It exists so no site can reintroduce `Date()...eta`: that range inverts as soon as the ETA passes
+/// and `...` traps, taking the widget process — and therefore the whole Live Activity — with it. See
+/// `LiveActivityCountdown`.
+private struct CountdownSlot: View {
+    let countdown: LiveActivityCountdown
+    let font: Font
+    let maxWidth: CGFloat
+    /// The compact island slot is too narrow for the word, so it gets the short label.
+    var compact: Bool = false
+
+    var body: some View {
+        switch countdown {
+        case .ticking(let range):
+            text(Text(timerInterval: range, countsDown: true))
+        case .overdue:
+            text(Text(compact ? LiveActivityCountdown.overdueLabelCompact : LiveActivityCountdown.overdueLabel))
+        case .hidden:
+            EmptyView()
+        }
+    }
+
+    private func text(_ label: Text) -> some View {
+        label
+            .font(font)
+            .multilineTextAlignment(.trailing)
+            .frame(maxWidth: maxWidth)
     }
 }
 
@@ -96,13 +134,12 @@ private struct LockScreenCard: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if let eta = state.etaDate {
-                        Text(timerInterval: Date()...eta, countsDown: true)
-                            .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: 70)
-                            .foregroundStyle(.primary)
-                    }
+                    CountdownSlot(
+                        countdown: state.countdown(),
+                        font: .system(size: 13, weight: .semibold).monospacedDigit(),
+                        maxWidth: 70
+                    )
+                    .foregroundStyle(.primary)
                 }
 
                 if !state.name.isEmpty {

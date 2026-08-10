@@ -32,6 +32,9 @@ private enum LibraryTypeFilter: String, CaseIterable, Identifiable, Sendable {
 
 private enum LibraryLayout: Sendable { case grid, list }
 
+/// Which full-screen presentation an SD-card file is being handed to.
+private enum SdPresentation: Sendable { case player, layers }
+
 /// Filter / search / naming rules for the library list. Pure, so the view never re-derives them.
 private enum LibraryBrowse {
     /// A file is "sliced" when it carries G-code or was produced by slicing for a model.
@@ -98,6 +101,34 @@ private enum LibraryFormat {
     }
 }
 
+/// Reduces a name to something that can be **one path segment** of a download URL.
+///
+/// `GET /api/v1/library/files/{id}/dl/{token}/{filename}` does not care what the filename says — an
+/// invented one still answers 200 — but it is a single path segment, and the server percent-DECODES
+/// the path before it routes. A name carrying a separator therefore becomes an EXTRA segment and the
+/// route stops matching, which is HTTP **404** from an endpoint that answers 403 for every bad
+/// credential and 200 for every filename it recognises as one. Names reach here from
+/// `print_name` — free-form server text, e.g. a MakerWorld title like `Bracket 20/40` — and from
+/// `filename` after a `removingPercentEncoding` round trip that can turn `%2F` back into `/`.
+///
+/// `.` and `..` are the same failure by a different route: URL resolution folds them away and the
+/// path loses a segment. An empty name leaves a trailing slash with no segment at all.
+enum LibraryDownloadName {
+    static func pathSegment(_ name: String, fallback: String) -> String {
+        var cleaned = ""
+        for scalar in name.unicodeScalars {
+            if scalar == "/" || scalar == "\\" {
+                cleaned.unicodeScalars.append("-")
+            } else if scalar.value >= 0x20, scalar.value != 0x7F {
+                // Control characters can only survive as percent-escaped noise; drop them.
+                cleaned.unicodeScalars.append(scalar)
+            }
+        }
+        let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed == "." || trimmed == ".." ? fallback : trimmed
+    }
+}
+
 // MARK: - Small shared value types
 
 /// A share target. `Identifiable` so the activity sheet can be driven by `.sheet(item:)`.
@@ -145,6 +176,10 @@ struct LibraryView: View {
 
     @State private var sheetFile: PrinterFile?
     @State private var playFile: PrinterFile?
+    /// The SD-card file whose layers are being scrubbed. Presented from here rather than through
+    /// `AppModel.overlay`, whose `layerViewer` case carries a `LibraryFile`; an SD file has no
+    /// library id, only a path.
+    @State private var layerFile: PrinterFile?
     @State private var dlBusy = false
     @State private var shareItem: LibShareItem?
 
@@ -207,7 +242,8 @@ struct LibraryView: View {
                     printerId: model.printerId,
                     file: file,
                     onDelete: { Task { await deleteSd(file) } },
-                    onPlay: PrinterFiles.isPlayableVideo(file.name) ? { play(file) } : nil
+                    onPlay: PrinterFiles.isPlayableVideo(file.name) ? { play(file) } : nil,
+                    onLayers: PrinterFiles.isSliced3mf(file.name) ? { showLayers(file) } : nil
                 )
                 .presentationDetents([.height(PrinterFiles.isSliced3mf(file.name) ? 470 : 230)])
                 .presentationCornerRadius(24)
@@ -224,6 +260,15 @@ struct LibraryView: View {
                     onClose: { playFile = nil }
                 )
             }
+        }
+        .fullScreenCover(item: $layerFile) { file in
+            LayerViewerOverlay(
+                model: model,
+                printerId: model.printerId,
+                path: file.path,
+                title: file.name,
+                onClose: { layerFile = nil }
+            )
         }
         .sheet(item: $shareItem) { item in
             LibShareSheet(url: item.url)
@@ -579,9 +624,13 @@ struct LibraryView: View {
 
     private var list: some View {
         let rows = shown
+        let lastId = rows.last?.id
+        // Identified by file id, NOT by array position. With a positional identity every row below a
+        // deletion (or below the cut of a search keystroke) keeps its view and swaps its contents, so
+        // its `AsyncImage` restarts at `.empty` — the whole thumbnail column blanks and re-downloads
+        // instead of one row disappearing. The grid above has always keyed on `LibraryFile.id`.
         return VStack(spacing: 0) {
-            ForEach(rows.indices, id: \.self) { index in
-                let f = rows[index]
+            ForEach(rows) { f in
                 let sel = selected.contains(f.id)
                 withMenu(f) {
                     Tap { pick(f) } content: {
@@ -627,7 +676,7 @@ struct LibraryView: View {
                         .background(selecting && sel ? c.accentDim : .clear)
                     }
                 }
-                if index < rows.count - 1 {
+                if f.id != lastId {
                     Rectangle().fill(c.line).frame(height: 1)
                 }
             }
@@ -698,13 +747,20 @@ struct LibraryView: View {
         selected = []
     }
 
-    /// Hand a file from the detail sheet to the player. UIKit refuses to present a full-screen cover
-    /// while a sheet is still dismissing, so the swap waits out the dismissal animation.
-    private func play(_ pf: PrinterFile) {
+    private func play(_ pf: PrinterFile) { handOff(pf, to: .player) }
+    private func showLayers(_ pf: PrinterFile) { handOff(pf, to: .layers) }
+
+    /// Hand a file from the detail sheet to a full-screen presentation. UIKit refuses to present a
+    /// full-screen cover while a sheet is still dismissing, so the swap waits out the dismissal
+    /// animation.
+    private func handOff(_ pf: PrinterFile, to target: SdPresentation) {
         sheetFile = nil
         Task {
             try? await Task.sleep(for: .milliseconds(350))
-            playFile = pf
+            switch target {
+            case .player: playFile = pf
+            case .layers: layerFile = pf
+            }
         }
     }
 
@@ -731,29 +787,28 @@ struct LibraryView: View {
             }
             .padding(.bottom, 12)
 
+            // Exclusive branches: an empty media folder used to render "Empty folder" AND the grid's
+            // own "No videos here yet." one under the other.
             if pLoading {
                 ProgressView().tint(c.accent).padding(.top, 30)
+            } else if pList != nil, pSorted.isEmpty {
+                LibEmpty(
+                    icon: "externaldrive",
+                    title: "Empty folder",
+                    message: "Nothing here on the printer's onboard storage."
+                )
+            } else if PrinterFiles.isMediaFolder(pPath) {
+                mediaGrid
             } else {
-                if pList != nil, pSorted.isEmpty {
-                    LibEmpty(
-                        icon: "externaldrive",
-                        title: "Empty folder",
-                        message: "Nothing here on the printer's onboard storage."
-                    )
+                ForEach(pSorted) { pf in
+                    printerRow(pf)
                 }
-                if PrinterFiles.isMediaFolder(pPath) {
-                    mediaGrid
-                } else {
-                    ForEach(pSorted) { pf in
-                        printerRow(pf)
-                    }
-                    if pSorted.contains(where: { !$0.isDirectory }) {
-                        Text("Tap a file for preview & actions · hold to delete")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(c.t3)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 8)
-                    }
+                if pSorted.contains(where: { !$0.isDirectory }) {
+                    Text("Tap a file for preview & actions · hold to delete")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(c.t3)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 8)
                 }
             }
         }
@@ -993,8 +1048,11 @@ struct LibraryView: View {
         defer { dlBusy = false }
         do {
             // The slicer token IS the auth and is single-use and short-lived, so it is minted per
-            // share and the download carries no headers at all.
-            let url = try await client.mintFileDownloadUrl(f.id, filename: f.filename)
+            // share and the download carries no headers at all. The filename lands in a path
+            // segment, so it goes through the sanitiser first — an empty `filename` is not caught by
+            // the client's `?? "model-{id}.stl"` default and would leave the URL a segment short.
+            let downloadName = LibraryDownloadName.pathSegment(f.filename, fallback: "model-\(f.id)")
+            let url = try await client.mintFileDownloadUrl(f.id, filename: downloadName)
             let dest = LibCache.url(for: LibraryBrowse.safeShareName(LibraryBrowse.displayName(f)))
             let local = try await FileDownloadDelegate.run(URLRequest(url: url), to: dest)
             shareItem = LibShareItem(url: local)
@@ -1053,20 +1111,21 @@ private struct LibEmpty: View {
 
 // MARK: - SD-card file sheet
 
-/// Tap an SD-card file: sliced 3MFs get a real plate preview plus print time and filament weight,
-/// everything gets Download (to the share sheet) and Delete; videos also get Play.
+/// Tap an SD-card file: sliced 3MFs get a real plate preview plus print time and filament weight and
+/// a route into the layer viewer, videos get Play, everything gets Download (to the share sheet) and
+/// Delete.
 ///
 /// The plate fetch is best-effort — a file the printer cannot describe still has to open.
 ///
-/// There is no Layers action yet: the layer viewer is reached through `Overlay.layerViewer`, which
-/// carries a `LibraryFile`. An SD file is addressed by path, so opening it needs an overlay case
-/// that takes a G-code URL + headers rather than a library id.
+/// `onPlay` and `onLayers` are mutually exclusive in practice (a `.3mf` is never an `.mp4`), so the
+/// button row is never more than three wide.
 private struct PrinterFileSheet: View {
     let client: BambuddyClient
     let printerId: Int
     let file: PrinterFile
     var onDelete: () -> Void
     var onPlay: (() -> Void)?
+    var onLayers: (() -> Void)?
 
     @Environment(\.palette) private var c
     @State private var plate: PlateInfo?
@@ -1076,7 +1135,9 @@ private struct PrinterFileSheet: View {
     @State private var confirmDelete = false
 
     private var sliced: Bool { PrinterFiles.isSliced3mf(file.name) }
-    private var downloadInk: Color { onPlay == nil ? c.accentInk : c.t1 }
+    /// Download demotes itself to a secondary button whenever something else is the headline action.
+    private var hasPrimaryAction: Bool { onPlay != nil || onLayers != nil }
+    private var downloadInk: Color { hasPrimaryAction ? c.t1 : c.accentInk }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1122,7 +1183,19 @@ private struct PrinterFileSheet: View {
                         .opacity(busy ? 0.5 : 1)
                     }
                 }
-                // Download demotes itself to a secondary button whenever Play is the headline action.
+                if let onLayers {
+                    Tap(disabled: busy, action: onLayers) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "square.3.layers.3d").font(.system(size: 15))
+                            Text("Layers").font(.system(size: 14, weight: .bold))
+                        }
+                        .foregroundStyle(c.accentInk)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 46)
+                        .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.accent))
+                        .opacity(busy ? 0.5 : 1)
+                    }
+                }
                 Tap(disabled: busy) { Task { await downloadAndShare() } } content: {
                     HStack(spacing: 8) {
                         if busy {
@@ -1136,7 +1209,7 @@ private struct PrinterFileSheet: View {
                     .foregroundStyle(downloadInk)
                     .frame(maxWidth: .infinity)
                     .frame(height: 46)
-                    .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(onPlay == nil ? c.accent : c.s3))
+                    .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(hasPrimaryAction ? c.s3 : c.accent))
                     .opacity(busy ? 0.5 : 1)
                 }
                 Tap(disabled: busy) { confirmDelete = true } content: {
@@ -1193,7 +1266,9 @@ private struct PrinterFileSheet: View {
         // The URL alone 401s — SD endpoints are X-API-Key gated, unlike library thumbnails.
         for (k, v) in client.authHeaders() { request.setValue(v, forHTTPHeaderField: k) }
         do {
-            let local = try await FileDownloadDelegate.run(request, to: LibCache.url(for: file.name))
+            // `LibCache.url` takes names that are already separator-safe, and an SD entry's name is
+            // whatever the printer's own listing said it was.
+            let local = try await FileDownloadDelegate.run(request, to: LibCache.url(for: LibraryBrowse.safeShareName(file.name)))
             shareItem = LibShareItem(url: local)
         } catch {
             problem = LibProblem(title: "Couldn’t download", message: error.localizedDescription)
@@ -1340,7 +1415,8 @@ private struct SdVideoPlayer: View {
 
     private func start() async {
         guard download.localURL == nil, download.failure == nil else { return }
-        let dest = LibCache.url(for: file.name)
+        // Same cache key as the sheet's Download, so a file fetched by one is reused by the other.
+        let dest = LibCache.url(for: LibraryBrowse.safeShareName(file.name))
         if FileManager.default.fileExists(atPath: dest.path) {
             download.localURL = dest
             return

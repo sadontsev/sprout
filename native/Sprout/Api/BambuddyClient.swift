@@ -141,8 +141,23 @@ final class BambuddyClient: Sendable {
 
     // MARK: - Transport
 
-    private func request(_ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil, timeout: TimeInterval = 60) -> URLRequest {
-        var r = URLRequest(url: URL(string: baseUrl + path)!)
+    /// Build an absolute URL from the configured base.
+    ///
+    /// `URL(string:)` still returns nil for things a person can genuinely paste — a stray `]`, `<`/`>`,
+    /// a bare `%` in the authority — and nothing upstream validates the base URL into a parseable
+    /// form (`ConfigRules.sanitizeBaseUrl` only trims). Force-unwrapping here killed the app at the
+    /// Connect button instead of letting `classifyConnectError` say what was wrong, so this throws a
+    /// user-facing message: `SproutError` is a `LocalizedError`, and the classifier falls through to
+    /// `localizedDescription` for anything that isn't an HTTP or URLError failure.
+    private func makeURL(_ path: String) throws -> URL {
+        guard let url = URL(string: baseUrl + path) else {
+            throw SproutError("That server URL isn't valid. Check the scheme (https), host and port — it can't contain spaces or stray brackets.")
+        }
+        return url
+    }
+
+    private func request(_ path: String, method: String = "GET", body: Data? = nil, contentType: String? = nil, timeout: TimeInterval = 60) throws -> URLRequest {
+        var r = URLRequest(url: try makeURL(path))
         r.httpMethod = method
         r.httpBody = body
         r.timeoutInterval = timeout
@@ -190,7 +205,7 @@ final class BambuddyClient: Sendable {
     @discardableResult
     private func adminLogin() async throws -> String {
         struct Login: Encodable { let username: String; let password: String }
-        var r = URLRequest(url: URL(string: baseUrl + "/api/v1/auth/login")!)
+        var r = URLRequest(url: try makeURL("/api/v1/auth/login"))
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         for (k, v) in extraHeaders { r.setValue(v, forHTTPHeaderField: k) }
@@ -237,7 +252,7 @@ final class BambuddyClient: Sendable {
         }
 
         func attempt(_ tok: String) async throws -> (Data, HTTPURLResponse?) {
-            var r = URLRequest(url: URL(string: baseUrl + path)!)
+            var r = URLRequest(url: try makeURL(path))
             r.httpMethod = method
             r.httpBody = body
             r.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
@@ -627,7 +642,7 @@ final class BambuddyClient: Sendable {
         }
 
         var head = "--\(boundary)\r\n"
-        head += "Content-Disposition: form-data; name=\"file\"; filename=\"\(name)\"\r\n"
+        head += "Content-Disposition: form-data; name=\"file\"; filename=\"\(Self.escapeFormDataFilename(name))\"\r\n"
         head += "Content-Type: application/octet-stream\r\n\r\n"
         try handle.write(contentsOf: Data(head.utf8))
 
@@ -639,7 +654,7 @@ final class BambuddyClient: Sendable {
         try handle.write(contentsOf: Data("\r\n--\(boundary)--\r\n".utf8))
         try handle.close()
 
-        var req = URLRequest(url: URL(string: baseUrl + "/api/v1/library/files")!)
+        var req = URLRequest(url: try makeURL("/api/v1/library/files"))
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         for (k, v) in authHeaders() { req.setValue(v, forHTTPHeaderField: k) }
@@ -656,6 +671,25 @@ final class BambuddyClient: Sendable {
 
     private func esc(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: .urlQueryValueAllowed) ?? s
+    }
+
+    /// Escape a filename for a multipart `Content-Disposition` header.
+    ///
+    /// The name is the user's own — `staged.lastPathComponent` straight from the document picker —
+    /// and `"`, CR and LF are all legal in an APFS filename. Interpolated raw, a quote closes the
+    /// quoted-string early (the file lands in the library under a truncated name) and a CRLF injects
+    /// further MIME headers into the part.
+    ///
+    /// This is the WHATWG form-data escape — `"` → `%22`, CR → `%0D`, LF → `%0A` — deliberately
+    /// rather than backslash quoted-pairs: it is byte-for-byte what browsers emit, so it is the input
+    /// every server-side multipart parser is actually exercised against.
+    static func escapeFormDataFilename(_ name: String) -> String {
+        let escaped = name
+            .replacingOccurrences(of: "\r", with: "%0D")
+            .replacingOccurrences(of: "\n", with: "%0A")
+            .replacingOccurrences(of: "\"", with: "%22")
+        // An empty filename makes the part nameless, which FastAPI rejects as a malformed upload.
+        return escaped.isEmpty ? "upload.bin" : escaped
     }
 }
 

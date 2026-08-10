@@ -278,12 +278,14 @@ struct PillToggle: View {
 /// Per piece: duration 1100 ms + fall (240–370) → 1340–1470 ms, delay 0–180 ms, horizontal drift
 /// ±65 pt, total rotation ±280°, width 6–11 pt, height 0.62 × width, corner radius 2.
 struct Confetti: View {
-    var colors: [Color]
-    var count: Int = 26
+    let colors: [Color]
+    let count: Int
 
     private struct Piece: Identifiable {
         let id: Int
-        let x: CGFloat
+        /// Start position across the parent, 0...1. A fraction rather than a point because the
+        /// pieces are generated before any layout exists; the width is applied at render.
+        let xFraction: CGFloat
         let drift: CGFloat
         let fall: Double
         let delay: Double
@@ -292,8 +294,41 @@ struct Confetti: View {
         let color: Color
     }
 
-    @State private var pieces: [Piece] = []
+    /// Generated ONCE, in `init`, so every piece is already on screen at its start state before
+    /// `fired` flips.
+    ///
+    /// Seeding them in `onAppear` next to `fired = true` is what made this component invisible:
+    /// SwiftUI coalesces both writes into a single update, so each piece was *inserted* with `fired`
+    /// already true, and `.animation(_:value:)` only animates a change on a view that was already
+    /// there. Every rectangle rendered straight at its terminal state — below the bottom edge, at
+    /// opacity 0 — so the burst never drew a single frame. `Shimmer` above has the same shape for
+    /// the same reason: the initial value lives in the state, and `onAppear` only moves it.
+    ///
+    /// `@State` keeps the value from the FIRST construction and drops every later initialiser, which
+    /// is what makes "once" true: the enclosing dashboard rebuilds this view on every status frame,
+    /// and plain stored properties would re-roll the pieces (and restart the burst) each time. The RN
+    /// component memoized on `count` alone, deliberately, for the same reason — a theme change
+    /// mid-flight must not regenerate them either.
+    @State private var pieces: [Piece]
     @State private var fired = false
+
+    init(colors: [Color], count: Int = 26) {
+        self.colors = colors
+        self.count = count
+        var rng = SystemRandomNumberGenerator()
+        _pieces = State(initialValue: (0..<count).map { i in
+            Piece(
+                id: i,
+                xFraction: CGFloat.random(in: 0...1, using: &rng),
+                drift: CGFloat.random(in: -65...65, using: &rng),
+                fall: Double.random(in: 0.240...0.370, using: &rng),
+                delay: Double.random(in: 0...0.180, using: &rng),
+                rotation: Double.random(in: -280...280, using: &rng),
+                width: CGFloat.random(in: 6...11, using: &rng),
+                color: colors.randomElement(using: &rng) ?? .white
+            )
+        })
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -302,8 +337,11 @@ struct Confetti: View {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(p.color)
                         .frame(width: p.width, height: p.width * 0.62)
+                        // `.top` centres each piece horizontally, so the spread is measured from the
+                        // middle: a raw 0...width offset would throw the whole burst off the right
+                        // edge instead of scattering it across the parent.
                         .offset(
-                            x: p.x + (fired ? p.drift : 0),
+                            x: (p.xFraction - 0.5) * geo.size.width + (fired ? p.drift : 0),
                             y: fired ? geo.size.height + 40 : -20
                         )
                         .rotationEffect(.degrees(fired ? p.rotation : 0))
@@ -314,24 +352,11 @@ struct Confetti: View {
                         )
                 }
             }
-            .onAppear {
-                guard pieces.isEmpty else { return }
-                var rng = SystemRandomNumberGenerator()
-                pieces = (0..<count).map { i in
-                    Piece(
-                        id: i,
-                        x: CGFloat.random(in: 0...max(geo.size.width, 1), using: &rng),
-                        drift: CGFloat.random(in: -65...65, using: &rng),
-                        fall: Double.random(in: 0.240...0.370, using: &rng),
-                        delay: Double.random(in: 0...0.180, using: &rng),
-                        rotation: Double.random(in: -280...280, using: &rng),
-                        width: CGFloat.random(in: 6...11, using: &rng),
-                        color: colors.randomElement(using: &rng) ?? .white
-                    )
-                }
-                fired = true
-            }
+            // GeometryReader sizes its content to fit, which would collapse the ZStack around the
+            // pieces and take the `.top` centring with it.
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
         }
         .allowsHitTesting(false)
+        .onAppear { fired = true }
     }
 }

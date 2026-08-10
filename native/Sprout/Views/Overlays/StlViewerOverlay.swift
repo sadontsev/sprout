@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import WebKit
+import os
 
 // The two model viewers are deliberately NOT native renderers. They are the same self-contained
 // HTML/JS pages the app has always shipped, hosted in a WKWebView:
@@ -17,6 +18,10 @@ import WebKit
 
 // MARK: - Shared page plumbing
 
+/// Both viewers log here. Shared rather than file-private because a failure in either one is the
+/// same question — "which URL did the page actually ask for?" — and it should read the same way.
+let viewerLog = Logger(subsystem: "com.mvks5.bambu", category: "viewer")
+
 /// What a viewer page reports back over the JS bridge.
 enum ViewerEvent: Equatable {
     /// Layer viewer finished parsing and drew its first frame.
@@ -24,7 +29,13 @@ enum ViewerEvent: Equatable {
     /// STL viewer finished parsing the mesh.
     case loaded(tris: Int)
     /// Download / parse / WebGL failure. The page renders its own message too.
-    case failed(String)
+    ///
+    /// `status` is the HTTP status of the in-page fetch when that is what failed, and 0 for a parse
+    /// or WebGL failure. It is carried separately from the message because the caller has to ACT on
+    /// it: 401/403 on the STL page means the one-shot download token was spent or aged out, which is
+    /// recoverable by minting another, while 404 means the URL had the wrong shape and re-minting
+    /// would rebuild the same broken URL.
+    case failed(String, status: Int)
 }
 
 /// Builders for the literals injected into a viewer page, plus the bridge shim.
@@ -82,16 +93,67 @@ enum ViewerJS {
         return "{\(body)}"
     }
 
-    /// Scheme + authority of `urlString`, as the document origin to load the page on. Falls back to
-    /// a dummy https origin so a malformed base URL fails inside the page (with a message the user
-    /// can read) rather than trapping here.
-    static func origin(of urlString: String) -> URL {
-        if let u = URL(string: urlString), let scheme = u.scheme, let host = u.host() {
+    /// The document URL to load a viewer page on: the server's own base URL, always directory-like.
+    ///
+    /// It is not merely the origin. Bambuddy (or a texturize sidecar) can be mounted under a PATH
+    /// prefix, and a page loaded at the bare origin resolves every relative in-page URL one or more
+    /// directories too high — which reaches a route that does not exist and answers **404**, the one
+    /// status the download endpoint itself never returns. The RN build passed `${baseUrl}/` here for
+    /// exactly this reason; dropping the path was a port regression.
+    ///
+    /// Query and fragment are discarded (a base URL has no business carrying either) and the path is
+    /// forced to end in a single `/` so RFC 3986 resolution treats it as a directory rather than
+    /// replacing its last segment.
+    ///
+    /// Falls back to a dummy https origin so a malformed base URL fails inside the page — with a
+    /// message the user can read — rather than trapping here.
+    static func documentBase(of urlString: String) -> URL {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let u = URL(string: trimmed), let scheme = u.scheme, let host = u.host() {
             var s = "\(scheme)://\(host)"
             if let port = u.port { s += ":\(port)" }
-            if let origin = URL(string: s + "/") { return origin }
+            var path = u.path()
+            while path.hasSuffix("/") { path.removeLast() }
+            s += path + "/"
+            if let base = URL(string: s) { return base }
         }
         return URL(string: "https://localhost/")!
+    }
+
+    /// A viewer URL reduced to what is safe to print AND to the only thing that matters when one
+    /// fails: its **shape**.
+    ///
+    /// - scheme + authority collapse to `{base}` — the user's host is not log material;
+    /// - the single-use download token after `/dl/` and any `token=` query value collapse to `…`.
+    ///
+    /// Everything else is verbatim, deliberately. A 404 from `/dl/{token}/{filename}` means the path
+    /// gained or lost a segment — an unescaped `/` inside the filename, an empty filename — and only
+    /// the literal path shows that. A credential the server dislikes is a 403, never a 404, so
+    /// hiding the token costs the diagnosis nothing.
+    static func loggableUrl(_ urlString: String) -> String {
+        var rest = urlString
+        // Split by hand rather than through URL: a base URL too malformed to parse is one of the
+        // things this log exists to reveal, and it must still produce a readable line.
+        if let schemeEnd = rest.range(of: "://") {
+            let afterAuthority = rest[schemeEnd.upperBound...]
+            let cut = afterAuthority.firstIndex { $0 == "/" || $0 == "?" || $0 == "#" }
+            rest = "{base}" + (cut.map { String(afterAuthority[$0...]) } ?? "")
+        }
+
+        let parts = rest.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        var path = String(parts.first ?? "")
+        if let marker = path.range(of: "/dl/") {
+            let token = path[marker.upperBound...]
+            let tail = token.firstIndex(of: "/").map { String(token[$0...]) } ?? ""
+            path = String(path[..<marker.upperBound]) + "…" + tail
+        }
+        guard parts.count > 1 else { return path }
+        let query = String(parts[1]).replacingOccurrences(
+            of: "(^|[&])token=[^&]*",
+            with: "$1token=…",
+            options: .regularExpression
+        )
+        return path + "?" + query
     }
 
     /// Number formatting for injected literals — no trailing `.0`, no locale decimal comma.
@@ -165,7 +227,10 @@ struct ViewerWebView: UIViewRepresentable {
 
             switch obj["type"] as? String {
             case "error":
-                onEvent(.failed((obj["message"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "render error"))
+                onEvent(.failed(
+                    (obj["message"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "render error",
+                    status: obj["status"] as? Int ?? 0
+                ))
             case "ready":
                 onEvent(.ready(hasSupport: obj["hasSupport"] as? Bool ?? false))
             case "loaded":
@@ -361,7 +426,10 @@ enum StlPage {
         <div id="err"></div>
         <script>
           var post=function(o){window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(o));};
-          function fail(m){document.getElementById('load').style.display='none';var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t show the model. '+m;post({type:'error',message:String(m)});}
+          // Carried out with every failure so the host can tell a SPENT one-shot token (401/403,
+          // re-mintable) from a URL whose shape is wrong (404, re-minting rebuilds the same URL).
+          var HTTPSTATUS=0;
+          function fail(m){document.getElementById('load').style.display='none';var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t show the model. '+m;post({type:'error',message:String(m),status:HTTPSTATUS});}
           window.addEventListener('error',function(e){fail(e.message||'error');});
           var URL_=\#(urlLit), NAME=\#(nameLit), HDRS=\#(hdrsLit), MAXB=\#(maxStlBytes);
           document.getElementById('lbl').textContent=NAME;
@@ -415,7 +483,7 @@ enum StlPage {
               -(xx*eye[0]+xy*eye[1]+xz*eye[2]), -(yx*eye[0]+yy*eye[1]+yz*eye[2]), -(zx*eye[0]+zy*eye[1]+zz*eye[2]), 1]; }
 
           fetch(URL_,{headers:HDRS}).then(function(r){
-            if(!r.ok) throw new Error('download failed (HTTP '+r.status+')');
+            if(!r.ok){ HTTPSTATUS=r.status; throw new Error('download failed (HTTP '+r.status+')'); }
             return r.arrayBuffer();
           }).then(function(buf){
             if(buf.byteLength>MAXB) throw new Error('model too large to preview on the phone');
@@ -536,14 +604,19 @@ struct StlModelView: View {
     var compact = false
 
     @State private var page: String?
+    /// The absolute URL handed to the page, kept so a failure can be logged as the URL that was
+    /// actually asked for rather than the one the reader assumes it was.
+    @State private var pageUrl: String?
     @State private var failure: String?
     @State private var loaded = false
     @State private var attempt = 0
+    /// One automatic re-mint has already been spent on this file.
+    @State private var reminted = false
 
     var body: some View {
         ZStack {
             if let page, failure == nil {
-                ViewerWebView(html: page, baseURL: origin, onEvent: handle)
+                ViewerWebView(html: page, baseURL: documentBase, onEvent: handle)
                     .id(attempt)
             }
             if let failure {
@@ -556,10 +629,10 @@ struct StlModelView: View {
         .task(id: attempt) { await build() }
     }
 
-    private var origin: URL {
+    private var documentBase: URL {
         switch source {
-        case .library: ViewerJS.origin(of: model.client?.baseUrl ?? "")
-        case .direct(let origin, _, _, _): ViewerJS.origin(of: origin)
+        case .library: ViewerJS.documentBase(of: model.client?.baseUrl ?? "")
+        case .direct(let origin, _, _, _): ViewerJS.documentBase(of: origin)
         }
     }
 
@@ -567,8 +640,17 @@ struct StlModelView: View {
         guard page == nil, failure == nil else { return }
 
         switch source {
-        case .direct(_, let path, let name, let headers):
-            page = StlPage.html(url: path, name: name, compact: compact, headers: headers)
+        case .direct(let origin, let path, let name, let headers):
+            // Resolve against the document base HERE rather than leaving a bare path for the page to
+            // resolve. Two reasons: the page's own resolution silently depended on the base keeping
+            // its path prefix (it did not), and a relative URL cannot be logged when it fails —
+            // whatever the page fetched would be a guess.
+            guard let resolved = URL(string: path, relativeTo: ViewerJS.documentBase(of: origin))?.absoluteURL else {
+                failure = "That preview URL isn’t valid."
+                return
+            }
+            pageUrl = resolved.absoluteString
+            page = StlPage.html(url: resolved.absoluteString, name: name, compact: compact, headers: headers)
 
         case .library(let fileId, let name):
             guard let client = model.client else {
@@ -576,10 +658,16 @@ struct StlModelView: View {
                 return
             }
             do {
-                // Minted exactly once per view: the slicer token is single-use and short-lived, so a
+                // Minted once per attempt: the slicer token is single-use and short-lived, so a
                 // second mint on a re-render would hand the page a URL the first one already spent.
-                let url = try await client.mintFileDownloadUrl(fileId, filename: name)
+                //
+                // The name is only a Content-Disposition courtesy to the server, but it lands in a
+                // PATH SEGMENT, so it has to be reduced to something that can be one — see
+                // `LibraryDownloadName`.
+                let safeName = LibraryDownloadName.pathSegment(name, fallback: "model-\(fileId).stl")
+                let url = try await client.mintFileDownloadUrl(fileId, filename: safeName)
                 guard !Task.isCancelled else { return }
+                pageUrl = url.absoluteString
                 page = StlPage.html(url: url.absoluteString, name: name, compact: compact, headers: [:])
             } catch let e as BambuddyError {
                 failure = e.detail
@@ -592,17 +680,40 @@ struct StlModelView: View {
     private func handle(_ event: ViewerEvent) {
         switch event {
         case .loaded: loaded = true
-        case .failed(let message): failure = message
         case .ready: break
+        case .failed(let message, let status):
+            viewerLog.error("STL page failed (HTTP \(status, privacy: .public)) on \(ViewerJS.loggableUrl(self.pageUrl ?? "<no url>"), privacy: .public) — \(message, privacy: .public)")
+            // A spent or expired one-shot token answers 401/403. The page CAN be re-run on the same
+            // token without the app asking — WebKit reloads it after a content-process recycle — so
+            // treating that as terminal strands a perfectly good file behind a dead credential.
+            // Mint another and reload, exactly once: 404 is deliberately excluded because it means
+            // the URL's shape is wrong and a fresh token would rebuild the same broken URL.
+            if !reminted, isTokenRejection(status), case .library = source {
+                reminted = true
+                viewerLog.notice("STL page: re-minting a download token after HTTP \(status, privacy: .public)")
+                rebuild()
+                return
+            }
+            failure = message
         }
     }
 
+    private func isTokenRejection(_ status: Int) -> Bool { status == 401 || status == 403 }
+
     /// A fresh attempt has to re-mint — the previous token is gone either way.
-    private func retry() {
+    private func rebuild() {
         page = nil
+        pageUrl = nil
         failure = nil
         loaded = false
         attempt += 1
+    }
+
+    /// The manual Retry. Unlike the automatic one it also re-arms the automatic re-mint, because the
+    /// user asking again is a new decision, not the same attempt continuing.
+    private func retry() {
+        reminted = false
+        rebuild()
     }
 }
 

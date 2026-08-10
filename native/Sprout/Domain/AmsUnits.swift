@@ -193,7 +193,10 @@ enum AmsTopology {
                     let sn = unit.serialNumber ?? ""
                     return (!sn.isEmpty && sn != "N/A") ? String(sn.suffix(4)) : ""
                 }(),
-                dryingMinLeft: max(0, Int((unit.dryTime?.double ?? 0).rounded()))
+                // `SafeInt`, not `Int(_:)`: `dry_time` is one of the fields the WS feed stringifies,
+                // and `LooseNumber` hands "nan"/"1e30" straight through as a finite-looking Double
+                // that the plain conversion traps on. This is the dashboard's render path.
+                dryingMinLeft: max(0, SafeInt.rounded(unit.dryTime?.double))
             ))
 
             for tray in trays {
@@ -205,7 +208,7 @@ enum AmsTopology {
                     // nil = colour unknown. The old '#3A3F45' fallback was a literal dark grey that
                     // never adapted to the light theme and, worse, claimed a colour we do not know.
                     color: empty ? nil : FilamentColor.norm(tray.trayColor),
-                    pct: empty ? "—" : "\(Int((tray.remain?.double ?? 0).rounded()))%",
+                    pct: empty ? "—" : "\(SafeInt.rounded(tray.remain?.double))%",
                     active: !empty && trayNow != nil && trayNow == globalId,
                     empty: empty,
                     unitId: id,

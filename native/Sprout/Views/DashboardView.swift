@@ -11,7 +11,6 @@ struct DashboardView: View {
     @Environment(\.palette) private var c
     @State private var switcherOpen = false
     @State private var speedOpen = false
-    @State private var camLoaded = false
     @State private var maintenance: (due: Int, warn: Int) = (0, 0)
     @State private var speedOverride: Int?
     @State private var confirmStop = false
@@ -269,10 +268,14 @@ struct DashboardView: View {
 
     // MARK: - Camera tile
 
-    /// Low frame rate on purpose: this is a thumbnail, and the camera is shared.
+    /// Low frame rate on purpose: this is a thumbnail, and the camera is shared. The badge quotes
+    /// this number, so the two cannot drift apart the way they did when the tile was a 2 s poll
+    /// labelled "1 fps".
+    private static let tileFps = 2
+
     private var tileStreamURL: URL? {
         guard let client = model.client, let token = model.cameraToken else { return nil }
-        return client.streamUrl(model.printerId, token: token, fps: 2)
+        return client.streamUrl(model.printerId, token: token, fps: Self.tileFps)
     }
 
     /// Exactly one consumer of the camera at a time. The fullscreen overlay runs its own stream, so
@@ -280,6 +283,10 @@ struct DashboardView: View {
     private var tileStreamActive: Bool {
         model.tab == .printer && model.overlay == nil && showCamera
     }
+
+    /// Derived, never mirrored into a second `@State`: a copy of "a frame has decoded" is a copy
+    /// that can be left behind claiming LIVE over a tile that has gone blank.
+    private var camLoaded: Bool { tileStreamActive && tileCam.isLive }
 
     private var cameraTile: some View {
         Tap { model.overlay = .camera } content: {
@@ -301,8 +308,7 @@ struct DashboardView: View {
                     } else {
                         Circle().fill(c.t3).frame(width: 6, height: 6)
                     }
-                    // "1 fps" is nominal — the poll is every 2 s. Keep the string.
-                    Text(camLoaded ? "LIVE · 1 fps" : "WAKING…")
+                    Text(camLoaded ? "LIVE · \(Self.tileFps) fps" : "WAKING…")
                         .font(.system(size: 9.5, weight: .semibold))
                         .tracking(0.6)
                         .foregroundStyle(.white)
@@ -328,10 +334,19 @@ struct DashboardView: View {
             .padding(.horizontal, 20)
             .padding(.top, 16)
         }
-        // A cold camera takes seconds to produce a frame; the badge must not claim LIVE over a blank
-        // tile.
-        .onChange(of: tileCam.isLive) { _, live in camLoaded = live }
-        .onChange(of: tileStreamActive) { _, active in if !active { camLoaded = false } }
+        // A cold camera takes seconds to produce a frame, and the badge must not claim LIVE over a
+        // blank tile. Both of these restart the stream: switching machines from the fleet switcher
+        // changes the URL (the printer id is in the path) without it ever becoming nil, and leaving
+        // the tab or opening the fullscreen overlay stops it outright.
+        //
+        // Clearing the flag is the load-bearing half. The renderer only ever sets `isLive` TRUE, so
+        // this reset is what lets the NEXT connection's first frame register as a change; without it
+        // the badge would keep pulsing green over the blank tile of a camera that is still waking.
+        // `initial: true` because the tile itself comes and goes with the print state: it is torn
+        // down on `connecting`/`offline` and rebuilt with a fresh renderer, and a latch left over
+        // from the previous appearance would claim LIVE before the new one has decoded anything.
+        .onChange(of: tileStreamURL) { _, _ in tileCam.isLive = false }
+        .onChange(of: tileStreamActive, initial: true) { _, _ in tileCam.isLive = false }
     }
 
     // MARK: - LIVE
@@ -720,6 +735,14 @@ struct DashboardView: View {
             }
             TempGrid(vm: vm, heatingEnabled: false)
         }
+        // The celebration the RN build shows on every finished print. An overlay so it costs no
+        // layout, clipped to the block the way the RN version is clipped to its container, and
+        // applied INSIDE the padding so it falls over the card rather than the screen margins.
+        // Same five palette colours and the same count of 22.
+        .overlay {
+            Confetti(colors: [c.accent, c.running, c.heating, c.paused, c.t1], count: 22)
+                .clipped()
+        }
         .padding(.horizontal, 20)
         .padding(.top, 18)
     }
@@ -774,43 +797,67 @@ struct DashboardView: View {
     }
 }
 
-/// Temperature cards, two per row. A trailing odd card stays half-width rather than stretching.
-struct TempGrid: View {
-    let vm: DashVM
-    let heatingEnabled: Bool
-    @Environment(\.palette) private var c
+/// One temperature card, as pure data.
+///
+/// Identity is the LABEL, not a fresh `UUID`. The card list is rebuilt on every body pass — `DashVM`
+/// changes on every WebSocket frame, so roughly once a second during a print — and a new id per pass
+/// makes SwiftUI tear each card down and re-insert it instead of updating it. That reset
+/// `RollingNumber`'s numeric transition, `HeatBar`'s `shimmer` and `PulseDot`'s `dim` every frame, so
+/// temperatures snapped and neither loop could complete a single leg. The labels are unique for
+/// every printer shape, which is the invariant this identity rests on and what `TempGridTests` pins.
+struct TempCard: Identifiable, Equatable, Sendable {
+    let label: String
+    let now: Int
+    let target: Int
+    let heating: Bool
+    var active: Bool = false
 
-    private struct Card: Identifiable {
-        let id = UUID()
-        let label: String
-        let now: Int
-        let target: Int
-        let heating: Bool
-        var active: Bool = false
+    var id: String { label }
+
+    /// Position-ordered, matching the temperature keys: `nozzle` is the LEFT head, `nozzle2` the
+    /// right. The third case cannot happen on any machine Bambuddy talks to, but a duplicate label
+    /// would silently break `ForEach` identity, so it is named rather than assumed away.
+    static func nozzleLabel(index: Int, of total: Int) -> String {
+        guard total > 1 else { return "Nozzle" }
+        switch index {
+        case 0: return "Left nozzle"
+        case 1: return "Right nozzle"
+        default: return "Nozzle \(index + 1)"
+        }
     }
 
-    private var cards: [Card] {
-        var out: [Card] = []
+    /// `heatingEnabled` is false in the print-complete block: a bed still coming down off 60° is not
+    /// heating for a job, and should not animate as if it were.
+    static func present(_ vm: DashVM, heatingEnabled: Bool) -> [TempCard] {
+        var out: [TempCard] = []
         if vm.nozzles.count > 1 {
             for (i, n) in vm.nozzles.enumerated() {
-                out.append(Card(
-                    label: i == 0 ? "Left nozzle" : "Right nozzle",
+                out.append(TempCard(
+                    label: nozzleLabel(index: i, of: vm.nozzles.count),
                     now: n.now, target: n.target,
                     heating: heatingEnabled && n.heating,
                     active: n.active
                 ))
             }
         } else {
-            out.append(Card(label: "Nozzle", now: vm.nozzleNow, target: vm.nozzleTarget, heating: heatingEnabled && vm.nozzleHeating))
+            out.append(TempCard(label: "Nozzle", now: vm.nozzleNow, target: vm.nozzleTarget, heating: heatingEnabled && vm.nozzleHeating))
         }
-        out.append(Card(label: "Bed", now: vm.bedNow, target: vm.bedTarget, heating: heatingEnabled && vm.bedHeating))
+        out.append(TempCard(label: "Bed", now: vm.bedNow, target: vm.bedTarget, heating: heatingEnabled && vm.bedHeating))
         if vm.hasChamber {
-            out.append(Card(label: "Chamber", now: vm.chamberNow, target: vm.chamberTarget, heating: heatingEnabled && vm.chamberHeating))
+            out.append(TempCard(label: "Chamber", now: vm.chamberNow, target: vm.chamberTarget, heating: heatingEnabled && vm.chamberHeating))
         }
         return out
     }
+}
+
+/// Temperature cards, two per row. A trailing odd card stays half-width rather than stretching.
+struct TempGrid: View {
+    let vm: DashVM
+    let heatingEnabled: Bool
+    @Environment(\.palette) private var c
 
     var body: some View {
+        let cards = TempCard.present(vm, heatingEnabled: heatingEnabled)
         let rows = stride(from: 0, to: cards.count, by: 2).map { Array(cards[$0..<min($0 + 2, cards.count)]) }
         VStack(spacing: 12) {
             ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
@@ -825,7 +872,7 @@ struct TempGrid: View {
         .padding(.top, 12)
     }
 
-    private func tempCard(_ card: Card) -> some View {
+    private func tempCard(_ card: TempCard) -> some View {
         let barColor = card.heating ? c.heating : c.running
         // A 4 % floor so a cold or unset card still shows a sliver rather than an empty track.
         let pct = card.target > 0 ? max(4, min(100, Double(card.now) / Double(card.target) * 100)) : 4
