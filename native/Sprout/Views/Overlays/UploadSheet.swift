@@ -152,7 +152,14 @@ struct UploadSheet: View {
         )
         .shadow1()
         // The MakerWorld panel scrolls and can grow tall; the picker is three rows and never does.
-        .frame(maxHeight: showMakerWorld ? maxHeight : nil)
+        //
+        // `alignment: .bottom` is not decoration. The panel's ScrollView is greedy, so this frame
+        // takes the full 88 % even when the panel has shrunk to its content — and a `maxHeight` frame
+        // CENTRES its child by default. That left the card floating in mid-screen with a square
+        // bottom edge and the file grid showing underneath: 841 pt of frame, a 340 pt card, centred.
+        // It only showed with short content, which is why a resolved model (tall enough to fill)
+        // always looked right.
+        .frame(maxHeight: showMakerWorld ? maxHeight : nil, alignment: .bottom)
     }
 
     // MARK: Pick-a-source panel
@@ -450,7 +457,12 @@ private struct MakerWorldPanel: View {
                 TextField(
                     "",
                     text: $url,
-                    prompt: Text("https://makerworld.com/en/models/…").foregroundStyle(c.t3)
+                    // `verbatim:` is load-bearing. A Text STRING LITERAL is a LocalizedStringKey, so
+                    // SwiftUI parses it as Markdown — and Markdown autolinks a bare URL, which
+                    // rendered this placeholder as a blue tappable link and ignored `foregroundStyle`
+                    // entirely. Settings' fields escape it only by accident: they pass a String
+                    // variable, which picks the verbatim overload.
+                    prompt: Text(verbatim: "https://makerworld.com/en/models/…").foregroundStyle(c.t3)
                 )
                 .font(.system(size: 14))
                 .foregroundStyle(c.t1)
