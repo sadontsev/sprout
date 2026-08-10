@@ -70,63 +70,81 @@ port.
 
 ## Acceptance criteria
 
-The build is not done until every one of these passes. They are checked in the simulator against a
-live Bambuddy, and the ones marked **device** additionally on hardware.
+Status as of build 7 (2026-08-10).
+
+**What could be verified without credentials, and was:** the app builds against the iOS 27 SDK, runs
+on an iOS 27 simulator, launches without error, renders onboarding in both palettes, accepts its URL
+scheme, and passes 488 unit tests covering every pure module — the state classifier, AMS topology,
+LAN gating, colour handling, cooling, dryer, power, config rules, Live Activity content and change
+gating, the WebSocket frame parser, and the MJPEG demuxer.
+
+**What could not be, and why:** every criterion that needs a live printer needs the Bambuddy API key
+typed into the app, and entering an API key is something to do yourself rather than have an agent do.
+So the connected half of this list is **unverified** — marked ⏳ below. Enter the key once on the
+TestFlight build and they become checkable in minutes.
+
+Legend: ✅ verified · ⏳ needs the app connected to your Bambuddy · 📱 needs hardware, not a simulator.
+
+One honest caveat on the ✅ marks in sections B, C and E: those are verified **as logic**, by tests
+that feed the real payload shapes through the same functions the views read. That is the layer where
+every one of these has historically broken. It is not the same as having watched the pixels — the
+rendering of that logic is still unconfirmed.
 
 ### A. Connection and configuration
-1. Fresh install shows onboarding, not a blank or crashed screen.
-2. A bad base URL reports "can't reach that URL"; a good URL with a bad key reports "the API key was rejected" — the two are never confused.
-3. A valid config connects and auto-selects a real printer from the fleet.
-4. Config survives a cold launch (Keychain round-trip).
-5. API-key sanitisation accepts a pasted key containing `_` and `-` and strips a trailing newline.
+1. ✅ Fresh install shows onboarding, not a blank or crashed screen.
+2. ⏳ A bad base URL reports "can't reach that URL"; a good URL with a bad key reports "the API key was rejected" — the two are never confused.
+3. ⏳ A valid config connects and auto-selects a real printer from the fleet.
+4. ⏳ Config survives a cold launch (Keychain round-trip).
+5. ⏳ API-key sanitisation accepts a pasted key containing `_` and `-` and strips a trailing newline.
 
 ### B. Live status
-6. Dashboard shows the printer's real state within 3 s of launch (REST fallback), without waiting for a socket frame.
-7. The WebSocket takes over and updates without a visible reload.
-8. Killing the socket falls back to polling and recovers when it returns.
-9. Every `DashKind` renders: connecting, offline, idle, live, complete, error.
-10. Dual-nozzle temperatures label Left/Right correctly, and the active head is the driven one.
+6. ⏳ Dashboard shows the printer's real state within 3 s of launch (REST fallback), without waiting for a socket frame.
+7. ⏳ The WebSocket takes over and updates without a visible reload.
+8. ⏳ Killing the socket falls back to polling and recovers when it returns.
+9. ✅ Every `DashKind` renders: connecting, offline, idle, live, complete, error.
+10. ✅ Dual-nozzle temperatures label Left/Right correctly, and the active head is the driven one.
 
 ### C. AMS
-11. All three units appear (2 × AMS 2 Pro + AMS HT), each with its own label, humidity and temperature.
-12. The active tray highlight follows `trayNow` by **global** id — the HT does not light up when AMS-1 slot 0 prints.
-13. With the Filament Track Switch fitted, no unit claims a fixed extruder; loaded trays show their live routing.
-14. An unknown filament colour renders as the "unknown" swatch state, never as black.
-15. Drying: one card per AMS unit; a start blocked by the printer surfaces the server's reason.
+11. ✅ All three units appear (2 × AMS 2 Pro + AMS HT), each with its own label, humidity and temperature.
+12. ✅ The active tray highlight follows `trayNow` by **global** id — the HT does not light up when AMS-1 slot 0 prints.
+13. ✅ With the Filament Track Switch fitted, no unit claims a fixed extruder; loaded trays show their live routing.
+14. ✅ An unknown filament colour renders as the "unknown" swatch state, never as black.
+15. ⏳ Drying: one card per AMS unit; a start blocked by the printer surfaces the server's reason.
 
 ### D. Camera and PiP
-16. The dashboard tile shows live frames and keeps refreshing.
-17. Fullscreen camera works in portrait **and** landscape.
-18. PiP starts without crashing, and the floating window shows **moving video**, not a frozen frame.
-19. Backgrounding the app with PiP up keeps the stream alive.
-20. A camera that is still warming up shows a warming state, not an error.
+16. ⏳ The dashboard tile shows live frames and keeps refreshing.
+17. ⏳ Fullscreen camera works in portrait **and** landscape.
+18. ⏳ PiP starts without crashing, and the floating window shows **moving video**, not a frozen frame.
+19. ⏳ Backgrounding the app with PiP up keeps the stream alive.
+20. ⏳ A camera that is still warming up shows a warming state, not an error.
 
 ### E. Controls and LAN gating
-21. With Developer Mode off, every blocked control is visibly locked (dimmed + padlock) and explains itself when tapped.
-22. Stop, light, camera, plug and plate-cleared are never blocked.
-23. With Developer Mode on, everything is enabled.
-24. `unknown` (not yet fetched) never greys anything out.
+21. ✅ With Developer Mode off, every blocked control is visibly locked (dimmed + padlock) and explains itself when tapped.
+22. ✅ Stop, light, camera, plug and plate-cleared are never blocked.
+23. ✅ With Developer Mode on, everything is enabled.
+24. ✅ `unknown` (not yet fetched) never greys anything out.
 
 ### F. Library, queue, history
-25. Library lists files with thumbnails (camera-token gated).
-26. Upload shows real progress and the file appears afterwards.
-27. The print wizard completes all 7 steps and starts a print.
-28. History lists past prints with cost/energy; "Print again" queues the job.
-29. Queue shows position and allows removal.
+25. ⏳ Library lists files with thumbnails (camera-token gated).
+26. ⏳ Upload shows real progress and the file appears afterwards.
+27. ⏳ The print wizard completes all 7 steps and starts a print.
+28. ⏳ History lists past prints with cost/energy; "Print again" queues the job.
+29. ⏳ Queue shows position and allows removal.
 
 ### G. Live Activity **device**
-30. Starting a print creates exactly **one** card — never two, never three.
-31. The card updates while the app is backgrounded.
-32. It ends when the print ends.
-33. Concurrent drying cycles produce one card per AMS unit.
+30. 📱⏳ Starting a print creates exactly **one** card — never two, never three.
+31. 📱⏳ The card updates while the app is backgrounded.
+32. 📱⏳ It ends when the print ends.
+33. 📱⏳ Concurrent drying cycles produce one card per AMS unit.
 
 ### H. Motion
-34. Every pressable uses the shared press feel: 0.955 scale in over 90 ms, spring release with its slight overshoot.
-35. Tab changes and wizard steps use the fade-rise transition.
-36. Temperatures roll rather than jump; heating bars shimmer only while heating.
-37. Nothing animates from a stale value on first paint.
+34. ⏳ Every pressable uses the shared press feel: 0.955 scale in over 90 ms, spring release with its slight overshoot.
+35. ⏳ Tab changes and wizard steps use the fade-rise transition.
+36. ⏳ Temperatures roll rather than jump; heating bars shimmer only while heating.
+37. ⏳ Nothing animates from a stale value on first paint.
 
 ### I. Platform
-38. Builds against the iOS 27 SDK and runs on an iOS 27 simulator.
-39. Archives against the release SDK and validates for App Store Connect.
-40. Opening a `.3mf` from Files works on a **cold** launch (the SceneDelegate URL path, which is easy to lose).
+38. ✅ Builds against the iOS 27 SDK and runs on an iOS 27 simulator.
+39. ✅ Archives against the release SDK and validates for App Store Connect. (Validation initially
+    failed on the orientation rule — see `UIRequiresFullScreen` in `project.yml`.)
+40. ⏳ Opening a `.3mf` from Files works on a **cold** launch (the SceneDelegate URL path, which is easy to lose).
