@@ -67,6 +67,22 @@ Hard-won facts, all measured (`docs/native-rewrite/15-makerworld-design.md` has 
 - An import is **never** sliced: `file_type` `3mf`, `/gcode` → 404, sliced for someone else's machine — while `print_time_seconds` *is* populated, which makes that field an unsafe proxy for "has toolpaths".
 - `sort` is not honoured on search (`new`, `hot` and a nonsense value all return the same order), and `isPrintable` is **absent** from hits. Neither may drive a control.
 
+### `laPushUrl` vs `resolvePushUrl`
+
+Two questions, two functions, and they must not be merged back:
+
+- `resolvePushUrl` — *"should Live Activities be pushed through a server, and where?"* `nil` when the
+  user turns push off.
+- `laPushUrl` — *"where is la-push?"* Ignores the toggle.
+
+la-push serves MakerWorld **collections** as well as push, and collections are plain authenticated
+HTTP with no APNs involved. Gating them on the push toggle made switching push off silently remove
+the Collections tab — the recurring bug, in a predicate that only *nearly* answered the question.
+
+This is not hypothetical: someone running a TestFlight build signed by **another team** cannot get
+push at all (APNs refuses a key that does not own the topic), so turning it off is the correct
+configuration for them — and precisely when collections must keep working.
+
 ### Printing more than one filament
 
 `ams_mapping` is **indexed by the 3MF's filament slot and valued by global tray id** — index 0 addresses slot 1. `Domain/AmsMapping.swift` owns the array and is the tested boundary; a plate whose lone filament is slot 3 needs `[-1, -1, tray]`, and `usedSlotCount == 1` is *not* the same question as "expressible as a one-element array".

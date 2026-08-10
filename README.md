@@ -82,6 +82,13 @@ still works; the app just doesn't offer collections. Note the volume is declared
 under the name compose generated for Bambuddy (`bambuddy_bambuddy_data`) — mounting the
 wrong one fails silently.
 
+**Using a TestFlight build someone else signed?** Everything works except push. APNs only lets a
+key push to a topic its own team owns, so your APNs key cannot push to their bundle id. Turn **off**
+"Live Activity via server" in Settings and set your own **Push server URL** — MakerWorld collections
+still work (plain HTTP), lock-screen cards just stop updating while the app is closed. For real push,
+build it yourself under your own team. Details:
+[deploy/la-push/README.md](deploy/la-push/README.md#sharing-someone-elses-build).
+
 Android status (spoiler: not yet): [docs/guides/android.md](docs/guides/android.md).
 
 ### 3. iOS app
