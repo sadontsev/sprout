@@ -36,26 +36,10 @@ private enum LibraryLayout: Sendable { case grid, list }
 private enum SdPresentation: Sendable { case player, layers }
 
 /// Filter / search / naming rules for the library list. Pure, so the view never re-derives them.
+///
+/// The "can this file do X" questions live in `LibraryFileCaps` instead — the wizard asks them too,
+/// and a second copy of `hasGcode` is exactly how it stopped agreeing with `isSliced`.
 private enum LibraryBrowse {
-    /// A file is "sliced" when it carries G-code or was produced by slicing for a model.
-    /// Whether the file was produced by a slicer — drives the "sliced" BADGE only.
-    ///
-    /// `slicedForModel` names the machine a file was prepared for, which a plain `.3mf` can carry
-    /// too: the library holds one that says "Creality K2 Pro" while containing no toolpaths at all.
-    /// So this is informational and must NOT gate anything that needs G-code — see `hasGcode`.
-    static func isSliced(_ f: LibraryFile) -> Bool {
-        (f.fileType ?? "").contains("gcode") || !(f.slicedForModel ?? "").isEmpty
-    }
-
-    /// Whether the file actually contains toolpaths, i.e. whether `/gcode` will answer.
-    ///
-    /// Only a `gcode.3mf` does. Gating the layer viewer on `isSliced` instead offered "View layers"
-    /// on a plain `.3mf` and the request 404'd — the same shape of bug as a button that looks
-    /// enabled while its handler refuses.
-    static func hasGcode(_ f: LibraryFile) -> Bool {
-        (f.fileType ?? "").lowercased().contains("gcode")
-    }
-
     /// Upload names arrive percent-encoded (`Adapter%20hexagon.stl`). A malformed escape decodes to
     /// nil, in which case the raw name is still better than nothing.
     static func displayName(_ f: LibraryFile) -> String {
@@ -77,7 +61,7 @@ private enum LibraryBrowse {
     static func filter(_ files: [LibraryFile], _ filter: LibraryTypeFilter, _ query: String) -> [LibraryFile] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         return files.filter { f in
-            let sliced = isSliced(f)
+            let sliced = LibraryFileCaps.isSliced(f)
             if filter == .sliced, !sliced { return false }
             if filter == .models, sliced { return false }
             if q.isEmpty { return true }
@@ -210,8 +194,8 @@ struct LibraryView: View {
         let all = files ?? []
         switch f {
         case .all: return all.count
-        case .models: return all.filter { !LibraryBrowse.isSliced($0) }.count
-        case .sliced: return all.filter { LibraryBrowse.isSliced($0) }.count
+        case .models: return all.filter { !LibraryFileCaps.isSliced($0) }.count
+        case .sliced: return all.filter { LibraryFileCaps.isSliced($0) }.count
         }
     }
 
@@ -569,7 +553,7 @@ struct LibraryView: View {
 
     private func gridCell(_ f: LibraryFile) -> some View {
         let sel = selected.contains(f.id)
-        let sliced = LibraryBrowse.isSliced(f)
+        let sliced = LibraryFileCaps.isSliced(f)
         return withMenu(f) {
             Tap { pick(f) } content: {
                 VStack(alignment: .leading, spacing: 0) {
@@ -704,7 +688,7 @@ struct LibraryView: View {
 
     private func subtitle(_ f: LibraryFile) -> String {
         let type = (f.fileType ?? "").uppercased()
-        let sliced = LibraryBrowse.isSliced(f) ? " · sliced" : ""
+        let sliced = LibraryFileCaps.isSliced(f) ? " · sliced" : ""
         return "\(type)\(sliced) · \(LibraryFormat.bytes(f.fileSize?.double))"
     }
 
@@ -721,7 +705,7 @@ struct LibraryView: View {
                 }
             }
         } else {
-            Image(systemName: (f.fileType ?? "").contains("gcode") ? "shippingbox" : "doc")
+            Image(systemName: LibraryFileCaps.hasGcode(f) ? "shippingbox" : "doc")
                 .font(.system(size: glyphSize))
                 .foregroundStyle(c.t3)
         }
@@ -736,11 +720,11 @@ struct LibraryView: View {
         } else {
             content().contextMenu {
                 Button { model.overlay = .wizard(f) } label: { Label("Print…", systemImage: "printer") }
-                if (f.fileType ?? "").lowercased() == "stl" {
+                if LibraryFileCaps.isStl(f) {
                     Button { model.overlay = .stlViewer(f) } label: { Label("View in 3D", systemImage: "cube") }
                 }
                 // hasGcode, not isSliced: only a gcode.3mf has toolpaths to show.
-                if LibraryBrowse.hasGcode(f) {
+                if LibraryFileCaps.hasGcode(f) {
                     Button { model.overlay = .layerViewer(f) } label: { Label("View layers", systemImage: "square.3.layers.3d") }
                 }
                 Button { Task { await share(f) } } label: { Label("Share…", systemImage: "square.and.arrow.up") }

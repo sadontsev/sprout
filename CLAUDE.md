@@ -114,6 +114,31 @@ Data flows **printer → Bambuddy → `BambuddyClient` → `usePrinterStatus` �
 - `src/config/secureConfig.ts` — Keychain storage (base URL, API key, camera token) via expo-secure-store.
 - `src/liveactivity/` — the iOS Live Activity (lock screen + Dynamic Island) via **`expo-widgets`** (first-party SDK 56). See the gotcha below.
 
+## The recurring bug in this codebase: offering what the backend will refuse
+
+This shape has now appeared four times, in unrelated code, written by different hands:
+
+| Where | The lie | What the user saw |
+|---|---|---|
+| LAN Developer Mode | Handlers were gated, buttons were not | Controls that looked live and silently did nothing |
+| Model texturizer | A settings toggle for a feature the native build lacks | A switch that changed nothing |
+| "View layers" | `isSliced` answered "was this prepared by a slicer?" when the question was "does this have toolpaths?" | HTTP 404 on a plain `.3mf` |
+| Wizard filament | Identity recomputed from hex instead of read from inventory | A brown spool labelled "Orange", green in Review |
+
+The common cause is not carelessness — it is a **predicate that answers a NEARBY question**. `isSliced`
+and `hasGcode` sound like synonyms and are not. "The user has permission" and "the printer will
+accept it" sound like synonyms and are not. A vendor's colour name and a computed one sound like
+synonyms and are not.
+
+**The rule: an affordance must be gated on the exact capability it needs, not on a proxy for it.**
+When those are two different questions, write two predicates and name them for the questions they
+answer. If you find yourself reusing one because it is "basically the same", that is the bug
+arriving.
+
+**And when a capability is absent, say so in the UI.** A dimmed control with a padlock that explains
+itself on tap beats a live-looking one; "Not in this build" beats a toggle that lies. The user should
+never have to discover a limitation by hitting an error.
+
 ## Gotchas that will waste your time (all hard-won)
 
 **Bambuddy auth quirks** (`bambuddyClient.ts` encodes these):
