@@ -363,6 +363,12 @@ private struct MakerWorldPanel: View {
     @State private var showingCollections = false
     /// The folder whose designs are in the grid, if any.
     @State private var activeCollection: MakerWorldCollection?
+    /// Which collections hold the design currently on screen. `nil` until asked — an empty set means
+    /// "asked, and it is in none", a different thing that must not render as "unknown".
+    @State private var savedIn: Set<Int>?
+    @State private var saveOpen = false
+    /// Collections with a write in flight, so one row can show progress without freezing the others.
+    @State private var saving: Set<Int> = []
     /// Measured height of the scroll's content — see `body` for why the scroll needs it.
     @State private var contentHeight: CGFloat = 0
 
@@ -874,6 +880,10 @@ private struct MakerWorldPanel: View {
 
         chips(r)
 
+        if collectionsClient.isAvailable {
+            saveControl(r)
+        }
+
         // Attribution the licence asks for, and that the `makerworld-1400373.3mf` filename destroys.
         if let original = r.design.originals?.first,
            let title = original.title?.nonEmpty {
@@ -987,6 +997,125 @@ private struct MakerWorldPanel: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 10)
+        }
+    }
+
+    /// Save this design into one of the owner's MakerWorld collections.
+    ///
+    /// Membership is a SET: MakerWorld lets a design sit in several collections at once, and the
+    /// write endpoint replaces the whole set. So the UI shows what is already true before it lets
+    /// anything be toggled — otherwise the first tap would look like "move", not "add".
+    @ViewBuilder
+    private func saveControl(_ r: MakerWorldResolved) -> some View {
+        let count = savedIn?.count ?? 0
+        VStack(alignment: .leading, spacing: 0) {
+            Tap { saveOpen.toggle() } content: {
+                HStack(spacing: 6) {
+                    Image(systemName: count > 0 ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(count == 0 ? "Save to collection" : "In \(count) collection\(count == 1 ? "" : "s")")
+                        .font(.system(size: 12.5, weight: .semibold))
+                    Image(systemName: saveOpen ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .foregroundStyle(count > 0 ? c.accent : c.t2)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(count > 0 ? c.accentDim : c.s2))
+                .contentShape(.rect)
+            }
+            .accessibilityLabel(count == 0 ? "Save to a collection" : "In \(count) collections")
+
+            if saveOpen {
+                if savedIn == nil {
+                    HStack(spacing: 8) {
+                        ProgressView().tint(c.t3)
+                        Text("Checking your collections…")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(c.t3)
+                    }
+                    .padding(.top, 10)
+                } else {
+                    VStack(spacing: 7) {
+                        ForEach(collections) { folder in
+                            saveRow(folder, designId: r.modelId)
+                        }
+                    }
+                    .padding(.top, 10)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 10)
+        // Keyed on the model: resolving a different one must re-ask, and must not show the previous
+        // design's checkmarks while it does.
+        .task(id: r.modelId) {
+            savedIn = nil
+            if collections.isEmpty {
+                collections = (try? await collectionsClient.collections()) ?? []
+            }
+            savedIn = try? await collectionsClient.collections(containing: r.modelId)
+        }
+    }
+
+    private func saveRow(_ folder: MakerWorldCollection, designId: Int) -> some View {
+        let inIt = savedIn?.contains(folder.id) == true
+        let busy = saving.contains(folder.id)
+        return Tap(disabled: busy) { toggleSave(folder, designId: designId) } content: {
+            HStack(spacing: 10) {
+                Group {
+                    if busy {
+                        ProgressView().tint(c.t3)
+                    } else {
+                        Image(systemName: inIt ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(inIt ? c.accent : c.t3)
+                    }
+                }
+                .frame(width: 20)
+                Text(folder.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(c.t1)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text("\(folder.count)")
+                    .font(.mono(11, weight: .medium))
+                    .foregroundStyle(c.t3)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(c.s2))
+            .contentShape(.rect)
+        }
+        .accessibilityLabel("\(folder.title), \(inIt ? "saved" : "not saved")")
+        .accessibilityAddTraits(inIt ? [.isSelected, .isButton] : .isButton)
+    }
+
+    /// Toggle one membership.
+    ///
+    /// The server answers with the design's FULL new membership and that replaces the local set, so
+    /// the checkmarks show what MakerWorld actually holds rather than what was optimistically
+    /// assumed — which matters when the write half of a read-union-write partly fails.
+    private func toggleSave(_ folder: MakerWorldCollection, designId: Int) {
+        guard let current = savedIn, !saving.contains(folder.id) else { return }
+        let wantMember = !current.contains(folder.id)
+        saving.insert(folder.id)
+        Task {
+            defer { saving.remove(folder.id) }
+            do {
+                savedIn = try await collectionsClient.setMembership(
+                    design: designId, collection: folder.id, member: wantMember)
+                model.toast = wantMember ? "Saved to \(folder.title)" : "Removed from \(folder.title)"
+                // Adjust the one count that changed, in place. Refetching the list looked tidier and
+                // was worse: MakerWorld returns the folders in a different order after a write, so
+                // the rows re-sorted under the finger that had just tapped one.
+                if let i = collections.firstIndex(where: { $0.id == folder.id }) {
+                    collections[i].count = max(collections[i].count + (wantMember ? 1 : -1), 0)
+                }
+            } catch {
+                model.toast = error.localizedDescription
+            }
         }
     }
 

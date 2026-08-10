@@ -13,7 +13,7 @@ the owner reads.
 """
 from __future__ import annotations
 
-import asyncio
+import json as json_module
 import sqlite3
 import unittest
 from pathlib import Path
@@ -249,6 +249,133 @@ class FailuresStayDistinct(MakerWorldTestCase):
         with self.assertRaises(mw.CollectionsUnavailable) as cm:
             await mw.list_collections(self.db())
         self.assertEqual(cm.exception.status, 502)
+
+
+# MARK: - Adding to / removing from a collection
+#
+# The upstream PUT REPLACES a design's whole collection membership — measured live: a design in
+# "Default Collection", PUT with favoritesIds=[Collection], ends up in Collection and is silently
+# gone from Default. Every test here exists because getting this wrong does not error, it quietly
+# un-collects things the owner curated.
+
+
+class MembershipArithmetic(unittest.TestCase):
+
+    def test_adding_keeps_every_collection_it_was_already_in(self):
+        self.assertEqual(mw.union_for_add({10, 20}, 30), [10, 20, 30])
+
+    def test_adding_to_a_collection_it_is_already_in_is_a_no_op_set(self):
+        self.assertEqual(mw.union_for_add({10, 20}, 20), [10, 20])
+
+    def test_adding_to_nothing_yields_just_that_collection(self):
+        self.assertEqual(mw.union_for_add(set(), 7), [7])
+
+    def test_removing_leaves_the_others_untouched(self):
+        self.assertEqual(mw.union_for_remove({10, 20, 30}, 20), [10, 30])
+
+    def test_removing_the_last_one_is_an_empty_list_not_a_missing_field(self):
+        """`favoritesIds: []` is how MakerWorld is told 'no collections' — measured."""
+        self.assertEqual(mw.union_for_remove({10}, 10), [])
+
+    def test_removing_something_it_was_not_in_changes_nothing(self):
+        self.assertEqual(mw.union_for_remove({10, 20}, 99), [10, 20])
+
+    def test_ids_are_ints_even_when_they_arrive_as_strings(self):
+        self.assertEqual(mw.union_for_add({10}, "20"), [10, 20])
+        self.assertEqual(mw.union_for_remove({10, 20}, "20"), [10])
+
+    def test_the_result_is_sorted_so_a_diff_is_readable(self):
+        self.assertEqual(mw.union_for_add({30, 10}, 20), [10, 20, 30])
+
+
+class SetDesignCollections(MakerWorldTestCase):
+    """`set_design_collections` reads the current membership, then writes the whole set back."""
+
+    def account(self, membership: dict[int, list[int]], put_status: int = 200):
+        """Serve a fake account and capture the PUT body.
+
+        `membership` maps collection id -> the design ids it contains.
+        """
+        captured: dict = {}
+
+        def get(url, headers):
+            if "listlite" in url:
+                return FakeResponse(200, {"hits": [{"id": c} for c in membership]})
+            for cid, designs in membership.items():
+                if f"/favorites/{cid}/designs" in url:
+                    return FakeResponse(200, {"hits": [{"id": d} for d in designs]})
+            return FakeResponse(200, {"hits": []})
+
+        class Client(FakeClient):
+            # Mirrors the REAL httpx surface the code uses. An over-permissive stub is how a
+            # `send(req, timeout=…)` call — which httpx does not accept — passed 42 tests and then
+            # failed against the live server.
+            async def put(self, url, headers=None, json=None, timeout=None):
+                captured["body"] = json
+                captured["method"] = "PUT"
+                captured["url"] = str(url)
+                return FakeResponse(put_status, {"total": 1})
+
+        mw.httpx.AsyncClient = lambda *a, **k: Client(get)
+        return captured
+
+    async def test_adding_sends_the_existing_memberships_plus_the_new_one(self):
+        """The bug this whole design exists to prevent: design 555 is in collection 10, and adding
+        it to 20 must send BOTH — sending just [20] removes it from 10, silently."""
+        put = self.account({10: [555], 20: []})
+        got = await mw.set_design_collections(555, 20, add=True, db_path=self.db())
+        self.assertEqual(put["method"], "PUT")
+        self.assertEqual(put["body"], {"designId": 555, "favoritesIds": [10, 20]})
+        self.assertEqual(got["collections"], [10, 20])
+        self.assertTrue(got["changed"])
+
+    async def test_removing_sends_everything_except_that_collection(self):
+        put = self.account({10: [555], 20: [555], 30: []})
+        got = await mw.set_design_collections(555, 10, add=False, db_path=self.db())
+        self.assertEqual(put["body"], {"designId": 555, "favoritesIds": [20]})
+        self.assertEqual(got["collections"], [20])
+
+    async def test_removing_the_only_one_sends_an_empty_list(self):
+        put = self.account({10: [555]})
+        await mw.set_design_collections(555, 10, add=False, db_path=self.db())
+        self.assertEqual(put["body"], {"designId": 555, "favoritesIds": []})
+
+    async def test_a_no_op_add_writes_nothing_at_all(self):
+        """Already there — mutating the owner's account anyway would be gratuitous."""
+        put = self.account({10: [555]})
+        got = await mw.set_design_collections(555, 10, add=True, db_path=self.db())
+        self.assertFalse(got["changed"])
+        self.assertEqual(put, {}, "no PUT should have been sent")
+
+    async def test_a_failed_membership_read_aborts_instead_of_writing_a_short_list(self):
+        """The dangerous failure. A partial read would PUT a set that silently un-collects."""
+        def get(url, headers):
+            if "listlite" in url:
+                return FakeResponse(200, {"hits": [{"id": 10}, {"id": 20}]})
+            return FakeResponse(403, {})
+        mw.httpx.AsyncClient = lambda *a, **k: FakeClient(get)
+        with self.assertRaises(mw.CollectionsUnavailable):
+            await mw.set_design_collections(555, 20, add=True, db_path=self.db())
+
+    async def test_a_refused_write_is_reported_rather_than_reported_as_success(self):
+        self.account({10: [555]}, put_status=403)
+        with self.assertRaises(mw.CollectionsUnavailable):
+            await mw.set_design_collections(555, 20, add=True, db_path=self.db())
+
+    async def test_membership_is_read_across_pages(self):
+        """A truncated read would drop designs from collections nobody is editing."""
+        big = list(range(1, 51))          # exactly one full page
+        calls = {"n": 0}
+
+        def get(url, headers):
+            if "listlite" in url:
+                return FakeResponse(200, {"hits": [{"id": 10}]})
+            calls["n"] += 1
+            return FakeResponse(200, {"hits": [{"id": d} for d in big]} if calls["n"] == 1
+                                else {"hits": [{"id": 999}]})
+        mw.httpx.AsyncClient = lambda *a, **k: FakeClient(get)
+        self.assertEqual(await mw.design_collection_ids(999, self.db()), [10],
+                         "the design is on page 2; a single-page read would have missed it")
 
 
 # MARK: - Designs inside a collection
