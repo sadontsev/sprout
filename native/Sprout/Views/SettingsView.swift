@@ -131,10 +131,22 @@ struct SettingsView: View {
                         field("Push server URL", text: $pushUrl, placeholder: "derived from the server host", keyboard: .URL)
                     }
 
-                    toggleRow("Model texturizer", isOn: $texturize,
-                              hint: "Needs the stl-texturize sidecar. Off hides the feature entirely.")
-                    if texturize {
-                        field("Texturize URL", text: $texturizeUrl, placeholder: "derived from the server host", keyboard: .URL)
+                    // The setting is kept so it survives a switch back to the RN build, but this
+                    // build has no texturizer yet — a toggle that promises a feature which isn't
+                    // there is worse than no toggle.
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text("Model texturizer")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(c.t3)
+                            Spacer()
+                            Text("Not in this build")
+                                .font(.mono(10))
+                                .foregroundStyle(c.t3)
+                        }
+                        Text("The stl-texturize sidecar isn't wired up natively yet. Your setting is kept.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(c.t3)
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
