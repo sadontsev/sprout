@@ -54,6 +54,11 @@ struct CameraOverlay: View {
     /// through, so the manual path has to be able to mint.
     @State private var localToken: String?
 
+    /// Gates the first connection until the shared upstream the dashboard tile created has been
+    /// dropped, so that THIS view's connection is the one that starts it — at the fullscreen frame
+    /// rate rather than the tile's thumbnail rate. See `CameraUpstreamClaim`.
+    @State private var upstreamReady = false
+
     @State private var showDiagnostics = false
     @State private var diagnosing = false
     @State private var diagnosis: CameraDiagnosis?
@@ -130,6 +135,10 @@ struct CameraOverlay: View {
             // there being an edge left to observe.
             if phase == .connecting { settle(orElse: .failed) }
         }
+        // NOT keyed on `attempt`. This runs once per opening of the overlay: once we own the
+        // upstream there is nothing left to claim, and re-running it when the camera token rotates
+        // would drop a healthy stream and pay the camera's warm-up again for no gain.
+        .task { await claimUpstream() }
         .onChange(of: pip.isLive) { _, isLive in
             if isLive { phase = .live }
         }
@@ -153,7 +162,7 @@ struct CameraOverlay: View {
             // Native sample-buffer view, never a WebView: an `<img>` can never enter PiP. It is NOT
             // re-created when the token rotates — the view hot-swaps the URL internally, because
             // rebuilding the display layer would take any active PiP window down with it.
-            CameraPiPView(url: streamUrl, active: true, model: pip)
+            CameraPiPView(url: streamUrl, active: upstreamReady, model: pip)
 
             if !live {
                 stateCard
@@ -544,6 +553,32 @@ struct CameraOverlay: View {
     ///
     /// Only a clean HTTP error short-circuits: a probe NETWORK failure proves nothing about the
     /// stream path and is ignored.
+    /// Drop the shared upstream the dashboard tile started, so the connection this view is about to
+    /// open is the one that creates a fresh one — at the fullscreen frame rate instead of the tile's
+    /// thumbnail rate. `CameraUpstreamClaim` documents the backend behaviour that makes this the only
+    /// lever a client has.
+    ///
+    /// Best-effort by construction, and it ALWAYS ends by letting the stream connect. The backend
+    /// refuses while another viewer is attached — in which case we share their rate rather than
+    /// kicking them off the camera — and any error at all just means we watch at whatever rate is
+    /// already running. A slow picture beats no picture.
+    private func claimUpstream() async {
+        defer { upstreamReady = true }
+        guard let client = model.client else { return }
+        for _ in 0..<CameraUpstreamClaim.maxAttempts {
+            guard !Task.isCancelled else { return }
+            do {
+                let result = try await client.stopCameraUpstream(model.printerId)
+                if CameraUpstreamClaim.step(stopped: result.stopped, skipped: result.skipped) == .proceed {
+                    return
+                }
+            } catch {
+                return
+            }
+            try? await Task.sleep(for: CameraUpstreamClaim.pollInterval)
+        }
+    }
+
     private func probeSnapshot() async {
         guard let url = snapshotUrl else { return }
         do {

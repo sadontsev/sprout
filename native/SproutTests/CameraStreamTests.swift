@@ -107,4 +107,60 @@ final class CameraStreamTests: XCTestCase {
         let url = URL(string: "https://example.invalid/api/v1/printers/1/camera/stream")!
         XCTAssertEqual(MJPEGStreamClient.redact(url), "https://example.invalid/api/v1/printers/1/camera/stream")
     }
+
+    // MARK: - Claiming the shared upstream at the fullscreen frame rate
+
+    /// The backend fixes the upstream's `-r` from whichever viewer created it, so the fullscreen
+    /// camera has to drop the tile's 2 fps upstream before it can start one of its own. It refuses
+    /// while another viewer is attached, and that refusal is the retry signal.
+    func testARefusedTeardownIsRetriedAndAClearedOneProceeds() {
+        XCTAssertEqual(CameraUpstreamClaim.step(stopped: 0, skipped: true), .retry)
+        XCTAssertEqual(CameraUpstreamClaim.step(stopped: 1, skipped: false), .proceed)
+    }
+
+    /// `stopped: 0` with no refusal means there was simply no upstream running — which is already
+    /// the state we are trying to reach, so it must NOT be mistaken for a failure worth retrying.
+    func testNothingToStopCountsAsSuccess() {
+        XCTAssertEqual(CameraUpstreamClaim.step(stopped: 0, skipped: false), .proceed)
+    }
+
+    /// The attempt count is derived from the two tuning knobs rather than written down beside them,
+    /// because a hand-maintained copy is what silently stops matching.
+    func testThePollingScheduleStaysInsideItsBudget() {
+        XCTAssertEqual(CameraUpstreamClaim.maxAttempts, 8)
+        XCTAssertLessThanOrEqual(
+            CameraUpstreamClaim.maxAttempts * CameraUpstreamClaim.pollIntervalMilliseconds,
+            CameraUpstreamClaim.budgetMilliseconds)
+        XCTAssertGreaterThan(CameraUpstreamClaim.maxAttempts, 1)
+    }
+
+    // MARK: - /camera/stop payload
+
+    /// THE regression this type exists for. The backend answers the SUCCESS path with `{"stopped": n}`
+    /// and omits `skipped` entirely; only the refusal path sends it. Decoding `skipped` as a
+    /// non-optional `Bool` therefore threw on exactly the response that means the teardown worked,
+    /// which would have sent the caller down its error path and straight back onto the 2 fps stream.
+    func testSuccessPayloadDecodesWithoutASkippedKey() throws {
+        let data = Data(#"{"stopped": 1}"#.utf8)
+        let result = try JSONDecoder().decode(BambuddyClient.CameraStopResult.self, from: data)
+        XCTAssertEqual(result.stopped, 1)
+        XCTAssertFalse(result.skipped)
+        XCTAssertEqual(CameraUpstreamClaim.step(stopped: result.stopped, skipped: result.skipped), .proceed)
+    }
+
+    func testRefusalPayloadDecodesAsSkipped() throws {
+        let data = Data(#"{"stopped": 0, "skipped": true}"#.utf8)
+        let result = try JSONDecoder().decode(BambuddyClient.CameraStopResult.self, from: data)
+        XCTAssertEqual(result.stopped, 0)
+        XCTAssertTrue(result.skipped)
+        XCTAssertEqual(CameraUpstreamClaim.step(stopped: result.stopped, skipped: result.skipped), .retry)
+    }
+
+    /// An empty object is not worth throwing over: "nothing was stopped, nothing was refused" is a
+    /// coherent reading, and the caller's next move on it — connect anyway — is the right one.
+    func testAnEmptyPayloadDecodesToNeutralValues() throws {
+        let result = try JSONDecoder().decode(BambuddyClient.CameraStopResult.self, from: Data("{}".utf8))
+        XCTAssertEqual(result.stopped, 0)
+        XCTAssertFalse(result.skipped)
+    }
 }

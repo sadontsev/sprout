@@ -610,3 +610,408 @@ itself, against the owner's printer, on the owner's account.
 - 3DPrinterOS — [Bambu Lab 3D Printers Troubleshooting Guide](https://intercom.help/3DPrinterOS/en/articles/11382779-bambu-lab-3d-printers-troubleshooting-guide)
 - Bambu Lab forum — [Bambu Lab Region Lock (China)](https://forum.bambulab.com/t/bambu-lab-region-lock-china/6602)
 - This repo — `docs/phase0-results.md`, `native/Sprout/Domain/LanMode.swift`, `mobile/src/capabilities/lanMode.ts`
+
+---
+
+## Review
+
+**Second author. Adversarial pass, 2026-08-10.** Everything above is the first author's text and is left
+intact. This section disagrees with parts of it. Where I re-probed the live system or re-read a cited
+source, I say so; where I am asserting rather than verifying, I say that too.
+
+**Summary of the disagreement:** the *verdict* is right and well-defended — transport is not the gate,
+signing is, and a cloud pipe buys nothing. What does not hold up is (a) several load-bearing claims
+about Bambuddy and about the ecosystem projects, which are wrong on the evidence; (b) the Phase 0
+plan, which is not implementable against today's Bambuddy; (c) the spike plan, which measures the
+wrong half of the problem; and (d) the framing of §6, which draws a legitimacy line the evidence does
+not support. Two things that are already true and already shippable are missing entirely.
+
+### What I re-verified and what held
+
+Stated so the disagreements below are read against a fair baseline. All re-probed on the server today.
+
+| Claim | Status |
+|---|---|
+| Printer id 2 is an H2C, fw `01.02.00.00`, `connected: true`, `state: RUNNING`, `developer_mode: false` | **Confirmed** (`GET /api/v1/printers/2/status`) |
+| Bambuddy exposes 548 paths | **Confirmed** — 548 paths / 685 operations |
+| `developer_mode = (fun_int & 0x20000000) == 0`, and an `ams_filament_setting` active probe | **Confirmed** — `bambu_mqtt.py:1047`, `:3129`, `:3422–3490` |
+| The nine `ActionId` → MQTT command mappings in §1 | **Confirmed** — all nine command strings exist in `bambu_mqtt.py` (`stop`/`pause`/`resume`, `print_speed:4760`, `ams_change_filament:4981,5036`, `ams_control:5075`, `ams_filament_drying:4160`, `auto_stop_ams_dry:5697`, `project_file:3744`) |
+| Bambuddy has no cloud MQTT and no signing | **Confirmed** — grep for `mqtt.bambulab`, `sign_string`, `cert_id`, `sign_alg`, `app_cert_list` across `/app/backend/app/` returns **zero** hits |
+| `/cloud/status` refuses the app's key | **Confirmed**, HTTP 403, verbatim as quoted |
+| TOTP is on a different host — `https://bambulab.com/api/sign-in/tfa`, CN variant `bambulab.cn` | **Confirmed** — `bambu_cloud.py:262–264` |
+| Honest User-Agent `Bambuddy/1.0 (+…)` | **Confirmed** — `bambu_cloud.py:23` |
+| 30-day hardcoded expiry; `refreshToken` stored and never used | **Confirmed** — `bambu_cloud.py:310,332,337`; no `refreshtoken` request anywhere |
+| `/v1/design-user-service/my/preference`, `/v1/iot-service/api/user/bind` | **Confirmed** — `bambu_cloud.py:352`, `:587` |
+| ha-bambulab's write-lockout quote | **Confirmed verbatim**, `docs/index.mdx:18` |
+| bambu-mcp's model list and its "Limitations without Developer Mode" paragraph | **Confirmed verbatim**; and its README does say every command is auto-signed with the extracted cert |
+| Bambu's May 2026 blog quote and its 2026-05-07 date | **Confirmed** |
+| §7 — the slicer CLI has no device-control surface | **Confirmed** — re-ran `--help` in the `bambu-studio-api` sidecar (`BambuStudio-02.07.01.57`); grep for `upload\|send\|host\|device\|network\|url` returns only `--pipe` and unrelated print-setting text |
+
+§7 is the strongest section in the document and I have nothing to add to it.
+
+---
+
+### 1. Wrong on the evidence
+
+**1.1 — "Bambuddy … read-only against Bambu Cloud" is false, and it is load-bearing.**
+§5 says the wiki "describes the integration as read-only against Bambu Cloud," and §10's ToS argument
+rests on "reading a personal account's own data … is what Bambuddy already does." Bambuddy **writes**
+to Bambu Cloud: `bambu_cloud.py:450` and `:535` POST to
+`https://api.bambulab.com/v1/iot-service/api/slicer/setting`, and `:564` DELETEs from it. Its own API
+surface confirms it — `POST /api/v1/cloud/settings` and `GET/PUT/DELETE /api/v1/cloud/settings/{setting_id}`,
+both of which §5's path listing omits. This does not overturn the ToS conclusion (writing your own
+slicer presets is still your own data with an honest UA), but the sentence as written is wrong, and
+"read-only" is doing rhetorical work it hasn't earned.
+
+**1.2 — §5's cloud inventory is incomplete in a way that matters.** It misses
+`/api/v1/cloud/settings/{setting_id}` and the entire **`/api/v1/orca-cloud/*` subtree** — seven paths
+including `auth/start`, `auth/password`, `auth/finish`, `logout`, `status`, `profiles`. That is a
+**second, independent cloud-credential store already running on the same box**. §10's credential-blast-radius
+paragraph is written as if `sprout-cmd` would be introducing the first such secret to that host. It
+would be the third.
+
+**1.3 — §4 and §5 contradict each other about coelacant1.**
+§5 dismisses it: *"Its own docs make no claim about controlling without Developer Mode and document no
+command list."* §4 then says of the cloud upload-and-task path: *"Whether a third-party client can
+create a task that the printer will accept is untested by any project I found."* That project ships
+`API_FILES_PRINTING.md`, which documents exactly that workflow —
+`upload_file(...)` → `get_cloud_files()` → `start_cloud_print(device_id=…, filename=…)` — and states
+its own limitation as *"Can't perform real-time print control (use MQTT for monitoring)."* So: the
+project was dismissed in §5 and then, in §4, cited-by-absence as evidence nobody had done the thing it
+does. The dismissal is half-right (no Developer-Mode claim, no *printer command* list) but the
+conclusion drawn from it is not. To be fair to the first author: that doc contains **no** verification
+evidence either — no statement of having run it against hardware. "One unverified implementation
+exists" is a different sentence from "untested by any project I found," and it is the one the evidence
+supports.
+
+**1.4 — §2's endpoint table smears its citations.** One blanket "Sources:" line covers four sources for
+nine rows. Checked individually: `sendemail/code`, `sendsmscode`, `refreshtoken` and `ttcode` appear
+**nowhere** in Bambuddy's `bambu_cloud.py` (grep across `/app/backend/app/` returns zero), so the
+"and Bambuddy's own `bambu_cloud.py`" attribution does not cover them. OpenBambuAPI's `cloud-http.md`
+documents `sendsmscode` and `refreshtoken` but **not** `sendemail/code`, and documents the
+applications endpoint as `GET /v1/iot-service/api/user/applications/{id}` — *not* the
+`/{appToken}/cert?aes256=` form. That form comes from bambu-mcp alone. The table reads as four
+corroborating sources; it is in places one source with three bystanders. Rows should be cited
+individually.
+
+**1.5 — the #1851 quote is real but has been trimmed of the part that undercuts the argument.**
+The quote checks out (`AdrianGarside`, 2026-01-23; the doc silently fixes his typo "Bamby"→"Bambu" and
+drops "for you" — fine). But his follow-up comment the same day says: *"it appears that with (at least)
+the latest A1 firmware **(in at least cloud mode)** it has stopped populating the 'is mqtt encryption
+disabled' bit… **What I don't know is if it was just the latest firmware or previously no one had
+complained or if they still populate that bit when in lan mode or developer lan mode.**"* The
+observation is scoped to cloud mode on an A1, and the maintainer explicitly does not know whether it
+generalises. The doc drops both qualifiers and promotes it to a Phase 0 work item. It is still a
+legitimate worry; it is not the settled fact the blockquote implies. And it is directly checkable here
+in thirty seconds — our H2C *is* currently populating the field, which is why `developer_mode` resolves
+to `false` at all (see 2.1).
+
+**1.6 — minor.** §1's table is headed "Probed live … `GET /api/v1/printers/2/status`". `model` is not in
+that payload; it comes from `GET /api/v1/printers/`. Everything else in the table is exactly right. In a
+table whose whole point is "measured, not assumed," one unmeasurable row is worth fixing.
+
+---
+
+### 2. The Phase 0 plan does not work as written
+
+**2.1 — "Prefer Bambuddy's probed answer over the inferred `fun` bit" is not implementable today, on
+this printer, from the app.** Bambuddy's logic (`bambu_mqtt.py:3125–3145`) is:
+
+```
+if "fun" in data:                                   -> derive from the bit
+elif developer_mode is None and not _dev_mode_probed -> probe
+```
+
+The probe is in the **`elif`**. The H2C sends `fun`. Therefore the probe **never runs on this machine**,
+and there is no probed answer to prefer. Worse, the REST API exposes a single `developer_mode` boolean
+with **no provenance field**, so even if both mechanisms ran, the client could not tell which one
+answered. As written, Phase 0 item 2 is not an app change — it is an unscoped Bambuddy change (add
+provenance, or force a probe alongside the bit). That should be stated, because "do this regardless, no
+cloud involved" currently reads as cheap and it isn't.
+
+**2.2 — the probe is not the safe, preferable oracle the doc treats it as.** Two problems, both visible
+in Bambuddy's own source:
+
+- **It is deliberately one-shot for a reason.** `_on_connect` (`bambu_mqtt.py:~789`): *"The probe
+  (ams_filament_setting to ext slot) can destabilize some firmware MQTT brokers, causing a reconnect →
+  probe → disconnect feedback loop (#887). Only probe once when developer_mode is truly unknown."* It is
+  additionally gated on a >30-key pushall and a 5-second post-connect delay. Phase 0 item 2 proposes
+  giving `.unknown` "a lifetime" — i.e. re-probing — which is precisely the behaviour upstream
+  engineered against. If you want that, say so and own the #887 risk explicitly.
+- **Its classifier is over-permissive.** `_handle_dev_mode_probe_response`: anything that is not
+  (`result == "failed"` **and** `"verify failed" in reason`) sets `developer_mode = True`. An unrelated
+  failure — bad parameter, wrong slot, firmware quirk — is read as "commands are accepted." That is a
+  predicate answering a nearby question, the exact pattern CLAUDE.md's table is about. The doc quotes
+  that rule at the firmware and then recommends preferring the predicate that breaks it.
+
+**2.3 — Bambuddy already ships a developer-mode capability endpoint, and neither app nor document knows
+it exists.** `GET /api/v1/printers/developer-mode-warnings` returns, live, right now:
+
+```json
+[{"printer_id": 2, "name": "H2C"}]
+```
+
+Grepping the repo: no `.swift`, `.ts` or `.tsx` outside tests references it; both apps read
+`developer_mode` from REST status only (`native/Sprout/Api/Models.swift:192`,
+`mobile/src/api/types.ts:116`). This is a second, server-authored signal that already answers "does
+this printer need Developer Mode?" as a first-class question rather than as a bitfield inference. It
+does not replace the flag and it has its own provenance question — but the brief's "check whether
+Bambuddy already exposes an endpoint for part of this" turns up a hit that §5 misses, and §5 is the
+section whose job that was.
+
+---
+
+### 3. The spike plan measures the wrong half
+
+**3.1 — Spike 1a tests the nine assumed-blocked actions and none of the assumed-*working* ones. That is
+backwards on both cost and consequence.** `LanMode.swift` exempts `.stop`, `.light` and `.camera` with
+comments, not measurements:
+
+- **`.stop` is the dangerous one.** Bambuddy sends `{"print": {"command": "stop", "sequence_id": "0"}}`
+  (`bambu_mqtt.py:3838`) — same `print.*` namespace, same `device/<SERIAL>/request` topic, same
+  verification path as `print.pause`. The code's justification for exempting it is a *safety* argument
+  ("a Stop that might fail is strictly better than one that cannot be pressed") and I agree with the
+  argument. But it is an argument about **what to render**, not evidence about **what the printer
+  does**. If `stop` is refused, this app currently renders a full-brightness emergency stop that
+  silently does nothing on a print that is failing — the highest-consequence instance of the exact bug
+  the subsystem exists to prevent, and the one case where the honest answer ("this may not work — cut
+  power at the plug") is materially different from the dishonest one. §1's own quote of Bambuddy's
+  probe semantics gives no reason to think `stop` is special.
+- **`.light`** is exempted because it "publishes system/ledctrl, which the firmware does not verify the
+  same way." I can confirm the payload (`system.ledctrl`, `bambu_mqtt.py:4841`). I can find **no source
+  anywhere** for the claim that the firmware verifies `system.*` differently from `print.*`. Bambu's
+  own framing is "critical operations," which is not a namespace. And this is falsifiable **by eye in
+  ten seconds** — toggle it and look at the printer.
+- Note also that `set_chamber_light`, `stop_print` and `pause_print` all `return True` immediately after
+  `publish()`. The belief that light works comes from the same non-checking code path that produced the
+  original lie. It is not independent evidence.
+
+**Reorder the plan:** measure the *unblocked* three first. Cheaper (light is free and visual), lower
+risk (no `pause`/`resume`/`project_file`), and the only branch with a safety consequence.
+
+**3.2 — Spike 1a won't measure the bytes production sends.** Bambuddy hardcodes `sequence_id: "0"` on
+pause, resume, stop, `print_speed`, `ams_control` and `auto_stop_ams_dry`. Spike 1a specifies "a unique
+`sequence_id`"; §10 specifies "idempotency by `sequence_id`". Both are correct for a purpose-built
+`sprout-cmd`, and both are unavailable on today's Bambuddy — where every pause and every stop share
+sequence id `0` and replies cannot be attributed. Worth one line, because a reader could take §10's
+idempotency requirement as satisfiable now.
+
+**3.3 — Spike 1b's inference is under-determined, and it is not a read.** Publishing
+`{"security": {"command": "app_cert_list"}}` is a **write to the request topic** — the same topic whose
+messages this firmware refuses. Only the *effect* is read-only. Consequently "no response at all means
+H2C firmware does something else entirely and §6 needs re-researching" does not follow: silence is
+equally consistent with (a) the scheme isn't implemented, (b) the request was itself verify-refused, and
+(c) unknown commands are dropped without reply. Only a **non-empty `cert_ids` list** is informative;
+every other outcome is null. Say that, or the spike will be over-read.
+
+**3.4 — Spike 2 step 1 cannot run as specified.** It routes login through Bambuddy's
+`POST /api/v1/cloud/login`, which sits behind the same authorization that makes `/cloud/status` return
+403 for the app's key — re-confirmed today. So the spike needs the admin JWT or a cloud-enabled key,
+while §10 argues that key **must stay** unauthorized. The resolution is easy (do it out of band as
+admin, never via the app's key) but it must be written down, because "the spike goes through Bambuddy's
+API" and "the app's key must never see cloud data" are the same near-synonym collision the document
+warns about elsewhere.
+
+**3.5 — the cheapest spike in the plan is missing.** §8 says, correctly, "we do not currently know which
+cloud, if either, this printer is bound to," and then routes that answer through Spike 2 — which costs
+the owner's Bambu credentials, a 2FA dance, and a Cloudflare fight. But if the printer is in **LAN Only
+Mode**, the whole cloud branch is dead and nobody needs to type a password. That is answerable with zero
+credentials and zero cloud contact: the printer's own LCD states it; `GET /api/v1/printers/2/status`
+carries `wired_network`, `wifi_signal`, `ipcam`, `sdcard`; and Bambuddy retains the full
+`state.raw_data` blob. **Make that Spike 0.** §8's decision consequence 3 ("if not cloud-bound at all,
+the entire branch is moot") deserves the cheapest possible test, not the most expensive one.
+
+**3.6 — "run every printer-touching step while the printer is idle" is a sentence, not a gate.** The
+printer was `RUNNING` at 16% when I re-probed today, as it was when this was written. Spike 1a includes
+`print.pause`, `print.resume` and `print.project_file`. Put `state != RUNNING` in the script as a hard
+precondition.
+
+---
+
+### 4. §6 draws a line the evidence does not support
+
+**4.1 — the certificate path's single source has never been shown to work.** bambu-mcp's
+`cloud-api-reference.md` describes itself as *reverse-engineered from Bambu Handy v3.x* by jadx APK
+decompilation plus Dio interceptor logs. There is **no evidence in it that the author ever called the
+cert endpoint successfully** — the endpoint is an observed/inferred URL shape, not a tested call. §6
+hedges well ("assume this fails", "do not put it on a roadmap") and I would keep that hedging. But §9
+then makes the entire Phase 1 architecture conditional on Spike 3 succeeding, and the decision-gate row
+"3 produces a working enrolment → build `sprout-cmd`" gives that outcome the same table weight as the
+others. On the evidence it is far and away the least likely row in the table.
+
+**4.2 — "legitimate account-derived enrolment" and "impersonating an official client" are probably the
+same act.** §6's own quoted source says *"the app token and AES payload are generated client-side."*
+Client-side means inside Handy. There is no published `appToken` derivation and no published AES key;
+obtaining either means extracting client secrets from the official application — which is the thing the
+second half of §6 correctly refuses. So the bright line between §6's two halves is likely not a line at
+all: the "clean" path's *first step* is the "dirty" path's method. §6 presents Spike 3 as an open
+legitimacy question. It should present it as: *the only known way to formulate this request is to
+extract client credentials from Handy, which we have already ruled out; the spike exists solely to
+confirm that and close the branch.* That is a materially different instruction to whoever runs it.
+
+**4.3 — "There is no published rule that settles the certificate-enrolment path either way" is not
+right.** Bambu has published a position on third-party access, and this document does not engage with
+it. Their wiki's *Third-party Integration* page and the *Updates and Third-Party Integration with Bambu
+Connect* blog post direct third-party software to **Bambu Connect** and the
+`bambu-connect://import-file?path=…&name=…&version=…` URL scheme, with the stated rationale that it lets
+everyone interact with printers **without requiring "complex verification or certification"** — and
+Bambu extended that invitation to OrcaSlicer's developers along with a new network plugin. That is a
+published answer to §6's question, and the answer is *no, third parties do not get certificates; they
+get Connect.* The doc mentions Bambu Connect exactly once, in §7, as the thing that replaced the network
+plugin, and never evaluates it.
+
+To be clear, I am **not** proposing Bambu Connect: it is a desktop GUI app, so it cannot serve a
+headless home server or an iPhone, and its file-import scheme addresses only `startPrint` — not pause,
+speed, AMS or drying. Those are good reasons to reject it. They are also reasons the document should
+state, because "we evaluated the official path and it doesn't fit our topology" is a much stronger
+position than "there is no published rule." As a bonus, this is a *second* independent argument that
+§4's `project_file` conclusion is right: Bambu's sanctioned print-start path for third parties is
+explicitly not MQTT.
+
+---
+
+### 5. Things treated as safer or more valuable than they are
+
+**5.1 — the coexistence claim is generalised off-model and off-firmware, and it is exactly the bug
+CLAUDE.md describes.** §5: *"Phase 0 already proved a second MQTT client can coexist with Bambuddy
+against the same printer with no telemetry flap (`docs/phase0-results.md` §5) — so a sidecar that
+publishes signed commands would not have to displace Bambuddy's connection."* What Phase 0 §5 actually
+proved: **Bambuddy + ha-bambulab, on the A1, firmware `01.08.00.00`.** Three gaps:
+
+- **Different machine.** The target is an H2C on `01.02.00.00`. The A1 is not even registered in
+  Bambuddy any more — `GET /api/v1/printers/` returns only id 2. `docs/phase0-results.md` is stale on
+  this point and should carry a note.
+- **Known to be firmware-dependent, by that same document.** Phase 0 §1: *"The old single-MQTT-client
+  reports were firmware `01.04`; they do not apply here."* The Phase 0 author explicitly flagged
+  coexistence as firmware-scoped. Generalising it across a model boundary and six major firmware
+  versions discards their own caveat.
+- **Contradicted by Bambuddy's source.** #887 is a report of extra publishes destabilising a firmware
+  broker into a reconnect loop.
+
+"Phase 0 proved coexistence is safe" → "Phase 0 observed coexistence on a different printer on
+different firmware; it must be re-established on the H2C before a second publisher is introduced."
+
+**5.2 — §9's diagram promises what §4 says is impossible.** The architecture diagram labels the
+`sprout-cmd` path **"[the 9 actions]"**. §4's own table says `startPrint` / `printAgain` are "Probably
+still no" *even with a valid signing identity* — a conclusion I think is correct and well-supported,
+since bambu-mcp signs **every** command and still reports `project_file` as needing Developer Mode. So
+the best possible outcome of the full Phase 1 build is **7 of 9**, missing precisely the two that the
+app's primary loop (slice on the server → print) depends on. That belongs in the verdict at the top,
+not in a table cell 200 lines above a diagram that contradicts it. It also reframes the whole
+cost/benefit: a multi-week sidecar, a quarterly 2FA ceremony and a new credential store, to restore
+pause/resume/speed/AMS/dry — while the app still cannot start a print.
+
+**5.3 — every protocol detail in §3 comes from a different printer generation, and §4 only flags half of
+it.** The signed-command example is from **Handy v3.x against a P1S**. bambu-mcp supports
+P1P/P1S/X1C/A1/A1 Mini — **no H2 series**. The `fun`-field observation is A1. §4 correctly flags the
+model gap against bambu-mcp's *capability* claim, but the same gap applies to the **wire format** in
+§3: `sign_ver: "v1.0"`, the header field set, the `payload_len` semantics and the `CN=<SERIAL>` cert_id
+convention are all unverified on H2 firmware. Bambuddy itself carries H2C-specific divergence in this
+area (`bambu_mqtt.py:~3633`, *"project_file for H2C rack-swap (O1C2) (#1780)"*), which is direct
+evidence that this model's command surface is not the P1S's. §3 should carry the same caveat §4 does.
+
+**5.4 — the physical-risk paragraph understates the realistic failure mode.** §10 says a signing bug
+"produces refusals, not wrong commands — the failure mode is inert," and names retry loops as the real
+hazard. Both true. The one missing: an extra publisher that destabilises the broker (#887) does not
+produce an inert refusal — it can drop **Bambuddy's** session, which takes out status, the Live
+Activity, and the camera mid-print. That is the plausible bad day here, and it applies to Spike 1a and
+Spike 1b as much as to `sprout-cmd`.
+
+**5.5 — the credential blast radius is bigger than "compromise of the home server."** That host also
+runs the cloudflared tunnel publishing Bambuddy to the public internet, gated only by Bambuddy's own
+auth (`docs/phase0-results.md` §6). And per 1.2 it already stores two cloud credential sets. A third
+store on a publicly-reachable host is a different sentence from "compromise of the home server would
+expose it."
+
+---
+
+### 6. The buried lede
+
+§10's last paragraph — *"if the owner does not actually use Handy or remote monitoring, that price is
+close to zero and this entire document is an expensive way to avoid a settings toggle"* — is the most
+important sentence in the document and it is in position 6 of 6 in the last section. It is a
+**one-question decision gate with zero cost**: *does the owner use Handy, remote monitoring, or
+MakerWorld send-to-printer on this machine?* If no, §§2–6 and §9 are moot before anyone opens a
+terminal.
+
+Two additions before that gate can be trusted:
+
+1. **Verify it for a CN-market H2C.** "Developer Mode is a supported, documented, one-time action" is
+   sourced from ha-bambulab and Bambu's general docs. This document's own §8 cites a region-lock thread
+   for China machines. Whether LAN Only + Developer Mode is available, and what it costs, on a
+   China-region H2C on `01.02.00.00` is not established anywhere above. That is Spike 0's second
+   question, and it is free.
+2. **Note the coupling.** Enabling Developer Mode issues a **new access code**, which must be re-entered
+   in Bambuddy (the app never sees it — the code lives only in Bambuddy per `docs/phase0-results.md` §2).
+   Cheap, but it is a step, and it is the kind of thing that turns "one toggle" into an evening.
+
+### 7. Recommended edits, in order
+
+1. Move the Developer Mode comparison (§10 last paragraph) above the verdict, with the CN-H2C caveat.
+2. Add **Spike 0** (free, no credentials): is the printer cloud-bound or LAN-only, and is Developer Mode
+   even offered on this firmware/region? It can kill the entire branch before Spike 2 costs anyone a
+   password.
+3. Reorder Spike 1a to measure `.light`, `.stop`, `.camera` **first**. Treat a refused `stop` as a
+   safety finding, not a capability finding.
+4. Fix 1.1 (read-only), 1.2 (missing paths incl. `orca-cloud`), 1.3 (coelacant1), 1.4 (per-row
+   citations), 1.5 (restore #1851's cloud-mode scoping).
+5. Rewrite Phase 0 item 2: it is a Bambuddy change (provenance on `developer_mode`), not an app change,
+   and it must not reintroduce repeat probing without owning #887.
+6. Add `GET /api/v1/printers/developer-mode-warnings` to §5 and to Phase 0.
+7. Restate §5's coexistence claim as scoped to the A1 on `01.08.00.00`, and make re-establishing it on
+   the H2C a precondition of any second publisher — including the spikes.
+8. Fix §9's diagram to read "[7 of the 9 actions — not startPrint/printAgain]", and say so in the
+   verdict.
+9. Rewrite §6's framing per 4.2 and 4.3: Spike 3 is a confirm-and-close exercise, not an open
+   legitimacy question, and Bambu's published third-party position should be cited and dismissed on
+   topology grounds rather than described as absent.
+10. Extend §3's P1S/Handy-v3.x caveat to the wire format itself, citing the H2C `project_file`
+    divergence already in Bambuddy.
+
+### Sources added by this review
+
+- [Bambu Lab Wiki — Third-party Integration](https://wiki.bambulab.com/en/software/third-party-integration)
+- [Bambu Lab — Updates and Third-Party Integration with Bambu Connect](https://blog.bambulab.com/updates-and-third-party-integration-with-bambu-connect/)
+- [coelacant1 — `API_FILES_PRINTING.md`](https://github.com/coelacant1/Bambu-Lab-Cloud-API/blob/main/API_FILES_PRINTING.md)
+- [greghesp/ha-bambulab#1851 — comments of 2026-01-23](https://github.com/greghesp/ha-bambulab/issues/1851) (the full maintainer comment, incl. the cloud-mode scoping)
+- Bambuddy `backend/app/services/bambu_mqtt.py` (`:789`, `:1047`, `:3125–3145`, `:3422–3490`, `:3633`, `:3744`, `:3838`, `:4160`, `:4587`, `:4760`, `:4822`, `:4981`, `:5075`, `:5697`) and `bambu_cloud.py` (`:23`, `:262–264`, `:307–342`, `:352`, `:450`, `:535`, `:564`, `:587`), read from the running container 2026-08-10
+- Live probes 2026-08-10: `GET /api/v1/printers/`, `GET /api/v1/printers/2/status`,
+  `GET /api/v1/printers/developer-mode-warnings`, `GET /api/v1/cloud/status` (403), `openapi.json`
+  (548 paths / 685 operations), `BambuStudio-02.07.01.57 --help` in the `bambu-studio-api` sidecar
+
+---
+
+## Spike 1 results (run 2026-08-10, read-only, no account)
+
+Ran the cheapest kill-switch first — probe the printer's `security` subsystem over the EXISTING LAN
+MQTT connection, using only the access code Bambuddy already holds. No Bambu account credentials
+were involved at any point. Scripts: `deploy/spikes/cert_*.py`. All read-only (they publish query
+commands and a `pushall`, which Bambuddy already does continuously; a second MQTT client coexists
+fine, as Phase 0 established).
+
+**Findings, in order:**
+
+1. **`pushall` does not surface any security block.** 395 distinct key paths, all under `print.*`.
+   The trusted-cert list is not in the standard report. (Two apparent matches — `design_id`,
+   `wifi_signal` — were substring false positives on "sign".)
+
+2. **The printer DOES have a `security` subsystem and answers `security.app_cert_list`.** It also
+   recognises `security.get_app_cert_list`, `security.get_cert_list`, `info.get_accessory` and
+   `system.get_access_code` — every command was echoed back, so the firmware knows them.
+
+3. **But `security.app_cert_list` returns `{"result": "FAIL"}`** — no `reason`, no list — to a plain
+   authenticated LAN client.
+
+**Interpretation.** The subsystem the certificate-enrolment idea depends on exists, which is more
+than the design assumed. But it will not hand its trusted-cert list to an ordinary LAN client. The
+`FAIL` has no reason code, so it is ambiguous between (a) the request is missing required parameters
+whose shape we do not have a source for, and (b) the command itself requires an
+already-trusted/signed identity to issue — which would be circular: you would need the signing cert
+in order to ask which certs are trusted.
+
+**Verdict.** The cheap reads are exhausted and lean negative. Distinguishing (a) from (b) means
+guessing the undocumented payload shape or reversing the official app — exactly the low-certainty
+work the "one path that could actually work" section said to *assume fails until a spike says
+otherwise*. This spike did not say otherwise. **Recommendation stands: do not build a cloud/cert
+transport.** The pragmatic fork is unchanged — accept the limits with the honest UI the app already
+has, or enable LAN Developer Mode (new access code, re-entered once; loses Handy).
