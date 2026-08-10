@@ -80,15 +80,26 @@ struct WizardView: View {
     private var trays: [AmsTrayRef] { AmsTopology.trayRefs(status) }
     private var mounted: [NozzleSize] { PresetSelect.mountedNozzles(status) }
 
+    /// Inventory assignments narrowed to what filament matching and naming read.
+    private var assignmentLikes: [AssignmentLike] { assigns.map { AssignmentLike($0) } }
+
     private var loaded: [LoadedFilament] {
         guard let presets else { return [] }
         return FilamentMatch.loaded(
             trays: trays,
-            assignments: assigns.map { AssignmentLike($0) },
+            assignments: assignmentLikes,
             presets: presets.allFilaments,
             token: token,
             nozzle: nozzle
         ).filter { !$0.isSupport }
+    }
+
+    /// What is in the tray this print is mapped to — the spool the nozzle will really pull from, and
+    /// therefore what the Review step has to describe. A catalog filament picked on the Material step
+    /// only tells the SLICER how to flow the material; it does not change what is physically loaded.
+    private var mappedIdentity: FilamentIdentity? {
+        trays.first { $0.globalId == slot }
+            .map { FilamentMatch.identity(for: $0, in: assignmentLikes) }
     }
 
     private var printerMismatch: Bool { alreadySliced && !profile.matchesSlicedFor(slicedFor) }
@@ -587,8 +598,15 @@ struct WizardView: View {
 
     private func loadedRow(_ f: LoadedFilament) -> some View {
         let selected = f.preset != nil && filament?.id == f.preset?.id
-        // A vendor colour name beats anything computed; the HSL namer is the fallback.
-        let name = f.colorName ?? FilamentColor.name(f.colorHex)
+        // Named by the domain, exactly as the Hardware tab names it: the spool's own colour name over
+        // the computed one, and its real filament on the second line. Deriving the title here is what
+        // dropped "Bambu PLA Wood" down to plain "PLA".
+        let id = f.identity
+        let sub = [
+            "Slot \(f.slot + 1)",
+            id.product,
+            f.preset == nil ? "no matching profile" : nil,
+        ].compactMap { $0 }.joined(separator: " · ")
         return Tap(disabled: f.preset == nil) {
             if let p = f.preset {
                 filament = p
@@ -596,12 +614,12 @@ struct WizardView: View {
             }
         } content: {
             HStack(spacing: 13) {
-                Swatch(value: f.colorHex, size: 30, radius: 9)
+                Swatch(value: id.colorHex, size: 30, radius: 9)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(name.map { "\($0) · \(f.material)" } ?? f.material)
+                    Text(id.title)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(c.t1)
-                    Text("Slot \(f.slot + 1)\(f.preset == nil ? " · no matching profile" : "")")
+                    Text(sub)
                         .font(.mono(11, weight: .medium))
                         .foregroundStyle(c.t3)
                 }
@@ -884,8 +902,10 @@ struct WizardView: View {
 
     private var stepReview: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Reviews the NEWLY produced sliced file when the slice returned one.
-            plateReview(fileId: result?.libraryFileId ?? file.id, sliced: true)
+            // Reviews the NEWLY produced sliced file when the slice returned one, and describes the
+            // filament with the spool that is in the mapped tray rather than the one the slicer
+            // defaulted to — this step is the user's last look at what will actually come out.
+            plateReview(fileId: result?.libraryFileId ?? file.id, sliced: true, selection: mappedIdentity)
             NoticeCard(
                 icon: "info.circle",
                 tint: c.accent,
@@ -927,14 +947,15 @@ struct WizardView: View {
 
     private func trayRow(_ t: AmsTrayRef, multi: Bool) -> some View {
         let empty = (t.trayType ?? "").isEmpty
-        let color = FilamentColor.norm(t.trayColor)
+        // The same naming as the Material step and the Hardware tab. Naming the colour from the hex
+        // here — the row never looked at the spool at all — printed "Orange PLA" beside a brown
+        // swatch of "Clay Brown" Bambu PLA Wood.
+        let id = FilamentMatch.identity(for: t, in: assignmentLikes)
         let position = multi ? "\(t.unitLabel) · Slot \(t.localId + 1)" : "Slot \(t.localId + 1)"
-        let contents = empty
-            ? "Empty"
-            : [FilamentColor.name(color), t.trayType].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
+        let contents = empty ? "Empty" : id.line
         return Tap(disabled: empty) { slot = t.globalId } content: {
             HStack(spacing: 13) {
-                Swatch(value: color, size: 28, radius: 8, empty: empty)
+                Swatch(value: id.colorHex, size: 28, radius: 8, empty: empty)
                 Text("\(position) · \(contents)")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(c.t1)
@@ -991,12 +1012,16 @@ struct WizardView: View {
 
     // MARK: - Shared pieces
 
-    private func plateReview(fileId: Int, sliced: Bool) -> some View {
+    /// `selection` is passed only where the user has actually made one (Review). On step 1 nothing has
+    /// been chosen yet — `slot` is still just the seeded default — so the file is described exactly as
+    /// it was sliced.
+    private func plateReview(fileId: Int, sliced: Bool, selection: FilamentIdentity? = nil) -> some View {
         WizardPlateReview(
             client: model.client,
             fileId: fileId,
             camToken: model.cameraToken,
             plateIndex: selectedPlate,
+            selection: selection,
             sliced: sliced,
             onSelectPlate: { selectedPlate = $0 },
             onViewLayers: { viewLayers = LayerTarget(file: layerFile(id: fileId)) }
@@ -1465,6 +1490,9 @@ private struct WizardPlateReview: View {
     let fileId: Int
     let camToken: String?
     let plateIndex: Int
+    /// The filament the print is mapped to, when the user has chosen one. nil describes the file as
+    /// sliced.
+    var selection: FilamentIdentity?
     var sliced: Bool = true
     var onSelectPlate: ((Int) -> Void)?
     var onViewLayers: (() -> Void)?
@@ -1477,6 +1505,10 @@ private struct WizardPlateReview: View {
     @State private var failed = false
 
     private var vm: PlateReviewVM { PlateReview.build(plates: plates, meta: meta, plateIndex: plateIndex) }
+
+    /// The plate's filament list, reconciled against the mapped spool — see `reviewRows` for which
+    /// source wins each field.
+    private var rows: [ReviewFilamentRow] { FilamentIdentity.reviewRows(vm.filaments, selection: selection) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1528,10 +1560,10 @@ private struct WizardPlateReview: View {
                     .padding(.top, 12)
             }
 
-            if !vm.filaments.isEmpty {
+            if !rows.isEmpty {
                 VStack(spacing: 0) {
-                    ForEach(Array(vm.filaments.enumerated()), id: \.offset) { i, f in
-                        filamentRow(f, first: i == 0)
+                    ForEach(rows) { f in
+                        filamentRow(f, first: f.index == 0)
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(c.s2))
@@ -1637,10 +1669,10 @@ private struct WizardPlateReview: View {
         }
     }
 
-    private func filamentRow(_ f: ReviewFilament, first: Bool) -> some View {
+    private func filamentRow(_ f: ReviewFilamentRow, first: Bool) -> some View {
         HStack(spacing: 12) {
-            Swatch(value: FilamentColor.norm(f.color), size: 22, radius: 7)
-            Text(f.type)
+            Swatch(value: f.colorHex, size: 22, radius: 7)
+            Text(f.name)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(c.t1)
             Spacer(minLength: 8)
@@ -1655,7 +1687,7 @@ private struct WizardPlateReview: View {
         }
     }
 
-    private func usage(_ f: ReviewFilament) -> String {
+    private func usage(_ f: ReviewFilamentRow) -> String {
         var out = f.grams.map { String(format: "%.1f g", $0) } ?? ""
         if let m = f.meters { out += "  ·  " + String(format: "%.2f m", m) }
         return out

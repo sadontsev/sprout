@@ -38,8 +38,22 @@ private enum SdPresentation: Sendable { case player, layers }
 /// Filter / search / naming rules for the library list. Pure, so the view never re-derives them.
 private enum LibraryBrowse {
     /// A file is "sliced" when it carries G-code or was produced by slicing for a model.
+    /// Whether the file was produced by a slicer — drives the "sliced" BADGE only.
+    ///
+    /// `slicedForModel` names the machine a file was prepared for, which a plain `.3mf` can carry
+    /// too: the library holds one that says "Creality K2 Pro" while containing no toolpaths at all.
+    /// So this is informational and must NOT gate anything that needs G-code — see `hasGcode`.
     static func isSliced(_ f: LibraryFile) -> Bool {
         (f.fileType ?? "").contains("gcode") || !(f.slicedForModel ?? "").isEmpty
+    }
+
+    /// Whether the file actually contains toolpaths, i.e. whether `/gcode` will answer.
+    ///
+    /// Only a `gcode.3mf` does. Gating the layer viewer on `isSliced` instead offered "View layers"
+    /// on a plain `.3mf` and the request 404'd — the same shape of bug as a button that looks
+    /// enabled while its handler refuses.
+    static func hasGcode(_ f: LibraryFile) -> Bool {
+        (f.fileType ?? "").lowercased().contains("gcode")
     }
 
     /// Upload names arrive percent-encoded (`Adapter%20hexagon.stl`). A malformed escape decodes to
@@ -725,7 +739,8 @@ struct LibraryView: View {
                 if (f.fileType ?? "").lowercased() == "stl" {
                     Button { model.overlay = .stlViewer(f) } label: { Label("View in 3D", systemImage: "cube") }
                 }
-                if LibraryBrowse.isSliced(f) {
+                // hasGcode, not isSliced: only a gcode.3mf has toolpaths to show.
+                if LibraryBrowse.hasGcode(f) {
                     Button { model.overlay = .layerViewer(f) } label: { Label("View layers", systemImage: "square.3.layers.3d") }
                 }
                 Button { Task { await share(f) } } label: { Label("Share…", systemImage: "square.and.arrow.up") }

@@ -308,13 +308,18 @@ private struct SlotCard: View {
         spool.flatMap { FilamentColor.norm($0.rgba) } ?? slot.color
     }
 
+    /// Composed by `FilamentIdentity` rather than here: the print wizard named the same spool two
+    /// other ways and got both wrong, so the precedence now lives in exactly one place.
     private var title: String {
-        if let spool {
-            if let named = spool.colorName, !named.isEmpty { return "\(named) \(spool.material)" }
-            return join([FilamentColor.name(swatch), spool.material], " ")
-        }
-        if slot.empty { return "Empty slot" }
-        return join([FilamentColor.name(swatch), slot.label], " ")
+        if slot.empty, spool == nil { return "Empty slot" }
+        return FilamentIdentity.resolve(
+            colorHex: swatch,
+            spoolColorName: spool?.colorName,
+            // The spool's material is the better answer when inventory knows the tray; `slot.label`
+            // is the tray's own word for it.
+            material: spool?.material ?? slot.label,
+            product: nil   // the specific filament has its own line below (`spoolLine`)
+        ).title
     }
 
     private var grams: Double? { spool?.gramsRemaining }
