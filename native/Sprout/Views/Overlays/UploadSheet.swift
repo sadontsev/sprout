@@ -1258,10 +1258,12 @@ private struct MakerWorldPanel: View {
         }
     }
 
-    /// The owner's own collections, from their la-push. Built from the same config the Live Activity
-    /// registration uses, so there is one answer to "where is my push server".
+    /// The owner's own collections, from their la-push.
+    ///
+    /// `laPushUrl`, **not** `resolvePushUrl`: collections are plain authenticated HTTP and have
+    /// nothing to do with APNs, so they must not disappear when Live-Activity push is switched off.
     private var collectionsClient: CollectionsClient {
-        CollectionsClient(baseUrl: model.config.flatMap(ConfigRules.resolvePushUrl),
+        CollectionsClient(baseUrl: model.config.flatMap(ConfigRules.laPushUrl),
                           apiKey: model.config?.apiKey ?? "")
     }
 
