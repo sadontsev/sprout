@@ -62,11 +62,28 @@ struct LoadedFilament: Hashable, Sendable, Identifiable {
     /// The tray's own material string, e.g. "PETG-CF".
     var material: String
     var colorHex: String?
+    /// The inventory spool's OWN colour name, or nil when no spool is assigned. Raw input to
+    /// `identity`, which is where the "vendor name beats the computed one" rule lives.
     var colorName: String?
+    /// The spool's own filament name ("Bambu PLA Wood"), when inventory knows one. The tray itself
+    /// only ever reports the bare material type, so without this the wizard cannot tell a Wood PLA
+    /// from a Basic one.
+    var product: String?
     var preset: Preset?
     var isSupport: Bool
 
     var id: Int { slot }
+
+    /// What to call this filament. Derived, never stored — `FilamentIdentity` owns the precedence,
+    /// and every screen that shows a filament asks it the same question.
+    var identity: FilamentIdentity {
+        FilamentIdentity.resolve(
+            colorHex: colorHex,
+            spoolColorName: colorName,
+            material: material,
+            product: product
+        )
+    }
 }
 
 enum FilamentMatch {
@@ -143,6 +160,37 @@ enum FilamentMatch {
         return nil
     }
 
+    /// The inventory spool assigned to `tray`, if any.
+    ///
+    /// Matches on BOTH ids. Matching the tray id alone made AMS 2 slot 0 inherit AMS 1 slot 0's
+    /// spool — wrong brand and colour, and a wrong slicer preset driving the slice. The unit id is
+    /// optional on the assignment, so a legacy record with no unit still matches its tray as before.
+    static func spool(for tray: AmsTrayRef, in assignments: [AssignmentLike]) -> AssignmentLike.SpoolLike? {
+        let match = assignments.first { $0.trayId == tray.localId && $0.amsId == tray.unitId }
+            ?? assignments.first { $0.trayId == tray.localId && $0.amsId == nil }
+        return match?.spool
+    }
+
+    /// What to call whatever is loaded in `tray` right now — the same answer on every screen.
+    ///
+    /// An empty tray resolves to an identity that names nothing (`line` is ""), which callers render
+    /// as "Empty" rather than as a half-filled name.
+    static func identity(for tray: AmsTrayRef, in assignments: [AssignmentLike]) -> FilamentIdentity {
+        let assigned = spool(for: tray, in: assignments)
+        return FilamentIdentity.resolve(
+            colorHex: colorHex(tray, assigned),
+            spoolColorName: assigned?.colorName,
+            material: tray.trayType,
+            product: assigned?.slicerFilamentName
+        )
+    }
+
+    /// The tray's own colour wins; the inventory spool is the fallback for a tray whose colour the
+    /// printer does not know.
+    private static func colorHex(_ tray: AmsTrayRef, _ spool: AssignmentLike.SpoolLike?) -> String? {
+        FilamentColor.norm(tray.trayColor) ?? FilamentColor.norm(spool?.rgba)
+    }
+
     /// True for filaments the wizard keeps out of the pickable list — they are printed as support,
     /// not as a model.
     private static func isSupport(_ material: String) -> Bool {
@@ -164,25 +212,18 @@ enum FilamentMatch {
         var out: [LoadedFilament] = []
         for tray in trays {
             guard let material = tray.trayType, !material.isEmpty else { continue }  // empty slot
-            // Match on BOTH ids. Matching the tray id alone made AMS 2 slot 0 inherit AMS 1 slot 0's
-            // spool — wrong brand and colour, and a wrong slicer preset driving the slice. The unit
-            // id is optional on the assignment, so a legacy record with no unit still matches its
-            // tray as before.
-            let assignment = assignments.first { $0.trayId == tray.localId && $0.amsId == tray.unitId }
-                ?? assignments.first { $0.trayId == tray.localId && $0.amsId == nil }
-            let spool = assignment?.spool
+            let assigned = spool(for: tray, in: assignments)
             out.append(LoadedFilament(
                 slot: tray.globalId,
                 unitLabel: tray.unitLabel,
                 localId: tray.localId,
                 material: material,
-                // The tray's own colour wins; the inventory spool is the fallback for a tray whose
-                // colour the printer does not know.
-                colorHex: FilamentColor.norm(tray.trayColor) ?? FilamentColor.norm(spool?.rgba),
-                colorName: spool?.colorName,
+                colorHex: colorHex(tray, assigned),
+                colorName: assigned?.colorName,
+                product: assigned?.slicerFilamentName,
                 preset: preset(
                     in: presets,
-                    slicerName: spool?.slicerFilamentName,
+                    slicerName: assigned?.slicerFilamentName,
                     material: material,
                     token: token,
                     nozzle: nozzle

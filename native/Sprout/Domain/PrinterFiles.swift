@@ -6,8 +6,12 @@ enum PrinterFiles {
 
     /// Sliced Bambu print files (`.gcode.3mf` / `.3mf`) — these get a plate preview and the layer
     /// viewer. Requires the dot, so `notes.3mf.txt` is not one.
+    /// A sliced 3MF — one that actually carries toolpaths and plate metadata.
+    ///
+    /// `.gcode.3mf`, NOT any `.3mf`: a plain project 3MF has no G-code, and treating it as sliced
+    /// offers a layer view whose request 404s.
     static func isSliced3mf(_ name: String) -> Bool {
-        name.lowercased().hasSuffix(".3mf")
+        name.lowercased().hasSuffix(".gcode.3mf")
     }
 
     /// AVPlayer plays the printer's timelapse `.mp4`s; `.avi` (older firmwares) is NOT playable.

@@ -5,16 +5,24 @@ final class PrinterFilesTests: XCTestCase {
 
     // MARK: - isSliced3mf
 
-    func testIsSliced3mfMatchesDot3mfAndGcode3mfCaseInsensitively() {
+    func testIsSliced3mfMatchesGcode3mfCaseInsensitively() {
         XCTAssertTrue(PrinterFiles.isSliced3mf("Bambu_Cube_XYZ.gcode.3mf"))
-        XCTAssertTrue(PrinterFiles.isSliced3mf("model.3MF"))
+        XCTAssertTrue(PrinterFiles.isSliced3mf("MODEL.GCODE.3MF"))
         XCTAssertFalse(PrinterFiles.isSliced3mf("notes.3mf.txt"))
         XCTAssertFalse(PrinterFiles.isSliced3mf("video.mp4"))
     }
 
+    /// A plain project 3MF is NOT sliced. It carries no toolpaths, so `/gcode` answers 404 — which
+    /// is exactly what "View layers" did on a `.3mf` the library had listed as sliced.
+    func testPlainThreeMfIsNotSliced() {
+        XCTAssertFalse(PrinterFiles.isSliced3mf("model.3mf"))
+        XCTAssertFalse(PrinterFiles.isSliced3mf("model.3MF"))
+        XCTAssertFalse(PrinterFiles.isSliced3mf(".3mf"))
+    }
+
     func testIsSliced3mfNeedsTheDot() {
-        XCTAssertTrue(PrinterFiles.isSliced3mf(".3mf"))
-        XCTAssertFalse(PrinterFiles.isSliced3mf("3mf"))
+        XCTAssertTrue(PrinterFiles.isSliced3mf(".gcode.3mf"))
+        XCTAssertFalse(PrinterFiles.isSliced3mf("gcode.3mf".replacingOccurrences(of: ".", with: "")))
         XCTAssertFalse(PrinterFiles.isSliced3mf(""))
     }
 
