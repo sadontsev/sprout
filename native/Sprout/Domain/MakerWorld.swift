@@ -233,13 +233,7 @@ enum MakerWorld {
             return MWFailure(message: "That doesn’t look like a MakerWorld model link. Paste one that "
                              + "looks like makerworld.com/models/1400373.", offerWebLink: false)
         case 400:
-            // Measured: MakerWorld lists profiles it will not release a file for — 5 of 6 undescribed
-            // profiles on model 40146 answered 400, including the one MakerWorld itself pre-selects,
-            // while every profile with published details downloaded. The list is not a promise, so
-            // the copy points at the next thing to try instead of calling it a failure.
-            return MWFailure(message: "MakerWorld has no downloadable file for this profile. Try "
-                             + "another one — the profiles that list print details are the ones that "
-                             + "usually work.", offerWebLink: true)
+            return MWFailure(message: undownloadableProfile, offerWebLink: true)
         case 404:
             return MWFailure(message: "MakerWorld has no model at that link.", offerWebLink: false)
         case 401 where step == .resolve:
@@ -270,11 +264,30 @@ enum MakerWorld {
             if status == 0 {
                 return MWFailure(message: "Couldn’t reach your Bambuddy server.", offerWebLink: false)
             }
-            let what = step == .resolve ? "look up" : "download"
-            return MWFailure(message: d ?? "Your Bambuddy server couldn’t \(what) this model on MakerWorld.",
+            if step == .importing {
+                // The refusal measured in practice arrives HERE, not as a 400: Bambuddy wraps
+                // MakerWorld's status in a 502 of its own (`{"detail": "Bambu Lab API unexpected
+                // status 400 for profile …"}`), and through a tunnelling proxy even that detail is
+                // replaced by the proxy's own error page — so this arm has to stand on its own words.
+                // Its own words are also better than the wrapper's, which names a status and explains
+                // nothing.
+                if let d, !lower.contains("unexpected status") {
+                    return MWFailure(message: d, offerWebLink: true)
+                }
+                return MWFailure(message: undownloadableProfile, offerWebLink: true)
+            }
+            return MWFailure(message: d ?? "Your Bambuddy server couldn’t look up this model on MakerWorld.",
                              offerWebLink: true)
         }
     }
+
+    /// Measured: MakerWorld lists profiles it will not release a file for. Five of six undescribed
+    /// profiles on model 40146 were refused, including the one MakerWorld itself pre-selects, while
+    /// every profile with published details downloaded. The listing is not a promise, so the copy
+    /// points at the next thing to try rather than reporting a dead end.
+    private static let undownloadableProfile =
+        "Your Bambuddy server couldn’t download this profile. MakerWorld lists profiles it won’t "
+        + "release a file for — try one that shows print details."
 
     /// Reduce the two probes to one answer.
     ///
