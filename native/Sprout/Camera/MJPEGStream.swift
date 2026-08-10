@@ -327,8 +327,7 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
 
     func start(url: URL) {
         stop()
-        parser = nil
-        sawFirstFrame = false
+        resetConnectionState()
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
@@ -342,6 +341,23 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
     func stop() {
         firstFrameDeadline?.cancel(); firstFrameDeadline = nil
         task?.cancel(); task = nil
+    }
+
+    /// Clear EVERY per-connection field before reconnecting.
+    ///
+    /// `demultiplexed` used to survive a restart, and that one omission was enough to break the
+    /// camera permanently after the first disconnect: the flag says "responses on this task are
+    /// parts, not headers", so on the next connection the opening
+    /// `multipart/x-mixed-replace; boundary=frame` response was judged as a part, found not to be
+    /// `image/*`, and rejected as "camera unavailable" before a single byte of video arrived. The
+    /// retry then failed the same way forever, and because each attempt attaches a viewer
+    /// server-side, the pile-up starved the camera for every other client too.
+    private func resetConnectionState() {
+        parser = nil
+        sawFirstFrame = false
+        demultiplexed = false
+        partExpected = nil
+        partBuffer.removeAll(keepingCapacity: true)
     }
 
     deinit { session?.invalidateAndCancel() }

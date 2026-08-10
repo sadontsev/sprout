@@ -115,6 +115,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
                                AVPictureInPictureSampleBufferPlaybackDelegate {
 
     let displayLayer = AVSampleBufferDisplayLayer()
+    private let rateWindowStart = Date()
 
     private let client = MJPEGStreamClient()
     private let builder = JPEGFrameBuilder()
@@ -234,7 +235,12 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
     private func scheduleReconnect() {
         guard !stopped else { return }
         retryAttempt += 1
-        let delay = min(0.4 * pow(1.6, Double(retryAttempt - 1)), 5.0)
+        // Fast at first, because the camera self-terminates ~7 s after its last viewer and a slow
+        // retry guarantees paying the warm-up again. But every attempt attaches a viewer upstream,
+        // and a tight loop piled up six of them and starved the camera for everyone — so once a run
+        // of attempts has failed without a single frame, drop to a much calmer cadence.
+        let base = min(0.4 * pow(1.6, Double(retryAttempt - 1)), 5.0)
+        let delay = retryAttempt > 5 ? 20.0 : base
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.connect() }
     }
 
@@ -242,6 +248,12 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
 
     func streamDidReceiveFrame(_ jpeg: Data) {
         frameCount += 1
+        // Logged sparsely, but it is the measurement that separates "the stream stopped" from
+        // "frames arrive and nothing renders" — the two look identical on screen.
+        if frameCount == 1 || frameCount % 100 == 0 {
+            let dt = Date().timeIntervalSince(rateWindowStart)
+            pipLog.info("camera frames=\(self.frameCount, privacy: .public) rate=\(String(format: "%.1f", Double(self.frameCount) / max(dt, 0.001)), privacy: .public)/s")
+        }
         if frameCount % 20 == 0 {
             emit(.stats(frames: frameCount, pipActive: pip?.isPictureInPictureActive == true))
         }
