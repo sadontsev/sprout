@@ -701,6 +701,36 @@ final class MakerWorldTests: XCTestCase {
         XCTAssertEqual(try requirements(#"{"file_id":9}"#).usedSlotCount, 1)
     }
 
+    // MARK: usedSlotIds — the list ams_mapping is built from
+
+    /// Measured payloads: file 47 plate 2 → `[1]`, file 46 plate 1 → `[1,2,3]`, plate 2 → `[2]`.
+    func testUsedSlotIdsAreTheSlotsThePlateConsumesAscending() throws {
+        XCTAssertEqual(try requirements(#"""
+        {"filaments":[{"slot_id":3,"used_in_plate":true},{"slot_id":1,"used_in_plate":true}]}
+        """#).usedSlotIds, [1, 3])
+        XCTAssertEqual(try requirements(#"""
+        {"filaments":[{"slot_id":1,"used_in_plate":false},{"slot_id":2,"used_in_plate":true}]}
+        """#).usedSlotIds, [2])
+    }
+
+    /// A nil `slot_id` falls back to the entry's POSITION, not to 1 — two such entries describe two
+    /// filaments, and `[1, 1]` would map one tray and silently drop the other.
+    func testAMissingSlotIdFallsBackToPositionNotToOne() throws {
+        XCTAssertEqual(try requirements(#"{"filaments":[{"type":"PLA"},{"type":"PETG"}]}"#).usedSlotIds,
+                       [1, 2])
+    }
+
+    func testUsedSlotIdsIsEmptyWhenNothingIsKnown() throws {
+        XCTAssertEqual(try requirements(#"{"filaments":[]}"#).usedSlotIds, [])
+        XCTAssertEqual(try requirements(#"{"file_id":9}"#).usedSlotIds, [])
+    }
+
+    func testUsedSlotIdsDedupesAndFloorsAtOne() throws {
+        XCTAssertEqual(try requirements(#"""
+        {"filaments":[{"slot_id":2},{"slot_id":2},{"slot_id":0}]}
+        """#).usedSlotIds, [1, 2])
+    }
+
     // MARK: - Misc
 
     func testWebUrlIsTheCanonicalModelPage() {

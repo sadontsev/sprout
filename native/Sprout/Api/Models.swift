@@ -692,6 +692,20 @@ struct FilamentRequirements: Codable, Hashable, Sendable {
     /// How many filament slots this print consumes.
     var usedSlotCount: Int { max(usedSlots.count, 1) }
 
+    /// The 1-based filament slots this print consumes, ascending and deduped.
+    ///
+    /// The list `ams_mapping` is built from. A missing `slot_id` falls back to the entry's POSITION,
+    /// not to `1` — two entries that both omit it describe two filaments, and collapsing them to
+    /// `[1, 1]` would map one tray and silently drop the other.
+    var usedSlotIds: [Int] {
+        var ids: [Int] = []
+        for (i, r) in usedSlots.enumerated() {
+            let id = max(r.slotId ?? (i + 1), 1)
+            if !ids.contains(id) { ids.append(id) }
+        }
+        return ids.sorted()
+    }
+
     /// The 1-based filament slot this print uses, when it uses exactly one — `nil` otherwise.
     ///
     /// **Not the same question as `usedSlotCount == 1`.** `ams_mapping` is indexed by the 3MF's
