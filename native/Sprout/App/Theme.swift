@@ -139,9 +139,15 @@ extension Font {
     }
 }
 
-/// RN `shadow1`.
 extension View {
+    /// The design's card shadow.
+    ///
+    /// `compositingGroup()` is load-bearing: without it SwiftUI shadows every glyph and stroke in
+    /// the subtree individually, so text inside a card picks up its own drop shadow and looks
+    /// smudged. Flattening first means the shadow is cast by the card's silhouette, which is what a
+    /// card shadow means.
     func shadow1() -> some View {
-        shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+        compositingGroup()
+            .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
     }
 }
