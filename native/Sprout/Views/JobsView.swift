@@ -694,8 +694,7 @@ private struct StatsBanner: View {
                 RollingNumber(
                     value: total,
                     font: .system(size: 46, weight: .bold),
-                    color: c.t1,
-                    digitHeight: 50
+                    color: c.t1
                 )
                 .tracking(-2)
                 .padding(.top, 7)
@@ -739,8 +738,7 @@ private struct StatsBanner: View {
                 RollingNumber(
                     value: successPct,
                     font: .system(size: 20, weight: .bold),
-                    color: c.t1,
-                    digitHeight: 22
+                    color: c.t1
                 )
                 .tracking(-0.5)
                 Text("SUCCESS")

@@ -861,8 +861,7 @@ struct WizardView: View {
                 RollingNumber(
                     value: slicePct,
                     font: .system(size: 46, weight: .bold),
-                    color: c.t1,
-                    digitHeight: 54
+                    color: c.t1
                 )
                 Text("%")
                     .font(.system(size: 22, weight: .bold))
