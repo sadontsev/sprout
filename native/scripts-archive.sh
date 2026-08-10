@@ -13,7 +13,9 @@ cd "$(dirname "$0")"
 #   DEVELOPMENT_TEAM=XXXXXXXXXX
 # or export it. xcodegen expands ${DEVELOPMENT_TEAM} in project.yml from the environment, so it has
 # to be exported before `xcodegen generate` — not just passed to xcodebuild.
-[ -f .env-local ] && set -a && . ./.env-local && set +a
+# `if`, not `[ … ] && …`: under `set -e` a failing && chain aborts the script, so with no
+# .env-local this exited silently before doing anything.
+if [ -f .env-local ]; then set -a; . ./.env-local; set +a; fi
 : "${DEVELOPMENT_TEAM:?set DEVELOPMENT_TEAM (see native/.env-local.example)}"
 export DEVELOPMENT_TEAM
 
