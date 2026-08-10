@@ -356,6 +356,9 @@ private struct MakerWorldPanel: View {
     @State private var activeNav: String?
     /// The query the visible hits belong to — paging has to repeat it, and the field may have moved on.
     @State private var activeQuery: String?
+    /// How the loaded hits are ordered. Resets to `.relevance` on every new search — a sort carried
+    /// over from a previous query would silently reorder the new one before it was ever asked for.
+    @State private var sort: MakerWorldSearch.Sort = .relevance
 
     // The owner's own MakerWorld collections, served by their la-push — see `CollectionsClient`.
     @State private var collections: [MakerWorldCollection] = []
@@ -746,9 +749,12 @@ private struct MakerWorldPanel: View {
             }
 
             UploadSectionLabel(gridLabel)
+
+            if hits.count > 1 { sortChips }
+
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
                       spacing: 10) {
-                ForEach(hits) { hit in
+                ForEach(MakerWorldSearch.sorted(hits, by: sort)) { hit in
                     resultTile(hit)
                 }
             }
@@ -770,6 +776,45 @@ private struct MakerWorldPanel: View {
             }
         }
         .padding(.top, 18)
+    }
+
+    /// Ordering for the loaded results.
+    ///
+    /// This sorts what is on screen, not the whole of MakerWorld — their search API ignores every
+    /// ordering parameter it was probed with (see `MakerWorldSearch.Sort`). So the scope is said out
+    /// loud whenever it could mislead: with more pages unloaded, "Most downloaded" means most
+    /// downloaded *of these*, and a chip that let the user believe otherwise would be this
+    /// codebase's recurring bug wearing a new hat.
+    private var sortChips: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(MakerWorldSearch.Sort.allCases) { option in
+                        let on = sort == option
+                        Tap { sort = option } content: {
+                            Text(option.label)
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(on ? c.accent : c.t2)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(on ? c.accentDim : c.s2))
+                                .overlay { Capsule().stroke(c.accent, lineWidth: on ? 1.5 : 0) }
+                                .contentShape(.rect)
+                        }
+                        .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
+                    }
+                }
+                .padding(.horizontal, 1)
+            }
+            .scrollIndicators(.hidden)
+
+            if !sort.isServerOrder, MakerWorldSearch.hasMore(loaded: hits.count, total: hitTotal) {
+                Text("Sorted within the \(hits.count) loaded — load more to widen it.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(c.t3)
+            }
+        }
+        .padding(.bottom, 12)
     }
 
     private var gridLabel: String {
@@ -1169,9 +1214,10 @@ private struct MakerWorldPanel: View {
         let detail = row.detail
         let materials = MakerWorld.materialsLine(detail)
 
-        return Tap {
-            picked = row
-        } content: {
+        return VStack(alignment: .leading, spacing: 0) {
+            Tap {
+                picked = row
+            } content: {
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(c.thumb)
@@ -1237,8 +1283,70 @@ private struct MakerWorldPanel: View {
             }
             .contentShape(.rect)
         }
-        .accessibilityLabel("\(row.title). \(MakerWorld.metaLine(detail)). \(materials)")
-        .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+            .accessibilityLabel("\(row.title). \(MakerWorld.metaLine(detail)). \(materials)")
+            .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+
+            // The preview belongs to the chosen profile, so it hangs off the row rather than sitting
+            // in one shared slot below the list: with 88 rows on a popular model, a panel elsewhere
+            // on screen would describe a row that has already scrolled away.
+            if selected { profilePreview(row) }
+        }
+        .animation(.snappy(duration: 0.22), value: selected)
+    }
+
+    /// A proper look at the profile the user has just chosen: the cover at a size worth looking at,
+    /// the uploader's own notes, and any extra photos they attached.
+    ///
+    /// Every part is conditional, because every part is genuinely optional upstream — most profiles
+    /// carry no blurb and no extra photos, and a preview that renders empty scaffolding for them
+    /// looks broken rather than sparse.
+    @ViewBuilder
+    private func profilePreview(_ row: MWProfileRow) -> some View {
+        let gallery = ([row.coverUrl].compactMap { $0 } + row.pictures)
+            .compactMap { client.makerworldThumbUrl($0) }
+
+        VStack(alignment: .leading, spacing: 10) {
+            if gallery.count > 1 {
+                // More than one photo, so it scrolls. Paging rather than free scroll: these are
+                // alternative views of one object, not a list to skim.
+                TabView {
+                    ForEach(Array(gallery.enumerated()), id: \.offset) { _, url in
+                        previewImage(url)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .automatic))
+                .frame(height: 210)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else if let url = gallery.first {
+                previewImage(url)
+                    .frame(height: 210)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+
+            if let summary = row.summary {
+                Text(verbatim: summary)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(c.t2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.top, 10)
+        .padding(.horizontal, 2)
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    private func previewImage(_ url: URL) -> some View {
+        Rectangle()
+            .fill(c.thumb)
+            .overlay {
+                AsyncImage(url: url) { image in
+                    image.resizable().aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    ProgressView().tint(c.t3)
+                }
+            }
+            .clipped()
     }
 
     /// What has been imported before — the panel's cold-start state, so an empty text field is not
@@ -1403,6 +1511,7 @@ private struct MakerWorldPanel: View {
         activeNav = nil
         activeQuery = nil
         hits = []
+        sort = .relevance
         hitTotal = nil
         searchError = nil
         searching = true
@@ -1423,6 +1532,7 @@ private struct MakerWorldPanel: View {
     private func backToCollections() {
         activeCollection = nil
         hits = []
+        sort = .relevance
         hitTotal = nil
         searchError = nil
         if collections.isEmpty {
@@ -1439,6 +1549,7 @@ private struct MakerWorldPanel: View {
         activeNav = nil
         activeQuery = nil
         hits = []
+        sort = .relevance
         hitTotal = nil
         searchError = nil
         searching = true
@@ -1464,6 +1575,7 @@ private struct MakerWorldPanel: View {
         activeNav = nil
         activeQuery = query
         hits = []
+        sort = .relevance
         hitTotal = nil
         Task {
             defer { searching = false }
@@ -1487,6 +1599,7 @@ private struct MakerWorldPanel: View {
         activeQuery = nil
         activeNav = nav.key
         hits = []
+        sort = .relevance
         hitTotal = nil
         Task {
             defer { searching = false }

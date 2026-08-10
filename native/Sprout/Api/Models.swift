@@ -543,12 +543,23 @@ struct MWInstance: Codable, Identifiable, Hashable, Sendable {
     var isDefault: Bool?            // false on every record of every model probed — see MakerWorld.preselect
     var appCanPrint: Bool?
     var instanceFilaments: [MWFilament]?
+    /// The profile's own blurb, as HTML — see `MakerWorldSearch.plainText`.
+    var summary: String?
+    /// Extra photos the uploader attached to this profile, beyond `cover`.
+    var pictures: [Picture]?
     var extention: Extention?
+
+    struct Picture: Codable, Hashable, Sendable, Identifiable {
+        var name: String?
+        var url: String?
+        var id: String { url ?? name ?? "" }
+    }
 
     init(id: Int, profileId: Int? = nil, title: String? = nil, cover: String? = nil,
          needAms: Bool? = nil, prediction: LooseNumber? = nil, weight: LooseNumber? = nil,
          materialCnt: Int? = nil, materialColorCnt: Int? = nil, isDefault: Bool? = nil,
-         appCanPrint: Bool? = nil, instanceFilaments: [MWFilament]? = nil, extention: Extention? = nil) {
+         appCanPrint: Bool? = nil, instanceFilaments: [MWFilament]? = nil, summary: String? = nil,
+         pictures: [Picture]? = nil, extention: Extention? = nil) {
         self.id = id
         self.profileId = profileId
         self.title = title
@@ -561,6 +572,8 @@ struct MWInstance: Codable, Identifiable, Hashable, Sendable {
         self.isDefault = isDefault
         self.appCanPrint = appCanPrint
         self.instanceFilaments = instanceFilaments
+        self.summary = summary
+        self.pictures = pictures
         self.extention = extention
     }
 
