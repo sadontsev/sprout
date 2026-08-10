@@ -35,7 +35,10 @@ struct Shell: View {
     }
 
     private var main: some View {
-        VStack(spacing: 0) {
+        // The bar FLOATS over the content rather than taking layout space: it is Liquid Glass, and
+        // glass with an opaque strip behind it is just a toolbar. Every screen already reserves
+        // bottom clearance so nothing is permanently hidden underneath.
+        ZStack(alignment: .bottom) {
             // Keyed on the tab so each change replays the fade-rise entrance, the same as the RN
             // build's <FadeRise key={tab} dy={8} duration={300}>.
             FadeRise(dy: 8, duration: 0.3) {
@@ -54,6 +57,7 @@ struct Shell: View {
 
             TabBar(active: Binding(get: { model.tab }, set: { model.tab = $0 }))
         }
+        .ignoresSafeArea(.keyboard)
     }
 }
 
