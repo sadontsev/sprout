@@ -958,3 +958,37 @@ async def makerworld_collection_designs(
         return await mw.collection_designs(collection_id, offset=offset, limit=min(max(limit, 1), 50))
     except mw.CollectionsUnavailable as e:
         raise HTTPException(status_code=e.status, detail=e.message) from e
+
+
+@app.get("/makerworld/designs/{design_id}/collections")
+async def makerworld_design_collections(design_id: int, _: None = Depends(_require_key)) -> dict:
+    """Which collections contain this design — what the app needs to draw the checkmarks."""
+    try:
+        return {"collections": await mw.design_collection_ids(design_id)}
+    except mw.CollectionsUnavailable as e:
+        raise HTTPException(status_code=e.status, detail=e.message) from e
+
+
+# PUT/DELETE rather than one endpoint with a flag: adding and removing are different intentions, and
+# the upstream call they share replaces the design's WHOLE membership, so which one was meant must
+# never be inferred from a payload.
+
+
+@app.put("/makerworld/collections/{collection_id}/designs/{design_id}")
+async def makerworld_add_to_collection(
+    collection_id: int, design_id: int, _: None = Depends(_require_key)
+) -> dict:
+    try:
+        return await mw.set_design_collections(design_id, collection_id, add=True)
+    except mw.CollectionsUnavailable as e:
+        raise HTTPException(status_code=e.status, detail=e.message) from e
+
+
+@app.delete("/makerworld/collections/{collection_id}/designs/{design_id}")
+async def makerworld_remove_from_collection(
+    collection_id: int, design_id: int, _: None = Depends(_require_key)
+) -> dict:
+    try:
+        return await mw.set_design_collections(design_id, collection_id, add=False)
+    except mw.CollectionsUnavailable as e:
+        raise HTTPException(status_code=e.status, detail=e.message) from e

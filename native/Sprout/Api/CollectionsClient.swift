@@ -40,11 +40,37 @@ struct CollectionsClient: Sendable {
                       as: MWSearchPage.self)
     }
 
+    /// Which collections currently contain this design — what draws the checkmarks.
+    func collections(containing designId: Int) async throws -> Set<Int> {
+        struct Envelope: Decodable { let collections: [Int]? }
+        return Set(try await get("/makerworld/designs/\(designId)/collections", as: Envelope.self)
+            .collections ?? [])
+    }
+
+    /// Add or remove ONE collection, leaving the design's other memberships alone.
+    ///
+    /// The upstream call replaces a design's entire membership, so the server does a read-union-write.
+    /// That is deliberately not done here: doing it in the app would put the read and the write on
+    /// opposite sides of a slow link, widening the window in which a partial answer becomes a `PUT`
+    /// that un-collects things.
+    @discardableResult
+    func setMembership(design designId: Int, collection collectionId: Int, member: Bool) async throws -> Set<Int> {
+        struct Result: Decodable { let collections: [Int]? }
+        let r: Result = try await send("/makerworld/collections/\(collectionId)/designs/\(designId)",
+                                       method: member ? "PUT" : "DELETE", as: Result.self)
+        return Set(r.collections ?? [])
+    }
+
     private func get<T: Decodable>(_ path: String, as type: T.Type) async throws -> T {
+        try await send(path, method: "GET", as: type)
+    }
+
+    private func send<T: Decodable>(_ path: String, method: String, as type: T.Type) async throws -> T {
         guard let url = LiveActivityController.endpoint(baseUrl, path) else {
             throw SproutError("Collections need a push server. Set one in Settings, or leave this off.")
         }
-        var req = URLRequest(url: url, timeoutInterval: 20)
+        var req = URLRequest(url: url, timeoutInterval: 30)
+        req.httpMethod = method
         req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
 

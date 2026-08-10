@@ -160,6 +160,97 @@ async def list_collections(db_path: str | None = None) -> list[dict[str, Any]]:
     return [normalise_collection(h) for h in hits if isinstance(h, dict) and h.get("id")]
 
 
+def union_for_add(current: set[int], collection_id: int) -> list[int]:
+    """The `favoritesIds` to send when ADDING a design to one collection.
+
+    `PUT my/design/favoriteslist` **replaces** the design's entire collection membership — measured:
+    a design in "Default Collection", PUT with `favoritesIds: [Collection]`, ends up in Collection
+    and is silently gone from Default. So an add has to send everything it was already in, plus the
+    new one, or it quietly un-collects.
+    """
+    return sorted(current | {int(collection_id)})
+
+
+def union_for_remove(current: set[int], collection_id: int) -> list[int]:
+    """The `favoritesIds` to send when REMOVING a design from one collection: everything else."""
+    return sorted(current - {int(collection_id)})
+
+
+async def _designs_in(client: httpx.AsyncClient, collection_id: int, token: str) -> set[int]:
+    """Every design id in a collection, paged out.
+
+    Paging matters here in a way it does not for display: this set becomes the membership we write
+    back, and a truncated read would drop designs from collections that are not even being edited.
+    """
+    ids: set[int] = set()
+    offset, page = 0, 50
+    while True:
+        body = await _get(client, f"/favorites/{int(collection_id)}/designs?offset={offset}&limit={page}",
+                          token)
+        hits = body.get("hits")
+        hits = hits if isinstance(hits, list) else []
+        ids |= {h.get("id") for h in hits if isinstance(h, dict) and h.get("id")}
+        if len(hits) < page:
+            return ids
+        offset += page
+
+
+async def design_collection_ids(design_id: int, db_path: str | None = None) -> list[int]:
+    """Which of the owner's collections currently contain this design.
+
+    There is no endpoint that answers this directly — `hasCollect` on a design is a bare boolean —
+    so it is derived by scanning every collection. That is several requests, which is why it happens
+    once per user action and is never used for rendering a list.
+    """
+    token = read_token(db_path)
+    async with httpx.AsyncClient() as client:
+        cols = await _get(client, "/my/favorites/listlite?offset=0&limit=50", token)
+        hits = cols.get("hits")
+        ids = [h["id"] for h in (hits if isinstance(hits, list) else []) if isinstance(h, dict) and h.get("id")]
+        found = []
+        for cid in ids:
+            if int(design_id) in await _designs_in(client, cid, token):
+                found.append(cid)
+    return found
+
+
+async def set_design_collections(design_id: int, collection_id: int, *, add: bool,
+                                 db_path: str | None = None) -> dict[str, Any]:
+    """Add or remove ONE collection, preserving every other membership.
+
+    The read half is not optional and its failure is not survivable: if the membership scan raises,
+    this raises too rather than writing a set built from partial knowledge. A `PUT` with a short list
+    is indistinguishable, to MakerWorld, from the owner deliberately un-collecting a design.
+    """
+    token = read_token(db_path)
+    current = set(await design_collection_ids(design_id, db_path))
+    wanted = (union_for_add if add else union_for_remove)(current, collection_id)
+    if sorted(current) == wanted:
+        # Nothing to do. Writing anyway would be a needless mutation of the owner's account.
+        return {"design_id": int(design_id), "collections": wanted, "changed": False}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            # `client.put`, matching `_get`'s use of `client.get`. NOT `client.send(req, timeout=…)`:
+            # send() takes no timeout kwarg, and a stub that accepted one let this ship broken.
+            r = await client.put(
+                f"{API}/my/design/favoriteslist",
+                headers={"Authorization": f"Bearer {token}", "User-Agent": USER_AGENT,
+                         "Content-Type": "application/json", "Accept": "application/json"},
+                json={"designId": int(design_id), "favoritesIds": wanted},
+                timeout=TIMEOUT,
+            )
+        except Exception as exc:
+            raise CollectionsUnavailable(f"Couldn't reach MakerWorld: {exc}", status=502) from exc
+    if r.status_code in (401, 403):
+        raise CollectionsUnavailable(
+            "MakerWorld rejected your server's Bambu Cloud sign-in. It may have expired — sign in "
+            "again under Bambuddy → Profiles → Cloud Profiles.", status=502)
+    if r.status_code >= 400:
+        raise CollectionsUnavailable(f"MakerWorld returned {r.status_code}.", status=502)
+    return {"design_id": int(design_id), "collections": wanted, "changed": True}
+
+
 async def collection_designs(collection_id: int, offset: int = 0, limit: int = 20,
                              db_path: str | None = None) -> dict[str, Any]:
     """The designs inside one collection.
