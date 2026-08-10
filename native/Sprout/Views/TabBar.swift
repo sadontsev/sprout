@@ -34,14 +34,21 @@ struct TabBar: View {
     /// it. Without this the bar keeps refracting the page behind it for someone who explicitly
     /// turned that off.
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    /// Ties the selected item's glass to a single shape that MORPHS between tabs rather than one
+    /// capsule fading out while another fades in. The container is what lets neighbouring glass
+    /// blend as it travels; without it the highlight would pop.
+    @Namespace private var glassNamespace
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(TabKey.allCases, id: \.self) { key in
-                let on = key == active
-                Tap(scale: 0.9) {
-                    active = key
-                } content: {
+        GlassEffectContainer(spacing: 14) {
+            HStack(spacing: 0) {
+                ForEach(TabKey.allCases, id: \.self) { key in
+                    let on = key == active
+                    Tap(scale: 0.9) {
+                        // Animated here, not in the caller: the morph belongs to the bar, and the
+                        // screen swap has its own (slower) transition.
+                        withAnimation(Motion.spring(0.42)) { active = key }
+                    } content: {
                     VStack(spacing: 4) {
                         if key == .printer {
                             NozzleIcon(color: on ? c.accent : c.t3, size: 22)
@@ -56,16 +63,29 @@ struct TabBar: View {
                             .lineLimit(1)
                             .foregroundStyle(on ? c.accent : c.t3)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
-                    .padding(.horizontal, 2)
-                    .contentShape(.rect)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .padding(.horizontal, 2)
+                        .contentShape(.rect)
+                        // `.interactive()` is the point of this: the glass responds to the touch
+                        // itself — it lifts and gives under a press and a drag, instead of the
+                        // material being a static backdrop with a separate scale animation on top.
+                        // Only the SELECTED item carries glass; giving every item its own turns the
+                        // bar into five competing highlights.
+                        .glassEffect(
+                            on && !reduceTransparency
+                                ? .regular.tint(c.accent.opacity(0.18)).interactive()
+                                : .identity,
+                            in: .capsule
+                        )
+                        .glassEffectID(on ? "tab-selection" : "tab-\(key.rawValue)", in: glassNamespace)
+                    }
+                    .accessibilityLabel(key.label)
+                    .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
                 }
-                .accessibilityLabel(key.label)
-                .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
             }
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 7)
         .padding(.horizontal, 6)
         // Liquid Glass belongs to the floating control layer, not to content: the bar sits above the
         // scrolling page and refracts it, so it reads as chrome rather than another card.
