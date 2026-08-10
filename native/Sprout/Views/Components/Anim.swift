@@ -62,54 +62,28 @@ struct Tap<Content: View>: View {
 
 // MARK: - RollingNumber
 
-/// A number whose digits roll vertically when the value changes (600 ms, ROLL_EASE).
+/// A number that rolls to its new value rather than snapping.
 ///
-/// Digits use tabular figures so the column width never jitters; the separator deliberately does
-/// NOT, matching the RN original.
+/// Uses the platform's own numeric transition driven by the design's roll curve. An earlier
+/// hand-rolled digit column (a 0-9 stack offset into a clipped window) rolled correctly but broke
+/// layout everywhere it was used: its baseline sat inside the offset column, so any
+/// `.lastTextBaseline` HStack flung the neighbouring label to the far edge, and it claimed far more
+/// width than its digits. Numbers are laid out next to units and separators all over this app, so
+/// correct layout matters more than owning the animation.
 struct RollingNumber: View {
     let value: Int
     var font: Font = .system(size: 34, weight: .bold)
     var color: Color = .primary
-    /// Row height — the roll distance per digit.
-    var digitHeight: CGFloat = 40
-
-    private var digits: [Character] { Array(String(value)) }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 0) {
-            ForEach(Array(digits.enumerated()), id: \.offset) { idx, ch in
-                if let d = ch.wholeNumberValue {
-                    DigitColumn(digit: d, height: digitHeight, font: font, color: color)
-                } else {
-                    Text(String(ch)).font(font).foregroundStyle(color)
-                }
-            }
-        }
-        .frame(height: digitHeight)
-        .clipped()
-    }
-
-    private struct DigitColumn: View {
-        let digit: Int
-        let height: CGFloat
-        let font: Font
-        let color: Color
-
-        var body: some View {
-            VStack(spacing: 0) {
-                ForEach(0...9, id: \.self) { n in
-                    Text("\(n)")
-                        .font(font)
-                        .monospacedDigit()
-                        .foregroundStyle(color)
-                        .frame(height: height)
-                }
-            }
-            .offset(y: -CGFloat(digit) * height + (height * 4.5))
-            .frame(height: height, alignment: .center)
-            .clipped()
-            .animation(Motion.roll(0.6), value: digit)
-        }
+        // No grouping separator: these sit next to plain totals ("1153 / 1237"), and one side
+        // formatting as "1,153" while the other doesn't looks like a bug.
+        Text(value, format: .number.grouping(.never))
+            .font(font)
+            .monospacedDigit()
+            .foregroundStyle(color)
+            .contentTransition(.numericText(value: Double(value)))
+            .animation(Motion.roll(0.6), value: value)
     }
 }
 
@@ -195,9 +169,9 @@ struct ProgressRing<Content: View>: View {
             if glow {
                 Circle()
                     .fill(color)
-                    .frame(width: size * 0.7, height: size * 0.7)
-                    .blur(radius: 9)
-                    .opacity(haloUp ? 0.6 : 0)
+                    .frame(width: size * 0.62, height: size * 0.62)
+                    .blur(radius: 22)
+                    .opacity(haloUp ? 0.28 : 0.04)
                     .animation(Motion.inOutQuad(1.2).repeatForever(autoreverses: true), value: haloUp)
                     .onAppear { haloUp = true }
             }

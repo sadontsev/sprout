@@ -274,8 +274,7 @@ struct PowerView: View {
                 bigValue(hero.watts.map { RollingNumber(
                     value: Int($0.rounded()),
                     font: .system(size: 28, weight: .bold),
-                    color: c.t1,
-                    digitHeight: 34
+                    color: c.t1
                 ) }, unit: "W")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

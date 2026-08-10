@@ -12,7 +12,6 @@ struct DashboardView: View {
     @State private var switcherOpen = false
     @State private var speedOpen = false
     @State private var camLoaded = false
-    @State private var snapshotTick = 0
     @State private var maintenance: (due: Int, warn: Int) = (0, 0)
     @State private var speedOverride: Int?
     @State private var confirmStop = false
@@ -75,14 +74,6 @@ struct DashboardView: View {
             Button("Keep printing", role: .cancel) {}
         } message: {
             Text("This cancels the current job. It can't be undone.")
-        }
-        // The camera poller is deliberately NOT gated on PiP state. It was, and a stuck "PiP active"
-        // flag froze this tile on a cached frame.
-        .task(id: model.tab) {
-            while !Task.isCancelled, model.tab == .printer {
-                try? await Task.sleep(for: .seconds(2))
-                snapshotTick &+= 1
-            }
         }
         .task(id: model.printerId) {
             maintenance = (0, 0)
@@ -276,9 +267,7 @@ struct DashboardView: View {
 
     private var snapshotURL: URL? {
         guard let client = model.client, let token = model.cameraToken else { return nil }
-        guard let base = client.snapshotUrl(model.printerId, token: token) else { return nil }
-        // The picture only changes when the URL changes, so the tick is the cache-bust.
-        return URL(string: base.absoluteString + "&_t=\(snapshotTick)")
+        return client.snapshotUrl(model.printerId, token: token)
     }
 
     private var cameraTile: some View {
@@ -286,14 +275,7 @@ struct DashboardView: View {
             ZStack(alignment: .topLeading) {
                 c.thumb
                 if let url = snapshotURL {
-                    AsyncImage(url: url, transaction: Transaction(animation: .easeInOut(duration: 0.12))) { phase in
-                        if let image = phase.image {
-                            image.resizable().aspectRatio(contentMode: .fill)
-                                .onAppear { camLoaded = true }
-                        } else {
-                            Color.clear
-                        }
-                    }
+                    SnapshotImage(url: url) { camLoaded = true }
                 } else {
                     Text("CHAMBER · SNAPSHOT")
                         .font(.mono(10, weight: .medium))
@@ -366,8 +348,7 @@ struct DashboardView: View {
                     RollingNumber(
                         value: vm.progressInt,
                         font: .system(size: 32, weight: .bold),
-                        color: c.t1,
-                        digitHeight: 38
+                        color: c.t1
                     )
                     Text("%")
                         .font(.system(size: 15, weight: .bold))
@@ -382,8 +363,7 @@ struct DashboardView: View {
                         RollingNumber(
                             value: Int(vm.layer) ?? 0,
                             font: .system(size: 19, weight: .semibold),
-                            color: c.t1,
-                            digitHeight: 23
+                            color: c.t1
                         )
                         Text(" / \(vm.totalLayers)")
                             .font(.mono(19, weight: .medium))
@@ -854,8 +834,7 @@ struct TempGrid: View {
                     RollingNumber(
                         value: card.now,
                         font: .system(size: 26, weight: .bold),
-                        color: c.t1,
-                        digitHeight: 31
+                        color: c.t1
                     )
                     Text("°").font(.system(size: 13, weight: .bold)).foregroundStyle(c.t3)
                 }
