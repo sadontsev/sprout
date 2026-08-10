@@ -682,11 +682,27 @@ struct FilamentRequirements: Codable, Hashable, Sendable {
         var id: Int { slotId ?? 0 }
     }
 
-    /// How many slots this print actually consumes. Slots the chosen plate does not use are excluded
-    /// — a four-plate file can list filaments no single plate needs.
-    var usedSlotCount: Int {
-        let used = (filaments ?? []).filter { $0.usedInPlate ?? true }
-        return max(used.count, 1)
+    /// The entries the chosen plate actually consumes. A four-plate file lists filaments no single
+    /// plate needs, so the unfiltered list answers a different question.
+    ///
+    /// A missing `used_in_plate` means "no per-plate information", not "unused" — treating it as
+    /// unused would under-report a print's needs, which is the direction that matters.
+    var usedSlots: [Requirement] { (filaments ?? []).filter { $0.usedInPlate ?? true } }
+
+    /// How many filament slots this print consumes.
+    var usedSlotCount: Int { max(usedSlots.count, 1) }
+
+    /// The 1-based filament slot this print uses, when it uses exactly one — `nil` otherwise.
+    ///
+    /// **Not the same question as `usedSlotCount == 1`.** `ams_mapping` is indexed by the 3MF's
+    /// filament slot, so a one-element array addresses slot 1 and only slot 1. A plate whose lone
+    /// filament is slot 3 needs `[-1, -1, tray]`; sending `[tray]` for it binds the chosen tray to a
+    /// filament the plate never asks for and leaves the real one for the firmware to guess.
+    /// Measured: plate 2 of the seed tray uses slot 2, plate 4 uses slot 3.
+    var soleUsedSlot: Int? {
+        let used = usedSlots
+        guard used.count == 1 else { return nil }
+        return max(used[0].slotId ?? 1, 1)
     }
 }
 

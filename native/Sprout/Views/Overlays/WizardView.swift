@@ -49,12 +49,12 @@ struct WizardView: View {
 
     // MARK: Nested surfaces & alerts
 
-    /// How many filament slots the file about to be printed actually needs, once known.
+    /// What the file about to be printed asks for, once known. `nil` while unasked or unanswerable.
     ///
-    /// `nil` while unasked. Anything above 1 is a capability the enqueue cannot express: `ams_mapping`
-    /// is sent as a one-element array, so filaments 2..n would be left unmapped and the printer would
-    /// guess. That is stated on the mapping step and blocks Start rather than being silently wrong.
-    @State private var requiredSlots: Int?
+    /// Two different questions come off this, and conflating them is how the mapping goes wrong:
+    /// *how many* slots the plate needs (more than one is a capability the enqueue cannot express),
+    /// and *which* slot it needs (which decides where the tray id sits in `ams_mapping`).
+    @State private var requirements: FilamentRequirements?
     @State private var viewLayers: LayerTarget?
     @State private var show3D = false
     @State private var alert: WizardAlert?
@@ -926,11 +926,16 @@ struct WizardView: View {
             // Reviews the NEWLY produced sliced file when the slice returned one, and describes the
             // filament with the spool that is in the mapped tray rather than the one the slicer
             // defaulted to — this step is the user's last look at what will actually come out.
+            // `selectable: false` — the slice has already run for ONE plate. Letting the chips change
+            // `selectedPlate` here left the enqueue pointing at a plate the output has no toolpaths
+            // for, and made step 6 ask about a different (file, plate) pair than the one that was
+            // sliced. Changing the plate means re-slicing, which is what going Back to Material does.
             plateReview(
                 fileId: result?.libraryFileId ?? file.id,
                 sliced: true,
                 layerFileId: slicedFileId,
-                selection: mappedIdentity
+                selection: mappedIdentity,
+                selectable: false
             )
             NoticeCard(
                 icon: "info.circle",
@@ -949,7 +954,7 @@ struct WizardView: View {
     private var stepMapFilament: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionLabel("AMS SLOT")
-            if let needed = requiredSlots, needed > 1 {
+            if let needed = requirements?.usedSlotCount, needed > 1 {
                 multiFilamentNotice(needed)
             }
             if trays.isEmpty {
@@ -980,13 +985,35 @@ struct WizardView: View {
     /// The file the enqueue will reference: the slice output when there is one, else the original.
     private var printFileId: Int { result?.libraryFileId ?? file.id }
 
-    /// Best-effort. A failure leaves `requiredSlots` nil and the gate open — blocking every print on
-    /// a network blip would be worse than the gap it guards, and the guard is an improvement on the
-    /// previous behaviour of never asking at all.
+    /// Best-effort. A genuine failure leaves `requirements` nil and the gate open — blocking every
+    /// print on a network blip would be worse than the gap it guards.
+    ///
+    /// A CANCELLED request is not a failure and must not be written back. `try?` swallows
+    /// `URLError.cancelled` into `nil`, and the assignment still runs, so advancing from step 6 to 7
+    /// used to cancel this request and then clear a `requiredSlots` that had already said "3
+    /// filaments" — re-opening the gate the user had just been shown. Every other loader in this file
+    /// guards the same way.
     private func loadRequiredSlots() async {
         guard let client = model.client else { return }
-        requiredSlots = (try? await client.filamentRequirements(printFileId, plate: selectedPlate))?
-            .usedSlotCount
+        let fetched = try? await client.filamentRequirements(printFileId, plate: selectedPlate)
+        guard !Task.isCancelled else { return }
+        requirements = fetched
+    }
+
+    /// `ams_mapping` for this print: indexed by the 3MF's FILAMENT SLOT, valued by global tray id.
+    ///
+    /// A one-element array addresses slot 1. That is right for the common case and silently wrong for
+    /// a plate whose lone filament is slot 2 or 3 — measured on a real multi-plate file — where the
+    /// chosen tray would be bound to a filament the plate never uses while its real one is left for
+    /// the firmware to guess. Pad with `-1` (Bambu's "unmapped" sentinel) so the tray lands at the
+    /// index the plate actually asks for.
+    ///
+    /// Unknown requirements fall back to the single-element form, which is what shipped before.
+    private func amsMapping(tray: Int) -> [Int] {
+        guard let sole = requirements?.soleUsedSlot, sole > 1 else { return [tray] }
+        var mapping = Array(repeating: -1, count: sole)
+        mapping[sole - 1] = tray
+        return mapping
     }
 
     /// Says the limitation out loud instead of mapping filament 1 and quietly abandoning the rest.
@@ -1093,7 +1120,8 @@ struct WizardView: View {
         fileId: Int,
         sliced: Bool,
         layerFileId: Int?,
-        selection: FilamentIdentity? = nil
+        selection: FilamentIdentity? = nil,
+        selectable: Bool = true
     ) -> some View {
         WizardPlateReview(
             client: model.client,
@@ -1102,7 +1130,7 @@ struct WizardView: View {
             plateIndex: selectedPlate,
             selection: selection,
             sliced: sliced,
-            onSelectPlate: { selectedPlate = $0 },
+            onSelectPlate: selectable ? { selectedPlate = $0 } : nil,
             // nil hides "View layers" outright. Offering it for a file with no G-code is the
             // library menu's old bug in a second surface: the page's fetch answers 404 and the
             // viewer opens onto "Couldn't render the preview".
@@ -1329,7 +1357,7 @@ struct WizardView: View {
         }
         // The enqueue can express exactly one mapped filament. Sending it for a multi-material print
         // would start a print whose other filaments are assigned by the firmware at random.
-        if let needed = requiredSlots, needed > 1 {
+        if let needed = requirements?.usedSlotCount, needed > 1 {
             alert = WizardAlert(
                 title: "Needs \(needed) filaments",
                 message: "Sprout can only map one filament to a tray, so it can’t start this print correctly. Slice a single-material plate, or start it from Bambu Studio."
@@ -1340,7 +1368,7 @@ struct WizardView: View {
         let libraryFileId = result?.libraryFileId ?? file.id
         let printerId = model.printerId
         let plate = selectedPlate
-        let mappedSlot = slot
+        let mapping = amsMapping(tray: slot)
         Task {
             do {
                 // `ams_mapping` is Bambu's own print-command field: indexed by FILAMENT, valued by
@@ -1351,7 +1379,7 @@ struct WizardView: View {
                     "printer_id": .int(printerId),
                     "library_file_id": .int(libraryFileId),
                     "use_ams": .bool(true),
-                    "ams_mapping": .array([.int(mappedSlot)]),
+                    "ams_mapping": .array(mapping.map { .int($0) }),
                     "plate_id": .int(plate),
                 ])
                 model.overlay = nil
@@ -1605,7 +1633,10 @@ private struct WizardPlateReview: View {
         VStack(alignment: .leading, spacing: 0) {
             if vm.plateCount > 1, let list = plates?.plates {
                 FlowLayout(spacing: 8) {
-                    ForEach(list) { p in
+                    // When the plate can no longer be changed, show only the one in play. A row of
+                    // chips that look tappable and do nothing is the offered-but-refused shape again;
+                    // the single chip reads as the label it now is.
+                    ForEach(onSelectPlate == nil ? list.filter { $0.index == vm.plateIndex } : list) { p in
                         plateChip(p.index, selected: p.index == vm.plateIndex)
                     }
                 }
@@ -1693,7 +1724,7 @@ private struct WizardPlateReview: View {
     }
 
     private func plateChip(_ index: Int, selected: Bool) -> some View {
-        Tap { onSelectPlate?(index) } content: {
+        Tap(disabled: onSelectPlate == nil) { onSelectPlate?(index) } content: {
             Text("Plate \(index)")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(selected ? c.accent : c.t2)

@@ -46,9 +46,17 @@ enum MakerWorldAccess: Equatable, Sendable {
             return "Your Bambuddy server isn’t signed in to Bambu Cloud. Sign in under Bambuddy → "
                 + "Profiles → Cloud Profiles. Bambuddy treats a sign-in as valid for 30 days."
         case .unreachable:
-            return "Couldn’t check your Bambu Cloud connection. You can still preview models."
+            return "Couldn’t check your Bambu Cloud connection. Resolving a link will try again."
         }
     }
+
+    /// Whether this state can clear itself without the user going anywhere.
+    ///
+    /// `.unreachable` is a snapshot of one instant — the server may already be back — so anything that
+    /// proves the server is reachable should re-ask rather than leave the button locked for the life
+    /// of the panel. The other two name a remedy that has to be applied elsewhere, so re-probing them
+    /// on the spot would achieve nothing.
+    var worthRetrying: Bool { self == .unreachable }
 }
 
 /// The outcome of `GET /cloud/status`, reduced to the only three shapes that change the answer.
@@ -234,9 +242,15 @@ enum MakerWorld {
                              + "usually work.", offerWebLink: true)
         case 404:
             return MWFailure(message: "MakerWorld has no model at that link.", offerWebLink: false)
+        case 401 where step == .resolve:
+            // Resolving is anonymous upstream — no Bambu Cloud token is involved — so the only 401
+            // producible here is Bambuddy rejecting THIS APP's key. Sending the user to re-do a cloud
+            // sign-in would have them fix something that was never used.
+            return MWFailure(message: d ?? "Your Bambuddy server rejected this app’s API key. Re-enter "
+                             + "it in Settings.", offerWebLink: false)
         case 401:
-            return MWFailure(message: "MakerWorld rejected your server’s Bambu Cloud sign-in. Sign in "
-                             + "again under Bambuddy → Profiles → Cloud Profiles.", offerWebLink: false)
+            return MWFailure(message: d ?? "MakerWorld rejected your server’s Bambu Cloud sign-in. Sign "
+                             + "in again under Bambuddy → Profiles → Cloud Profiles.", offerWebLink: false)
         case 403:
             // MakerWorld's own words. Never replaced with "import failed".
             return MWFailure(message: d ?? "MakerWorld won’t release this file to your account.",
@@ -316,8 +330,13 @@ enum MakerWorld {
 
         // Defensive, and only defensive: no record-only profile has ever been measured. If upstream
         // ever ships one, losing it silently would be the same bug in miniature.
+        //
+        // Both keys are checked. Membership on `profileId` alone let a record whose id collides with
+        // an existing ROW id through, and `MWProfileRow` is Identifiable by instance id — duplicate
+        // ids in a ForEach are undefined behaviour, not a cosmetic duplicate.
         let seen = Set(resolved.instances.compactMap(\.profileId))
-        for r in records where r.profileId.map({ !seen.contains($0) }) ?? false {
+        let seenIds = Set(rows.map(\.id))
+        for r in records where (r.profileId.map { !seen.contains($0) } ?? false) && !seenIds.contains(r.id) {
             rows.append(MWProfileRow(id: r.id, profileId: r.profileId, title: title(r),
                                      coverUrl: r.cover, detail: detail(r)))
         }
