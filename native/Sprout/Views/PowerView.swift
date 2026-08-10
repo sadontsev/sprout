@@ -738,22 +738,27 @@ private struct PowerBreathe<Content: View>: View {
     @State private var up = false
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(color)
-                .opacity(active && up ? maxOpacity : 0)
-                .scaleEffect(active && up ? 1 + grow : 1)
-                .animation(
-                    active ? Motion.inOutQuad(1.2).repeatForever(autoreverses: true) : Motion.inOutQuad(0.3),
-                    value: up
-                )
-                .animation(Motion.inOutQuad(0.3), value: active)
-                .allowsHitTesting(false)
-            content()
-        }
-        .onChange(of: active, initial: true) { _, isActive in
-            up = isActive
-        }
+        // The halo is a BACKGROUND, not a ZStack sibling: a bare shape has no intrinsic size, so as
+        // a sibling it stretched to the card's full width and `scaleEffect` then pushed it past both
+        // screen edges. As a background it inherits the button's size and grows from there, which is
+        // what a glow around a control means.
+        content()
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(color)
+                    .opacity(active && up ? maxOpacity : 0)
+                    .scaleEffect(active && up ? 1 + grow : 1)
+                    .blur(radius: 12)
+                    .animation(
+                        active ? Motion.inOutQuad(1.2).repeatForever(autoreverses: true) : Motion.inOutQuad(0.3),
+                        value: up
+                    )
+                    .animation(Motion.inOutQuad(0.3), value: active)
+                    .allowsHitTesting(false)
+            }
+            .onChange(of: active, initial: true) { _, isActive in
+                up = isActive
+            }
     }
 }
 
