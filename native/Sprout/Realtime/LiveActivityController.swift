@@ -5,13 +5,16 @@ import Observation
 /// Builds Live Activity content from live status, and owns the app's side of the card lifecycle.
 ///
 /// Two ownership modes, and exactly one owner at a time:
-/// - **SERVER** (a la-push URL resolves): the server starts, updates and ends every card. The app
-///   never calls `request` — it registers push tokens and reconciles, reporting the full set of live
-///   activities so the server can notice a user-swiped dismissal.
-/// - **LOCAL** (no push URL): the app owns cards outright.
+/// - **SERVER** (a la-push URL resolves): the server starts every card by push-to-start, pushes every
+///   update off its own poll, and ends it. The app's entire job is to hand over two tokens — the
+///   device's push-to-start token, and each card's per-activity update token once a card exists — and
+///   to notice dismissal. It calls neither `request` nor `update`.
+/// - **LOCAL** (no push URL): the app owns cards outright and registers nothing.
 ///
 /// Getting this wrong is what produced the duplicate-card bug: two owners both starting a card for
-/// the same print.
+/// the same print. Getting only *half* of SERVER mode right is worse than either: an app that refuses
+/// to start a card and also registers no start token leaves the lock screen empty for the whole
+/// print, because the server has nothing to push a start to.
 @MainActor
 @Observable
 final class LiveActivityController {
@@ -21,15 +24,39 @@ final class LiveActivityController {
     private var lastContent: [String: PrintActivityAttributes.ContentState] = [:]
     private var lastUpdate: [String: Date] = [:]
 
+    /// Card keys the user swiped away, so a dismissal sticks for the rest of that print. Dedup used to
+    /// be derived purely from `Activity.activities`, which a dismissed card leaves — so the next 2 °C
+    /// of nozzle drift started a brand-new card and the user could not get rid of it at all. Cleared
+    /// in `end`: once the print (or drying cycle) that card stood for is over, the next one may have
+    /// a card again.
+    private var dismissed: Set<String> = []
+    /// Activity ids this controller ended itself. ActivityKit reports `.dismissed` for those too, once
+    /// the system finally clears the card off the screen, and reading that as a user swipe would
+    /// suppress the NEXT print's card.
+    private var endedByApp: Set<String> = []
+    /// Activity ids already wired to their state (and, in SERVER mode, push-token) streams.
+    private var observed: Set<String> = []
+    /// Latest APNs update token per activity id, kept so a failed registration can be retried without
+    /// waiting for the token to rotate — tokens rotate rarely, and a card with no token registered is
+    /// a card frozen at the content it was created with.
+    private var tokens: [String: String] = [:]
+    /// `"<activity id>|<token>"` pairs la-push has accepted.
+    private var registered: Set<String> = []
+    private var lastRegisterAttempt: [String: Date] = [:]
+
     /// Minimum gap between updates for one card. ActivityKit throttles aggressively and a card that
     /// updates every status frame gets its budget cut.
     private static let throttle: TimeInterval = 4
+    /// Minimum gap between registration attempts for one (card, token) pair. `sync` runs every 4 s and
+    /// an unreachable la-push must not turn that into a POST storm.
+    private static let registerRetry: TimeInterval = 30
 
     var isServerOwned: Bool { pushUrl != nil }
 
     init(config: AppConfig) {
         pushUrl = ConfigRules.resolvePushUrl(config)
         apiKey = config.apiKey
+        startObserving()
     }
 
     // MARK: - Content mapping
@@ -143,22 +170,33 @@ final class LiveActivityController {
 
     /// Whether a change is worth spending an update on.
     ///
-    /// Temps and ETA are on the card, so without them a heat-up that doesn't advance progress or
-    /// layer never updates and the card shows cold temperatures for minutes.
+    /// The rule for this list: **every field the widget renders belongs in it**, with a threshold only
+    /// on the numerically noisy ones. Temps and ETA are on the card, so without them a heat-up that
+    /// doesn't advance progress or layer never updates and the card shows cold temperatures for
+    /// minutes. `totalLayers` is on it for the same reason with a sharper edge: the widget hides the
+    /// whole layer row until `totalLayers > 0`, and Bambuddy commonly reports the total on a frame
+    /// where nothing else moves — leaving that field out kept the row hidden until the first layer
+    /// finished.
     nonisolated static func meaningfulChange(from a: PrintActivityAttributes.ContentState?, to b: PrintActivityAttributes.ContentState) -> Bool {
         guard let a else { return true }
         return abs(a.progress - b.progress) >= 1
             || a.layer != b.layer
+            || a.totalLayers != b.totalLayers
             || a.stateLabel != b.stateLabel
             || a.name != b.name
             || a.printerName != b.printerName
             || a.modelUri != b.modelUri
+            || a.iconUri != b.iconUri
             || a.queueCount != b.queueCount
             || a.nextName != b.nextName
+            || a.finished != b.finished
+            || a.symbol != b.symbol
+            || a.tint != b.tint
             || abs(a.nozzle - b.nozzle) >= 2
             || abs(a.nozzle2 - b.nozzle2) >= 2
             || a.nozzleTarget != b.nozzleTarget
             || a.nozzle2Target != b.nozzle2Target
+            || a.hasNozzle2 != b.hasNozzle2
             || a.activeNozzle != b.activeNozzle
             || abs(a.bed - b.bed) >= 2
             || a.bedTarget != b.bedTarget
@@ -180,6 +218,17 @@ final class LiveActivityController {
     /// `offline` and `connecting` are deliberately no-ops: a WebSocket blip must never kill a card
     /// that represents a print still running.
     func sync(printerId: Int, printerName: String, vm: DashVM, status: PrinterStatus?) async {
+        // Cards also appear without us: in SERVER mode la-push starts them remotely, and cards from a
+        // previous launch outlive the process. Sweeping here — not only from `activityUpdates`, whose
+        // replay of already-live activities is not something to bet a subsystem on — is what
+        // guarantees every card ends up wired to its dismissal and push-token streams.
+        adoptExistingActivities()
+
+        // Deliberately not awaited: this loop runs every 4 s and also drives the cooldown readout, so
+        // a slow la-push must not stall it. `lastRegisterAttempt` is stamped BEFORE the request, so an
+        // overlapping flush cannot double-POST.
+        if isServerOwned, !tokens.isEmpty { Task { [weak self] in await self?.flushRegistrations() } }
+
         guard let status else { return }
         guard vm.kind != .offline, vm.kind != .connecting else { return }
 
@@ -209,6 +258,14 @@ final class LiveActivityController {
     }
 
     private func upsert(printerId: Int, amsId: Int?, content: PrintActivityAttributes.ContentState, ended: Bool) async {
+        // SERVER mode: the server is the sole WRITER as well as the sole creator, so this returns
+        // before touching a card or the gate state behind it. Two writers do not merely halve the
+        // ActivityKit budget — la-push pushes off a 5 s poll while the app reads a socket, so the two
+        // hold different snapshots and the card's progress visibly jitters backwards. The local gate
+        // (`lastContent`/`lastUpdate`) also knows nothing about what the server last rendered, so the
+        // two sides cannot even agree on what counts as a change.
+        guard !isServerOwned else { return }
+
         let k = key(printerId: printerId, amsId: amsId)
 
         guard Self.meaningfulChange(from: lastContent[k], to: content) else { return }
@@ -228,64 +285,209 @@ final class LiveActivityController {
             return
         }
 
-        // In server mode the server is the only thing allowed to create a card. Starting one here as
-        // well is precisely how a print ended up with two.
-        guard !isServerOwned else { return }
+        // No card exists, so this is a creation. Respect a swipe: the user removing a card is an
+        // instruction, not a glitch to heal.
+        guard !dismissed.contains(k) else { return }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
         do {
+            // `pushType: nil` is not a shortcut: this branch is LOCAL-ONLY (the guard above returns in
+            // SERVER mode), and LOCAL means there is no server to hand an APNs token to.
             let activity = try Activity.request(
                 attributes: PrintActivityAttributes(printerId: printerId, amsId: amsId),
                 content: ActivityContent(state: content, staleDate: nil),
-                pushType: pushUrl == nil ? nil : .token
+                pushType: nil
             )
             lastContent[k] = content
             lastUpdate[k] = Date()
-            if pushUrl != nil { observePushToken(activity) }
+            observe(activity)
         } catch {
             // A refused start is not worth surfacing — the user may simply have Live Activities off.
         }
     }
 
+    /// Take a card down. Unlike `update`, this runs in BOTH modes on purpose: ending is terminal and
+    /// idempotent, so the worst a duplicated end can do is remove a card a few seconds before la-push
+    /// would have. The failure it prevents is far worse — a server that dies mid-print leaves a card
+    /// counting down to a stale ETA on the lock screen with nothing able to clear it.
     func end(printerId: Int, amsId: Int?) async {
         let k = key(printerId: printerId, amsId: amsId)
         lastContent[k] = nil
         lastUpdate[k] = nil
+        // The card's subject is over, so a swipe of it must not suppress the next print's card.
+        dismissed.remove(k)
         for activity in Activity<PrintActivityAttributes>.activities
         where activity.attributes.printerId == printerId && activity.attributes.amsId == amsId {
+            endedByApp.insert(activity.id)
             await activity.end(nil, dismissalPolicy: .default)
         }
     }
 
-    /// Report each card's push token to la-push, and keep reporting on rotation. The token is the
-    /// only identity an adopted card exposes, so it is what the server keys on.
-    private func observePushToken(_ activity: Activity<PrintActivityAttributes>) {
+    // MARK: - Ownership plumbing
+
+    /// Attach everything the app is responsible for regardless of who owns the cards.
+    private func startObserving() {
+        // The push-to-start token is the ONLY way la-push can create a card while the app is closed,
+        // and `upsert` refuses to create one in SERVER mode — so without this registration neither
+        // party ever starts a card and the lock screen simply stays empty for the whole print. The
+        // stream emits the current token as soon as it is iterated, then again on rotation.
+        if isServerOwned {
+            Task { [weak self] in
+                for await tokenData in Activity<PrintActivityAttributes>.pushToStartTokenUpdates {
+                    guard let self else { return }
+                    // `icon_uri` is empty until the brand glyph is written to the App Group (a known
+                    // gap); la-push treats an empty value as "keep what you have" for start tokens.
+                    await self.post("/register-start", body: StartRegistration(pushToken: Self.hex(tokenData), iconUri: ""))
+                }
+            }
+        }
+
+        Task { [weak self] in
+            for await activity in Activity<PrintActivityAttributes>.activityUpdates {
+                guard let self else { return }
+                self.observe(activity)
+            }
+        }
+        adoptExistingActivities()
+    }
+
+    private func adoptExistingActivities() {
+        for activity in Activity<PrintActivityAttributes>.activities { observe(activity) }
+    }
+
+    /// Wire one card — ours or the server's — to the streams that keep it honest.
+    private func observe(_ activity: Activity<PrintActivityAttributes>) {
+        guard observed.insert(activity.id).inserted else { return }
+        let id = activity.id
+        let k = key(printerId: activity.attributes.printerId, amsId: activity.attributes.amsId)
+
+        Task { [weak self] in
+            for await state in activity.activityStateUpdates {
+                guard let self else { return }
+                // Only `.dismissed` means the card has actually left the screen. `.ended` still leaves
+                // it visible under `.default`, and acting on it would drop the card early.
+                if case .dismissed = state { self.cardVanished(activityId: id, key: k) }
+            }
+        }
+
+        guard isServerOwned else { return }
         Task { [weak self] in
             for await tokenData in activity.pushTokenUpdates {
-                let token = tokenData.map { String(format: "%02x", $0) }.joined()
-                await self?.register(token: token, activity: activity)
+                guard let self else { return }
+                let token = Self.hex(tokenData)
+                self.tokens[id] = token
+                await self.register(activity: activity, token: token)
             }
         }
     }
 
-    private func register(token: String, activity: Activity<PrintActivityAttributes>) async {
-        guard let pushUrl, let url = URL(string: pushUrl + "/register-activity") else { return }
-        struct Body: Encodable {
-            let token: String
-            let printerId: Int
-            let amsId: Int?
+    private func cardVanished(activityId: String, key k: String) {
+        observed.remove(activityId)
+        tokens[activityId] = nil
+        registered = registered.filter { !$0.hasPrefix("\(activityId)|") }
+        lastRegisterAttempt = lastRegisterAttempt.filter { !$0.key.hasPrefix("\(activityId)|") }
+        // We ended this one ourselves, so its disappearance carries no instruction from the user.
+        guard endedByApp.remove(activityId) == nil else { return }
+        dismissed.insert(k)
+        lastContent[k] = nil
+        lastUpdate[k] = nil
+    }
+
+    // MARK: - la-push registration
+
+    /// `POST /register-start` — the device's push-to-start token.
+    struct StartRegistration: Encodable, Equatable {
+        let pushToken: String
+        let iconUri: String
+    }
+
+    /// `POST /register` — binds one card's APNs update token so the server can push into it.
+    struct CardRegistration: Encodable, Equatable {
+        let printerId: Int
+        let pushToken: String
+        let printerName: String
+        let iconUri: String
+        /// `"print"` | `"dry"`. la-push keys drying cards `dry:<printerId>:<amsId>` off THIS field, so
+        /// a drying card registered as a print overwrites the print card's registration instead.
+        let kind: String
+        let amsId: Int?
+    }
+
+    /// Pure: what a card says about itself → the body la-push wants.
+    ///
+    /// The name and glyph are echoed from the card's OWN content rather than from anything the app has
+    /// cached, because `/register` overwrites both server-side: in SERVER mode this card was created
+    /// by la-push, and posting the app's idea of the name would blank a title the server got right.
+    nonisolated static func cardRegistration(
+        attributes: PrintActivityAttributes,
+        state: PrintActivityAttributes.ContentState,
+        token: String
+    ) -> CardRegistration {
+        CardRegistration(
+            printerId: attributes.printerId,
+            pushToken: token,
+            printerName: state.printerName,
+            iconUri: state.iconUri,
+            kind: attributes.amsId == nil ? "print" : "dry",
+            amsId: attributes.amsId
+        )
+    }
+
+    /// Re-attempt registrations that have not been accepted yet. A card whose token never reached
+    /// la-push is a card frozen at the content it was created with — the "stuck at 0 %" symptom — and
+    /// the token stream will not re-emit just because a POST failed.
+    private func flushRegistrations() async {
+        for activity in Activity<PrintActivityAttributes>.activities {
+            guard let token = tokens[activity.id] else { continue }
+            await register(activity: activity, token: token)
         }
-        var req = URLRequest(url: url)
+    }
+
+    private func register(activity: Activity<PrintActivityAttributes>, token: String) async {
+        guard isServerOwned, !token.isEmpty else { return }
+        let pair = "\(activity.id)|\(token)"
+        guard !registered.contains(pair) else { return }
+        if let last = lastRegisterAttempt[pair], Date().timeIntervalSince(last) < Self.registerRetry { return }
+        lastRegisterAttempt[pair] = Date()
+
+        let body = Self.cardRegistration(attributes: activity.attributes, state: activity.content.state, token: token)
+        if await post("/register", body: body) { registered.insert(pair) }
+    }
+
+    /// la-push endpoint for `path`, or nil when push is off. Trailing slashes are stripped because
+    /// `…/` + `/register` is `//register`, which the server 404s.
+    nonisolated static func endpoint(_ base: String?, _ path: String) -> URL? {
+        guard var base = base else { return nil }
+        while base.hasSuffix("/") { base.removeLast() }
+        guard !base.isEmpty else { return nil }
+        return URL(string: base + path)
+    }
+
+    /// The JSON shape la-push's pydantic models expect: snake_case, nil optionals omitted.
+    nonisolated static func encode(_ body: some Encodable) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        return try? encoder.encode(body)
+    }
+
+    nonisolated static func hex(_ data: Data) -> String {
+        data.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// POST a registration body. Returns whether la-push accepted it.
+    ///
+    /// The status code is checked rather than discarded: this app spent a release posting to a route
+    /// that did not exist, and a swallowed 404/422 looks exactly like success from in here.
+    @discardableResult
+    private func post(_ path: String, body: some Encodable) async -> Bool {
+        guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else { return false }
+        var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        req.httpBody = try? encoder.encode(Body(
-            token: token,
-            printerId: activity.attributes.printerId,
-            amsId: activity.attributes.amsId
-        ))
-        _ = try? await URLSession.shared.data(for: req)
+        req.httpBody = data
+        guard let (_, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse else { return false }
+        return (200..<300).contains(http.statusCode)
     }
 }

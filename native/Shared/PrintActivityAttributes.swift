@@ -71,8 +71,24 @@ struct PrintActivityAttributes: ActivityAttributes {
         var amsTarget: Int?
         var humidity: Int?
 
+        /// `nil` when there is no ETA. Finiteness is checked because this number arrives as JSON off
+        /// the wire: an infinity would otherwise build a nonsense `Date` that compares as a perfectly
+        /// good future one.
         var etaDate: Date? {
-            etaEpochMs > 0 ? Date(timeIntervalSince1970: etaEpochMs / 1000) : nil
+            guard etaEpochMs > 0, etaEpochMs.isFinite else { return nil }
+            return Date(timeIntervalSince1970: etaEpochMs / 1000)
+        }
+
+        /// What the card's countdown slot should render *right now*.
+        ///
+        /// `now` is injected so the decision is testable without waiting on a clock; render sites
+        /// call it with the default.
+        func countdown(now: Date = Date()) -> LiveActivityCountdown {
+            guard let eta = etaDate else { return .hidden }
+            // `>` and not `>=`: a zero-length range is a legal `ClosedRange` but renders a timer with
+            // nothing left to tick, which is exactly the `.overdue` case.
+            guard eta > now else { return .overdue }
+            return .ticking(now...eta)
         }
     }
 
@@ -82,4 +98,34 @@ struct PrintActivityAttributes: ActivityAttributes {
     var printerId: Int
     /// nil for a print card; the AMS unit id for a drying card.
     var amsId: Int?
+}
+
+/// What a card's countdown slot can show — the only sanctioned way to build a range for
+/// `Text(timerInterval:)`.
+///
+/// `Text(timerInterval:)` takes a `ClosedRange<Date>`, and `...` calls
+/// `precondition(lowerBound <= upperBound)`, so `Date()...etaDate` **traps the whole widget
+/// process** the instant the stored ETA is in the past. That is routine rather than exotic: a
+/// content state is sticky. In local mode the app is the only updater and stops the moment it is
+/// suspended, so WidgetKit re-renders the last pushed state on every lock-screen wake and every
+/// Dynamic Island expansion thereafter; prints also routinely overrun their own estimate while the
+/// app is backgrounded. Clamping the ETA when it is *computed* cannot help — nothing keeps it in the
+/// future until it is *rendered*. So no render site forms a range itself; they all switch on this.
+enum LiveActivityCountdown: Equatable, Sendable {
+    /// No ETA at all. The slot renders nothing, as it always has.
+    case hidden
+    /// A well-formed future range, safe to hand to `Text(timerInterval:countsDown:)`.
+    case ticking(ClosedRange<Date>)
+    /// The ETA is known but has passed: static text. Counting *up* from the ETA instead is not an
+    /// option — `Text(timerInterval:)` clamps at the range it was given, so an `eta...now` range
+    /// would freeze at the instant of the render that built it.
+    case overdue
+
+    /// Overdue text for the roomy slots (lock-screen card, expanded Dynamic Island). "Finishing" is
+    /// honest for both readings of a passed ETA — a print running over, or a state that went stale
+    /// while the app was suspended.
+    static let overdueLabel = "Finishing"
+    /// Overdue text for the ~44pt compact Dynamic Island slot, where `overdueLabel` would truncate.
+    /// Reads as the countdown it replaces, run out.
+    static let overdueLabelCompact = "0:00"
 }

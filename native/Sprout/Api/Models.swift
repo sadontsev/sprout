@@ -33,7 +33,20 @@ struct LooseNumber: Codable, Hashable, Sendable, ExpressibleByFloatLiteral, Expr
     }
 
     var double: Double? { value }
-    var int: Int? { value.flatMap { $0.isFinite ? Int($0) : nil } }
+
+    /// Truncated toward zero (as `Int(_: Double)` is), or nil when there is no value or it isn't
+    /// finite.
+    ///
+    /// `isFinite` alone is not enough: `Int(_: Double)` is a runtime TRAP — not a silent 0 — for any
+    /// finite value outside `Int`'s range, and `Double("1e30")` from a stringified WebSocket field is
+    /// perfectly finite. Saturating at the ends keeps the promise this type exists to make (the rest
+    /// of the app can't crash on a bad number), and matches `Dryer.safeRound` / `Cooling.rounded`.
+    var int: Int? {
+        guard let value, value.isFinite else { return nil }
+        if value >= Double(Int.max) { return .max }
+        if value <= Double(Int.min) { return .min }
+        return Int(value)
+    }
 }
 
 /// A printer registered in Bambuddy (GET /printers/).
@@ -574,15 +587,72 @@ struct MakerWorldImportResponse: Codable, Hashable, Sendable {
 
 // MARK: - Slicing
 
+/// One poll of `GET /api/v1/slice-jobs/{job_id}`.
+///
+/// A finished slice reports its outputs NESTED under `result` — validated against the live server and
+/// recorded in `docs/phase0-results.md` as `result.{library_file_id, print_time_seconds,
+/// filament_used_g, filament_used_mm}`; the RN client read `j.result` for the same reason. Reading
+/// those names off the root decoded nil every time, so the wizard enqueued the original (unsliced)
+/// file instead of the .gcode.3mf just produced.
+///
+/// The root-level twins are kept as a FALLBACK, not as the primary shape: the server has not been
+/// re-verified since, so a build that flattens the job must still decode. Consumers read the computed
+/// accessors below, which prefer the nested object and fall back to the root.
 struct SliceJob: Codable, Hashable, Sendable {
+    /// The `result` object a completed job carries.
+    struct Result: Codable, Hashable, Sendable {
+        var status: String?
+        var error: String?
+        /// The NEW library file the slice produced — this is what actually gets enqueued.
+        var libraryFileId: LooseNumber?
+        var printTimeSeconds: LooseNumber?
+        var filamentUsedG: LooseNumber?
+        var filamentUsedMm: LooseNumber?
+    }
+
     var id: Int?
     var status: String?
     var progress: LooseNumber?
-    var errorMessage: String?
-    var libraryFileId: Int?
-    var printTimeSeconds: LooseNumber?
-    var filamentUsedG: LooseNumber?
-    var filamentUsedMm: LooseNumber?
+    var result: Result?
+
+    // Root-level fallbacks. Prefixed `root` so the accessors below can own the plain names the app
+    // reads; `CodingKeys` restores the wire spelling (matched AFTER the decoder's snake_case
+    // conversion, hence camelCase).
+    var rootError: String?
+    var rootErrorMessage: String?
+    var rootLibraryFileId: LooseNumber?
+    var rootPrintTimeSeconds: LooseNumber?
+    var rootFilamentUsedG: LooseNumber?
+    var rootFilamentUsedMm: LooseNumber?
+
+    enum CodingKeys: String, CodingKey {
+        case id, status, progress, result
+        case rootError = "error"
+        case rootErrorMessage = "errorMessage"
+        case rootLibraryFileId = "libraryFileId"
+        case rootPrintTimeSeconds = "printTimeSeconds"
+        case rootFilamentUsedG = "filamentUsedG"
+        case rootFilamentUsedMm = "filamentUsedMm"
+    }
+
+    /// Ids are `LooseNumber` on the wire side so a stringified `"42"` can't fail the whole job
+    /// payload the way a strict `Int?` would.
+    var libraryFileId: Int? { result?.libraryFileId?.int ?? rootLibraryFileId?.int }
+    var printTimeSeconds: LooseNumber? { result?.printTimeSeconds ?? rootPrintTimeSeconds }
+    var filamentUsedG: LooseNumber? { result?.filamentUsedG ?? rootFilamentUsedG }
+    var filamentUsedMm: LooseNumber? { result?.filamentUsedMm ?? rootFilamentUsedMm }
+
+    /// Why a slice failed. The server names this field `error` (the RN client threw `j.error`);
+    /// `error_message` is only a fallback, and a blank string is treated as absent so the caller's
+    /// own "Slice failed" default wins instead of an empty alert body.
+    var errorMessage: String? {
+        for candidate in [rootError, result?.error, rootErrorMessage] {
+            if let text = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                return text
+            }
+        }
+        return nil
+    }
 }
 
 struct CameraDiagnosis: Codable, Hashable, Sendable {

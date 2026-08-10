@@ -18,7 +18,11 @@ import os
 /// bound if decode ever falls behind, at 2 MB/s, and (b) add latency that never recovers,
 /// because the producer rate is fixed by the server, not by us. Bounded memory here is
 /// exactly 2 frames (~520 KB).
-final class LatestFrameGate {
+///
+/// `@unchecked Sendable`: every field is read and written under `lock`, which is the whole reason
+/// this type exists — it is the one object deliberately touched from both the network queue and the
+/// decode queue.
+final class LatestFrameGate: @unchecked Sendable {
     private let lock = NSLock()
     private var pending: Data?
     private var draining = false
@@ -80,6 +84,11 @@ final class LatestFrameGate {
 /// 1680x1080): 6.19 ms full res, 2.45 ms at subsample 2, 1.69 ms at subsample 4.
 enum DecodeStrategy { case passthrough, imageIO }
 
+/// NOT thread-safe, by design: every method and every field is confined to the renderer's
+/// `decodeQueue`. `formatDescription` and `pool` are reference-counted CoreMedia/CoreVideo objects,
+/// so releasing one from a second thread while `passthroughBuffer` is between its load and its use is
+/// an over-release, not a torn read. `demoteToImageIO` in particular arrives from an
+/// AVSampleBufferDisplayLayer notification on an unspecified thread and must be hopped, not locked.
 final class JPEGFrameBuilder {
 
     private(set) var strategy: DecodeStrategy = .passthrough
@@ -226,8 +235,9 @@ final class JPEGFrameBuilder {
 // MARK: - 5. The network client
 // ============================================================================
 
-protocol MJPEGStreamClientDelegate: AnyObject {
-    /// Delivered on the client's delegate queue. Do not block.
+protocol MJPEGStreamClientDelegate: AnyObject, Sendable {
+    /// Delivered on the client's state queue — the same serial queue URLSession uses for its delegate
+    /// callbacks, and the only queue that ever touches the client. Do not block.
     func streamDidReceiveFrame(_ jpeg: Data)
     func streamDidBecomeLive()
     func streamDidFail(_ error: MJPEGStreamError)
@@ -265,14 +275,27 @@ enum MJPEGStreamError: LocalizedError {
     }
 }
 
-final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
+/// `@unchecked Sendable`: every stored property below is confined to `stateQueue`, including the ones
+/// URLSession writes through its delegate callbacks — there is exactly one queue that may touch this
+/// object's state, and the public API hops onto it rather than reaching in from the caller's queue.
+final class MJPEGStreamClient: NSObject, @unchecked Sendable, URLSessionDataDelegate {
 
-    weak var delegate: MJPEGStreamClientDelegate?
+    /// THE queue. It is the delegate queue's `underlyingQueue`, so URLSession runs every callback on
+    /// it; `setDelegate`/`start`/`stop`/`invalidate` hop onto it; the first-frame watchdog fires on it.
+    ///
+    /// Serialising only the delegate queue was not enough, and the gap was not theoretical: `start()`
+    /// ran `resetConnectionState()` from the MAIN queue, so `parser` could be set to nil between the
+    /// delegate thread's `parser != nil` check and its `parser!` use — an "unexpectedly found nil"
+    /// trap — and `partBuffer.append` could run against the same copy-on-write storage another thread
+    /// was calling `removeAll` on.
+    private let stateQueue = DispatchQueue(label: "bambu.mjpeg.state", qos: .userInitiated)
 
     private var session: URLSession!
+    private weak var delegateRef: MJPEGStreamClientDelegate?
     private var task: URLSessionDataTask?
     private var parser: MultipartMJPEGParser?
     private var sawFirstFrame = false
+    private var invalidated = false
     // URLSession DE-MULTIPLEXES multipart/x-mixed-replace by itself: every part arrives as its own
     // didReceive-response callback carrying that PART's Content-Type, and the bytes that follow are
     // the part body alone — boundary framing never reaches the delegate. So the parser below only
@@ -285,19 +308,17 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
     private var firstFrameDeadline: DispatchWorkItem?
     private let firstFrameTimeout: TimeInterval
 
-    /// Serial: URLSession delivers delegate callbacks on this queue's underlying thread, so the
-    /// parser is single-threaded by construction and needs no locking.
-    private let delegateQueue: OperationQueue = {
-        let q = OperationQueue()
-        q.maxConcurrentOperationCount = 1
-        q.qualityOfService = .userInitiated
-        q.name = "bambu.mjpeg.net"
-        return q
-    }()
-
     init(firstFrameTimeout: TimeInterval = 12) {
         self.firstFrameTimeout = firstFrameTimeout
         super.init()
+
+        // Serial AND backed by `stateQueue`: URLSession runs the callbacks as operations on the
+        // underlying queue, so a delegate callback can never overlap a start/stop/watchdog hop.
+        let delegateQueue = OperationQueue()
+        delegateQueue.maxConcurrentOperationCount = 1
+        delegateQueue.qualityOfService = .userInitiated
+        delegateQueue.name = "bambu.mjpeg.net"
+        delegateQueue.underlyingQueue = stateQueue
 
         // EPHEMERAL, deliberately. Three reasons, in order of importance:
         //  1. The stream token lives in the QUERY STRING. A `.default` session persists response
@@ -325,8 +346,44 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
         session = URLSession(configuration: cfg, delegate: self, delegateQueue: delegateQueue)
     }
 
+    /// The delegate is stored on `stateQueue` like everything else, so it is set through a method
+    /// rather than a property. Safe to call from any queue; callbacks arrive on `stateQueue`.
+    func setDelegate(_ next: MJPEGStreamClientDelegate?) {
+        stateQueue.async { [weak self] in self?.delegateRef = next }
+    }
+
+    /// Safe to call from any queue — the work runs on `stateQueue`, ordered against every in-flight
+    /// delegate callback.
     func start(url: URL) {
-        stop()
+        stateQueue.async { [weak self] in self?.performStart(url: url) }
+    }
+
+    /// Safe to call from any queue — the work runs on `stateQueue`.
+    func stop() {
+        stateQueue.async { [weak self] in self?.performStop() }
+    }
+
+    /// URLSession keeps a STRONG reference to its delegate — this object — until the session is
+    /// explicitly invalidated. That made client and session a retain cycle, so `deinit` could never
+    /// run and every camera session permanently leaked one client, one ephemeral URLSession and its
+    /// operation queue. The owner must call this exactly once when it is done with the client; there
+    /// is no other way for these to be released.
+    func invalidate() {
+        stateQueue.async { [weak self] in
+            // `weak` still resolves here: the session itself is holding us until the line below.
+            guard let self, !self.invalidated else { return }
+            self.invalidated = true
+            self.performStop()
+            self.delegateRef = nil
+            self.session.invalidateAndCancel()
+        }
+    }
+
+    // ---- everything below runs on `stateQueue` ----
+
+    private func performStart(url: URL) {
+        guard !invalidated else { return }
+        performStop()
         resetConnectionState()
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
@@ -338,8 +395,10 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
         t.resume()
     }
 
-    func stop() {
+    private func performStop() {
         firstFrameDeadline?.cancel(); firstFrameDeadline = nil
+        // `cancel()` is asynchronous, so callbacks for this task can still be queued behind us.
+        // Clearing `task` is what makes them identifiable as stale — see the identity guards below.
         task?.cancel(); task = nil
     }
 
@@ -359,8 +418,6 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
         partExpected = nil
         partBuffer.removeAll(keepingCapacity: true)
     }
-
-    deinit { session?.invalidateAndCancel() }
 
     /// Never log the raw URL — it carries the camera stream token.
     static func redact(_ url: URL) -> String {
@@ -384,12 +441,17 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
             self.fail(.noFirstFrame(after: self.firstFrameTimeout))
         }
         firstFrameDeadline = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + firstFrameTimeout, execute: item)
+        // On `stateQueue`, NOT main. It reads `sawFirstFrame` and then tears the task down; running
+        // that on main against fields the delegate queue was writing meant a first frame landing on
+        // the deadline could be delivered while the watchdog was already committed to killing the
+        // connection — the healthy stream was cancelled and `streamDidFail` was handed to a delegate
+        // that had just been told the stream was live, on a queue the protocol says it never uses.
+        stateQueue.asyncAfter(deadline: .now() + firstFrameTimeout, execute: item)
     }
 
     private func fail(_ e: MJPEGStreamError) {
-        stop()
-        delegate?.streamDidFail(e)
+        performStop()
+        delegateRef?.streamDidFail(e)
     }
 
     // ---- URLSessionDataDelegate ----
@@ -397,6 +459,9 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
     func urlSession(_ s: URLSession, dataTask: URLSessionDataTask,
                     didReceive response: URLResponse,
                     completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        // A cancelled task keeps delivering until URLSession notices. Anything not from the task we
+        // currently own is from a connection that has already been replaced or torn down.
+        guard dataTask === task else { completionHandler(.cancel); return }
         guard let http = response as? HTTPURLResponse else {
             completionHandler(.cancel); fail(.notMultipart("non-HTTP response")); return
         }
@@ -436,7 +501,8 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
         completionHandler(.allow)
     }
 
-    /// Emit whatever part body has accumulated. Called when the next part starts and at completion.
+    /// Emit whatever part body has accumulated. Called when the NEXT part's headers arrive, which is
+    /// what proves the body is complete on a part that carried no Content-Length.
     private func flushPart() {
         guard !partBuffer.isEmpty else { return }
         let jpeg = partBuffer
@@ -445,18 +511,48 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
         emitFrame(jpeg)
     }
 
+    /// The same flush at end-of-connection. A part with no Content-Length is otherwise only completed
+    /// by the next part's headers, and the on-demand camera self-terminates instead of sending them —
+    /// so a stream that handed over one whole JPEG and closed used to discard it, leave `sawFirstFrame`
+    /// false, and report "no JPEG within 12s" for a frame it had actually received.
+    ///
+    /// Nothing here proves completeness, so ask the JPEG itself — see `isCompleteJPEG`.
+    private func flushFinalPart() {
+        defer { partBuffer.removeAll(keepingCapacity: true); partExpected = nil }
+        guard Self.isCompleteJPEG(partBuffer) else { return }
+        emitFrame(partBuffer)
+    }
+
+    /// A whole JPEG opens with SOI (FF D8) and ends with EOI (FF D9). At end-of-connection there is
+    /// no following part to prove the buffered body was complete, and without this check a connection
+    /// dropped mid-frame would hand the decoder a truncation and report the stream as having gone
+    /// live off the back of it.
+    static func isCompleteJPEG(_ d: Data) -> Bool {
+        d.count >= 4 && d.prefix(2).elementsEqual([0xFF, 0xD8]) && d.suffix(2).elementsEqual([0xFF, 0xD9])
+    }
+
     private func emitFrame(_ jpeg: Data) {
         if !sawFirstFrame {
             sawFirstFrame = true
             firstFrameDeadline?.cancel(); firstFrameDeadline = nil
-            delegate?.streamDidBecomeLive()
+            delegateRef?.streamDidBecomeLive()
         }
-        delegate?.streamDidReceiveFrame(jpeg)
+        delegateRef?.streamDidReceiveFrame(jpeg)
     }
 
     func urlSession(_ s: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard dataTask === task else { return }
         if demultiplexed {
             partBuffer.append(data)
+            // The parser path has enforced an 8 MB ceiling since it was written, precisely so a server
+            // that stops emitting boundaries cannot exhaust memory. This branch — the one that
+            // actually runs on device, because URLSession de-multiplexes multipart itself — had no
+            // ceiling at all: with no Content-Length the buffer's only bound was the next part's
+            // headers, so a stream that never sent them grew at ~2 MB/s until jetsam.
+            if partBuffer.count > MultipartMJPEGParser.bufferLimit {
+                fail(.parse(MJPEGParseError.bufferOverflow(limit: MultipartMJPEGParser.bufferLimit)))
+                return
+            }
             // Content-Length lets a frame be emitted the moment it is complete rather than waiting
             // for the next part's headers — a whole frame-interval of latency at 10 fps.
             if let n = partExpected, partBuffer.count >= n {
@@ -467,9 +563,14 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
             }
             return
         }
-        guard parser != nil else { return }
+        // Take the parser out of the property for the duration of the call: it is a struct holding a
+        // rolling byte buffer, and being its sole owner is what lets `consume` append in place instead
+        // of copying the whole buffer per chunk.
+        guard var p = parser else { return }
+        parser = nil
         let events: [MJPEGParseEvent]
-        do { events = try parser!.consume(data) } catch { fail(.parse(error)); return }
+        do { events = try p.consume(data) } catch { fail(.parse(error)); return }
+        parser = p
 
         for e in events {
             switch e {
@@ -522,13 +623,17 @@ final class MJPEGStreamClient: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ s: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard task === self.task else { return }
+        self.task = nil
         firstFrameDeadline?.cancel(); firstFrameDeadline = nil
-        guard let error else {
-            delegate?.streamDidFail(.transport(URLError(.networkConnectionLost)))
-            return
-        }
+        // Our own cancellation, from stop()/start(). Nothing to report and nothing worth flushing.
         if (error as? URLError)?.code == .cancelled { return }
-        delegate?.streamDidFail(.transport(error))
+        flushFinalPart()
+        if let error {
+            delegateRef?.streamDidFail(.transport(error))
+        } else {
+            delegateRef?.streamDidFail(.transport(URLError(.networkConnectionLost)))
+        }
     }
 }
 

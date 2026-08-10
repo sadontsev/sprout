@@ -1,3 +1,4 @@
+import ActivityKit
 import Foundation
 import Observation
 import SwiftUI
@@ -83,7 +84,14 @@ final class AppModel {
     }
 
     /// Build the client and start everything that depends on it.
+    ///
+    /// Re-entrant by design: Settings → Save calls this on an already-connected app, so the previous
+    /// session has to be torn down FIRST. Assigning over `status`/`cooldown` does not stop them —
+    /// each is pinned by its own running task — so every Save used to add a live WebSocket and two
+    /// poll loops that nothing could ever reach again, still using the old base URL and API key.
     func connect(_ cfg: AppConfig) async {
+        teardownSession()
+
         config = cfg
         SecureConfig.save(cfg)
 
@@ -96,7 +104,9 @@ final class AppModel {
         client = c
 
         // Restore the last printer immediately so the first paint is the right machine; the fleet
-        // refresh below corrects it if that printer is gone.
+        // refresh below corrects it if that printer is gone. Safe here only because `teardownSession`
+        // already cleared the stores — the `didSet` reaches for them, and reaching for the PREVIOUS
+        // session's stores is how a re-Save used to restart the very loop it was about to orphan.
         printerId = cfg.printerId ?? 0
         cameraToken = cfg.cameraToken
 
@@ -118,18 +128,53 @@ final class AppModel {
     }
 
     func signOut() {
-        status?.stop()
-        cooldown?.stop()
-        derivedTask?.cancel()
-        cameraTokenTask?.cancel()
-        fleetTask?.cancel()
-        lanTask?.cancel()
-        status = nil
+        endLiveActivities()
+        teardownSession()
+        liveActivity = nil
         client = nil
         printers = []
         cameraToken = nil
+        lanMode = .unknown
         SecureConfig.clear()
         config = nil
+    }
+
+    /// Stop everything the current client owns. Both stores keep themselves alive from inside their
+    /// own loops, so dropping the reference is not a teardown — `stop()` is.
+    private func teardownSession() {
+        status?.stop()
+        status = nil
+        cooldown?.stop()
+        cooldown = nil
+        derivedTask?.cancel()
+        derivedTask = nil
+        cameraTokenTask?.cancel()
+        cameraTokenTask = nil
+        fleetTask?.cancel()
+        fleetTask = nil
+        lanTask?.cancel()
+        lanTask = nil
+    }
+
+    /// End every live card on the way out of a session.
+    ///
+    /// Sign-out cancels the reconcile loop and clears the config, so nothing will ever update or end
+    /// these again — not even the next launch, since `sync` needs a status and a status needs a
+    /// client. A card left up ticks toward a stale ETA until ActivityKit expires it hours later.
+    ///
+    /// Enumerating ActivityKit rather than the printers we happen to have synced is deliberate: a
+    /// card can outlive the fleet entry that created it, and the attributes it carries are exactly
+    /// what `end` keys on.
+    private func endLiveActivities() {
+        guard let la = liveActivity else { return }
+        let cards = Activity<PrintActivityAttributes>.activities
+            .map { ($0.attributes.printerId, $0.attributes.amsId) }
+        guard !cards.isEmpty else { return }
+        Task {
+            for (printerId, amsId) in cards {
+                await la.end(printerId: printerId, amsId: amsId)
+            }
+        }
     }
 
     // MARK: - Fleet
@@ -178,15 +223,24 @@ final class AppModel {
         derivedTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let s = self.status?.status
+                // The cooldown card is a property of the machine the user is LOOKING at, so it stays
+                // on the selection.
+                let selected = self.status?.status
                 let material = self.vm.ams.first { $0.active }?.label
-                self.cooldown?.update(status: s, vmKind: self.vm.kind, material: material)
-                await self.liveActivity?.sync(
-                    printerId: self.printerId,
-                    printerName: self.printer?.name ?? "",
-                    vm: self.vm,
-                    status: s
-                )
+                self.cooldown?.update(status: selected, vmKind: self.vm.kind, material: material)
+
+                // Live Activities are not: a card belongs to a printer, and this is the only thing
+                // that will ever call `sync` for one. Reconciling the selection alone froze the other
+                // machine's card the moment the user switched — and left it up for good, since
+                // nothing would then be called with that printer's id to end it.
+                for (id, s) in self.status?.statuses ?? [:] {
+                    await self.liveActivity?.sync(
+                        printerId: id,
+                        printerName: self.printers.first { $0.id == id }?.name ?? "",
+                        vm: Dash.present(s),
+                        status: s
+                    )
+                }
                 try? await Task.sleep(for: .seconds(4))
             }
         }

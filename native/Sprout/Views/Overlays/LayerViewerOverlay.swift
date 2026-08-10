@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import os
 
 // The layer viewer is the same self-contained page the app has always shipped, hosted in a
 // WKWebView (see StlViewerOverlay.swift for the shared plumbing and the reasoning).
@@ -169,13 +170,16 @@ enum LayerPage {
         <script>
           var URL_=\#(urlLit), HDRS=\#(hdrLit);
           var post=function(o){window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(o));};
-          function fail(m){var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t render the preview. '+m;post({type:'error',message:String(m)});}
+          // Carried out with every failure so the host logs the HTTP status alongside the URL that
+          // produced it, instead of scraping it back out of the message.
+          var HTTPSTATUS=0;
+          function fail(m){var e=document.getElementById('err');e.style.display='flex';e.textContent='Couldn’t render the preview. '+m;post({type:'error',message:String(m),status:HTTPSTATUS});}
           window.addEventListener('error',function(e){fail(e.message||'error');});
           try{
             var PLATE=\#(plateLit), layers=[], sup=[], zs=[], b=null;
         \#(gcodeParserJS)
             fetch(URL_, { headers: HDRS })
-              .then(function (r) { if (!r.ok) throw new Error('download failed (HTTP ' + r.status + ')'); return r.text(); })
+              .then(function (r) { if (!r.ok) { HTTPSTATUS = r.status; throw new Error('download failed (HTTP ' + r.status + ')'); } return r.text(); })
               .then(function (text) {
                 var P = parseGcode(text);
                 if (!P.layers.length) throw new Error('no printable layers were found in this file');
@@ -489,8 +493,16 @@ struct LayerViewerOverlay: View {
     let model: AppModel
     private let source: LayerSource
     private let title: String
+    /// How the close button dismisses. The library entry point is presented through
+    /// `AppModel.overlay`, so clearing that IS the dismissal; the SD-card entry point is a
+    /// `fullScreenCover` owned by the Files tab, which has to clear its own binding instead — and
+    /// would otherwise stay on screen forever with a close button that does nothing visible.
+    private let onClose: (() -> Void)?
 
     @State private var page: String?
+    /// The absolute URL handed to the page, kept so a failure logs the URL that was actually asked
+    /// for rather than the one the reader assumes it was.
+    @State private var pageUrl: String?
     /// nil until the page reports `ready`, which is also the signal that parsing finished.
     @State private var hasSupport: Bool?
     @State private var failure: String?
@@ -503,13 +515,15 @@ struct LayerViewerOverlay: View {
         // malformed escape decodes to nil, in which case the raw name still beats nothing.
         let raw = [file.printName ?? "", file.filename].first { !$0.isEmpty } ?? "file-\(file.id)"
         self.title = raw.removingPercentEncoding ?? raw
+        self.onClose = nil
     }
 
     /// SD-card entry point — same viewer, different G-code endpoint.
-    init(model: AppModel, printerId: Int, path: String, title: String) {
+    init(model: AppModel, printerId: Int, path: String, title: String, onClose: @escaping () -> Void) {
         self.model = model
         self.source = .printerFile(printerId: printerId, path: path)
         self.title = title
+        self.onClose = onClose
     }
 
     var body: some View {
@@ -517,7 +531,7 @@ struct LayerViewerOverlay: View {
             Palette.dark.bg.ignoresSafeArea()
 
             if let page, failure == nil {
-                ViewerWebView(html: page, baseURL: origin, onEvent: handle)
+                ViewerWebView(html: page, baseURL: documentBase, onEvent: handle)
                     .id(attempt)
                     .ignoresSafeArea()
             }
@@ -531,7 +545,7 @@ struct LayerViewerOverlay: View {
             }
 
             ViewerTopBar(title: title) {
-                model.overlay = nil
+                close()
             } trailing: {
                 if let hasSupport {
                     supportsPill(hasSupport)
@@ -540,6 +554,14 @@ struct LayerViewerOverlay: View {
         }
         .preferredColorScheme(.dark)
         .task(id: attempt) { build() }
+    }
+
+    private func close() {
+        if let onClose {
+            onClose()
+        } else {
+            model.overlay = nil
+        }
     }
 
     /// Supports are only known once the parser has seen every `; FEATURE:` comment, so this pill
@@ -558,8 +580,8 @@ struct LayerViewerOverlay: View {
         .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(ViewerChrome.pill.opacity(0.55)))
     }
 
-    private var origin: URL {
-        ViewerJS.origin(of: model.client?.baseUrl ?? "")
+    private var documentBase: URL {
+        ViewerJS.documentBase(of: model.client?.baseUrl ?? "")
     }
 
     private func build() {
@@ -572,11 +594,13 @@ struct LayerViewerOverlay: View {
         case .library(let fileId): client.gcodePath(fileId)
         case .printerFile(let printerId, let filePath): client.printerGcodePath(printerId, path: filePath)
         }
+        let url = client.baseUrl + path
+        pageUrl = url
         // The API key rides along in the page source. That is safe here and nowhere else: the
         // document is loaded on the server's own origin from a string we built, so no third-party
         // script can read it — and the G-code endpoints reject the camera stream token outright.
         page = LayerPage.html(
-            url: client.baseUrl + path,
+            url: url,
             headers: client.authHeaders(),
             plate: PrinterProfile.forPrinter(model.printer).plate
         )
@@ -585,8 +609,10 @@ struct LayerViewerOverlay: View {
     private func handle(_ event: ViewerEvent) {
         switch event {
         case .ready(let supports): hasSupport = supports
-        case .failed(let message): failure = message
         case .loaded: break
+        case .failed(let message, let status):
+            viewerLog.error("Layer page failed (HTTP \(status, privacy: .public)) on \(ViewerJS.loggableUrl(self.pageUrl ?? "<no url>"), privacy: .public) — \(message, privacy: .public)")
+            failure = message
         }
     }
 
@@ -594,6 +620,7 @@ struct LayerViewerOverlay: View {
     /// be resumed inside a page that has already shown its error.
     private func retry() {
         page = nil
+        pageUrl = nil
         failure = nil
         hasSupport = nil
         attempt += 1

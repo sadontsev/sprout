@@ -68,7 +68,11 @@ final class CameraPiPUIView: UIView {
 @MainActor
 @Observable
 final class CameraPiPModel {
-    /// A frame has been decoded and shown — the tile can stop claiming it is connecting.
+    /// Whether the CURRENT connection has delivered a frame. It must go back to false when the
+    /// renderer reconnects: consumers drive their state machines off a *change* of this flag, and
+    /// while it was a write-once latch a reconnect (Retry, or the 45-minute camera-token rotation)
+    /// left them waiting on an edge that could never happen again — the overlay decayed to
+    /// "NO SIGNAL" over a picture that was still moving.
     var isLive = false
     var lastError: String?
     var pipActive = false
@@ -112,6 +116,8 @@ struct CameraPiPView: UIViewRepresentable {
             switch event {
             case .live:
                 model.isLive = true
+            case .connecting:
+                model.isLive = false
             case .error(let message, _):
                 model.lastError = message
             case .pipStart:

@@ -1,6 +1,31 @@
 import Foundation
 import SwiftUI
 
+/// `Double` → `Int` without trapping.
+///
+/// `Int(_:)` is a runtime TRAP — not a zero — for NaN, ±infinity, and for any finite magnitude past
+/// ~9.22e18, and these values arrive off the wire: Bambuddy's WebSocket serializer stringifies
+/// numerics and `LooseNumber` parses `"nan"`, `"inf"` and `"1e30"` without complaint. Saturating
+/// keeps the RN behaviour (which rendered the silly number) instead of killing the dashboard.
+///
+/// Shared because the sibling Domain modules each grew their own copy of this guard, and the two
+/// modules on the primary render path were the ones that skipped it.
+enum SafeInt {
+    /// Nearest whole value, ties away from zero — for display numbers.
+    static func rounded(_ v: Double?) -> Int { clamped(v?.rounded()) }
+
+    /// Truncated toward zero — for divisions like minutes → hours, where rounding up would report
+    /// "2h 00m" for 119 minutes.
+    static func truncated(_ v: Double?) -> Int { clamped(v?.rounded(.towardZero)) }
+
+    private static func clamped(_ v: Double?) -> Int {
+        guard let v, v.isFinite else { return 0 }
+        if v >= Double(Int.max) { return .max }
+        if v <= Double(Int.min) { return .min }
+        return Int(v)
+    }
+}
+
 enum DashKind: String, Sendable, Hashable {
     case connecting, offline, idle, live, complete, error
 }
@@ -82,7 +107,9 @@ enum Dash {
 
     static func fmtDuration(_ minutes: Double) -> String {
         guard minutes.isFinite, minutes > 0 else { return "—" }
-        let h = Int(minutes / 60)
+        // `isFinite` bounds the remainder but not the quotient: 1e30 minutes is finite and its hour
+        // count is not representable, which `Int(_:)` answers with a trap.
+        let h = SafeInt.truncated(minutes / 60)
         let m = Int(minutes.truncatingRemainder(dividingBy: 60).rounded())
         return h > 0 ? "\(h)h \(String(format: "%02d", m))m" : "\(m)m"
     }
@@ -105,10 +132,7 @@ enum Dash {
             .joined(separator: "-")
     }
 
-    private static func round(_ n: Double?) -> Int {
-        guard let n, n.isFinite else { return 0 }
-        return Int(n.rounded())
-    }
+    private static func round(_ n: Double?) -> Int { SafeInt.rounded(n) }
 
     /// Heating: trust the payload's explicit flag when present, else derive from the temp gap.
     private static func heating(_ explicit: Bool?, now: Int, target: Int, gap: Int) -> Bool {

@@ -27,9 +27,16 @@ struct Shell: View {
             OverlayHost(model: model, overlay: overlay)
         }
         .overlay(alignment: .bottom) {
-            if let toast = model.toast {
-                ToastBanner(text: toast) { model.toast = nil }
+            // The animation lives on the container, not at the mutation site: `model.toast` is
+            // written from half a dozen failure paths across the app and none of them wrap the
+            // assignment in `withAnimation`, so without this the banner's move/opacity transition
+            // never plays and it cuts in and out.
+            ZStack {
+                if let toast = model.toast {
+                    ToastBanner(text: toast) { model.toast = nil }
+                }
             }
+            .animation(Motion.standard(0.28), value: model.toast)
         }
         .environment(model)
     }
@@ -110,8 +117,14 @@ struct ToastBanner: View {
             .padding(.bottom, 96)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .onTapGesture(perform: onDismiss)
-            .task {
+            // Keyed on the message. Replacing `model.toast` with a different string keeps this view
+            // at the same structural position, so an un-keyed `.task` would not restart and the new
+            // message would run out whatever was left of the previous banner's five seconds.
+            .task(id: text) {
                 try? await Task.sleep(for: .seconds(5))
+                // A cancelled sleep means a newer message replaced this one (or the banner is going
+                // away); dismissing here would clear the toast that just arrived.
+                guard !Task.isCancelled else { return }
                 onDismiss()
             }
     }
