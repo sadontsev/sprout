@@ -68,6 +68,34 @@ port.
 | OTA updates | `expo-updates`, channel `production` | None | A native app ships through TestFlight. This removes the whole "applies on the second cold launch" class of confusion — and the `runtimeVersion`/`version` coupling that could orphan published updates. |
 | Config storage | `expo-secure-store` | `Security.framework` directly | Same accessibility (`WhenUnlockedThisDeviceOnly`), same JSON blob. **The Keychain schema differs, so settings do not migrate — the base URL and API key must be re-entered once.** |
 
+## Open bug: the fullscreen camera renders black
+
+Found on a live connection 2026-08-10. The dashboard's snapshot tile is fine; this is the MJPEG
+video path only.
+
+Evidence from the renderer's own log while the overlay was open:
+
+```
+CodecType: jpeg, DecodedPixelBuffer: 420f, 1680 x 1080   ← frames decode, ~2 ms each
+frames decoded: 1856, dropped: 0
+1787 frames enqueued in the last 6 seconds                ← ~300 fps, which one camera cannot produce
+enqueued: 1783, displayed: 339, flushed: 930, evicted: 513
+Task <...> received response, status 503                  ← the camera refusing another viewer
+```
+
+So decode is healthy and the display layer is being flooded, not starved: it evicts far more than it
+shows. The enqueue rate and the 503 together say **more than one stream is running at once** — three
+concurrent stream tasks appeared in the log. `MJPEGStreamClient.start(url:)` already calls `stop()`
+first, so a single client cannot stack; the duplication is therefore at the level above, i.e. more
+than one `CameraPiPRenderer` alive. `UIViewRepresentable.makeUIView` running more than once without
+the earlier view being dismantled is the obvious suspect.
+
+Next step: log the renderer's lifetime (init/deinit) with an instance id, confirm the count, and give
+the overlay a single renderer that outlives view re-creation rather than one per representable.
+
+This is very likely the same root cause as the RN build's long-standing "PiP shows a frozen frame" —
+that symptom is what a flooded, evicting display layer looks like from the outside.
+
 ## Known gaps — where the native build is NOT yet at parity
 
 These are real feature losses against `mobile/`, not deliberate differences. Listed so the
