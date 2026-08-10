@@ -30,6 +30,10 @@ enum TabKey: String, CaseIterable, Hashable, Sendable {
 struct TabBar: View {
     @Binding var active: TabKey
     @Environment(\.palette) private var c
+    /// Liquid Glass is a transparency effect, so it has to yield when the system asks for less of
+    /// it. Without this the bar keeps refracting the page behind it for someone who explicitly
+    /// turned that off.
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         HStack(spacing: 0) {
@@ -65,7 +69,14 @@ struct TabBar: View {
         .padding(.horizontal, 6)
         // Liquid Glass belongs to the floating control layer, not to content: the bar sits above the
         // scrolling page and refracts it, so it reads as chrome rather than another card.
-        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+        .background {
+            if reduceTransparency {
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .fill(c.s1)
+                    .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(c.line))
+            }
+        }
+        .glassEffect(reduceTransparency ? .identity : .regular, in: .rect(cornerRadius: 26))
         .padding(.horizontal, 14)
         .padding(.bottom, 4)
     }
