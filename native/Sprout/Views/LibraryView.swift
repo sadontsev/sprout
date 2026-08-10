@@ -771,21 +771,31 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 if pPath != "/" {
+                    // `chevron.backward`, not `arrow.up`: this is "go back one level", and an upward
+                    // arrow reads as sort order or scroll-to-top. The label also needs an explicit
+                    // `contentShape` — a glyph over a background is only hit-tested on the drawn
+                    // pixels, so taps that missed the strokes fell THROUGH to the file row behind and
+                    // opened it, which is what made the control look broken rather than merely ugly.
                     Tap { Task { await loadPrinter(LibraryBrowse.parentPath(pPath)) } } content: {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(c.t2)
-                            .frame(width: 32, height: 32)
-                            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.s2))
+                        Image(systemName: "chevron.backward")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(c.t1)
+                            .frame(width: 36, height: 36)
+                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(c.s2))
+                            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
+                    .accessibilityLabel("Back to \(LibraryBrowse.parentPath(pPath))")
                 }
                 Text("printer:\(pPath)")
                     .font(.mono(12))
                     .foregroundStyle(c.t3)
                     .lineLimit(1)
+                    .truncationMode(.head)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.bottom, 12)
+            // Keeps the row above the list: a fall-through here opens a file instead of navigating.
+            .zIndex(1)
 
             // Exclusive branches: an empty media folder used to render "Empty folder" AND the grid's
             // own "No videos here yet." one under the other.
