@@ -1,0 +1,232 @@
+import XCTest
+@testable import Sprout
+
+/// Covers `Domain/MakerWorldSearch.swift` and the search wire types.
+///
+/// The fixture is a trimmed capture of a real
+/// `GET api.bambulab.com/v1/search-service/search/design?keyword=benchy` response (2026-08-10).
+/// What it preserves matters more than what it drops: `isPrintable` is **absent**, exactly as the
+/// live API sends it, so any test that assumed that field would fail here rather than in the field.
+final class MakerWorldSearchTests: XCTestCase {
+
+    private static let page = #"""
+    {"total":7076,"hits":[
+      {"id":2842356,"title":"Ultra Lite Benchy","slug":"ultra-lite-benchy",
+       "cover":"https://makerworld.bblmw.com/c/2842356.jpg","license":"BY-NC","nsfw":false,
+       "isExclusive":false,"likeCount":1,"printCount":0,"downloadCount":2,"collectionCount":1,
+       "designCreator":{"uid":900000001,"name":"ADprinter","avatar":"https://makerworld.bblmw.com/a.jpg"}},
+      {"id":3047341,"title":"Benchy Keychain","cover":"https://makerworld.bblmw.com/c/3047341.jpg",
+       "license":"BY","nsfw":true,"likeCount":9,"printCount":4,"downloadCount":1500,
+       "designCreator":{"name":"someone"}}
+    ]}
+    """#
+
+    private func decodePage() throws -> MWSearchPage {
+        try JSONDecoder().decode(MWSearchPage.self, from: Data(Self.page.utf8))
+    }
+
+    // MARK: - Decoding
+
+    /// This API is camelCase inside a camelCase envelope — the opposite of Bambuddy's. Decoding it
+    /// with Bambuddy's `.convertFromSnakeCase` decoder would leave every count nil.
+    func testHitsDecodeWithAPlainDecoder() throws {
+        let p = try decodePage()
+        XCTAssertEqual(p.total, 7076)
+        XCTAssertEqual(p.hits?.count, 2)
+        let first = try XCTUnwrap(p.hits?.first)
+        XCTAssertEqual(first.id, 2842356)
+        XCTAssertEqual(first.title, "Ultra Lite Benchy")
+        XCTAssertEqual(first.downloadCount, 2)
+        XCTAssertEqual(first.designCreator?.name, "ADprinter")
+        XCTAssertEqual(first.license, "BY-NC")
+    }
+
+    /// The endpoint that does NOT work announces itself this way, and it must decode rather than
+    /// throw — otherwise a working-but-empty search is reported as a broken one.
+    func testANullHitsListDecodesAsNoResultsNotAsAFailure() throws {
+        let p = try JSONDecoder().decode(MWSearchPage.self,
+                                         from: Data(#"{"total":0,"hits":null}"#.utf8))
+        XCTAssertEqual(p.total, 0)
+        XCTAssertNil(p.hits)
+    }
+
+    // MARK: - Intent: one field, two jobs
+
+    func testAMakerWorldLinkResolvesRatherThanSearches() {
+        XCTAssertEqual(MakerWorldSearch.intent(for: "https://makerworld.com/models/40146"),
+                       .resolve(modelId: 40146))
+        XCTAssertEqual(MakerWorldSearch.intent(for: "https://makerworld.com/en/models/1400373"),
+                       .resolve(modelId: 1400373))
+        XCTAssertEqual(MakerWorldSearch.intent(for: " https://makerworld.com/models/40146#profileId-9 "),
+                       .resolve(modelId: 40146))
+    }
+
+    func testASlugAfterTheIdStillResolves() {
+        XCTAssertEqual(MakerWorldSearch.intent(for: "https://makerworld.com/en/models/40146-benchy"),
+                       .resolve(modelId: 40146))
+    }
+
+    func testABareModelIdIsTreatedAsALink() {
+        XCTAssertEqual(MakerWorldSearch.intent(for: "1400373"), .resolve(modelId: 1400373))
+    }
+
+    /// A short number is a search term, not an id — "3" should find models called 3, not open model 3.
+    func testAShortNumberIsSearchedForNotOpened() {
+        XCTAssertEqual(MakerWorldSearch.intent(for: "3"), .search("3"))
+        XCTAssertEqual(MakerWorldSearch.intent(for: "123"), .search("123"))
+    }
+
+    func testAnythingElseSearches() {
+        XCTAssertEqual(MakerWorldSearch.intent(for: "benchy"), .search("benchy"))
+        XCTAssertEqual(MakerWorldSearch.intent(for: "  cable clip  "), .search("cable clip"))
+    }
+
+    /// A link to somewhere else is searched for, not refused. The user never claimed it was a
+    /// MakerWorld link, so "that isn't a MakerWorld link" would be answering a question nobody asked.
+    func testALinkToAnotherSiteIsSearchedRatherThanRefused() {
+        XCTAssertEqual(MakerWorldSearch.intent(for: "https://thingiverse.com/thing:763622"),
+                       .search("https://thingiverse.com/thing:763622"))
+    }
+
+    func testAnEmptyFieldIsIdle() {
+        XCTAssertEqual(MakerWorldSearch.intent(for: ""), .idle)
+        XCTAssertEqual(MakerWorldSearch.intent(for: "   \n "), .idle)
+    }
+
+    func testTheButtonSaysWhatWillHappen() {
+        XCTAssertEqual(MakerWorldSearch.intent(for: "benchy").buttonLabel, "Search")
+        XCTAssertEqual(MakerWorldSearch.intent(for: "https://makerworld.com/models/1").buttonLabel, "Open")
+        XCTAssertEqual(MakerWorldSearch.Intent.idle.buttonLabel, "Search")
+    }
+
+    func testModelUrlIsWhatResolveTakes() {
+        XCTAssertEqual(MakerWorldSearch.modelUrl(id: 40146), "https://makerworld.com/models/40146")
+    }
+
+    // MARK: - What a tile may claim
+
+    func testStatsAreBuiltOnlyFromCountsTheHitCarries() throws {
+        let hits = try XCTUnwrap(decodePage().hits)
+        XCTAssertEqual(MakerWorldSearch.stats(hits[0]), "2 downloads")
+        XCTAssertEqual(MakerWorldSearch.stats(hits[1]), "1.5k downloads  ·  4 prints")
+    }
+
+    /// Zero is a real answer; absent is not zero.
+    func testZeroIsShownButAnAbsentCountIsOmitted() {
+        var hit = MWSearchHit(id: 1)
+        hit.downloadCount = 0
+        XCTAssertEqual(MakerWorldSearch.stats(hit), "0 downloads")
+
+        hit.downloadCount = nil
+        hit.likeCount = 5
+        XCTAssertEqual(MakerWorldSearch.stats(hit), "5 likes", "falls back rather than inventing a 0")
+
+        XCTAssertEqual(MakerWorldSearch.stats(MWSearchHit(id: 1)), "")
+    }
+
+    func testSingularAndPluralAgreeWithTheNumber() {
+        var hit = MWSearchHit(id: 1)
+        hit.downloadCount = 1
+        XCTAssertEqual(MakerWorldSearch.stats(hit), "1 download")
+    }
+
+    func testCompactKeepsBigNumbersInsideATile() {
+        XCTAssertEqual(MakerWorldSearch.compact(0), "0")
+        XCTAssertEqual(MakerWorldSearch.compact(999), "999")
+        XCTAssertEqual(MakerWorldSearch.compact(1_000), "1k")
+        XCTAssertEqual(MakerWorldSearch.compact(1_500), "1.5k")
+        XCTAssertEqual(MakerWorldSearch.compact(9_949), "9.9k")
+        XCTAssertEqual(MakerWorldSearch.compact(48_000), "48k")
+        XCTAssertEqual(MakerWorldSearch.compact(385_297), "385k")
+        XCTAssertEqual(MakerWorldSearch.compact(1_300_000), "1.3M")
+        XCTAssertEqual(MakerWorldSearch.compact(12_000_000), "12M")
+    }
+
+    func testTheLicenceChipMatchesTheDetailScreensRules() throws {
+        let hits = try XCTUnwrap(decodePage().hits)
+        XCTAssertEqual(MakerWorldSearch.licence(hits[0])?.label, "CC BY-NC")
+        XCTAssertEqual(MakerWorldSearch.licence(hits[1])?.label, "CC BY")
+        XCTAssertNil(MakerWorldSearch.licence(MWSearchHit(id: 1)))
+    }
+
+    func testAdultContentIsMarkedRatherThanHidden() throws {
+        let hits = try XCTUnwrap(decodePage().hits)
+        XCTAssertFalse(MakerWorldSearch.isAdult(hits[0]))
+        XCTAssertTrue(MakerWorldSearch.isAdult(hits[1]))
+        XCTAssertFalse(MakerWorldSearch.isAdult(MWSearchHit(id: 1)), "unstated is not true")
+    }
+
+    // MARK: - Paging
+
+    func testHasMoreIsDrivenByTheReportedTotal() {
+        XCTAssertTrue(MakerWorldSearch.hasMore(loaded: 20, total: 7076))
+        XCTAssertFalse(MakerWorldSearch.hasMore(loaded: 7076, total: 7076))
+        XCTAssertFalse(MakerWorldSearch.hasMore(loaded: 0, total: 0))
+        XCTAssertFalse(MakerWorldSearch.hasMore(loaded: 20, total: nil))
+    }
+
+    /// An exact multiple of the page size is where "the last page was full" gets it wrong.
+    func testAFullFinalPageDoesNotPromiseAnotherOne() {
+        XCTAssertFalse(MakerWorldSearch.hasMore(loaded: 40, total: 40))
+    }
+
+    /// The endpoint's ordering is not stable between calls — the same query returned a different
+    /// leading hit seconds apart — so offset paging genuinely repeats models.
+    func testMergeDropsHitsAlreadyOnScreen() {
+        let a = [MWSearchHit(id: 1), MWSearchHit(id: 2)]
+        let b = [MWSearchHit(id: 2), MWSearchHit(id: 3)]
+        XCTAssertEqual(MakerWorldSearch.merge(a, b).map(\.id), [1, 2, 3])
+    }
+
+    func testMergeKeepsOrderAndSurvivesAnEmptyPage() {
+        let a = [MWSearchHit(id: 5), MWSearchHit(id: 1)]
+        XCTAssertEqual(MakerWorldSearch.merge(a, []).map(\.id), [5, 1])
+        XCTAssertEqual(MakerWorldSearch.merge([], a).map(\.id), [5, 1])
+    }
+
+    func testMergeDedupesWithinASinglePageToo() {
+        XCTAssertEqual(MakerWorldSearch.merge([], [MWSearchHit(id: 7), MWSearchHit(id: 7)]).map(\.id),
+                       [7])
+    }
+
+    // MARK: - Browse
+
+    func testPersonalisedCategoriesAreDroppedBecauseThisAppIsAnonymous() {
+        let navs = [MWNav(key: "Following", name: "Following"),
+                    MWNav(key: "Foryou", name: "For You"),
+                    MWNav(key: "Trending", name: "Trending"),
+                    MWNav(key: "category_400", name: "Household")]
+        XCTAssertEqual(MakerWorldSearch.browsable(navs).map(\.key), ["Trending", "category_400"])
+    }
+
+    func testAKeylessCategoryIsDroppedRatherThanRenderedAsADeadChip() {
+        XCTAssertEqual(MakerWorldSearch.browsable([MWNav(key: "", name: "Mystery")]).count, 0)
+    }
+
+    // MARK: - Failure copy
+
+    /// Every message keeps the paste path alive, because that is the one that does not depend on an
+    /// undocumented endpoint.
+    func testEverySearchFailureStillPointsAtThePastePath() {
+        for status in [0, 401, 403, 418, 429, 500, -1] {
+            let message = try! XCTUnwrap(MakerWorldSearchError(status: status).errorDescription)
+            XCTAssertTrue(message.lowercased().contains("link"),
+                          "status \(status) left the user with no way forward: \(message)")
+        }
+    }
+
+    /// If MakerWorld ever gates these endpoints, search is removed — not worked around with a token
+    /// the app must never hold.
+    func testBeingGatedIsReportedAsAnEndingNotATransientError() {
+        for status in [401, 403] {
+            let message = try! XCTUnwrap(MakerWorldSearchError(status: status).errorDescription)
+            XCTAssertTrue(message.contains("sign-in"))
+            XCTAssertFalse(message.lowercased().contains("try again"))
+        }
+    }
+
+    func testRateLimitingAndCaptchaAreNamedSeparately() {
+        XCTAssertTrue(try XCTUnwrap(MakerWorldSearchError(status: 429).errorDescription).contains("rate-limit"))
+        XCTAssertTrue(try XCTUnwrap(MakerWorldSearchError(status: 418).errorDescription).contains("CAPTCHA"))
+    }
+}

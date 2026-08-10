@@ -1197,3 +1197,54 @@ all of Phase 2 (search).
 Library files **44, 45** (Benchy profiles), **46** (seed tray) and **47** (46's plate 2 sliced for the
 H2C), plus slice job 1. All in the auto-created `MakerWorld` folder. Safe to delete; kept because they
 are the only multi-plate and multi-material files in the library to test the wizard against.
+
+
+---
+
+# Phase 2 — Discovery, shipped
+
+Search and browse are built, verified in the simulator against the live API, and reachable from the
+same panel as the paste field. What changed against §10's Phase 2 sketch, and why.
+
+## Spikes closed
+
+| # | Answer |
+|---|---|
+| **S-2** | **`sort` is NOT honoured — no sort control shipped.** `sort=new`, `sort=hot`, `sort=zzzz` and `sort=` all return the same leading hits (`2842356, 3047341, 918737`); only the tail differs, and the tail differs between identical calls anyway. A nonsense value behaves exactly like a valid one, which is the signature of a parameter that is parsed and discarded. Shipping a sort picker would have been a control that does nothing — the codebase's recurring bug, in a new place. |
+| **S-3** | **`homepage/nav` answers anonymously with a real taxonomy** — 15 entries: `Trending`, `category_400` Household, `category_800` Toys & Games, `category_700` Tools, `category_300` Hobby & DIY, `category_900` 3D Printer, `category_100` Art, `category_600` Miniatures, `category_1000` Props & Cosplays, `category_200` Fashion, `category_2000` Generative 3D Model, `category_500` Education, `LaserCut`, plus `Following` and `Foryou`. The chips are built from this at runtime rather than hardcoded: the list is MakerWorld's to change. |
+| **S-8** | Still open — every probe ran from a fixed IP. Whether a mobile carrier's CGNAT egress gets challenged is unmeasured, and the risk register's "Low" rating remains an argument rather than a measurement. |
+
+**`Following` and `Foryou` are dropped from the chips.** Both are personalised to a signed-in
+account; this app is anonymous by design, so they would render as categories that quietly return
+someone else's idea of relevance, or nothing.
+
+## A correction to §6's tile design
+
+§10 proposed "a 'not printable' marker when `is_printable` is false". **`isPrintable` is absent from
+live hits.** Not false — absent. So `false` and "MakerWorld said nothing" are the same value, and
+rendering a negative claim from a missing field is exactly the failure this document spends a chapter
+on. No such marker exists. `nsfw` **is** present and is *marked*, not filtered: silently dropping hits
+would contradict the result count in the same response.
+
+Stats are built the same way — `0 downloads` is shown because zero is an answer, while an absent
+count is omitted rather than rendered as zero.
+
+## Topology, as designed
+
+Search calls `api.bambulab.com/v1/search-service` **directly from the app**, through
+`MakerWorldSearchClient` — its own type, its own `URLSession`, its own error enum, sharing nothing
+with `BambuddyClient`. That isolation is the point: these endpoints are undocumented and Bambu can
+gate them without notice, and when that happens only this feature may break. Covers still go through
+Bambuddy's `/makerworld/thumbnail` proxy, so browsing does not put the phone's IP in MakerWorld's CDN
+logs for every tile on screen.
+
+**One field, two jobs.** Rather than a separate search box, the existing field dispatches on what is
+in it: a `/models/<digits>` URL (or a bare id) opens that model, anything else searches. The button
+label says which. This keeps the paste path first-class *by construction* — R-5's "if search is ever
+gated, it is removed, not worked around" only holds if the link path cannot rot into an unmaintained
+fallback. Every search failure message ends by pointing at it, and a `401`/`403` says so in the words
+of an ending rather than a retry.
+
+Paging merges rather than appends: the endpoint's ordering is not stable between calls — the same
+query returned a different leading hit seconds apart — so offset paging genuinely repeats models, and
+duplicate ids in a `ForEach` are undefined behaviour rather than a cosmetic problem.
