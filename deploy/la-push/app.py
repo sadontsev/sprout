@@ -8,6 +8,11 @@ tracking even after iOS suspends the app. It ends a card when its print finishes
 
 The ContentState shape MUST match PrintActivityProps in the app
 (mobile/src/liveactivity/PrintActivity.tsx); the state/colour mapping mirrors present.ts.
+
+TWO clients register here — that RN app and the native SwiftUI rewrite (native/), which ship as
+different TestFlight builds of the SAME bundle id. Their Live-Activity wire shapes are incompatible
+and both mismatches fail SILENTLY (APNs 200, nothing applied), so every registration carries a
+`client` discriminator and the payload is built to match it. See clients.py.
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ import jwt  # PyJWT
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, COOL_MAX_C, COOL_MIN_C, READY, clamp_threshold, cool_step
 from p2s import dry_identity, next_started_for, print_identity, prune, should_start
 
@@ -167,7 +173,8 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
 
 
 # ---- state ----
-# _regs: str(printerId) -> Live-Activity card {printerId, pushToken, printerName, iconUri, lastPush, lastState}
+# _regs: str(printerId) -> Live-Activity card {printerId, pushToken, printerName, iconUri, client,
+# lastPush, lastState}. `client` is EXPO/NATIVE and decides the push shape; absent = EXPO (see clients.py).
 _regs: dict[str, dict] = {}
 # _device_tokens: raw APNs device tokens for regular alert notifications (print done / error).
 _device_tokens: list[str] = []
@@ -177,6 +184,12 @@ _p2s_tokens: list[str] = []
 _p2s_dry_sent: dict[str, bool] = {}
 # _p2s_icons: p2s token -> App-Group glyph URI (the app knows the path; we don't).
 _p2s_icons: dict[str, str] = {}
+# _p2s_clients: p2s token -> EXPO|NATIVE. A start payload's attributes-type is client-specific and a
+# wrong one produces NO card (APNs still says 200), so the token has to remember who handed it over.
+# Keyed by token, exactly like _p2s_icons — only ONE build can be installed at a time under a shared
+# bundle id, but the other build's token lingers here until APNs 400/410s it, and each must be pushed
+# in its own shape meanwhile. Absent = EXPO (tokens registered before this field existed).
+_p2s_clients: dict[str, str] = {}
 # _p2s_pending: {registry key -> unix ts} for remote starts awaiting their update token.
 #
 # A remotely-started card is UNREACHABLE until the app hands us its token — we can neither update nor
@@ -228,7 +241,7 @@ _cool_threshold_at = 0.0
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients
     try:
         data = json.loads(REG_FILE.read_text())
         _regs = data.get("regs", {})
@@ -243,6 +256,9 @@ def _load() -> None:
         _p2s_tokens = data.get("p2s", [])
         _p2s_dry_sent = data.get("p2s_dry_sent", {})
         _p2s_icons = data.get("p2s_icons", {})
+        # Missing on state written before the second client existed -> every stored token is the RN
+        # app's, which is what an empty map means anyway (client_of/norm_client default to EXPO).
+        _p2s_clients = data.get("p2s_clients", {})
         _p2s_pending = data.get("p2s_pending", {})
         _p2s_started = data.get("p2s_started", {})
     except (FileNotFoundError, json.JSONDecodeError):
@@ -250,14 +266,15 @@ def _load() -> None:
         # to survive a missing/corrupt state file raised ValueError instead.
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
         _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}, {}, {}
-        _cool, _p2s_started = {}, {}
+        _cool, _p2s_started, _p2s_clients = {}, {}, {}
 
 
 def _save() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind,
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
-                                    "p2s_icons": _p2s_icons, "p2s_pending": _p2s_pending, "p2s_started": _p2s_started,
+                                    "p2s_icons": _p2s_icons, "p2s_clients": _p2s_clients,
+                                    "p2s_pending": _p2s_pending, "p2s_started": _p2s_started,
                                     "last_paused": _last_paused,
                                     "paused_at": _paused_at, "paused_reminded": _paused_reminded,
                                     "cool": _cool}))
@@ -302,35 +319,38 @@ def _urgent(last: dict | None, cs: dict) -> bool:
     return last.get("stateLabel") != cs.get("stateLabel") or bool(last.get("finished")) != bool(cs.get("finished"))
 
 
-def _envelope(cs: dict) -> dict:
-    """The widget's native ContentState is Codable{name: String, props: String} — `props` is the
-    JSON-SERIALIZED props string and `name` is the registered component. A flat props dict fails
-    decoding ON-DEVICE while APNs still answers 200 — pushed updates silently never applied."""
-    return {"name": "PrintActivity", "props": json.dumps(cs, separators=(",", ":"))}
+# The content-state/attributes shapes live in clients.py (`envelope`, `start_attributes`) because
+# they are pure and the interesting part is WHICH shape, not the sending — see that module for why
+# the RN and native apps cannot share one payload.
 
 
 async def _push_update(client: httpx.AsyncClient, reg: dict, cs: dict, priority: str = "5") -> int:
-    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "update", "content-state": _envelope(cs)}, priority)
+    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "update", "content-state": envelope(cs, client_of(reg))}, priority)
 
 
-async def _push_start(client: httpx.AsyncClient, push_token: str, cs: dict) -> int:
+async def _push_start(client: httpx.AsyncClient, push_token: str, cs: dict, printer_id: int,
+                      ams_id: int | None, la_client: str = EXPO) -> int:
     """ActivityKit push-to-start (iOS 17.2+): starts the Live Activity with the app closed. The
     per-activity UPDATE token reaches us when iOS wakes the app (or on next open via adoption);
     until then the card still shows live countdowns — etaEpochMs timers tick client-side.
     NOTE: the `alert` block is part of Apple's start-payload spec — starts WITHOUT it were observed
-    accepted by APNs (200) but silently discarded on-device (no card, no app wake)."""
+    accepted by APNs (200) but silently discarded on-device (no card, no app wake).
+    `printer_id`/`ams_id` matter only for the native client, whose attributes type carries them (the
+    expo client's attributes are empty and both are ignored) — required rather than defaulted anyway,
+    because a defaulted 0 would silently start a native card for the wrong printer."""
     title = (cs.get("printerName") or "Printer").strip() or "Printer"
     body = cs.get("name") or cs.get("stateLabel") or "Started"
+    attrs_type, attrs = start_attributes(la_client, printer_id, ams_id)
     return await _apns_send(client, push_token, {
         "timestamp": int(time.time()), "event": "start",
-        "attributes-type": "LiveActivityAttributes", "attributes": {},
-        "content-state": _envelope(cs),
+        "attributes-type": attrs_type, "attributes": attrs,
+        "content-state": envelope(cs, la_client),
         "alert": {"title": f"{title} — {cs.get('stateLabel', 'Started')}", "body": body},
     }, "10")
 
 
 async def _push_end(client: httpx.AsyncClient, reg: dict, cs: dict) -> int:
-    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "end", "content-state": _envelope(cs), "dismissal-date": int(time.time()) + 1800})
+    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "end", "content-state": envelope(cs, client_of(reg)), "dismissal-date": int(time.time()) + 1800})
 
 
 # ---- Bambuddy ----
@@ -419,12 +439,18 @@ async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: st
     # card already exists.
     if not _p2s_tokens or key in _regs:
         return False
+    # The registry key is the ONLY place the printer/AMS ids survive to here, and the native client's
+    # attributes need both — a start without them creates no card.
+    pid, ams = key_ids(key)
     for tok in list(_p2s_tokens):
-        code = await _push_start(client, tok, {**cs, "iconUri": _p2s_icons.get(tok, cs.get("iconUri", ""))})
-        print(f"[p2s] start {label} -> {code}", flush=True)
+        tok_client = norm_client(_p2s_clients.get(tok))
+        code = await _push_start(client, tok, {**cs, "iconUri": _p2s_icons.get(tok, cs.get("iconUri", ""))},
+                                 printer_id=pid, ams_id=ams, la_client=tok_client)
+        print(f"[p2s] start {label} ({tok_client}) -> {code}", flush=True)
         if code in (400, 410):
             _p2s_tokens.remove(tok)
             _p2s_icons.pop(tok, None)
+            _p2s_clients.pop(tok, None)
     _p2s_pending[key] = time.time()
     _save()
     return True
@@ -759,6 +785,10 @@ class Register(BaseModel):
     icon_uri: str = ""
     kind: str = "print"  # "print" | "dry" (AMS drying card)
     ams_id: int | None = None  # required in practice for kind="dry"; absent = legacy client
+    # Which app registered this card — "expo" (mobile/, expo-widgets) | "native" (native/, SwiftUI).
+    # Defaults to "expo" because the RN build is already installed and does not send the field; it
+    # can only be changed by an OTA, so an absent value MUST keep meaning what it meant before.
+    client: str = EXPO
 
 
 class DeviceReg(BaseModel):
@@ -776,12 +806,20 @@ async def _startup() -> None:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "registrations": len(_regs), "devices": len(_device_tokens), "apns_host": APNS_HOST}
+    return {
+        "ok": True, "registrations": len(_regs), "devices": len(_device_tokens), "apns_host": APNS_HOST,
+        # Per-client counts: a native build whose registration silently landed as "expo" — the exact
+        # failure the discriminator exists to prevent, and one that looks like a healthy 200 from
+        # every other angle — is visible here without touching the phone.
+        "cards_by_client": {c: sum(1 for reg in _regs.values() if client_of(reg) == c) for c in (EXPO, NATIVE)},
+        "start_tokens_by_client": {c: sum(1 for t in _p2s_tokens if norm_client(_p2s_clients.get(t)) == c) for c in (EXPO, NATIVE)},
+    }
 
 
 class StartReg(BaseModel):
     push_token: str  # ActivityKit push-to-start token (per device, per attributes type)
     icon_uri: str = ""  # App-Group glyph path, so remote starts match app-started cards
+    client: str = EXPO  # "expo" | "native" — see Register.client
 
 
 @app.post("/register-start")
@@ -792,6 +830,10 @@ async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
             print(f"[p2s] registered start token {r.push_token[:8]}… ({len(_p2s_tokens)} total)", flush=True)
         if r.icon_uri:
             _p2s_icons[r.push_token] = r.icon_uri
+        # Always (re)written, never gated on a truthy value: the same device reinstalled with the
+        # OTHER build can re-present a token we already hold, and a stale client here means a start
+        # payload of the wrong shape — accepted by APNs, no card on the phone.
+        _p2s_clients[r.push_token] = norm_client(r.client)
         _save()
     return {"ok": True}
 
@@ -838,6 +880,11 @@ async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
             "printerId": pid, "pushToken": tok,
             "printerName": _printers_cache.get(pid) or f"Printer {pid}",
             "iconUri": r.icon_uri, "kind": "dry" if key.startswith("dry:") else "print",
+            # /sync is the RN app's reconcile path and ONLY the RN app's — the native app hands a
+            # remotely-started card over through /register (with client:"native") when its push-token
+            # stream fires, and never posts here. Stated rather than left to default so a native app
+            # that grows a /sync call is an obvious edit rather than a silent expo-shaped push.
+            "client": EXPO,
             "lastPush": 0, "lastState": None,
         }
         _p2s_pending.pop(key, None)
@@ -864,12 +911,14 @@ async def register(r: Register, _: None = Depends(_require_key)) -> dict:
     )
     _regs[key] = {
         "printerId": r.printer_id, "pushToken": r.push_token, "printerName": r.printer_name,
-        "iconUri": r.icon_uri, "kind": r.kind, "lastPush": 0, "lastState": None,
+        "iconUri": r.icon_uri, "kind": r.kind, "client": norm_client(r.client),
+        "lastPush": 0, "lastState": None,
     }
     if r.kind != "dry":
         _p2s_pending.pop(str(r.printer_id), None)  # reachable again — future starts are allowed
     _save()
-    print(f"[register] {r.kind} printer {r.printer_id} ({r.printer_name}) token {r.push_token[:8]}…", flush=True)
+    print(f"[register] {r.kind} printer {r.printer_id} ({r.printer_name}) [{norm_client(r.client)}] "
+          f"token {r.push_token[:8]}…", flush=True)
     return {"ok": True}
 
 
