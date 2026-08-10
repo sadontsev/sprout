@@ -3,20 +3,29 @@
 Both stacks run on <your-server> via Docker Compose, copied to `<deploy-dir>/bambuddy/`
 and `<deploy-dir>/slicer-api/`. Tailnet-only; never exposed via cloudflared.
 
-For push notifications / Live Activities, also deploy `la-push` — see
-[docs/guides/push-notifications.md](../docs/guides/push-notifications.md).
+For push notifications / Live Activities — and for the native app's MakerWorld **collections** —
+also deploy `la-push`: [deploy/la-push/README.md](la-push/README.md) for the service,
+[docs/guides/push-notifications.md](../docs/guides/push-notifications.md) for the APNs walkthrough.
 
 ## Slicer
 
     cd <deploy-dir>/slicer-api && docker compose --profile bambu up -d
 
+(The slicer's compose uses `${VAR:-default}` throughout, so it starts without a `.env`.)
+
 ## Bambuddy
 
-    cd <deploy-dir>/bambuddy && docker compose up -d
+    cd <deploy-dir>/bambuddy
+    cp .env.example .env          # then set JWT_SECRET_KEY=$(openssl rand -hex 32)
+    docker compose up -d
+
+`JWT_SECRET_KEY` uses compose's fail-hard `${VAR:?}` form, so a missing or blank one aborts before
+anything starts. `PORT` defaults to **8910** (8000 is usually taken).
 
 After deploy: set `preferred_slicer = bambu_studio` and slicer URL
 `http://localhost:3001` in Bambuddy Settings → Slicer. Front with
-`tailscale serve --bg 8000`.
+`tailscale serve --bg 8910` — the bare port is the proxy TARGET, so 8000 would serve whatever
+else is on that port.
 
 ## Register the printer + mint the app's API key
 
@@ -37,7 +46,7 @@ inherits the standard profile, just turns `enable_support` on). The app's Materi
 **Supports** toggle that picks the twin. Run it once, and again after any Bambuddy update:
 
     BB_ADMIN_USER=<admin-user> BB_ADMIN_PW="$(cat <secrets-dir>/bb_admin_pw)" \
-      BAMBUDDY_URL=http://localhost:8000 python3 ensure-support-profiles.py
+      BAMBUDDY_URL=http://localhost:8910 python3 ensure-support-profiles.py
 
 (From a non-<your-server> host it defaults to `https://bambuddy.example.com` and prompts for the password; it
 sends a browser UA so Cloudflare doesn't 1010-block it.) Verified end-to-end: a slice with the twin

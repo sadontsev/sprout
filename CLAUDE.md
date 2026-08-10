@@ -9,7 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > stand in for whatever box/domains run your backend. Substitute your own device/team/hosts;
 > the commands and gotchas transfer as-is. Start with [README.md](README.md) for setup.
 
-A **personal iOS app** to control + monitor a Chinese-market **Bambu Lab A1** 3D printer (the official Bambu Handy app can't drive that unit). It's an **Expo SDK 56 / React Native 0.85** app (`mobile/`) that is a polished client of a **self-hosted Bambuddy backend** (FastAPI, ~505 endpoints). Distribution is **local/TestFlight for one user** — there is no CI, and the app is **built locally with Xcode**, not EAS.
+A **personal iOS app** to control + monitor a Chinese-market Bambu Lab printer — currently an **H2C** (dual-nozzle, 9 addressable AMS trays); the codebase still carries A1-era notes where they were written. The official Bambu Handy app can't drive these units. It is a polished client of a **self-hosted Bambuddy backend** (FastAPI, ~548 endpoints). Distribution is **local/TestFlight for one user** — there is no CI, and both apps are **built locally with Xcode**, not EAS.
+
+**There are two apps, same bundle id, shipped as separate TestFlight builds.** `mobile/` is the Expo SDK 56 / RN 0.85 original; `native/` is the SwiftUI reimplementation and is where new work lands. When a change could go in either, ask which is meant.
 
 Monorepo layout:
 - `mobile/` — the Expo app. Has its own `mobile/AGENTS.md`: **read the exact v56 docs at https://docs.expo.dev/versions/v56.0.0/ before writing Expo code** — SDK 56 APIs differ from older muscle memory.
@@ -21,10 +23,16 @@ Monorepo layout:
 ## The native app (`native/`)
 
 ```bash
-cd native && xcodegen generate     # project.yml is the source; Sprout.xcodeproj is GITIGNORED
+# Every path here is REPO-ROOT relative. The `cd` is subshelled on purpose: unsubshelled it
+# leaks into the rest of the block and then `native/Sprout.xcodeproj` resolves to
+# native/native/… — which fails with a misleading "does not exist".
+(cd native && xcodegen generate)   # project.yml is the source; Sprout.xcodeproj is GITIGNORED
 DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
   xcodebuild -project native/Sprout.xcodeproj -scheme Sprout \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
+DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
+  xcodebuild -project native/Sprout.xcodeproj -scheme Sprout \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test     # ~760 tests, seconds
 ./native/scripts-archive.sh        # archive + export an .ipa for TestFlight
 ```
 
@@ -34,6 +42,36 @@ DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
 - Bare-slash regex literals may not begin or end with a space — write `\s`.
 - **`PrintActivityAttributes.ContentState` field names are a wire format.** la-push pushes that JSON over APNs, so renaming a property breaks remote Live Activity updates without breaking the build.
 - The Keychain schema differs from `expo-secure-store`'s, so settings do **not** migrate between the two apps — the base URL and API key are re-entered once.
+- `Text("…")` with a **string literal** is a `LocalizedStringKey`, so SwiftUI parses it as Markdown — and Markdown autolinks a bare URL. A placeholder containing one rendered as blue tappable link text with `foregroundStyle` ignored. Use `Text(verbatim:)`. A `String` *variable* picks the non-Markdown overload, which is why the Settings fields never hit this.
+- `.frame(maxHeight:)` **centres** its child by default. A greedy child (a `ScrollView`) keeps the frame at full height while the content shrinks, leaving a bottom sheet floating mid-screen. Pass `alignment: .bottom`.
+- `.overlay { … }` content is **not** clipped to the base. A `.fill` image is flexible, so a `maxWidth/maxHeight` frame does not constrain it and a `clipShape` *inside* the overlay clips nothing — put the `clipShape` on the composite. A fixed `.frame(width:height:)` does constrain, which is why the small thumbnails never showed it.
+
+### MakerWorld — search, browse and collections are native-only; resolve + import exist in both apps
+
+Three network surfaces, deliberately kept apart so one breaking cannot break the others:
+
+| what | who serves it | auth |
+|---|---|---|
+| resolve + import | Bambuddy (`/api/v1/makerworld/*`) | app's `X-API-Key`; the *import* additionally needs the server signed in to Bambu Cloud |
+| search + browse | `api.bambulab.com/v1/search-service` — **called straight from the app** (`MakerWorldSearchClient`) | none, anonymous |
+| the owner's collections | the owner's own **la-push** (`/makerworld/collections`) | app's `X-API-Key`; la-push reads Bambuddy's stored Bambu Cloud bearer |
+
+**The app must never hold a Bambu Cloud bearer.** A phone is lost far more often than a home server, and Bambu has been actively hostile to third-party cloud access. If `search-service` ever starts requiring one, search is **removed**, not worked around.
+
+Hard-won facts, all measured (`docs/native-rewrite/15-makerworld-design.md` has the probes):
+
+- `search-service/search/design` works anonymously; `design-service/design/search` answers `200 {"total":0,"hits":null}` from anywhere. They sound like the same endpoint. They are not.
+- **A `200` with an empty list from this API can mean "not authenticated".** `favorites/designs/{uid}` returns `total: 0` anonymously and `total: 30` with a token, for the same user. Never render "you have none" from one of these without checking the endpoint 401s when unauthenticated.
+- `resolve` returns two overlapping profile lists. The `/instances` **hits are the row set** (a strict superset); `design.instances[]` is a metadata sidecar and the only place `prediction`/`weight`/`needAms`/`instanceFilaments` live. `defaultInstanceId` is an **instance id**, matching `hits[].id` — not a `profileId`.
+- MakerWorld lists profiles it will not release a file for: 5 of 6 undescribed profiles on model 40146 are refused, **including the one it pre-selects**. The refusal arrives as a **502** wrapping the upstream status, and through a tunnelling proxy even its `detail` is stripped — so that copy has to stand on its own words.
+- An import is **never** sliced: `file_type` `3mf`, `/gcode` → 404, sliced for someone else's machine — while `print_time_seconds` *is* populated, which makes that field an unsafe proxy for "has toolpaths".
+- `sort` is not honoured on search (`new`, `hot` and a nonsense value all return the same order), and `isPrintable` is **absent** from hits. Neither may drive a control.
+
+### Printing more than one filament
+
+`ams_mapping` is **indexed by the 3MF's filament slot and valued by global tray id** — index 0 addresses slot 1. `Domain/AmsMapping.swift` owns the array and is the tested boundary; a plate whose lone filament is slot 3 needs `[-1, -1, tray]`, and `usedSlotCount == 1` is *not* the same question as "expressible as a one-element array".
+
+Ask `filament-requirements` **per plate** (`?plate_id=`) for the exact `(file, plate)` pair that will be enqueued — unfiltered it reports every slot in the file, and on a Sprout-sliced output the plate ids other than the one sliced return stale data. Slicing N filaments works today (`filament_presets` plural, **compacted** to used slots in ascending order — measured); the wizard's UI is still single-filament and refuses multi-material with a stated reason.
 
 ## Commands (run from `mobile/`)
 
@@ -153,4 +191,9 @@ never have to discover a limitation by hitting an error.
 
 ## Testing
 
-`jest-expo`. Tests cover **pure logic** only — `present.ts` view-model, `bambuddyClient` URL/token builders, settings key sanitization, and the config-plugin transforms (`plugins/__tests__/`). Native modules (`expo-widgets`, `@expo/ui`, `react-native-webview`) are not imported by tests. `npx tsc --noEmit` is the main correctness gate before every build.
+**`native/`** has its own suite — ~760 XCTest cases over `Sprout/Domain/` and the API decoders, run
+with the `xcodebuild … test` line in the native section above. **`deploy/la-push/`** uses stdlib
+`unittest` (no pytest, deliberately, so it runs inside the container): `python3 -m unittest discover
+deploy/la-push`.
+
+Everything below is about **`mobile/`**. `jest-expo`. Tests cover **pure logic** only — `present.ts` view-model, `bambuddyClient` URL/token builders, settings key sanitization, and the config-plugin transforms (`plugins/__tests__/`). Native modules (`expo-widgets`, `@expo/ui`, `react-native-webview`) are not imported by tests. `npx tsc --noEmit` is the main correctness gate before every build.

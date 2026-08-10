@@ -9,9 +9,17 @@ services:
       BAMBUDDY_URL: http://localhost:8910
       BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY}   # from ./.env (never committed)
       APNS_KEY_PATH: /keys/apns_key.p8
-      APNS_KEY_ID: <YOUR_APNS_KEY_ID>
-      APNS_TEAM_ID: <YOUR_TEAM_ID>
-      APNS_TOPIC: com.mvks5.bambu.push-type.liveactivity
+      # From ./.env — see .env.example. These were literals for a while, which meant anyone else
+      # deploying this signed their pushes with THEIR .p8 while claiming the original owner's key id
+      # and team, and APNs answered 403 InvalidProviderToken / 400 TopicDisallowed. `:?` fails the
+      # deploy loudly instead of at the first push.
+      APNS_KEY_ID: ${APNS_KEY_ID:?set APNS_KEY_ID in .env}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:?set APNS_TEAM_ID in .env}
+      APNS_TOPIC: ${APNS_TOPIC:?set APNS_TOPIC in .env}
+      # NOT set here on purpose: app.py derives it from APNS_TOPIC, and passing an empty value would
+      # DEFEAT that default (os.environ.get returns "" rather than falling back), sending an empty
+      # apns-topic on every alert banner. Add it to .env only if your bundle id is not APNS_TOPIC
+      # minus ".push-type.liveactivity".
       # SANDBOX for local Xcode/dev builds; switch to api.push.apple.com for TestFlight/App Store.
       # Production APNs by default — the app ships via TestFlight, whose Live-Activity tokens are
       # PRODUCTION-environment; pushing them to sandbox gets 400 BadDeviceToken and the registration
@@ -24,9 +32,12 @@ services:
       # so a token Bambuddy refreshes is picked up at once.
       BAMBUDDY_DB: /bambuddy/bambuddy.db
     volumes:
-      - <secrets-dir>/apns_key.p8:/keys/apns_key.p8:ro
+      # Your own APNs auth key. Override APNS_KEY_FILE in .env if you keep it elsewhere.
+      - ${APNS_KEY_FILE:-${HOME}/.config/sprout/apns_key.p8}:/keys/apns_key.p8:ro
       - ./data:/data
       # READ-ONLY, deliberately: this service must never be able to write another app's database.
+      # Comment this out (and BAMBUDDY_DB above) if you do not want the MakerWorld collection
+      # endpoints — everything else works without it.
       - bambuddy_data:/bambuddy:ro
 
 volumes:
@@ -38,4 +49,4 @@ volumes:
   # `docker inspect bambuddy --format '{{range .Mounts}}{{.Name}}{{end}}'`.
   bambuddy_data:
     external: true
-    name: bambuddy_bambuddy_data
+    name: ${BAMBUDDY_VOLUME:-bambuddy_bambuddy_data}

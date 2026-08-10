@@ -18,7 +18,7 @@ then an interactive prompt. The password is never logged. On <your-server> the s
 <secrets-dir>/ — e.g.  BB_ADMIN_PW="$(cat <secrets-dir>/bb_admin_pw)" ./ensure-support-profiles.py
 
 USAGE:
-  BAMBUDDY_URL=http://localhost:8000 BB_ADMIN_USER=admin BB_ADMIN_PW=... python3 ensure-support-profiles.py
+  BAMBUDDY_URL=http://localhost:8910 BB_ADMIN_USER=admin BB_ADMIN_PW=... python3 ensure-support-profiles.py
   python3 ensure-support-profiles.py            # prompts for creds, hits https://bambuddy.example.com
 """
 import argparse, getpass, json, os, re, sys, urllib.error, urllib.request
