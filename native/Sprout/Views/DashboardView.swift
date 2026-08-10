@@ -16,6 +16,11 @@ struct DashboardView: View {
     @State private var speedOverride: Int?
     @State private var confirmStop = false
     @State private var explainingLock = false
+    /// The tile streams rather than polling stills. The snapshot endpoint only produces fresh frames
+    /// while the camera is actually streaming — cold, it replays the last cached frame forever, which
+    /// is why a polled tile looked frozen. One low-rate stream is both live and cheaper than a
+    /// 266 KB still every two seconds.
+    @State private var tileCam = CameraPiPModel()
 
     private var vm: DashVM { model.vm }
     private var lock: LockedActions {
@@ -264,17 +269,24 @@ struct DashboardView: View {
 
     // MARK: - Camera tile
 
-    private var snapshotURL: URL? {
+    /// Low frame rate on purpose: this is a thumbnail, and the camera is shared.
+    private var tileStreamURL: URL? {
         guard let client = model.client, let token = model.cameraToken else { return nil }
-        return client.snapshotUrl(model.printerId, token: token)
+        return client.streamUrl(model.printerId, token: token, fps: 2)
+    }
+
+    /// Exactly one consumer of the camera at a time. The fullscreen overlay runs its own stream, so
+    /// the tile stands down while it is up rather than both holding a subscriber.
+    private var tileStreamActive: Bool {
+        model.tab == .printer && model.overlay == nil && showCamera
     }
 
     private var cameraTile: some View {
         Tap { model.overlay = .camera } content: {
             ZStack(alignment: .topLeading) {
                 c.thumb
-                if let url = snapshotURL {
-                    SnapshotImage(url: url) { camLoaded = true }
+                if let url = tileStreamURL {
+                    CameraPiPView(url: url, active: tileStreamActive, model: tileCam)
                 } else {
                     Text("CHAMBER · SNAPSHOT")
                         .font(.mono(10, weight: .medium))
@@ -317,8 +329,9 @@ struct DashboardView: View {
             .padding(.top, 16)
         }
         // A cold camera takes seconds to produce a frame; the badge must not claim LIVE over a blank
-        // tile, so the flag resets whenever the URL goes away.
-        .onChange(of: snapshotURL == nil) { _, gone in if gone { camLoaded = false } }
+        // tile.
+        .onChange(of: tileCam.isLive) { _, live in camLoaded = live }
+        .onChange(of: tileStreamActive) { _, active in if !active { camLoaded = false } }
     }
 
     // MARK: - LIVE
