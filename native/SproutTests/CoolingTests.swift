@@ -170,7 +170,14 @@ final class CoolingNormalizeSamplesTests: XCTestCase {
 final class CoolingEstimateAmbientTests: XCTestCase {
     func testReadsTheRoomOffTheIdleFloorOfALongHistory() throws {
         // Between prints the plate settles to ambient, so the low percentile IS the room.
-        let week = opt((0..<400).map { $0 < 40 ? Double(60 - $0) : Double(28 + $0 % 3) })
+        // Written out with explicit types rather than as one inferred expression: with `$0` and the
+        // ternary's branches both left open, the checker has to weigh every numeric overload of
+        // `<`, `-`, `+` and `%` against every `Double.init`, and Xcode 27's frontend gives up on it
+        // ("unable to type-check this expression in reasonable time") while 26.3 still manages.
+        // Same values either way.
+        let week = opt((0..<400).map { (i: Int) -> Double in
+            i < 40 ? Double(60 - i) : Double(28 + i % 3)
+        })
         let a = try XCTUnwrap(Cooling.estimateAmbient(week))
         XCTAssertGreaterThanOrEqual(a, 28)
         XCTAssertLessThanOrEqual(a, 30)

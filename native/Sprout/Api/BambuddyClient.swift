@@ -636,6 +636,31 @@ final class BambuddyClient: Sendable {
 
     func makerWorldStatus() async throws -> MakerWorldStatus { try await get("/api/v1/makerworld/status") }
 
+    /// Ask both cloud questions and reduce them to one answer.
+    ///
+    /// Two endpoints because `can_download` alone cannot distinguish "this key may not read the cloud
+    /// account" from "the server is not signed in" — and those have different remedies in different
+    /// apps. A `403` here is an ANSWER, not a failure, so it is caught rather than thrown.
+    func makerWorldAccess() async -> MakerWorldAccess {
+        async let cloud: MakerWorldCloudProbe = {
+            do {
+                let s: CloudStatus = try await get("/api/v1/cloud/status")
+                return .readable(authenticated: s.isAuthenticated ?? false)
+            } catch let e as BambuddyError where e.status == 403 {
+                return .forbidden
+            } catch {
+                return .failed
+            }
+        }()
+        async let download = (try? await makerWorldStatus())?.canDownload
+        return await MakerWorld.access(cloud: cloud, canDownload: download)
+    }
+
+    /// Everything imported from MakerWorld so far — the panel's cold-start state.
+    func recentMakerWorldImports(limit: Int = 6) async -> [MakerWorldRecentImport] {
+        (try? await get("/api/v1/makerworld/recent-imports?limit=\(limit)", as: [MakerWorldRecentImport].self)) ?? []
+    }
+
     /// Resolve a MakerWorld model URL → design + printable profiles. No cloud token needed.
     /// Throws on 400 (not a MW url) / 404 (model not found).
     func resolveMakerWorld(_ url: String) async throws -> MakerWorldResolved {

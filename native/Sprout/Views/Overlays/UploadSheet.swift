@@ -311,8 +311,8 @@ struct UploadSheet: View {
 /// design plus its printable profiles so the right one gets pulled into the library.
 ///
 /// Importing needs a Bambu Cloud token on the *server*; resolving does not. That split is why the
-/// panel is usable — preview and all — while `canDownload` is false, with only the final button
-/// unavailable.
+/// panel stays usable — preview, profiles and all — when an import is blocked, with only the final
+/// button unavailable and a reason attached to it.
 @MainActor
 private struct MakerWorldPanel: View {
     let model: AppModel
@@ -322,14 +322,18 @@ private struct MakerWorldPanel: View {
     let onClose: () -> Void
 
     @Environment(\.palette) private var c
+    @Environment(\.openURL) private var openURL
 
     @State private var url = ""
-    @State private var canDownload: Bool?
+    @State private var access: MakerWorldAccess = .checking
     @State private var resolving = false
     @State private var resolved: MakerWorldResolved?
-    @State private var picked: MWInstance?
-    @State private var err: String?
+    @State private var rows: [MWProfileRow] = []
+    @State private var picked: MWProfileRow?
+    @State private var failure: MWFailure?
     @State private var importing = false
+    @State private var recent: [MakerWorldRecentImport] = []
+    @State private var licenceExpanded = false
     /// Measured height of the scroll's content — see `body` for why the scroll needs it.
     @State private var contentHeight: CGFloat = 0
 
@@ -343,16 +347,18 @@ private struct MakerWorldPanel: View {
 
             header
 
-            connectionBanner
+            accessBanner
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     linkField
-                    if let err {
-                        UploadErrorCard(text: err).padding(.top, 12)
+                    if let failure {
+                        failureCard(failure)
                     }
                     if let resolved {
                         designBlock(resolved)
+                    } else if !recent.isEmpty {
+                        recentBlock
                     }
                 }
                 .padding(.bottom, 6)
@@ -371,8 +377,12 @@ private struct MakerWorldPanel: View {
             }
         }
         .task {
-            // Any failure means "can't import" — the button explains itself rather than pretending.
-            canDownload = (try? await client.makerWorldStatus())?.canDownload ?? false
+            // Two questions, because `can_download` alone cannot say WHICH remedy applies.
+            access = await client.makerWorldAccess()
+        }
+        .task {
+            // A cold panel with an empty text field says nothing about what this screen is for.
+            recent = await client.recentMakerWorldImports()
         }
     }
 
@@ -400,9 +410,12 @@ private struct MakerWorldPanel: View {
         .padding(.bottom, 14)
     }
 
+    /// One banner, three possible reasons, each naming the thing that actually has to change. The
+    /// previous single message sent the owner to sign in to Bambu Cloud when the server was already
+    /// signed in and the gap was a scope on the API key — a remedy that would have changed nothing.
     @ViewBuilder
-    private var connectionBanner: some View {
-        if canDownload == nil {
+    private var accessBanner: some View {
+        if access == .checking {
             HStack(spacing: 10) {
                 ProgressView().tint(c.t3)
                 Text("Checking your MakerWorld connection…")
@@ -411,12 +424,12 @@ private struct MakerWorldPanel: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 14)
-        } else if canDownload == false {
+        } else if let message = access.message {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(c.heating)
-                Text("MakerWorld isn’t connected on your Bambuddy server. You can preview a model, but to import it, sign in to Bambu Cloud in Bambuddy → Settings → MakerWorld.")
+                Text(message)
                     .font(.system(size: 12.5, weight: .medium))
                     .lineSpacing(3)
                     .foregroundStyle(c.t2)
@@ -425,6 +438,7 @@ private struct MakerWorldPanel: View {
             .padding(13)
             .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.heatingDim))
             .padding(.bottom, 14)
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -497,22 +511,52 @@ private struct MakerWorldPanel: View {
                 .padding(.top, 5)
         }
 
-        if alreadyImported {
-            HStack(spacing: 7) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(c.accent)
-                Text("Already in your library")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(c.accent)
+        chips(r)
+
+        // Attribution the licence asks for, and that the `makerworld-1400373.3mf` filename destroys.
+        if let original = r.design.originals?.first,
+           let title = original.title?.nonEmpty {
+            Text("Remix of “\(title)”" + (original.author?.nonEmpty.map { " by \($0)" } ?? ""))
+                .font(.system(size: 11.5, weight: .medium))
+                .lineSpacing(2)
+                .foregroundStyle(c.t3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+        }
+
+        // MakerWorld's own licence prose, disclosed rather than paraphrased.
+        if licenceExpanded, let l = MakerWorld.licence(r.design), l.title != nil || l.body != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                if let t = l.title {
+                    Text(t)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(c.t2)
+                }
+                if let b = l.body {
+                    Text(b)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .lineSpacing(3)
+                        .foregroundStyle(c.t3)
+                }
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.accentDim))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(c.s2))
             .padding(.top, 10)
         }
 
-        if r.instances.isEmpty {
+        // A paid / points / exclusive model resolves fine and refuses at import. Saying so before a
+        // download beats "Import failed" after one.
+        if let caution = MakerWorld.availability(r.design).caution {
+            Text(caution)
+                .font(.system(size: 11.5, weight: .medium))
+                .lineSpacing(2)
+                .foregroundStyle(c.heating)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+        }
+
+        if rows.isEmpty {
             Text("No printable profiles listed for this model — importing brings it in as published.")
                 .font(.system(size: 12, weight: .medium))
                 .lineSpacing(3)
@@ -521,14 +565,61 @@ private struct MakerWorldPanel: View {
                 .padding(.top, 18)
         } else {
             VStack(alignment: .leading, spacing: 0) {
-                UploadSectionLabel("PROFILE" + (r.instances.count > 1 ? "  ·  \(r.instances.count)" : ""))
+                UploadSectionLabel("PROFILE" + (rows.count > 1 ? "  ·  \(rows.count)" : ""))
                 VStack(spacing: 9) {
-                    ForEach(r.instances) { inst in
-                        profileRow(inst)
+                    ForEach(rows) { row in
+                        profileRow(row)
                     }
                 }
             }
             .padding(.top, 20)
+        }
+    }
+
+    /// Licence and library-state chips. The licence is shown BEFORE the download, which is the
+    /// difference between an informed print and a surprise.
+    @ViewBuilder
+    private func chips(_ r: MakerWorldResolved) -> some View {
+        let licence = MakerWorld.licence(r.design)
+        if licence != nil || alreadyImported {
+            HStack(spacing: 8) {
+                if let l = licence {
+                    let hasProse = l.title != nil || l.body != nil
+                    Tap(disabled: !hasProse) { licenceExpanded.toggle() } content: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(l.label)
+                                .font(.system(size: 11.5, weight: .semibold))
+                            if hasProse {
+                                Image(systemName: licenceExpanded ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                        }
+                        .foregroundStyle(c.t2)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.s2))
+                        .contentShape(.rect)
+                    }
+                    .accessibilityLabel("Licence \(l.label)" + (hasProse ? ", show details" : ""))
+                }
+
+                if alreadyImported {
+                    HStack(spacing: 7) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Already in your library")
+                            .font(.system(size: 11.5, weight: .semibold))
+                    }
+                    .foregroundStyle(c.accent)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.accentDim))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 10)
         }
     }
 
@@ -567,14 +658,18 @@ private struct MakerWorldPanel: View {
             .foregroundStyle(c.t3)
     }
 
-    private func profileRow(_ inst: MWInstance) -> some View {
-        let selected = picked?.id == inst.id
-        let seconds = instanceTime(inst)
-        let grams = instanceWeight(inst)
-        let filaments = instanceFilaments(inst)
+    /// A row for one profile.
+    ///
+    /// The meta line is either MakerWorld's numbers or an explicit statement that MakerWorld has
+    /// none. It is never "—": on a popular model the majority of profiles carry no published
+    /// metadata, and rendering a dash for all of them is what made the whole picker look broken.
+    private func profileRow(_ row: MWProfileRow) -> some View {
+        let selected = picked?.id == row.id
+        let detail = row.detail
+        let materials = MakerWorld.materialsLine(detail)
 
         return Tap {
-            picked = inst
+            picked = row
         } content: {
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -582,7 +677,7 @@ private struct MakerWorldPanel: View {
                     .frame(width: 52, height: 52)
                     .overlay {
                         Group {
-                            if let url = client.makerworldThumbUrl(inst.cover) {
+                            if let url = client.makerworldThumbUrl(row.coverUrl) {
                                 AsyncImage(url: url) { image in
                                     image.resizable().aspectRatio(contentMode: .fill)
                                 } placeholder: {
@@ -599,20 +694,30 @@ private struct MakerWorldPanel: View {
                     }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(instanceTitle(inst))
+                    Text(row.title)
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(c.t1)
                         .lineLimit(1)
 
                     HStack(spacing: 8) {
-                        Text(metaLine(seconds: seconds, grams: grams, needAms: inst.needAms == true))
+                        Text(MakerWorld.metaLine(detail))
                             .font(.mono(11.5, weight: .medium))
                             .foregroundStyle(c.t3)
-                        HStack(spacing: 3) {
-                            ForEach(Array(filaments.prefix(4).enumerated()), id: \.offset) { _, f in
-                                Swatch(value: FilamentColor.norm(f.color), size: 9, radius: 5)
+                            .lineLimit(2)
+                        if let detail {
+                            HStack(spacing: 3) {
+                                ForEach(Array(detail.slots.prefix(4).enumerated()), id: \.offset) { _, s in
+                                    Swatch(value: FilamentColor.norm(s.color), size: 9, radius: 5)
+                                }
                             }
                         }
+                    }
+
+                    if !materials.isEmpty {
+                        Text(materials)
+                            .font(.mono(11, weight: .medium))
+                            .foregroundStyle(c.t3)
+                            .lineLimit(1)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -631,32 +736,123 @@ private struct MakerWorldPanel: View {
             }
             .contentShape(.rect)
         }
+        .accessibilityLabel("\(row.title). \(MakerWorld.metaLine(detail)). \(materials)")
         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
     }
 
-    private func importButton(_ r: MakerWorldResolved) -> some View {
-        let allowed = canDownload == true
-        return Tap(disabled: importing || !allowed, action: doImport) {
-            HStack(spacing: 9) {
-                if importing {
-                    ProgressView().tint(c.accentInk)
+    /// What has been imported before — the panel's cold-start state, so an empty text field is not
+    /// the only thing this screen ever says.
+    @ViewBuilder
+    private var recentBlock: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            UploadSectionLabel("IMPORTED BEFORE")
+            VStack(spacing: 9) {
+                ForEach(recent) { item in
+                    Tap {
+                        // Re-resolving is the only thing this row can honestly offer: the file is
+                        // already in the library, and this panel imports rather than browses.
+                        guard let source = item.sourceUrl else { return }
+                        url = source
+                        resolve()
+                    } content: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(c.t3)
+                                .frame(width: 28)
+                            Text(item.filename ?? "Imported model")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(c.t2)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if item.sourceUrl != nil {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(c.t3)
+                            }
+                        }
+                        .padding(11)
+                        .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.s2))
+                        .contentShape(.rect)
+                    }
+                    .disabled(item.sourceUrl == nil)
                 }
-                Text(importLabel(allowed: allowed))
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(allowed ? c.accentInk : c.t3)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(allowed ? c.accent : c.s3))
-            .contentShape(.rect)
+        }
+        .padding(.top, 20)
+    }
+
+    /// A failure plus, where a browser can succeed where the server cannot, the way out.
+    @ViewBuilder
+    private func failureCard(_ f: MWFailure) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            UploadErrorCard(text: f.message)
+            if f.offerWebLink, let modelId = resolved?.modelId ?? parsedModelId,
+               let link = MakerWorld.webUrl(modelId: modelId) {
+                Tap { openURL(link) } content: {
+                    HStack(spacing: 6) {
+                        Text("Open on MakerWorld")
+                            .font(.system(size: 13, weight: .semibold))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundStyle(c.accent)
+                    .contentShape(.rect)
+                }
+            }
+        }
+        .padding(.top, 12)
+    }
+
+    /// The model id out of whatever was typed, so **Open on MakerWorld** still works when the failure
+    /// happened before anything resolved.
+    private var parsedModelId: Int? {
+        guard let match = trimmedUrl.firstMatch(of: /models\/(\d+)/) else { return nil }
+        return Int(match.1)
+    }
+
+    @ViewBuilder
+    private func importButton(_ r: MakerWorldResolved) -> some View {
+        let allowed = !access.blocksImport
+        VStack(spacing: 8) {
+            Tap(disabled: importing || !allowed, action: doImport) {
+                HStack(spacing: 9) {
+                    if importing {
+                        ProgressView().tint(c.accentInk)
+                    } else if !allowed {
+                        // A padlock that explains itself beats a live-looking control that refuses.
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(c.t3)
+                    }
+                    Text(importLabel(allowed: allowed))
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(allowed ? c.accentInk : c.t3)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(allowed ? c.accent : c.s3))
+                .contentShape(.rect)
+            }
+            .accessibilityLabel("\(importLabel(allowed: allowed)), model \(r.modelId)")
+            .accessibilityHint(access.message ?? "")
+
+            // One line, under the button, before the download — not a modal and not a checkbox.
+            if let l = MakerWorld.licence(r.design) {
+                Text(l.obligation)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineSpacing(2)
+                    .foregroundStyle(c.t3)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            }
         }
         .padding(.top, 14)
-        .accessibilityLabel("\(importLabel(allowed: allowed)), model \(r.modelId)")
     }
 
     private func importLabel(allowed: Bool) -> String {
         if importing { return "Importing…" }
-        guard allowed else { return "Import unavailable" }
+        guard allowed else { return access == .checking ? "Checking…" : "Import unavailable" }
         return alreadyImported ? "Import again" : "Import to library"
     }
 
@@ -666,25 +862,28 @@ private struct MakerWorldPanel: View {
         let u = trimmedUrl
         guard !u.isEmpty, !resolving else { return }
         resolving = true
-        err = nil
+        failure = nil
         resolved = nil
+        rows = []
         picked = nil
+        licenceExpanded = false
         Task {
             defer { resolving = false }
             do {
                 let r = try await client.resolveMakerWorld(u)
                 resolved = r
-                picked = r.instances.first
+                rows = MakerWorld.rows(r)
+                picked = MakerWorld.preselect(rows, defaultInstanceId: r.design.defaultInstanceId)
             } catch {
-                err = uploadApiDetail(error) ?? "Couldn’t resolve that link. Paste a makerworld.com model URL."
+                failure = mwFailure(.resolve, error)
             }
         }
     }
 
     private func doImport() {
-        guard let r = resolved, !importing, canDownload == true else { return }
+        guard let r = resolved, !importing, !access.blocksImport else { return }
         importing = true
-        err = nil
+        failure = nil
         Task {
             do {
                 let res = try await client.importMakerWorld(
@@ -707,48 +906,20 @@ private struct MakerWorldPanel: View {
                 onClose()
             } catch {
                 importing = false
-                err = "Import failed — " + (uploadApiDetail(error) ?? error.localizedDescription)
+                failure = mwFailure(.importing, error)
             }
         }
     }
 
+    /// Turn a thrown request into copy that blames the right hop. `BambuddyError` carries the status
+    /// and the API's own `detail`; anything else never reached the server.
+    private func mwFailure(_ step: MakerWorld.Step, _ error: Error) -> MWFailure {
+        MakerWorld.failure(step: step,
+                           status: (error as? BambuddyError)?.status ?? 0,
+                           detail: uploadApiDetail(error))
+    }
+
     // MARK: Field fallbacks
-
-    // MakerWorld's payload is inconsistent about where per-profile numbers live: sometimes on the
-    // instance, sometimes only on its first plate. Both are checked at every read site.
-
-    private func instanceTime(_ i: MWInstance) -> Double? {
-        i.prediction?.double ?? i.extention?.modelInfo?.plates?.first?.prediction?.double
-    }
-
-    private func instanceWeight(_ i: MWInstance) -> Double? {
-        i.weight?.double ?? i.extention?.modelInfo?.plates?.first?.weight?.double
-    }
-
-    private func instanceFilaments(_ i: MWInstance) -> [MWFilament] {
-        i.instanceFilaments ?? i.extention?.modelInfo?.plates?.first?.filaments ?? []
-    }
-
-    private func instanceTitle(_ i: MWInstance) -> String {
-        guard let t = i.title, !t.isEmpty else { return "Default profile" }
-        return t
-    }
-
-    private func metaLine(seconds: Double?, grams: Double?, needAms: Bool) -> String {
-        var s: String
-        if let seconds, seconds > 0 {
-            s = "\(Int((seconds / 60).rounded())) min"
-        } else {
-            s = "—"
-        }
-        if let grams, grams > 0 { s += "  ·  \(number(grams)) g" }
-        if needAms { s += "  ·  AMS" }
-        return s
-    }
-
-    private func number(_ v: Double) -> String {
-        v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
-    }
 
     private func byline(_ design: MWDesign) -> String {
         var s = ""

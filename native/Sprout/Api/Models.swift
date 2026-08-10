@@ -523,25 +523,73 @@ struct MWFilament: Codable, Hashable, Sendable {
 }
 
 /// One printable profile/instance. `id` → instance_id, `profileId` → profile_id on import.
+///
+/// The same type decodes BOTH lists a resolve returns, because they carry the same field names — but
+/// not the same fields. The `/instances` hits have `id`/`profileId`/`title`/`cover` and, measured
+/// across 95 of them on two models, **none** of `prediction`, `weight`, `needAms`,
+/// `instanceFilaments` or `extention`; those live only on `design.instances[]`. `MakerWorld.rows`
+/// joins the two, so decoding every substantive field as optional here is load-bearing, not defensive
+/// habit.
 struct MWInstance: Codable, Identifiable, Hashable, Sendable {
     let id: Int
     var profileId: Int?
     var title: String?
     var cover: String?
     var needAms: Bool?
-    var prediction: LooseNumber?    // print time, seconds (best-effort)
-    var weight: LooseNumber?        // grams (best-effort)
+    var prediction: LooseNumber?    // print time, seconds
+    var weight: LooseNumber?        // grams
+    var materialCnt: Int?           // distinct materials
+    var materialColorCnt: Int?      // distinct colours
+    var isDefault: Bool?            // false on every record of every model probed — see MakerWorld.preselect
+    var appCanPrint: Bool?
     var instanceFilaments: [MWFilament]?
     var extention: Extention?
+
+    init(id: Int, profileId: Int? = nil, title: String? = nil, cover: String? = nil,
+         needAms: Bool? = nil, prediction: LooseNumber? = nil, weight: LooseNumber? = nil,
+         materialCnt: Int? = nil, materialColorCnt: Int? = nil, isDefault: Bool? = nil,
+         appCanPrint: Bool? = nil, instanceFilaments: [MWFilament]? = nil, extention: Extention? = nil) {
+        self.id = id
+        self.profileId = profileId
+        self.title = title
+        self.cover = cover
+        self.needAms = needAms
+        self.prediction = prediction
+        self.weight = weight
+        self.materialCnt = materialCnt
+        self.materialColorCnt = materialColorCnt
+        self.isDefault = isDefault
+        self.appCanPrint = appCanPrint
+        self.instanceFilaments = instanceFilaments
+        self.extention = extention
+    }
 
     struct Extention: Codable, Hashable, Sendable {
         var modelInfo: ModelInfo?
         struct ModelInfo: Codable, Hashable, Sendable {
             var plates: [Plate]?
+            var compatibility: Compat?
+            var otherCompatibility: [Compat]?
+            var projectSettings: ProjectSettings?
+
+            struct Compat: Codable, Hashable, Sendable {
+                var devModelName: String?      // "O1C2"
+                var devProductName: String?    // "H2C"
+                var nozzleDiameter: LooseNumber?
+            }
+            struct ProjectSettings: Codable, Hashable, Sendable {
+                var layerHeight: String?
+                var wallLoops: String?
+                var sparseInfillDensity: String?
+            }
             struct Plate: Codable, Hashable, Sendable {
+                var index: Int?
                 var prediction: LooseNumber?
                 var weight: LooseNumber?
                 var filaments: [MWFilament]?
+                var thumbnail: Thumb?
+
+                struct Thumb: Codable, Hashable, Sendable { var url: String? }
             }
         }
     }
@@ -556,11 +604,36 @@ struct MWDesign: Codable, Identifiable, Hashable, Sendable {
     var likeCount: Int?
     var tags: [String]?
     var designCreator: Creator?
+    /// The metadata sidecar for the `/instances` hits — see `MWInstance` and `MakerWorld.rows`.
+    var instances: [MWInstance]?
+    /// MakerWorld's own pre-selection. An **instance id**, matching `instances[].id`.
+    var defaultInstanceId: Int?
+    var license: String?
+    var licenseDescriptionInfo: LicenseInfo?
+    var originals: [Original]?
+    var paidSetting: PaidSetting?
+    var isPointRedeemable: Bool?
+    var isExclusive: Bool?
 
     struct Creator: Codable, Hashable, Sendable {
         var name: String?
         var handle: String?
         var avatar: String?
+    }
+    /// MakerWorld's own licence prose. Rendered verbatim rather than paraphrased.
+    struct LicenseInfo: Codable, Hashable, Sendable {
+        var title: String?
+        var content: String?
+    }
+    /// Upstream attribution when the model is a remix.
+    struct Original: Codable, Hashable, Sendable {
+        var title: String?
+        var author: String?
+        var link: String?
+        var license: String?
+    }
+    struct PaidSetting: Codable, Hashable, Sendable {
+        var isPaid: Bool?
     }
 }
 
@@ -583,6 +656,30 @@ struct MakerWorldImportResponse: Codable, Hashable, Sendable {
     var libraryFileId: Int
     var filename: String?
     var wasExisting: Bool?
+    /// The auto-created `MakerWorld` folder, so the Files tab can be opened where the file landed.
+    var folderId: Int?
+    /// Echoes the profile that was pulled, so the response can be matched back to the picked row.
+    var profileId: Int?
+}
+
+/// `GET /api/v1/cloud/status`. A `403` means the API key has no cloud scope — a different condition
+/// from "not signed in", with a different remedy. See `MakerWorldAccess`.
+struct CloudStatus: Codable, Hashable, Sendable {
+    var isAuthenticated: Bool?
+    var email: String?
+    var region: String?
+}
+
+/// One row of `GET /api/v1/makerworld/recent-imports`.
+struct MakerWorldRecentImport: Codable, Identifiable, Hashable, Sendable {
+    var libraryFileId: Int
+    var filename: String?
+    var folderId: Int?
+    var thumbnailPath: String?
+    var sourceUrl: String?
+    var createdAt: String?
+
+    var id: Int { libraryFileId }
 }
 
 // MARK: - Slicing
