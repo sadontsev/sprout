@@ -337,7 +337,10 @@ private struct MakerWorldPanel: View {
     @State private var resolved: MakerWorldResolved?
     @State private var rows: [MWProfileRow] = []
     @State private var picked: MWProfileRow?
-    @State private var failure: MWFailure?
+    /// The failure plus which call produced it — the step decides where it is rendered, because an
+    /// import failure has to appear beside the button that caused it rather than at the top of a
+    /// scroll the user is 7 000 points down.
+    @State private var failure: (step: MakerWorld.Step, detail: MWFailure)?
     @State private var importing = false
     @State private var recent: [MakerWorldRecentImport] = []
     @State private var licenceExpanded = false
@@ -359,8 +362,11 @@ private struct MakerWorldPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     linkField
-                    if let failure {
-                        failureCard(failure)
+                    // A resolve failure belongs under the field that caused it; the content is short
+                    // at that point, so it is on screen. An import failure is rendered by
+                    // `importButton` instead — see `failure`.
+                    if let failure, failure.step == .resolve {
+                        failureCard(failure.detail)
                     }
                     if let resolved {
                         designBlock(resolved)
@@ -578,7 +584,10 @@ private struct MakerWorldPanel: View {
         } else {
             VStack(alignment: .leading, spacing: 0) {
                 UploadSectionLabel("PROFILE" + (rows.count > 1 ? "  ·  \(rows.count)" : ""))
-                VStack(spacing: 9) {
+                // Lazy: a popular model resolves to 88 rows, and an eager stack built every one of
+                // them at once — 88 AsyncImage views firing 88 concurrent requests at the thumbnail
+                // proxy for rows that are thousands of points off screen.
+                LazyVStack(spacing: 9) {
                     ForEach(rows) { row in
                         profileRow(row)
                     }
@@ -621,7 +630,10 @@ private struct MakerWorldPanel: View {
                     HStack(spacing: 7) {
                         Image(systemName: "checkmark")
                             .font(.system(size: 13, weight: .semibold))
-                        Text("Already in your library")
+                        // MODEL-level, and worded as such. `already_imported_library_ids` matches any
+                        // profile of this model, so "Already in your library" beside a profile picker
+                        // read as a claim about the selected profile that the data cannot support.
+                        Text("This model is in your library")
                             .font(.system(size: 11.5, weight: .semibold))
                     }
                     .foregroundStyle(c.accent)
@@ -832,6 +844,14 @@ private struct MakerWorldPanel: View {
     private func importButton(_ r: MakerWorldResolved) -> some View {
         let allowed = !access.blocksImport
         VStack(spacing: 8) {
+            // Pinned with the button, not buried at the top of the scroll: on an 88-profile model the
+            // user is thousands of points down when an import is refused, and the whole remedy ("try
+            // another profile") was being written where they had no reason to look.
+            if let failure, failure.step == .importing {
+                failureCard(failure.detail)
+                    .padding(.bottom, 2)
+            }
+
             Tap(disabled: importing || !allowed, action: doImport) {
                 HStack(spacing: 9) {
                     if importing {
@@ -867,17 +887,26 @@ private struct MakerWorldPanel: View {
         .padding(.top, 14)
     }
 
+    /// Always "Import to library" once allowed.
+    ///
+    /// It used to say "Import again" whenever ANY profile of this model had been imported, which is
+    /// a claim about the selected profile that `already_imported_library_ids` cannot support — the
+    /// ids are library files, and nothing maps them back to a profile. A duplicate is deduped
+    /// server-side and reported honestly by the toast, so the label has nothing to add.
     private func importLabel(allowed: Bool) -> String {
         if importing { return "Importing…" }
         guard allowed else { return access == .checking ? "Checking…" : "Import unavailable" }
-        return alreadyImported ? "Import again" : "Import to library"
+        return "Import to library"
     }
 
     // MARK: Actions
 
     private func resolve() {
         let u = trimmedUrl
-        guard !u.isEmpty, !resolving else { return }
+        // `!importing` matters: swapping the design out from under an in-flight import left the
+        // failure card offering "Open on MakerWorld" for whichever model happened to be on screen,
+        // and handed the wizard off for a model the panel was no longer showing.
+        guard !u.isEmpty, !resolving, !importing else { return }
         resolving = true
         failure = nil
         resolved = nil
@@ -891,8 +920,11 @@ private struct MakerWorldPanel: View {
                 resolved = r
                 rows = MakerWorld.rows(r)
                 picked = MakerWorld.preselect(rows, defaultInstanceId: r.design.defaultInstanceId)
+                // A resolve is proof the server is reachable. Without this, one failed probe at open
+                // locked the import for the life of the panel even as the design rendered fine.
+                if access.worthRetrying { access = await client.makerWorldAccess() }
             } catch {
-                failure = mwFailure(.resolve, error)
+                failure = (.resolve, mwFailure(.resolve, error))
             }
         }
     }
@@ -906,9 +938,10 @@ private struct MakerWorldPanel: View {
                 let res = try await client.importMakerWorld(
                     MakerWorldImportRequest(
                         modelId: r.modelId,
-                        // The picked profile wins; the resolve response's own profile id is the
-                        // fallback for a model that lists no instances.
-                        profileId: picked?.profileId ?? r.profileId,
+                        // The resolve response's own profile id is the fallback ONLY when no row is
+                        // picked at all. Falling back for a picked row that happens to carry no
+                        // profileId would quietly import a different profile than the one selected.
+                        profileId: picked.map(\.profileId) ?? r.profileId,
                         instanceId: picked?.id,
                         folderId: nil
                     )
@@ -939,7 +972,7 @@ private struct MakerWorldPanel: View {
                 }
             } catch {
                 importing = false
-                failure = mwFailure(.importing, error)
+                failure = (.importing, mwFailure(.importing, error))
             }
         }
     }

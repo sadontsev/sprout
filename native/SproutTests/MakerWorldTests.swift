@@ -18,7 +18,7 @@ final class MakerWorldTests: XCTestCase {
     /// (instance 42179) has no entry in `design.instances`, so it can only be described as
     /// undescribed. Licence `BY-ND`, a Thingiverse remix credit, empty licence prose.
     private static let benchy = #"""
-    {"model_id":40146,"instances":[{"id":42179,"profileId":22111064,"title":"1 Colour, 0.25mm layer, 2 walls, 10% infill","cover":"https://makerworld.bblmw.com/c/42179.png"},{"id":40704,"profileId":35118578,"title":"12min42s, Bambu PLA Basic, A1 mini","cover":"https://makerworld.bblmw.com/c/40704.png"},{"id":109644,"profileId":35438952,"title":"14min44s, Bambu PLA Basic, A1","cover":"https://makerworld.bblmw.com/c/109644.png"}],"design":{"id":40146,"title":"Benchy Bambu Pla Basic","coverUrl":"https://makerworld.bblmw.com/cover.png","downloadCount":385253,"designCreator":{"name":"Bambu Lab"},"defaultInstanceId":42179,"license":"BY-ND","licenseDescriptionInfo":{},"originals":[{"title":"#3DBenchy - The jolly 3D printing torture-test by CreativeTools.se","author":"CreativeTools","link":"https://www.thingiverse.com/thing:763622"}],"paidSetting":{"isPaid":false,"crowdfunding":0},"isPointRedeemable":false,"isExclusive":false,"instances":[{"id":109644,"profileId":35438952,"title":"14min44s, Bambu PLA Basic, A1","prediction":1895,"weight":12,"needAms":false,"materialCnt":1,"materialColorCnt":1,"isDefault":false,"appCanPrint":true,"instanceFilaments":[{"type":"PLA","color":"#FFFFFF","usedG":"12"}],"extention":{"modelInfo":{"compatibility":{"devModelName":"N2S","devProductName":"A1","nozzleDiameter":0.4},"otherCompatibility":[{"devModelName":"O1C2","devProductName":"H2C","nozzleDiameter":0.4},{"devModelName":"C12","devProductName":"P1S","nozzleDiameter":0.4},{"devModelName":"C11","devProductName":"P1P","nozzleDiameter":0.4}],"projectSettings":{"layerHeight":"0.25","wallLoops":"2","sparseInfillDensity":"10%"},"plates":[{"index":1,"prediction":1895,"weight":12,"thumbnail":{"url":"https://makerworld.bblmw.com/p/1.png"}}]}}},{"id":40704,"profileId":35118578,"title":"12min42s, Bambu PLA Basic, A1 mini","prediction":1661,"weight":13,"needAms":false,"materialCnt":1,"materialColorCnt":1,"isDefault":false,"appCanPrint":true,"instanceFilaments":[{"type":"PLA","color":"#FFFFFF","usedG":"13"}],"extention":{"modelInfo":{"compatibility":{"devModelName":"N1","devProductName":"A1 mini","nozzleDiameter":0.4},"otherCompatibility":[{"devModelName":"O1C2","devProductName":"H2C","nozzleDiameter":0.4},{"devModelName":"C12","devProductName":"P1S","nozzleDiameter":0.4},{"devModelName":"C11","devProductName":"P1P","nozzleDiameter":0.4}],"projectSettings":{"layerHeight":"0.25","wallLoops":"2","sparseInfillDensity":"10%"},"plates":[{"index":1,"prediction":1661,"weight":13,"thumbnail":{"url":"https://makerworld.bblmw.com/p/1.png"}}]}}}]}}
+    {"model_id":40146,"instances":[{"id":42179,"profileId":22111064,"title":"1 Colour, 0.25mm layer, 2 walls, 10% infill","cover":"https://makerworld.bblmw.com/c/42179.png"},{"id":40704,"profileId":35118578,"title":"12min42s, Bambu PLA Basic, A1 mini","cover":"https://makerworld.bblmw.com/c/40704.png"},{"id":109644,"profileId":35438952,"title":"14min44s, Bambu PLA Basic, A1","cover":"https://makerworld.bblmw.com/c/109644.png"}],"design":{"id":40146,"title":"Benchy Bambu Pla Basic","coverUrl":"https://makerworld.bblmw.com/cover.png","downloadCount":385253,"designCreator":{"name":"Bambu Lab"},"defaultInstanceId":42179,"license":"BY-ND","licenseDescriptionInfo":{"title":"","content":""},"originals":[{"title":"#3DBenchy - The jolly 3D printing torture-test by CreativeTools.se","author":"CreativeTools","link":"https://www.thingiverse.com/thing:763622"}],"paidSetting":{"isPaid":false,"crowdfunding":0},"isPointRedeemable":false,"isExclusive":false,"instances":[{"id":109644,"profileId":35438952,"title":"14min44s, Bambu PLA Basic, A1","prediction":1895,"weight":12,"needAms":false,"materialCnt":1,"materialColorCnt":1,"isDefault":false,"appCanPrint":true,"instanceFilaments":[{"type":"PLA","color":"#FFFFFF","usedG":"12"}],"extention":{"modelInfo":{"compatibility":{"devModelName":"N2S","devProductName":"A1","nozzleDiameter":0.4},"otherCompatibility":[{"devModelName":"O1C2","devProductName":"H2C","nozzleDiameter":0.4},{"devModelName":"C12","devProductName":"P1S","nozzleDiameter":0.4},{"devModelName":"C11","devProductName":"P1P","nozzleDiameter":0.4}],"projectSettings":{"layerHeight":"0.25","wallLoops":"2","sparseInfillDensity":"10%"},"plates":[{"index":1,"prediction":1895,"weight":12,"thumbnail":{"url":"https://makerworld.bblmw.com/p/1.png"}}]}}},{"id":40704,"profileId":35118578,"title":"12min42s, Bambu PLA Basic, A1 mini","prediction":1661,"weight":13,"needAms":false,"materialCnt":1,"materialColorCnt":1,"isDefault":false,"appCanPrint":true,"instanceFilaments":[{"type":"PLA","color":"#FFFFFF","usedG":"13"}],"extention":{"modelInfo":{"compatibility":{"devModelName":"N1","devProductName":"A1 mini","nozzleDiameter":0.4},"otherCompatibility":[{"devModelName":"O1C2","devProductName":"H2C","nozzleDiameter":0.4},{"devModelName":"C12","devProductName":"P1S","nozzleDiameter":0.4},{"devModelName":"C11","devProductName":"P1P","nozzleDiameter":0.4}],"projectSettings":{"layerHeight":"0.25","wallLoops":"2","sparseInfillDensity":"10%"},"plates":[{"index":1,"prediction":1661,"weight":13,"thumbnail":{"url":"https://makerworld.bblmw.com/p/1.png"}}]}}}]}}
     """#
 
     /// A 3-filament, 4-plate model under the Standard Digital File License, flagged exclusive.
@@ -201,7 +201,23 @@ final class MakerWorldTests: XCTestCase {
 
     func testPreselectFallsBackToTheFirstSingleFilamentDescribedRow() throws {
         let rows = MakerWorld.rows(try benchyResolved())
+        // 42179 is first in the list and undescribed, so passing here means the described-row rule
+        // fired rather than the `rows.first` fallback underneath it.
+        XCTAssertNil(rows.first?.detail)
         XCTAssertEqual(MakerWorld.preselect(rows, defaultInstanceId: nil)?.id, 40704)
+    }
+
+    /// The multi-slot branch: when nothing is single-filament, the second described-row rule has to
+    /// fire rather than dropping through to `rows.first`.
+    func testPreselectPrefersADescribedRowEvenWhenEveryOneIsMultiFilament() throws {
+        var r = try seedResolved()
+        r.instances.insert(MWInstance(id: 9_001, profileId: 9_002, title: "Undescribed, and first"),
+                           at: 0)
+        let rows = MakerWorld.rows(r)
+        XCTAssertNil(rows.first?.detail)
+        let picked = MakerWorld.preselect(rows, defaultInstanceId: nil)
+        XCTAssertEqual(picked?.id, 1452154)
+        XCTAssertEqual(picked?.detail?.slotCount, 3)
     }
 
     func testPreselectStillUsesTheirPickWhenNothingIsDescribed() throws {
@@ -413,9 +429,18 @@ final class MakerWorldTests: XCTestCase {
     }
 
     func testNeitherProbeAnsweringIsSaidPlainlyRatherThanGuessed() {
-        let a = MakerWorld.access(cloud: .failed, canDownload: nil)
-        XCTAssertEqual(a, .unreachable)
-        XCTAssertTrue(try! XCTUnwrap(a.message).contains("still preview"))
+        XCTAssertEqual(MakerWorld.access(cloud: .failed, canDownload: nil), .unreachable)
+    }
+
+    /// `.unreachable` is a snapshot of one instant and the only blocking state that can clear itself
+    /// with no user action. Locking the button for the life of the panel — while the panel goes on to
+    /// resolve a model and prove the server is back — hides a capability the backend would allow.
+    func testOnlyTheTransientStateAdvertisesItselfAsWorthRetrying() {
+        XCTAssertTrue(MakerWorldAccess.unreachable.worthRetrying)
+        for a: MakerWorldAccess in [.ready, .checking, .keyLacksCloudScope, .serverNotSignedIn] {
+            XCTAssertFalse(a.worthRetrying, "\(a) needs a remedy applied elsewhere; re-probing changes nothing")
+        }
+        XCTAssertTrue(try XCTUnwrap(MakerWorldAccess.unreachable.message).contains("try again"))
     }
 
     func testEveryBlockingStateExplainsItselfAndReadyDoesNot() {
@@ -498,6 +523,32 @@ final class MakerWorldTests: XCTestCase {
         XCTAssertFalse(f.message.contains("API Keys"), "that is a different condition entirely")
     }
 
+    /// Resolving is anonymous upstream, so a 401 there cannot be about a Bambu Cloud token — it is
+    /// Bambuddy rejecting this app's own key. Sending the user to re-do a cloud sign-in would have
+    /// them fix something the call never used.
+    func testA401AtResolveBlamesThisAppsKeyNotTheServersCloudSignIn() {
+        let f = MakerWorld.failure(step: .resolve, status: 401, detail: nil)
+        XCTAssertTrue(f.message.contains("API key"))
+        XCTAssertFalse(f.message.contains("Cloud Profiles"))
+    }
+
+    /// The server's own sentence beats anything written here, at either step.
+    func testA401ForwardsTheServersOwnDetailWhenItSendsOne() {
+        for step: MakerWorld.Step in [.resolve, .importing] {
+            XCTAssertEqual(MakerWorld.failure(step: step, status: 401, detail: "Key revoked on 2026-08-01.")
+                .message, "Key revoked on 2026-08-01.")
+        }
+    }
+
+    /// The live 400 always carries a `detail`; the fixed copy has to win over it, because MakerWorld's
+    /// raw text here ("Bambu Lab API unexpected status 400 for profile 21931235") explains nothing.
+    func testA400AtImportKeepsItsOwnCopyOverAnUnhelpfulUpstreamDetail() {
+        let f = MakerWorld.failure(step: .importing, status: 400,
+                                   detail: "Bambu Lab API unexpected status 400 for profile 21931235")
+        XCTAssertTrue(f.message.contains("Try another one"))
+        XCTAssertFalse(f.message.contains("unexpected status"))
+    }
+
     func testRateLimitingAsksForPatienceRatherThanRetryingInALoop() {
         XCTAssertTrue(MakerWorld.failure(step: .resolve, status: 429, detail: nil)
             .message.contains("rate-limiting"))
@@ -546,8 +597,10 @@ final class MakerWorldTests: XCTestCase {
     }
 
     /// A four-plate file lists filaments no single plate needs. Counting the whole file would block a
-    /// perfectly printable single-material plate — measured: this exact file reports 6 slots
-    /// unfiltered and 1 per plate.
+    /// single-material plate — measured: this exact file reports 6 slots unfiltered and 1 per plate.
+    ///
+    /// Note the used slot here is **2**, not 1. That is the real plate 2 of file 46, and it is why
+    /// the count alone cannot decide the mapping — see `soleUsedSlot`.
     func testSlotsTheChosenPlateDoesNotUseAreNotCounted() throws {
         let r = try requirements(#"""
         {"file_id":46,"plate_id":2,"filaments":[
@@ -557,6 +610,49 @@ final class MakerWorldTests: XCTestCase {
           {"slot_id":4,"type":"PETG","used_in_plate":false}]}
         """#)
         XCTAssertEqual(r.usedSlotCount, 1)
+        XCTAssertEqual(r.soleUsedSlot, 2, "the count says 'one filament'; the mapping needs to know WHICH")
+    }
+
+    // MARK: soleUsedSlot — which slot, not how many
+
+    /// `ams_mapping` index 0 addresses filament slot 1. A one-element array for a plate whose lone
+    /// filament is slot 3 binds the chosen tray to a filament the plate never asks for.
+    func testSoleUsedSlotIsTheSlotIdNotThePositionInTheList() throws {
+        let r = try requirements(#"""
+        {"plate_id":4,"filaments":[
+          {"slot_id":1,"type":"PLA","used_in_plate":false},
+          {"slot_id":3,"type":"PETG","used_in_plate":true}]}
+        """#)
+        XCTAssertEqual(r.usedSlotCount, 1)
+        XCTAssertEqual(r.soleUsedSlot, 3)
+    }
+
+    func testSoleUsedSlotIsNilWhenThePlateNeedsMoreThanOne() throws {
+        let r = try requirements(#"""
+        {"filaments":[{"slot_id":1,"used_in_plate":true},{"slot_id":2,"used_in_plate":true}]}
+        """#)
+        XCTAssertNil(r.soleUsedSlot)
+    }
+
+    func testSoleUsedSlotIsNilWhenNothingIsKnown() throws {
+        XCTAssertNil(try requirements(#"{"filaments":[]}"#).soleUsedSlot)
+        XCTAssertNil(try requirements(#"{"file_id":9}"#).soleUsedSlot)
+    }
+
+    /// A slot id the API omits or reports as 0 must not produce a negative array index.
+    func testSoleUsedSlotFloorsAtOne() throws {
+        XCTAssertEqual(try requirements(#"{"filaments":[{"type":"PLA"}]}"#).soleUsedSlot, 1)
+        XCTAssertEqual(try requirements(#"{"filaments":[{"slot_id":0,"type":"PLA"}]}"#).soleUsedSlot, 1)
+    }
+
+    /// The output of Sprout's own slice renumbers to slot 1 — measured on file 47 `?plate_id=2` — so
+    /// the common path keeps sending the single-element mapping that shipped before.
+    func testASlicedOutputReportsSlotOneSoTheMappingIsUnchanged() throws {
+        let r = try requirements(#"""
+        {"file_id":47,"plate_id":2,"filaments":[{"slot_id":1,"type":"PLA","used_grams":33.0,
+        "tray_info_idx":"GFA00","used_in_plate":true,"nozzle_id":1}]}
+        """#)
+        XCTAssertEqual(r.soleUsedSlot, 1)
     }
 
     /// A missing flag means "no per-plate information", not "unused" — dropping those would report
