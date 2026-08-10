@@ -746,3 +746,327 @@ unauthenticated `/makerworld/thumbnail` proxy so the phone's IP stays out of Mak
 - [Consumer Rights Wiki — Bambu Lab cease and desist against OrcaSlicer fork developer](https://consumerrights.wiki/w/Bambu_Lab_cease_and_desist_against_OrcaSlicer_fork_developer)
 - In-repo: `docs/native-rewrite/06-overlays.md` (§230–300), `docs/phase0-results.md`, `CLAUDE.md`
   ("The recurring bug in this codebase: offering what the backend will refuse").
+
+---
+
+# Review
+
+> **Second author.** Everything above is the original author's text and is left unedited. This
+> section is an adversarial review: it re-ran the document's probes and challenges what did not
+> survive. Where I agree, I say so briefly; the bulk below is disagreement, because that is the
+> useful part. Same placeholders (`<BAMBUDDY>`, `<KEY>`); nothing secret is printed.
+>
+> Method: re-probed Bambuddy 0.2.4.9 and `api.bambulab.com` on 2026-08-10, read the OpenAPI schema
+> and the container source, and grepped the repo. Commands are quoted so every claim here is
+> re-runnable too.
+
+## R-0. What survived, so the disagreement below is calibrated
+
+I tried to break these and could not. They are solid:
+
+- **Server surface.** 548 OpenAPI paths, version `0.2.4.9`, exactly five `/makerworld/*` endpoints.
+- **The "big surprise" reproduces exactly.** `design-service/design/search?keyword=benchy` → `200`
+  `{"total":0,"hits":null}`; `search-service/search/design?keyword=benchy` → `200` `total: 7070`;
+  `select/design/nav?navKey=Trending` → `total: 800` (doc said 799 — it is a live number). The
+  document's central factual claim is correct, and the `design-service` vs `search-service`
+  diagnosis is a genuinely good catch.
+- **The profile-decode diagnosis is correct and worse than stated.** `prediction`, `weight`,
+  `needAms`, `instanceFilaments`, `extention` are absent from **100%** of top-level hits (88/88 on
+  40146, 7/7 on 1400373). `detail` is a zeroed placeholder on **88/88**. The data really is only in
+  `design.instances[]`.
+- **`design` is an opaque passthrough.** `MakerWorldResolvedModel.design` is
+  `{"additionalProperties": true, "type": "object"}` — so the Phase 1 decode fix genuinely needs no
+  backend change. This was the claim most likely to sink Phase 1, and it holds.
+- **The slice call is genuinely unblocked.** `filament_presets: list[PresetRef]` exists on the live
+  `SliceRequest`, and `schemas/slicer.py:124-139` backfills it from the singular form — sending the
+  plural alone is the *preferred* new-client path. `plate: 0` is a real "all plates" sentinel. All
+  four quoted preset ids exist verbatim; H2C preset counts are exactly 5 / 16 / 189.
+- **§5's evidence.** File 40 → `/gcode` `404`, `plates[0].print_time_seconds: null`; file 41 →
+  `/gcode` `200`, `69 890 554` bytes, `36285`. `classify_file_type` only returns `gcode.3mf` for a
+  `.gcode.3mf` suffix. The "always re-slice" conclusion is right.
+- **§5.3's printer facts.** Nozzles `HS01 0.6` + `HH05 0.4`, AMS `0/1` (`n3f`, 4 trays) + `128`
+  (`n3s`, `is_ams_ht`), `vt_tray` `254/255`, `fila_switch.installed: true`. Verbatim correct.
+- **The repo citations.** `filament_preset` singular at `WizardView.swift:1219`, one-element
+  `ams_mapping` at `:1291`, `MakerWorldImportResponse` missing `folder_id`/`profile_id`
+  (`Models.swift`), `api_keys` flags, `users.cloud_token` set. All check out.
+- **`instance_id` really is inert** — the OpenAPI description says so verbatim.
+
+Now the parts that do not hold.
+
+---
+
+## R-1. **BLOCKER** — the prescribed join drops MakerWorld's own default profile, and leaves 58% of rows exactly as blank as they are today
+
+§4.2 says: *"`design.instances[]` is the record; the `/instances` hits add nothing except a longer
+tail of profiles for which MakerWorld itself publishes no metadata."* Phase 1 item 1 then says to
+build rows from `design.instances[]`, and names model 40146 as the test case.
+
+Measured on that exact model:
+
+```
+hits: 88   design.instances: 37   profileIds hits-only: 51   design-only: 0
+hits WITH metadata after the join: 37 of 88
+design.instances with isDefault == True: []          ← on BOTH probed models
+design.defaultInstanceId: 42179
+  → present in hits[].id?            True
+  → present in design.instances[].id? FALSE
+  → that hit's profileId (22111064) present in design.instances[].profileId? FALSE
+```
+
+Three separate failures fall out of this, and they compound:
+
+1. **`hits ⊇ design.instances`, always.** There are zero design-only profileIds. So the complete
+   list is the hits; `design.instances[]` is the *metadata sidecar*, not "the record". The document
+   has the primary and secondary sources backwards. Build rows from `design.instances[]` and 51 of
+   88 real, named, importable profiles (`"0.25mm layer, 2 walls, 10% infill"`, with valid
+   `profileId`s the import endpoint accepts) silently vanish from the picker — profiles the owner
+   can see on the website. That is the codebase's recurring bug running in reverse: *hiding* a
+   capability that exists, on a proxy for "is this profile real".
+2. **The pre-selection rule cannot fire on the document's own test model.** `defaultInstanceId` is
+   an **instance `id`**, not a `profileId` — the document's join key. On 40146 that instance is not
+   in `design.instances[]` at all. So "Pre-select `design.defaultInstanceId`" silently fails; the
+   `isDefault` fallback is empty on **both** probed models (0/37 and 0/7), so the chain degrades all
+   the way to "first with `appCanPrint`". §4.2 lists `isDefault` in the signals table as if it were
+   measured. It was not; it is dead on every model probed.
+3. **The stated success criterion is unreachable.** The TL;DR promises the fix stops rows showing
+   `—` with no weight and no swatches. After the fix, on the named test model, **51 of 88 rows still
+   render exactly that**, including the pre-selected one — MakerWorld publishes no metadata for its
+   own default profile. There is no worse outcome than shipping a fix whose headline test case is
+   the row that still looks broken.
+
+**What to do instead.** Left-join *from hits*: hits are the row set, `design.instances[]` enriches
+by `profileId`, and a row with no match gets an explicit, honest empty state — *"MakerWorld
+publishes no details for this profile"* — not `—`. That state is missing from the design entirely
+and must be specified, because it is the majority case on popular models. Pre-select by matching
+`defaultInstanceId` against **`hits[].id`** (where it actually lives), then fall back.
+
+Re-run:
+```bash
+# resolve, then compare the two lists
+curl -s -X POST -H "X-API-Key: <KEY>" -H 'Content-Type: application/json' \
+  -d '{"url":"https://makerworld.com/models/40146"}' <BAMBUDDY>/api/v1/makerworld/resolve
+```
+
+## R-2. **MAJOR** — Phase 1 is not shippable alone, and is not the "smallest increment" it claims
+
+Two independent problems.
+
+**(a) Half of Phase 1 cannot be executed or tested today.** `can_download` is `false` on this
+server, so **no import can be performed at all**. Items 4 (decode the import response), 5 (hand off
+into the wizard) and 6 (multi-filament end to end) all sit downstream of a successful import that
+nobody can currently produce. Unblocking it requires ticking *Allow cloud access* on an API key in
+Bambuddy's admin UI — and per `CLAUDE.md`, **settings writes are admin-only; the scoped app key gets
+403**. So Phase 1 has an out-of-band human prerequisite that the app cannot perform and the document
+never lists as a precondition. It is filed as spike S-1's *setup step*, which badly understates it:
+it gates 5 of the 8 Phase 1 items, not one spike.
+
+**(b) Item 6 is not "phase 1", by the document's own argument.** Item 6 is N filament pickers, a
+plural slice request, N mapping rows and full-length `ams_mapping` — comfortably the largest single
+piece of work in the whole plan. The document admits it "pay[s] for [itself] outside MakerWorld",
+which is an argument that it is *a different project*, not an argument for bundling it into a phase
+whose stated purpose is "stop lying". Items 1–5, 7, 8 are genuinely shippable and genuinely useful
+without it (single-material MakerWorld models work end to end; multi-material models are honestly
+gated). Splitting is free and the document gives no reason not to:
+
+- **Phase 1a — truthfulness** (items 1, 2, 3, 4, 7, 8). No import required to build or review most
+  of it; ships value immediately.
+- **Phase 1b — the hand-off** (item 5). Needs one successful import.
+- **Phase 1c — multi-material** (item 6). Needs 1b, is not MakerWorld-specific, and should be
+  scheduled against the multi-material story, not this one.
+
+Until 1c lands, a multi-filament model must be **refused with a stated reason** at the picker, not
+allowed into a wizard that will map filament 1 and silently drop 2 and 3. The document does not say
+this anywhere, and the wizard's current one-element `ams_mapping` (`WizardView.swift:1291`) makes it
+the default behaviour. That is the recurring bug, shipped.
+
+## R-3. **MAJOR** — "`nozzle_mapping` cannot reach a queued print" is asserted, not established; an existing-endpoint path was never tried
+
+§5.3 and risk-register row 7 declare this blocked on an upstream PR (S-5, Phase 3) and instruct the
+UI to say the printer picks the nozzle. The asymmetry is real:
+
+```
+PrintQueueItemCreate   | nozzle_mapping: False
+PrintQueueItemResponse | nozzle_mapping: True
+PrintQueueItemUpdate   | nozzle_mapping: True   ← anyOf[array<int>, null]
+```
+
+But the document stopped at `POST /queue/`. The live server also has:
+
+```
+/api/v1/queue/{item_id}          ['get', 'patch', 'delete']   ← PATCH takes PrintQueueItemUpdate
+/api/v1/queue/{item_id}/start    ['post']
+PrintQueueItemCreate.manual_start                              ← exists
+```
+
+So `POST /queue/ {manual_start: true, …}` → `PATCH /queue/{id} {nozzle_mapping: […]}` →
+`POST /queue/{id}/start` is a plausible route to the exact capability, **entirely within existing
+endpoints and requiring no upstream change to a third-party image**. It may not work — `PATCH` may
+not propagate the field into `printer_manager.start_print`, and `manual_start` semantics need
+checking — but "may not work" is a spike, not a blocker. The document converted an untested
+assumption into a hard constraint, a UI copy decision ("the printer chooses the nozzle") and a
+deferral to Phase 3. That is precisely the failure mode it warns about elsewhere. **S-5 should be
+rewritten to test the PATCH path first and only escalate upstream if it fails.**
+
+## R-4. **MAJOR** — the "~90 day" token lifetime is wrong, and "cannot be refreshed" is contradicted by the code
+
+§3.1 states tokens "last ~90 days and cannot be refreshed", §3.1's remedy copy says *"(Add: tokens
+last ~90 days.)"*, and §8 repeats "~90 d". This is asserted with no source — exactly the kind of
+protocol detail the brief said not to state from memory. From `app/services/bambu_cloud.py`:
+
+```python
+# Token typically valid for ~3 months, but we'll refresh more often
+self.token_expiry = datetime.now(timezone.utc) + timedelta(days=30)   # ×3 sites (login, _set_tokens, set_token)
+...
+self.refresh_token = data.get("refreshToken")                          # a refresh token IS stored
+return not (self.token_expiry and datetime.now(timezone.utc) > self.token_expiry)
+```
+
+Two corrections. (1) **Bambuddy's own validity window is 30 days, not 90** — and it is Bambuddy's
+window, not Bambu's, that flips `can_download` to `false` and that the user experiences. UI copy
+saying "~90 days" would be wrong by 3× and would make a re-login prompt at day 31 look like a bug.
+The "~3 months" figure exists only as an unverified comment about the *upstream* token. (2) **A
+`refreshToken` is stored**, so the flat claim "cannot be refreshed" is unsupported; whether Bambuddy
+*uses* it is a separate, unasked question. Say "Bambuddy treats the token as valid for 30 days" —
+that is the part that is actually established.
+
+## R-5. **MAJOR** — Phase 2's topology has no fallback that does not violate another rule in this document
+
+Phase 2 puts `search-service` calls on the phone. I verified the feasibility claim and it is
+*stronger* than the document argued — the endpoint is not User-Agent gated:
+
+```
+Bambuddy UA → 200 total=7070    Sprout/1.0 (iOS) UA → 200 total=7070
+curl default → 200 total=7070   empty UA          → 200 total=7070
+```
+
+That is good news the document did not claim. The problem is what happens when it stops being true.
+§9 row 1 correctly says Bambu can gate these endpoints without notice. If `search-service` starts
+requiring a bearer, the phone has no token **by design** (§3.2: "nothing in this design should ever
+put a Bambu Cloud bearer in the iOS Keychain" — a rule I agree with). The only remaining fix is to
+proxy search through Bambuddy — which §9's last row says is an upstream PR to a third-party image.
+So the failure mode is: *search dies and cannot be repaired in the app.* That is an acceptable
+outcome, but it is a design consequence that should be stated in Phase 2 rather than discovered.
+Add one line: **"if search is ever gated, it is removed, not worked around"** — and keep the paste
+field as a first-class entry point permanently, not as a degradation path.
+
+Also: every probe in this document ran from the home server. There is no evidence about mobile
+carrier IPs. The claim that moving search to the phone "puts the CAPTCHA risk on the phone's IP
+instead of the server IP" is sound in direction but untested in magnitude — a carrier CGNAT egress
+shared by thousands of users is a *more* likely bot-flag candidate than a residential IP, not less.
+Low severity, but the risk register rates this "Low" on the basis of an argument, not a measurement.
+
+## R-6. **MAJOR** — the "Made for H2C" badge has almost no discriminating power, and edges into the trap §4.2 itself names
+
+§4.2 proposes badges from `compatibility` / `otherCompatibility`. Measured:
+
+```
+model 40146 : design.instances marked otherCompatibility H2C = 36 of 37
+model 1400373: design.instances marked otherCompatibility H2C =  6 of 7
+```
+
+A badge that is true 97% of the time is decoration, not information — it will read as
+"this one is fine for your printer" on essentially every row, which is exactly the *slicing-settings
+vs printability* conflation the document's own **Trap** box warns about two paragraphs earlier. The
+document names the trap and then designs a prominent, near-constant affirmative badge into the
+primary row. Either drop the badge, or invert it: surface only the **negative** case (the ~3% with
+no H2C marking), which is the only state that carries information.
+
+Related, and self-contradictory: §4.2 and §6② propose a `compatibility.nozzleDiameter` caution
+("needs 0.4") — while §6 step 2 correctly reasons that *"we are about to re-slice, so it is not a
+mismatch"*. Both cannot be right. Since every import is re-sliced for the H2C with our own printer
+preset, the source profile's nozzle diameter has no bearing on whether the model prints; warning
+about it invents a problem the pipeline already solves. §6 step 2 is the correct reasoning; §4.2's
+caution line should go.
+
+## R-7. **MAJOR** — the TL;DR states as fact a bug that §11 admits is unverified
+
+TL;DR: *"`can_download` conflates two unrelated conditions and **currently tells the owner to fix
+the wrong thing**."* §3.1: *"Today, on this server, it is **case 3 and only case 3**."* Both are
+stated flatly. But S-6 concedes the premise is unknown: which key does the installed app hold?
+
+Confirmed live (names and flags only):
+
+```
+api_keys: (1,'ios-app',0)  (2,'Claude Mac',1)  (3,'iOS-app-new',1)  (4,'claude-native-test',1)
+users:    max  has_cloud_token: True  region: global
+```
+
+Every probe in the document used the key in `~/.config/bambu-phase0/bb_apikey` — key **1**, the
+provisioning key. Key **3** is literally named `iOS-app-new` and **has** cloud access. If the
+shipped app holds key 3, then `can_download` is already `true` on the device, the "wrong remedy" bug
+**does not reproduce for the user at all**, and Phase 1 item 2 is a copy change rather than a bug
+fix. The document reasoned from the wrong client's credentials to a claim about what the owner sees.
+
+This is cheap to settle and should not be a spike: have the app call `GET /cloud/status` at startup
+and branch on `403` vs `200`. That is the §3.1 design rule (`cloudReadable`) already — so **the
+correct predicate makes S-6 moot**. Downgrade the TL;DR to "may tell the owner to fix the wrong
+thing, depending on which key the app holds", and delete S-6 in favour of implementing `cloudReadable`.
+
+## R-8. **MINOR** — §5's third line of evidence is factually wrong (the conclusion still stands)
+
+*"Both probed models' default profiles are `compatibility: X1 Carbon 0.4` / `A1 0.4`."* Measured
+compatibility spread:
+
+```
+40146  : {(A1,0.4):9, (A1 mini,0.4):9, (P1P,0.4):1, (P1S,0.4):9, (P2S,0.4):5,
+          (A1,0.2):1, (A1,0.6):1, (P2S,0.2):1, (X2D,0.8):1}   ← no X1 Carbon anywhere
+1400373: {(X1 Carbon,0.4):3, (P1S,0.4):1, (A1,0.4):2, (Elegoo Neptune 3 Pro,0.4):1}
+```
+
+Model 40146 has no X1 Carbon profile at all, and its *default* profile has no `compatibility` field
+whatsoever (it is one of the 51 metadata-less hits from R-1). The "always re-slice" conclusion is
+unaffected — evidence 1 (`classify_file_type`) and 2 (`/gcode` → 404) carry it on their own — but
+evidence 3 as written is not reproducible and should be corrected or dropped.
+
+## R-9. **MINOR** — the licence section rests a legal claim on a secondary source and a sample of three
+
+§7: *"Printing for yourself is inside every one of these licences"* and *"no licence in play
+restricts the *use*"*. The only citation for the Standard Digital File License is a third-party
+explainer (`modelrover.com`), not MakerWorld's own licence text. The sample is two models plus one
+search hit. "Every one of these licences" is a generalisation over a set the document never
+enumerated from the source.
+
+The *practical* conclusion (single user, own printer, no share affordance → fine) is almost
+certainly right and I am not disputing it. But state it as what it is — "on the licences observed,
+personal printing is permitted; Sprout adds no redistribution affordance, which is the obligation
+that actually bites" — and cite MakerWorld's own licence page rather than a gloss. The attribution
+requirement in item 2 is the genuinely load-bearing part and it is well specified.
+
+## R-10. **MINOR** — two small things the design will trip over on contact
+
+- **`.wizard` takes a `LibraryFile`, not an id.** `AppModel.swift:11` is `case wizard(LibraryFile)`,
+  but `/makerworld/import` returns `{library_file_id, filename, …}`. §6④'s "sets
+  `model.overlay = .wizard(file)` directly" needs an intervening `GET /library/files/{id}` (listed
+  in the API inventory, so it is covered) *and* an enum change to carry `MakerWorldSeed`. Name it.
+- **`docs/phase0-results.md` is stale where this document cites it.** It says *"Pass the full preset
+  OBJECT"*; the live schema wants `PresetRef {source, id}`, which is what this document correctly
+  uses. Worth a footnote so the next reader does not "fix" the design back to the old shape.
+- **The thumbnail proxy is unauthenticated on a publicly-tunnelled host.** The document notes this
+  neutrally and Phase 2 proposes to route *more* traffic through it. The CDN host allowlist keeps it
+  from being a general SSRF, so this is not a blocker — but "unauthenticated" belongs in the risk
+  register, not only in a parenthetical, since remote access is via a public tunnel.
+
+---
+
+## Revised spike list
+
+| # | Change |
+|---|---|
+| **S-1** | Keep, but **re-scope**: it is not a spike, it is a Phase 1 *precondition*. Enabling cloud access on the app's key gates Phase 1 items 4, 5 and 6. Schedule it first. |
+| **S-2** | Keep as-is. Sound. |
+| **S-3** | Keep as-is. Sound. |
+| **S-4** | Keep. Lower priority than the document implies — nothing before Phase 3 depends on it. |
+| **S-5** | **Rewrite (R-3).** Before any upstream ask: test `POST /queue/ {manual_start:true}` → `PATCH /queue/{id} {nozzle_mapping}` → `POST /queue/{id}/start` and check whether the mapping reaches `start_print`. Escalate upstream only if it does not. |
+| **S-6** | **Delete (R-7).** Implementing the `cloudReadable` predicate (`GET /cloud/status` ≠ 403) answers it at runtime on every launch. |
+| **S-7** *(new)* | Of the 51 metadata-less profiles on model 40146, does `POST /makerworld/import` accept their `profileId` and return a usable 3MF? Decides whether R-1's empty-state rows are importable-but-undocumented (list them) or genuinely dead (filter them, and say why). One import, permissive licence. |
+| **S-8** *(new)* | Does `search-service/search/design` answer from a mobile carrier IP as it does from the home IP (R-5)? One request from the phone on cellular before committing to Phase 2's topology. |
+
+## Bottom line
+
+The document's research is real and its two headline findings — the `search-service` discovery and
+the profile-decode diagnosis — both survive re-probing. The failures are not in the evidence, they
+are in the step from evidence to design: the join direction is inverted (R-1), the phase boundary is
+drawn around work that cannot be tested yet (R-2), one hard blocker was declared without trying the
+adjacent endpoint that has the field (R-3), and the two most confident sentences in the TL;DR rest
+on a credential the author never verified the app uses (R-7). Fix R-1, R-2 and R-7 before anyone
+writes code; R-3 changes what Phase 3 even contains.

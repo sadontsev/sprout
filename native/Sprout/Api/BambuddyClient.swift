@@ -373,6 +373,37 @@ final class BambuddyClient: Sendable {
         try await post("/api/v1/printers/\(printerId)/camera/diagnose")
     }
 
+    /// What the backend did with a request to drop the shared camera upstream.
+    struct CameraStopResult: Decodable {
+        /// How many upstream processes were actually terminated.
+        let stopped: Int
+        /// The backend REFUSED because another viewer is still attached.
+        ///
+        /// Decoded leniently on purpose: the success path returns `{"stopped": n}` with **no
+        /// `skipped` key at all**, and only the refusal path sends `{"stopped": 0, "skipped": true}`.
+        /// A non-optional `Bool` here would therefore throw on exactly the response that means the
+        /// teardown worked, turning the success case into an error.
+        let skipped: Bool
+
+        private enum CodingKeys: String, CodingKey { case stopped, skipped }
+
+        init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            stopped = try c.decodeIfPresent(Int.self, forKey: .stopped) ?? 0
+            skipped = try c.decodeIfPresent(Bool.self, forKey: .skipped) ?? false
+        }
+    }
+
+    /// Drop the shared fan-out upstream so the NEXT viewer to connect creates a fresh one at its own
+    /// `fps`. See `CameraUpstreamClaim` for why a client has to do this at all.
+    ///
+    /// `X-API-Key` (verified live against 0.2.4.8), NOT the camera `?token=` — unlike stream and
+    /// snapshot, which reject the header with 401.
+    @discardableResult
+    func stopCameraUpstream(_ printerId: Int) async throws -> CameraStopResult {
+        try await post("/api/v1/printers/\(printerId)/camera/stop")
+    }
+
     // MARK: - Library
 
     func listFiles() async throws -> [LibraryFile] { try await get("/api/v1/library/files") }
