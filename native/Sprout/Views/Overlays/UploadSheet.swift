@@ -215,15 +215,13 @@ struct UploadSheet: View {
             } content: {
                 HStack(spacing: 13) {
                     UploadSourceTile(symbol: "globe")
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("From MakerWorld")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(c.t1)
-                        Text("Paste a model link")
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(c.t3)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // No subtitle: it said "Paste a model link", which stopped being the whole story
+                    // when the panel gained search, browse and collections — and a subtitle that
+                    // names one of four ways in is worse than none.
+                    Text("From MakerWorld")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(c.t1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(c.t3)
@@ -722,6 +720,25 @@ private struct MakerWorldPanel: View {
 
     private var resultsGrid: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Inside a collection there has to be a visible way out. The "My collections" chip does
+            // go back, but it renders as already-selected while its folder is open, so it reads as
+            // where-you-are rather than a way to leave.
+            if let folder = activeCollection {
+                Tap(action: backToCollections) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("All collections")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(c.accent)
+                    .padding(.vertical, 4)
+                    .contentShape(.rect)
+                }
+                .accessibilityLabel("Back to all collections, leaving \(folder.title)")
+                .padding(.bottom, 10)
+            }
+
             UploadSectionLabel(gridLabel)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
                       spacing: 10) {
@@ -1267,6 +1284,20 @@ private struct MakerWorldPanel: View {
                 searchError = error.localizedDescription
                 showingCollections = false
             }
+        }
+    }
+
+    /// Leave a folder for the folder list. Only refetches if the list was somehow lost — going back
+    /// should be instant, and the collections have not changed in the seconds since they loaded.
+    private func backToCollections() {
+        activeCollection = nil
+        hits = []
+        hitTotal = nil
+        searchError = nil
+        if collections.isEmpty {
+            openCollections()
+        } else {
+            showingCollections = true
         }
     }
 
