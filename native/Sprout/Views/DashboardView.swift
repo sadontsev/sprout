@@ -289,7 +289,13 @@ struct DashboardView: View {
     private var camLoaded: Bool { tileStreamActive && tileCam.isLive }
 
     private var cameraTile: some View {
-        Tap { model.overlay = .camera } content: {
+        // NOT wrapped in `Tap`. SwiftUI may instantiate a `UIViewRepresentable` inside a Button's
+        // label more than once, and each instance built its own renderer and opened its own MJPEG
+        // connection — two `MJPEG connect` lines milliseconds apart, two viewers attached upstream.
+        // The camera allows a limited number, so duplicates cost real frames. A plain tap gesture
+        // makes the tile just as tappable without the label being re-evaluated. Losing the press
+        // scale on a live video tile is no loss.
+        Group {
             ZStack(alignment: .topLeading) {
                 c.thumb
                 if let url = tileStreamURL {
@@ -334,6 +340,8 @@ struct DashboardView: View {
             .padding(.horizontal, 20)
             .padding(.top, 16)
         }
+        .contentShape(.rect)
+        .onTapGesture { model.overlay = .camera }
         // A cold camera takes seconds to produce a frame, and the badge must not claim LIVE over a
         // blank tile. Both of these restart the stream: switching machines from the fleet switcher
         // changes the URL (the printer id is in the path) without it ever becoming nil, and leaving
