@@ -136,7 +136,7 @@ struct DashboardView: View {
                     .font(.system(size: 17))
                     .foregroundStyle(c.t2)
                     .frame(width: 38, height: 38)
-                    .background(Circle().fill(c.s2))
+                    .glassEffect(.regular.interactive(), in: .circle)
             }
             .accessibilityLabel("Settings")
         }
@@ -178,8 +178,7 @@ struct DashboardView: View {
                 }
             }
             .padding(5)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(c.s1))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(c.line2))
+            .glassEffect(.regular, in: .rect(cornerRadius: 16))
             .shadow1()
             .padding(.horizontal, 20)
             .padding(.top, 12)
@@ -546,9 +545,8 @@ struct DashboardView: View {
                 }
             }
             .padding(5)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(c.s1))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(c.line2))
-            .shadow(color: .black.opacity(0.55), radius: 24, x: 0, y: 12)
+            .glassEffect(.regular, in: .rect(cornerRadius: 16))
+            .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 12)
             .padding(.horizontal, -6)
         }
     }
