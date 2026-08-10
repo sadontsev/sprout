@@ -121,6 +121,32 @@ extension FilamentIdentity {
     /// - ONLY the mapped row is rewritten. `ams_mapping` is indexed by FILAMENT and the wizard sends a
     ///   single entry, so filament 1 is the only one bound to a tray; any others are still purely the
     ///   slicer's choice and must keep saying so.
+    /// Rows for a print with a chosen spool per filament slot.
+    ///
+    /// `selections` is keyed by the row's 0-based index, i.e. `slotId - 1`. Rows with no selection
+    /// keep describing what the slicer chose — still the right rule, now applied per row instead of
+    /// only to row 0.
+    static func reviewRows(
+        _ filaments: [ReviewFilament],
+        selections: [Int: FilamentIdentity]
+    ) -> [ReviewFilamentRow] {
+        guard !filaments.isEmpty else {
+            guard let named = selections[0], !named.line.isEmpty else { return [] }
+            return [ReviewFilamentRow(index: 0, colorHex: named.colorHex, name: named.line,
+                                      grams: nil, meters: nil)]
+        }
+        return filaments.enumerated().map { i, f in
+            guard let named = selections[i], !named.line.isEmpty else {
+                return ReviewFilamentRow(index: i, colorHex: FilamentColor.norm(f.color),
+                                         name: f.type, grams: f.grams, meters: f.meters)
+            }
+            // The spool's colour, falling back to the plate's — a row must never lose a swatch it
+            // could have shown.
+            return ReviewFilamentRow(index: i, colorHex: named.colorHex ?? FilamentColor.norm(f.color),
+                                     name: named.line, grams: f.grams, meters: f.meters)
+        }
+    }
+
     static func reviewRows(
         _ filaments: [ReviewFilament],
         selection: FilamentIdentity?,

@@ -327,3 +327,66 @@ final class FilamentIdentityReviewRowTests: XCTestCase {
         XCTAssertEqual(rows.map(\.name), ["PLA"])
     }
 }
+
+// MARK: - Per-slot review rows
+//
+// A multi-filament print has a chosen spool for EVERY row, not just row 0. The single-selection
+// overload rewrote row `mappedIndex` and left the rest describing the slicer's choice — right for one
+// filament, and a lie for three.
+
+final class ReviewRowsPerSlotTests: XCTestCase {
+
+    private func fil(_ slot: Int, _ type: String, _ color: String?, _ g: Double?) -> ReviewFilament {
+        ReviewFilament(slot: slot, type: type, color: color, grams: g, meters: nil)
+    }
+
+    private func spool(_ colorName: String?, _ product: String?, _ hex: String?,
+                       material: String? = "PLA") -> FilamentIdentity {
+        FilamentIdentity(colorHex: hex, colorName: colorName, material: material, product: product)
+    }
+
+    func testEveryMappedRowIsRewrittenNotJustTheFirst() {
+        let plate = [fil(1, "PLA", "#FF0000", 10), fil(2, "PLA", "#00FF00", 20), fil(3, "PETG", "#0000FF", 5)]
+        let rows = FilamentIdentity.reviewRows(plate, selections: [
+            0: spool("Jade White", "Bambu PLA Basic", "#FFFFFF"),
+            2: spool("Clay Brown", "Bambu PETG HF", "#8B5A2B"),
+        ])
+        XCTAssertEqual(rows.count, 3)
+        XCTAssertTrue(rows[0].name.contains("Jade White"))
+        XCTAssertEqual(rows[0].colorHex, "#FFFFFF")
+        XCTAssertEqual(rows[1].name, "PLA", "no selection — keeps the slicer's own description")
+        XCTAssertEqual(rows[1].colorHex, "#00FF00")
+        XCTAssertTrue(rows[2].name.contains("Clay Brown"))
+    }
+
+    /// Quantities always come from the plate: the spool says what it is, the slice says how much.
+    func testGramsAlwaysComeFromThePlateNotTheSpool() {
+        let rows = FilamentIdentity.reviewRows([fil(1, "PLA", "#FF0000", 12.5)],
+                                               selections: [0: spool("Jade White", "Bambu PLA Basic", "#FFFFFF")])
+        XCTAssertEqual(rows[0].grams, 12.5)
+    }
+
+    func testASelectionWithNoNameDoesNotReplaceThePlatesWords() {
+        let rows = FilamentIdentity.reviewRows([fil(1, "PETG", "#0000FF", 3)],
+                                               selections: [0: spool(nil, nil, nil, material: nil)])
+        XCTAssertEqual(rows[0].name, "PETG")
+    }
+
+    /// A spool with no hex must not erase the swatch the plate could have drawn.
+    func testAColourlessSpoolFallsBackToThePlatesColour() {
+        let rows = FilamentIdentity.reviewRows([fil(1, "PLA", "#123456", 1)],
+                                               selections: [0: spool("Mystery", "Some PLA", nil)])
+        XCTAssertEqual(rows[0].colorHex, "#123456")
+    }
+
+    func testNoSelectionsAtAllLeavesEveryRowAsTheSlicerDescribedIt() {
+        let plate = [fil(1, "PLA", "#FF0000", 1), fil(2, "PETG", "#00FF00", 2)]
+        XCTAssertEqual(FilamentIdentity.reviewRows(plate, selections: [:]).map(\.name), ["PLA", "PETG"])
+    }
+
+    func testAnEmptyPlateStillShowsTheChosenSpoolForRowZero() {
+        let rows = FilamentIdentity.reviewRows([], selections: [0: spool("Jade White", "Bambu PLA Basic", "#FFFFFF")])
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertNil(rows[0].grams, "nothing measured anything")
+    }
+}

@@ -26,12 +26,19 @@ struct WizardView: View {
     @State private var nozzle: NozzleSize = .mm04
     /// Latches on the first tap: until then the picker follows whatever is physically mounted.
     @State private var nozzleTouched = false
-    @State private var filament: Preset?
+    /// Slicer preset per filament SLOT (1-based, MakerWorld's own numbering). One entry for the
+    /// overwhelmingly common single-filament print.
+    @State private var filaments: [Int: Preset] = [:]
     @State private var quality: Preset?
     @State private var supports = false
     @State private var selectedPlate = 1
     @State private var bedType: String
-    @State private var slot: Int
+    /// Chosen tray per filament slot. Never stores -1: a missing key means "not chosen yet",
+    /// which the UI names; -1 exists only in the wire array.
+    @State private var trayBySlot: [Int: Int] = [:]
+    /// Which filament slot the Material and Map steps are currently editing. Hidden entirely when
+    /// the print needs one filament, which is almost always.
+    @State private var editingSlot: Int = 1
     @State private var adv = SliceOverrides()
     @State private var advOpen = false
     @State private var showCatalog = false
@@ -63,10 +70,6 @@ struct WizardView: View {
     init(model: AppModel, file: LibraryFile) {
         self.model = model
         self.file = file
-        // 255 is `tray_now`'s "no active tray" sentinel — seeding the mapping with it would map the
-        // print onto a slot that does not exist.
-        let trayNow = model.status?.status?.trayNow?.int ?? -1
-        _slot = State(initialValue: (0...3).contains(trayNow) ? trayNow : 0)
         _bedType = State(initialValue: PrinterProfile.forPrinter(model.printer).bedTypes[0].id)
     }
 
@@ -105,9 +108,28 @@ struct WizardView: View {
     /// What is in the tray this print is mapped to — the spool the nozzle will really pull from, and
     /// therefore what the Review step has to describe. A catalog filament picked on the Material step
     /// only tells the SLICER how to flow the material; it does not change what is physically loaded.
-    private var mappedIdentity: FilamentIdentity? {
-        trays.first { $0.globalId == slot }
+    private func identity(forSlot s: Int) -> FilamentIdentity? {
+        trayBySlot[s].flatMap { gid in trays.first { $0.globalId == gid } }
             .map { FilamentMatch.identity(for: $0, in: assignmentLikes) }
+    }
+
+    /// Chosen spools keyed by the 0-based index `ams_mapping` and the Review list speak.
+    private var mappedIdentities: [Int: FilamentIdentity] {
+        Dictionary(uniqueKeysWithValues: mappedSlots.compactMap { s in
+            identity(forSlot: s).map { (s - 1, $0) }
+        })
+    }
+
+    /// The filament this print needs more than one of. Drives whether the slot selector appears at
+    /// all — with one filament the wizard looks exactly as it always has.
+    private var isMultiFilament: Bool { mappedSlots.count > 1 }
+
+    /// A tray's human position: "AMS 2 · Slot 1", "AMS HT". Never the raw global id, which renders
+    /// as "Slot 129" for the HT unit.
+    private func trayLabel(_ gid: Int) -> String {
+        guard let t = trays.first(where: { $0.globalId == gid }) else { return "—" }
+        return Set(trays.map(\.unitId)).count > 1 ? "\(t.unitLabel) · Slot \(t.localId + 1)"
+                                                 : "Slot \(t.localId + 1)"
     }
 
     /// The library file on the Review step that actually carries toolpaths, or nil when none does.
@@ -173,12 +195,24 @@ struct WizardView: View {
         .presentationBackground(.clear)
         .onAppear { withAnimation(Motion.standard(0.22)) { scrimIn = true } }
         .task(id: nozzle) { await loadPresets() }
+        // On the CARD, not on a step: step 3 must know how many filaments the plate needs before it
+        // draws its pickers, and step 6 needs the same answer for the file it will enqueue. Both read
+        // the pair (file that will be printed, plate that will be printed) — asking a different pair
+        // returns stale data, measured.
+        .task(id: "\(printFileId)-\(selectedPlate)") { await loadRequiredSlots() }
         .task { await loadSlicedFor() }
         .task(id: step) { await runSliceStep() }
         .onChange(of: mounted.map(\.rawValue).joined(separator: ","), initial: true) { _, _ in
             if !nozzleTouched, !mounted.isEmpty { nozzle = PresetSelect.defaultNozzle(mounted) }
         }
         .onChange(of: loadedKey, initial: true) { _, _ in applyDefaultFilament() }
+        // The requirements land after the presets do, so the first `applyDefaultFilament` may have
+        // run believing this was a one-filament print. Re-open the latch when the answer changes.
+        .onChange(of: mappedSlots) { _, slots in
+            defaulted = false
+            if !slots.contains(editingSlot) { editingSlot = slots.first ?? 1 }
+            applyDefaultFilament()
+        }
         .onChange(of: model.overlay) { _, current in
             // Both nested viewers close themselves by clearing `model.overlay` — correct when the
             // shell presents them, but nested over the wizard it would tear the wizard down too and
@@ -515,6 +549,7 @@ struct WizardView: View {
                     textColor: c.t1
                 )
             } else {
+                if isMultiFilament { slotSelector }
                 materialSection
                 Spacer().frame(height: 22)
                 qualitySection
@@ -554,6 +589,60 @@ struct WizardView: View {
         }
     }
 
+    /// Which filament slot the pickers below are choosing for.
+    ///
+    /// One picker with an explicit "for which filament" selector, rather than N pickers stacked:
+    /// nine trays times three slots is an unreadable wall, and the selector makes it impossible to
+    /// answer for the wrong slot by accident. Hidden entirely at N == 1.
+    @ViewBuilder
+    private var slotSelector: some View {
+        SectionLabel("THIS PLATE NEEDS \(mappedSlots.count) FILAMENTS")
+        FlowLayout(spacing: 8) {
+            ForEach(mappedSlots, id: \.self) { s in
+                let on = editingSlot == s
+                let done = filaments[s] != nil
+                Tap { editingSlot = s } content: {
+                    HStack(spacing: 5) {
+                        if done {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        Text("Filament \(s)")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(on ? c.accent : (done ? c.t2 : c.t3))
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(on ? c.accentDim : c.s2))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .stroke(c.accent, lineWidth: on ? 1.5 : 0)
+                    }
+                }
+                .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
+            }
+        }
+        .padding(.bottom, 16)
+
+        if let need = requirementFor(editingSlot) {
+            // What the FILE asks for, so the choice is informed rather than a guess.
+            HStack(spacing: 9) {
+                Swatch(value: FilamentColor.norm(need.color), size: 18, radius: 6)
+                Text("The file wants \(need.type ?? "filament") here"
+                     + ((need.usedGrams?.double).map { $0 > 0 ? String(format: " · %.0f g", $0) : "" } ?? ""))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(c.t3)
+            }
+            .padding(.bottom, 12)
+        }
+    }
+
+    /// What the file says about one slot, when it says anything.
+    private func requirementFor(_ s: Int) -> FilamentRequirements.Requirement? {
+        requirements?.usedSlots.first { ($0.slotId ?? 1) == s }
+    }
+
     @ViewBuilder
     private var materialSection: some View {
         SectionLabel(loaded.isEmpty ? "MATERIAL" : "LOADED IN THE PRINTER")
@@ -591,13 +680,13 @@ struct WizardView: View {
             } else {
                 VStack(spacing: 9) {
                     ForEach(catalog) { m in
-                        Tap { filament = m } content: {
+                        Tap { filaments[editingSlot] = m } content: {
                             HStack(spacing: 0) {
                                 Text(m.name.replacingOccurrences(of: " \(token)", with: ""))
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundStyle(c.t1)
                                 Spacer(minLength: 8)
-                                if filament?.id == m.id {
+                                if filaments[editingSlot]?.id == m.id {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 14, weight: .semibold))
                                         .foregroundStyle(c.accent)
@@ -607,7 +696,7 @@ struct WizardView: View {
                             .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.s2))
                             .overlay {
                                 RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                    .stroke(c.accent, lineWidth: filament?.id == m.id ? 1.5 : 0)
+                                    .stroke(c.accent, lineWidth: filaments[editingSlot]?.id == m.id ? 1.5 : 0)
                             }
                         }
                     }
@@ -618,20 +707,22 @@ struct WizardView: View {
     }
 
     private func loadedRow(_ f: LoadedFilament) -> some View {
-        let selected = f.preset != nil && filament?.id == f.preset?.id
+        let selected = f.preset != nil && filaments[editingSlot]?.id == f.preset?.id
         // Named by the domain, exactly as the Hardware tab names it: the spool's own colour name over
         // the computed one, and its real filament on the second line. Deriving the title here is what
         // dropped "Bambu PLA Wood" down to plain "PLA".
         let id = f.identity
         let sub = [
-            "Slot \(f.slot + 1)",
+            trayLabel(f.slot),
             id.product,
             f.preset == nil ? "no matching profile" : nil,
         ].compactMap { $0 }.joined(separator: " · ")
         return Tap(disabled: f.preset == nil) {
             if let p = f.preset {
-                filament = p
-                slot = f.slot
+                // Picking a physical spool answers both questions at once — which is why the user is
+                // not asked twice — so it writes the preset AND the tray for this slot.
+                filaments[editingSlot] = p
+                trayBySlot[editingSlot] = f.slot
             }
         } content: {
             HStack(spacing: 13) {
@@ -934,7 +1025,7 @@ struct WizardView: View {
                 fileId: result?.libraryFileId ?? file.id,
                 sliced: true,
                 layerFileId: slicedFileId,
-                selection: mappedIdentity,
+                selections: mappedIdentities,
                 selectable: false
             )
             NoticeCard(
@@ -954,9 +1045,7 @@ struct WizardView: View {
     private var stepMapFilament: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionLabel("AMS SLOT")
-            if let needed = requirements?.usedSlotCount, needed > 1 {
-                multiFilamentNotice(needed)
-            }
+            if isMultiFilament { mapSlotSelector }
             if trays.isEmpty {
                 Text("No AMS trays reported yet. Load filament in the printer, then come back.")
                     .font(.system(size: 12, weight: .medium))
@@ -971,15 +1060,14 @@ struct WizardView: View {
                         trayRow(t, multi: multi)
                     }
                 }
-                Text("Tap a slot to map this print's filament.")
+                Text(isMultiFilament
+                     ? "Tap a tray for filament \(editingSlot). Each filament the plate uses needs one."
+                     : "Tap a slot to map this print's filament.")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(c.t3)
                     .padding(.top, 13)
             }
         }
-        // Asked of the file that will actually be enqueued, and re-asked if the plate changes —
-        // a four-plate file can need three filaments on one plate and one on another.
-        .task(id: "\(printFileId)-\(selectedPlate)") { await loadRequiredSlots() }
     }
 
     /// The file the enqueue will reference: the slice output when there is one, else the original.
@@ -1007,47 +1095,43 @@ struct WizardView: View {
         return ids.isEmpty ? [1] : ids
     }
 
-    /// Slot → chosen global tray id.
-    ///
-    /// Still a one-entry dictionary derived from the single `slot` the mapping step offers: step 6 is
-    /// not yet N-wide, and a multi-filament print is refused before it gets here. The array builder
-    /// underneath already handles N, so making the step N-wide is a UI change rather than a wire one.
-    private var trayBySlot: [Int: Int] { [mappedSlots[0]: slot] }
-
     /// `ams_mapping` for this print. The array's semantics — index is the filament slot, value is the
     /// global tray id — live on `AmsMapping.build`, which is pure and tested.
     private func amsMapping() -> [Int] {
         AmsMapping.build(usedSlots: mappedSlots, trays: trayBySlot)
     }
 
-    /// Says the limitation out loud instead of mapping filament 1 and quietly abandoning the rest.
-    ///
-    /// The enqueue sends `ams_mapping` as a one-element array, which is right for a single-material
-    /// print and silently wrong for this one — filaments 2..n arrive unmapped and the firmware picks
-    /// whatever it likes. A stated "not in this build" is the only honest option until the mapping
-    /// step can carry a row per slot.
-    private func multiFilamentNotice(_ needed: Int) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(c.heating)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("This print needs \(needed) filaments")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(c.t1)
-                Text("Sprout can only map one, so it can’t start this print — the other \(needed - 1) "
-                     + "would go to whichever spool the printer happened to choose. Slice a "
-                     + "single-material plate, or start it from Bambu Studio.")
-                    .font(.system(size: 12, weight: .medium))
-                    .lineSpacing(3)
-                    .foregroundStyle(c.t2)
+    /// One chip per filament the plate uses, so the tray list below is unambiguous about WHICH
+    /// filament it is mapping. Each chip shows the tray already chosen for it.
+    @ViewBuilder
+    private var mapSlotSelector: some View {
+        FlowLayout(spacing: 8) {
+            ForEach(mappedSlots, id: \.self) { sl in
+                let on = editingSlot == sl
+                let mapped = trayBySlot[sl]
+                Tap { editingSlot = sl } content: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Filament \(sl)")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(on ? c.accent : c.t2)
+                        Text(mapped.map(trayLabel) ?? "not mapped")
+                            .font(.mono(10.5, weight: .medium))
+                            .foregroundStyle(mapped == nil ? c.heating : c.t3)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(on ? c.accentDim : c.s2))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .stroke(c.accent, lineWidth: on ? 1.5 : 0)
+                    }
+                }
+                .accessibilityLabel("Filament \(sl), \(mapped.map(trayLabel) ?? "not mapped")")
+                .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(13)
-        .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.heatingDim))
         .padding(.bottom, 14)
-        .accessibilityElement(children: .combine)
     }
 
     private func trayRow(_ t: AmsTrayRef, multi: Bool) -> some View {
@@ -1058,14 +1142,14 @@ struct WizardView: View {
         let id = FilamentMatch.identity(for: t, in: assignmentLikes)
         let position = multi ? "\(t.unitLabel) · Slot \(t.localId + 1)" : "Slot \(t.localId + 1)"
         let contents = empty ? "Empty" : id.line
-        return Tap(disabled: empty) { slot = t.globalId } content: {
+        return Tap(disabled: empty) { trayBySlot[editingSlot] = t.globalId } content: {
             HStack(spacing: 13) {
                 Swatch(value: id.colorHex, size: 28, radius: 8, empty: empty)
                 Text("\(position) · \(contents)")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(c.t1)
                 Spacer(minLength: 0)
-                if slot == t.globalId {
+                if trayBySlot[editingSlot] == t.globalId {
                     Image(systemName: "checkmark")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(c.accent)
@@ -1075,7 +1159,7 @@ struct WizardView: View {
             .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.s2))
             .overlay {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .stroke(c.accent, lineWidth: slot == t.globalId ? 1.5 : 0)
+                    .stroke(c.accent, lineWidth: trayBySlot[editingSlot] == t.globalId ? 1.5 : 0)
             }
             .opacity(empty ? 0.4 : 1)
         }
@@ -1089,8 +1173,14 @@ struct WizardView: View {
             VStack(spacing: 0) {
                 SummaryRow(key: "File", value: displayName)
                 SummaryRow(key: "Printer", value: model.printer?.name ?? "—")
-                SummaryRow(key: "Material", value: (filament?.name ?? "As sliced").replacingOccurrences(of: " \(token)", with: ""))
-                SummaryRow(key: "Mapped to", value: "Slot \(slot + 1)")
+                ForEach(mappedSlots, id: \.self) { sl in
+                    SummaryRow(
+                        key: isMultiFilament ? "Filament \(sl)" : "Material",
+                        value: (filaments[sl]?.name ?? "As sliced").replacingOccurrences(of: " \(token)", with: "")
+                    )
+                    SummaryRow(key: isMultiFilament ? "  → tray" : "Mapped to",
+                               value: trayBySlot[sl].map(trayLabel) ?? "not mapped")
+                }
                 SummaryRow(key: "Est. time", value: estimatedTime)
             }
             .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(c.s2))
@@ -1124,7 +1214,7 @@ struct WizardView: View {
         fileId: Int,
         sliced: Bool,
         layerFileId: Int?,
-        selection: FilamentIdentity? = nil,
+        selections: [Int: FilamentIdentity] = [:],
         selectable: Bool = true
     ) -> some View {
         WizardPlateReview(
@@ -1132,7 +1222,7 @@ struct WizardView: View {
             fileId: fileId,
             camToken: model.cameraToken,
             plateIndex: selectedPlate,
-            selection: selection,
+            selections: selections,
             sliced: sliced,
             onSelectPlate: selectable ? { selectedPlate = $0 } : nil,
             // nil hides "View layers" outright. Offering it for a file with no G-code is the
@@ -1230,17 +1320,42 @@ struct WizardView: View {
 
     private func applyDefaultFilament() {
         guard !defaulted, let presets else { return }
-        // `slot` is the GLOBAL tray id, the same space `tray_now` speaks.
-        let active = loaded.first { $0.slot == (status?.trayNow?.int ?? -1) && $0.preset != nil }
-            ?? loaded.first { $0.preset != nil }
-        if let active, let preset = active.preset {
-            filament = preset
-            slot = active.slot
-            defaulted = true
-        } else if !trays.isEmpty, let first = presets.catalog.first {
-            filament = first
-            defaulted = true
+        // Single filament: exactly the rule that has always run — the active tray, else the first
+        // loaded spool with a profile. With one row on screen a guess is visible and correctable.
+        if mappedSlots.count <= 1 {
+            let s = mappedSlots.first ?? 1
+            let active = loaded.first { $0.slot == (status?.trayNow?.int ?? -1) && $0.preset != nil }
+                ?? loaded.first { $0.preset != nil }
+            if let active, let preset = active.preset {
+                filaments[s] = preset
+                trayBySlot[s] = active.slot
+                defaulted = true
+            } else if !trays.isEmpty, let first = presets.catalog.first {
+                filaments[s] = first
+                defaulted = true
+            }
+            return
         }
+
+        // Multi-filament: pre-fill ONLY where a loaded spool matches the file's requirement exactly —
+        // same material type AND same colour, and only one candidate. A nearest-colour guess is the
+        // "brown spool labelled Orange" bug one layer up: with five rows the user cannot tell which
+        // were guesses, so anything unsure is left blank and named instead.
+        for sl in mappedSlots where trayBySlot[sl] == nil {
+            guard let need = requirementFor(sl), let wantType = need.type?.nonEmpty else { continue }
+            let wantColor = FilamentColor.norm(need.color)
+            let matches = loaded.filter {
+                $0.preset != nil
+                    && ($0.identity.product?.localizedCaseInsensitiveContains(wantType) ?? false)
+                    && $0.identity.colorHex != nil
+                    && $0.identity.colorHex == wantColor
+            }
+            if matches.count == 1, let m = matches.first, let p = m.preset {
+                filaments[sl] = p
+                trayBySlot[sl] = m.slot
+            }
+        }
+        defaulted = true
     }
 
     // MARK: - Slicing
@@ -1268,7 +1383,11 @@ struct WizardView: View {
             let processPreset = (supports ? quality.flatMap { presets?.supportByBase[$0.name] } : nil) ?? quality
 
             var processRef = processPreset.map { presetRef($0) }
-            var filamentRef = filament.map { presetRef($0) }
+            // Ascending slot order, compacted to the slots the plate uses — measured: the server
+            // consumes `filament_presets` positionally against the USED slots, not the raw slot
+            // numbers (a plate whose only slot is 2, given [PLA, PETG], printed PLA).
+            let ordered = mappedSlots.compactMap { filaments[$0] }
+            var filamentRef = ordered.first.map { presetRef($0) }
 
             // Advanced overrides ride an ephemeral LOCAL preset that inherits the chosen profile and
             // carries only the changed keys, so stock presets are never touched.
@@ -1279,7 +1398,8 @@ struct WizardView: View {
                 )
                 processRef = .object(["source": .string("local"), "id": .string(String(id))])
             }
-            if client.hasAdminLogin, let filament, adv.hasFilamentOverrides {
+            if client.hasAdminLogin, let filament = ordered.first, ordered.count == 1,
+               adv.hasFilamentOverrides {
                 // H2-series filament keys are per-(extruder, variant) arrays of length 3; a
                 // single-extruder machine takes one element.
                 let variants = (model.printer?.nozzleCount ?? 1) > 1 ? 3 : 1
@@ -1302,7 +1422,14 @@ struct WizardView: View {
             ]
             if let p = presets?.printer { body["printer_preset"] = presetRef(p) }
             if let processRef { body["process_preset"] = processRef }
-            if let filamentRef { body["filament_preset"] = filamentRef }
+            // Singular for one filament — byte-identical to what has always shipped and is proven
+            // against this server. Plural only when there is genuinely more than one, so the common
+            // path is not changed on an untested hunch.
+            if ordered.count > 1 {
+                body["filament_presets"] = .array(ordered.map { presetRef($0) })
+            } else if let filamentRef {
+                body["filament_preset"] = filamentRef
+            }
 
             let jobId = try await client.slice(file.id, body: body)
 
@@ -1355,17 +1482,36 @@ struct WizardView: View {
             )
             return
         }
-        guard trays.contains(where: { $0.globalId == slot && !($0.trayType ?? "").isEmpty }) else {
-            alert = WizardAlert(title: "Pick a slot", message: "Choose which AMS slot to print from first.")
+        // Two questions, both re-asked at press time against live status.
+        //
+        // "Every filament this plate needs has a tray" — NOT "a tray is selected", and NOT "how many
+        // filaments", which is what this used to ask. `ams_mapping` carries one entry per slot, so an
+        // unmapped slot reaches the printer as -1 and the firmware picks a spool at random.
+        let unmapped = AmsMapping.unmapped(usedSlots: mappedSlots, trays: trayBySlot)
+        if !unmapped.isEmpty {
+            alert = WizardAlert(
+                title: unmapped.count == 1 ? "Filament \(unmapped[0]) has no tray" : "Some filaments have no tray",
+                message: isMultiFilament
+                    ? "This plate uses \(mappedSlots.count) filaments. Map " +
+                      unmapped.map { "filament \($0)" }.joined(separator: ", ") + " on the previous step."
+                    : "Choose which AMS slot to print from first."
+            )
             return
         }
-        // The enqueue can express exactly one mapped filament. Sending it for a multi-material print
-        // would start a print whose other filaments are assigned by the firmware at random.
-        if let needed = requirements?.usedSlotCount, needed > 1 {
+        // "…and those trays still hold filament." The AMS is live between choosing and starting; a
+        // spool pulled in between would otherwise be printed from.
+        let stale = AmsMapping.stale(trays: trayBySlot, loaded: trays)
+        if !stale.isEmpty {
             alert = WizardAlert(
-                title: "Needs \(needed) filaments",
-                message: "Sprout can only map one filament to a tray, so it can’t start this print correctly. Slice a single-material plate, or start it from Bambu Studio."
+                title: "That tray is empty now",
+                message: "The spool for " + stale.map { isMultiFilament ? "filament \($0)" : "this print" }
+                    .joined(separator: ", ") + " was removed. Pick another tray."
             )
+            return
+        }
+        if let over = AmsMapping.unmappable(usedSlots: mappedSlots).first {
+            alert = WizardAlert(title: "Too many filaments",
+                                message: "This plate asks for filament slot \(over), which this app can't address.")
             return
         }
         starting = true
@@ -1615,7 +1761,7 @@ private struct WizardPlateReview: View {
     let plateIndex: Int
     /// The filament the print is mapped to, when the user has chosen one. nil describes the file as
     /// sliced.
-    var selection: FilamentIdentity?
+    var selections: [Int: FilamentIdentity] = [:]
     var sliced: Bool = true
     var onSelectPlate: ((Int) -> Void)?
     var onViewLayers: (() -> Void)?
@@ -1631,7 +1777,7 @@ private struct WizardPlateReview: View {
 
     /// The plate's filament list, reconciled against the mapped spool — see `reviewRows` for which
     /// source wins each field.
-    private var rows: [ReviewFilamentRow] { FilamentIdentity.reviewRows(vm.filaments, selection: selection) }
+    private var rows: [ReviewFilamentRow] { FilamentIdentity.reviewRows(vm.filaments, selections: selections) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
