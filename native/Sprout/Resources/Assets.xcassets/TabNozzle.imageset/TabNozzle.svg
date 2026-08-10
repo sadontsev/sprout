@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="48 30 96 142" width="17.577" height="26">
+  <!-- The Printer tab's brand glyph, as a TEMPLATE asset rather than a SwiftUI view: the system tab
+       bar renders items through UIKit and needs an image it can tint for selected/unselected state,
+       which a Canvas-drawn view cannot provide. Geometry is identical to NozzleIcon.swift — same
+       "48 30 96 142" viewBox, same five shapes, same order. Keep the two in step.
+
+       width/height are the INTRINSIC POINT SIZE, and for a tab-bar item that is load-bearing: UIKit
+       lays the item out at the image's own size, so the artwork's native 96x142 rendered a glyph
+       that swamped the whole bar. 26 pt tall (x the 96:142 aspect) matches the SF Symbols on the
+       other four tabs. The viewBox is untouched, and preserves-vector-representation keeps it crisp
+       at any scale. -->
+  <g fill="#000000">
+    <rect x="60" y="36" width="72" height="50" rx="12" ry="12"/>
+    <rect x="60" y="80" width="72" height="9" rx="4.5" ry="4.5"/>
+    <path d="M74 92 L118 92 L106 128 L96 150 L86 128 Z"/>
+    <circle cx="96" cy="120" r="11"/>
+    <rect x="58" y="150" width="76" height="15" rx="7.5" ry="7.5"/>
+  </g>
+</svg>

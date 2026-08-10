@@ -1465,7 +1465,8 @@ private struct HwPage<Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 8)
-            .padding(.bottom, 120)   // clearance for the tab bar
+            // End-of-content breathing room only — the system tab bar insets the safe area for us.
+            .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
         .background(c.bg)

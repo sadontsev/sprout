@@ -68,7 +68,9 @@ struct DashboardView: View {
                 }
             }
             .padding(.top, 6)
-            .padding(.bottom, 120)   // clearance for the floating tab bar
+            // End-of-content breathing room only. The system tab bar insets the safe area for us,
+            // so the old 120 pt of hand-reserved clearance would now stack on top of that inset.
+            .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
         .background(c.bg)

@@ -2,8 +2,13 @@ import SwiftUI
 
 /// Monochrome brand nozzle glyph (the app-icon mark, single-colour) for the Printer tab.
 ///
-/// Tints with `color` so it matches the other tab icons. Same proportions as the Live Activity
-/// glyph — the source viewBox is `48 30 96 142`, which this reproduces by scaling into the frame.
+/// Tints with `color`. Same proportions as the Live Activity glyph — the source viewBox is
+/// `48 30 96 142`, which this reproduces by scaling into the frame.
+///
+/// The Printer TAB does not use this view: a system tab bar renders its items through UIKit and needs
+/// a tintable template image, which a `Canvas` cannot be. The same artwork therefore also exists as
+/// `Assets.xcassets/TabNozzle.imageset` — same viewBox, same five shapes, same order. Change one and
+/// change the other.
 struct NozzleIcon: View {
     var color: Color
     var size: CGFloat = 24
