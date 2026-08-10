@@ -27,9 +27,9 @@ struct SnapshotImage: View {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    // A new frame is the same scene a moment later, so cross-fade rather than cut.
-                    .transition(.opacity)
-                    .id(image)
+                    // Deliberately NO .id(image): keying on the frame gives every update a fresh
+                    // view identity, so SwiftUI tears the old one down and inserts a new one — which
+                    // reads as a blink twice a second. Swapping the content in place is seamless.
             }
         }
         .animation(.easeInOut(duration: 0.12), value: image)
