@@ -48,10 +48,27 @@ enum ConfigRules {
     /// - LOCAL (nil): registration is skipped, so Live Activities only update while the app runs and
     ///   there are no push banners — but no server is needed.
     ///
-    /// Resolution: `serverPush == false` forces LOCAL. Otherwise prefer an explicit `pushUrl`; else
-    /// derive it from a `bambuddy.*` host by swapping the subdomain to `lapush.`.
+    /// Resolution: `serverPush == false` forces LOCAL. Otherwise it is `laPushUrl`.
     static func resolvePushUrl(_ cfg: AppConfig) -> String? {
-        if cfg.serverPush == false { return nil }
+        cfg.serverPush == false ? nil : laPushUrl(cfg)
+    }
+
+    /// **Where la-push is**, whether or not Live Activities are pushed through it.
+    ///
+    /// A different question from `resolvePushUrl`, and keeping them apart matters: la-push also
+    /// serves MakerWorld collections, which are plain authenticated HTTP and have nothing to do with
+    /// APNs. Reading the push toggle to decide whether collections exist made turning OFF
+    /// "Live Activity via server" silently remove the Collections tab — a predicate answering a
+    /// nearby question, which is this codebase's recurring bug.
+    ///
+    /// It matters most for someone using a TestFlight build signed by a different Apple team: push
+    /// cannot work for them (APNs will not let their key claim this app's topic), so switching the
+    /// toggle off is exactly what they should do — and it is exactly when collections should keep
+    /// working.
+    ///
+    /// Prefer an explicit `pushUrl`; else derive it from a `bambuddy.*` host by swapping the
+    /// subdomain to `lapush.`.
+    static func laPushUrl(_ cfg: AppConfig) -> String? {
         if let explicit = cfg.pushUrl?.trimmingCharacters(in: .whitespaces), !explicit.isEmpty {
             return httpUrl(trimTrailingSlashes(explicit))
         }

@@ -134,6 +134,36 @@ final class ConfigRulesTests: XCTestCase {
         XCTAssertNil(ConfigRules.resolvePushUrl(config(serverPush: false)))
     }
 
+    /// "Where is la-push" is a different question from "should Live Activities be pushed through it".
+    ///
+    /// la-push also serves MakerWorld collections — plain authenticated HTTP, no APNs — so turning
+    /// Live-Activity push off must not take the Collections tab with it. That matters most for
+    /// someone running a TestFlight build signed by a different Apple team: push cannot work for
+    /// them at all, so switching it off is exactly right, and exactly when collections should stay.
+    func testLaPushUrlSurvivesServerPushBeingOff() {
+        XCTAssertEqual(
+            ConfigRules.laPushUrl(config(pushUrl: "https://push.example.com/", serverPush: false)),
+            "https://push.example.com"
+        )
+        XCTAssertEqual(ConfigRules.laPushUrl(config(serverPush: false)), "https://lapush.example.com")
+        XCTAssertNil(ConfigRules.resolvePushUrl(config(serverPush: false)), "push itself stays off")
+    }
+
+    /// Everything else about the two must agree, or the app would reach one la-push for cards and
+    /// another for collections.
+    func testTheTwoAgreeWheneverPushIsOn() {
+        for cfg in [config(), config(pushUrl: "https://push.example.com"),
+                    config(baseUrl: "https://example.com"), config(pushUrl: "ftp://nope.example.com")] {
+            XCTAssertEqual(ConfigRules.resolvePushUrl(cfg), ConfigRules.laPushUrl(cfg))
+        }
+    }
+
+    /// A malformed entry must not become a host the app then sends an API key to.
+    func testLaPushUrlRejectsNonHttpSchemesToo() {
+        XCTAssertNil(ConfigRules.laPushUrl(config(pushUrl: "ftp://push.example.com", serverPush: false)))
+        XCTAssertNil(ConfigRules.laPushUrl(config(pushUrl: "not a url", serverPush: false)))
+    }
+
     func testExplicitPushUrlWins() {
         XCTAssertEqual(
             ConfigRules.resolvePushUrl(config(pushUrl: "https://push.example.com/")),
