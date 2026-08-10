@@ -903,7 +903,19 @@ private struct MakerWorldPanel: View {
                 model.toast = res.wasExisting == true
                     ? "\(what) was already in your library"
                     : "\(what) added to your library"
+
+                // Hand straight off into the print wizard rather than dropping the user back on the
+                // Files list to find the file they just asked for. It is the SAME wizard — the LAN
+                // gate, the wrong-printer guard, the plate review and the enqueue all already live
+                // there, and a second print path would drift from every one of them.
+                //
+                // A MakerWorld import is never printable as-is: measured, the file is a plain `3mf`
+                // whose `/gcode` answers 404 and whose embedded profile targets someone else's
+                // machine. So the wizard opens at its first step and slices, exactly as it would for
+                // any unsliced upload.
+                let file = try? await client.getFileDetail(res.libraryFileId)
                 onClose()
+                if let file { model.overlay = .wizard(file) }
             } catch {
                 importing = false
                 failure = mwFailure(.importing, error)
