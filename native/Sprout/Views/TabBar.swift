@@ -61,14 +61,12 @@ struct TabBar: View {
                 .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
             }
         }
-        .padding(.top, 9)
+        .padding(.vertical, 9)
+        .padding(.horizontal, 6)
+        // Liquid Glass belongs to the floating control layer, not to content: the bar sits above the
+        // scrolling page and refracts it, so it reads as chrome rather than another card.
+        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+        .padding(.horizontal, 14)
         .padding(.bottom, 4)
-        .background(alignment: .top) {
-            ZStack(alignment: .top) {
-                c.s1
-                Rectangle().fill(c.line).frame(height: 1)
-            }
-            .ignoresSafeArea(edges: .bottom)
-        }
     }
 }
