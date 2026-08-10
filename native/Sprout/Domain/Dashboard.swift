@@ -94,6 +94,13 @@ struct DashVM: Hashable, Sendable {
     var hmsCode: String?
     /// FINISH + plate not confirmed clear — the queue is blocked until the user confirms.
     var awaitingPlateClear: Bool = false
+    /// The archive to re-queue, or nil when there is nothing to re-print.
+    ///
+    /// "The print finished" is a NEARBY question, not this one: a job Bambuddy never archived — one
+    /// started from the printer's own screen or off its SD card, or a FINISH that landed before the
+    /// archive row was written — reports no id, and `POST /queue/` has nothing to send. A "Print
+    /// again" button gated on `kind == .complete` therefore did nothing at all when tapped.
+    var reprintArchiveId: Int?
     /// Every slot across every AMS unit, flat and in unit order.
     var ams: [AmsSlotVM] = []
     /// The units those slots belong to — grouping, capacity, drying ceiling, fed extruder.
@@ -237,6 +244,7 @@ enum Dash {
         vm.hmsCount = hmsCount
         vm.hmsCode = hmsCode
         vm.awaitingPlateClear = status.awaitingPlateClear == true
+        vm.reprintArchiveId = status.currentArchiveId
         vm.ams = ams.slots
         vm.amsUnits = ams.units
         vm.amsRouting = ams.routing

@@ -71,7 +71,9 @@ struct WizardView: View {
     /// "@BBL A1" / "@BBL H2C" — the suffix BambuStudio stamps on every preset for this machine.
     private var token: String { profile.presetToken }
 
-    private var alreadySliced: Bool { (file.fileType ?? "").contains("gcode") }
+    /// Whether the file already carries toolpaths — the reason Material/Slicing/Review are skipped,
+    /// and the only thing that makes a layer view possible before a slice has run.
+    private var alreadySliced: Bool { LibraryFileCaps.hasGcode(file) }
     private var steps: [Int] { alreadySliced ? [1, 2, 6, 7] : [1, 2, 3, 4, 5, 6, 7] }
     private var idx: Int { steps.firstIndex(of: step) ?? 0 }
 
@@ -100,6 +102,17 @@ struct WizardView: View {
     private var mappedIdentity: FilamentIdentity? {
         trays.first { $0.globalId == slot }
             .map { FilamentMatch.identity(for: $0, in: assignmentLikes) }
+    }
+
+    /// The library file on the Review step that actually carries toolpaths, or nil when none does.
+    ///
+    /// Deliberately NOT `result?.libraryFileId ?? file.id`, which is what Review shows: that fallback
+    /// exists so a slice job that reported no file id still describes *something*, and the something
+    /// it falls back to is the un-sliced source. "There is a plate to review" and "there are
+    /// toolpaths to scrub" are two questions, and only this one may gate the layer viewer.
+    private var slicedFileId: Int? {
+        if let id = result?.libraryFileId { return id }
+        return alreadySliced ? file.id : nil
     }
 
     private var printerMismatch: Bool { alreadySliced && !profile.matchesSlicedFor(slicedFor) }
@@ -371,7 +384,7 @@ struct WizardView: View {
                     )
                     .padding(.bottom, 14)
                 }
-                plateReview(fileId: file.id, sliced: true)
+                plateReview(fileId: file.id, sliced: true, layerFileId: file.id)
             } else if isStl {
                 stlPreview
                 // The RN build offers "Texturize first" alongside this; the stl-texturize sidecar
@@ -384,12 +397,14 @@ struct WizardView: View {
                 .padding(.top, 14)
             } else {
                 // Multi-plate projects expose every plate here — only the picked one gets sliced.
-                plateReview(fileId: file.id, sliced: false)
+                // No `layerFileId`: this branch is the un-sliced case. A project `.3mf` has
+                // plates and a thumbnail but no toolpaths, so there is nothing to scrub yet.
+                plateReview(fileId: file.id, sliced: false, layerFileId: nil)
             }
         }
     }
 
-    private var isStl: Bool { (file.fileType ?? "").lowercased() == "stl" }
+    private var isStl: Bool { LibraryFileCaps.isStl(file) }
 
     /// Raw STLs have no slicer plates yet, so a plate review would be an empty grey box.
     private var stlPreview: some View {
@@ -905,7 +920,12 @@ struct WizardView: View {
             // Reviews the NEWLY produced sliced file when the slice returned one, and describes the
             // filament with the spool that is in the mapped tray rather than the one the slicer
             // defaulted to — this step is the user's last look at what will actually come out.
-            plateReview(fileId: result?.libraryFileId ?? file.id, sliced: true, selection: mappedIdentity)
+            plateReview(
+                fileId: result?.libraryFileId ?? file.id,
+                sliced: true,
+                layerFileId: slicedFileId,
+                selection: mappedIdentity
+            )
             NoticeCard(
                 icon: "info.circle",
                 tint: c.accent,
@@ -1015,7 +1035,12 @@ struct WizardView: View {
     /// `selection` is passed only where the user has actually made one (Review). On step 1 nothing has
     /// been chosen yet — `slot` is still just the seeded default — so the file is described exactly as
     /// it was sliced.
-    private func plateReview(fileId: Int, sliced: Bool, selection: FilamentIdentity? = nil) -> some View {
+    private func plateReview(
+        fileId: Int,
+        sliced: Bool,
+        layerFileId: Int?,
+        selection: FilamentIdentity? = nil
+    ) -> some View {
         WizardPlateReview(
             client: model.client,
             fileId: fileId,
@@ -1024,7 +1049,10 @@ struct WizardView: View {
             selection: selection,
             sliced: sliced,
             onSelectPlate: { selectedPlate = $0 },
-            onViewLayers: { viewLayers = LayerTarget(file: layerFile(id: fileId)) }
+            // nil hides "View layers" outright. Offering it for a file with no G-code is the
+            // library menu's old bug in a second surface: the page's fetch answers 404 and the
+            // viewer opens onto "Couldn't render the preview".
+            onViewLayers: layerFileId.map { id in { viewLayers = LayerTarget(file: layerFile(id: id)) } }
         )
     }
 

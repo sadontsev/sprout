@@ -159,8 +159,12 @@ struct SettingsView: View {
                         }
                     }
 
+                    // The hint says only what this build does. It once ended "…and there are no push
+                    // banners", which reads as a promise that ON delivers them — the native build
+                    // registers Live Activity push tokens but never registers for notifications, so
+                    // there are no banners in either position.
                     toggleRow("Live Activity via server", isOn: $serverPush,
-                              hint: "Off keeps lock-screen cards local: they update only while the app is running, and there are no push banners.")
+                              hint: "On lets your server keep the lock-screen card current in the background. Off keeps it local: it updates only while the app is running.")
                     if serverPush {
                         field("Push server URL", text: $pushUrl, placeholder: "derived from the server host", keyboard: .URL)
                     }

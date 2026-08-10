@@ -721,26 +721,7 @@ struct DashboardView: View {
                     .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(c.accent))
                 }
             }
-            Tap(action: lock.press(.printAgain) {
-                guard let archive = model.status?.status?.currentArchiveId else { return }
-                model.perform("Print again") { client, id in
-                    try await client.reprint(archiveId: archive, printerId: id)
-                }
-            }) {
-                HStack(spacing: 8) {
-                    if lock.blocked(.printAgain) {
-                        Image(systemName: "lock.fill").font(.system(size: 13))
-                            .foregroundStyle(vm.awaitingPlateClear ? c.t1 : c.accentInk)
-                    }
-                    Text("Print again")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(vm.awaitingPlateClear ? c.t1 : c.accentInk)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(vm.awaitingPlateClear ? c.s3 : c.accent))
-                .opacity(lock.style(.printAgain) ?? 1)
-            }
+            reprintButton
             TempGrid(vm: vm, heatingEnabled: false)
         }
         // The celebration the RN build shows on every finished print. An overlay so it costs no
@@ -753,6 +734,48 @@ struct DashboardView: View {
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
+    }
+
+    /// Re-queue the finished job.
+    ///
+    /// Gated on `vm.reprintArchiveId`, not on the print being complete: those are two questions, and
+    /// a job Bambuddy never archived answers the second yes and the first no. It used to be gated on
+    /// the first and `guard`ed on the second, so the button was a full-width accent-filled primary
+    /// that swallowed the tap in silence. With no archive it keeps its place and says what it can
+    /// actually do — the RN build's fallback, made visible.
+    ///
+    /// The LAN lock rides the reprint only. Without an archive this control sends the printer
+    /// nothing at all, so dimming it and raising "controls are locked" would be the same class of
+    /// lie pointing the other way.
+    private var reprintButton: some View {
+        let archive = vm.reprintArchiveId
+        let secondary = vm.awaitingPlateClear
+        let isLocked = archive != nil && lock.blocked(.printAgain)
+        let ink = secondary ? c.t1 : c.accentInk
+        return Tap {
+            guard let archive else {
+                model.tab = .library
+                return
+            }
+            lock.press(.printAgain) {
+                model.perform("Print again") { client, id in
+                    try await client.reprint(archiveId: archive, printerId: id)
+                }
+            }()
+        } content: {
+            HStack(spacing: 8) {
+                if isLocked {
+                    Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(ink)
+                }
+                Text(archive == nil ? "Print something else" : "Print again")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(ink)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(secondary ? c.s3 : c.accent))
+            .opacity(isLocked ? Lan.lockedOpacity : 1)
+        }
     }
 
     private var errorBlock: some View {
