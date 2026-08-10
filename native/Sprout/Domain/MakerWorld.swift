@@ -133,6 +133,11 @@ struct MWProfileRow: Identifiable, Hashable, Sendable {
     /// picker must say so in words; rendering "—" for time and no swatches is what made every row on
     /// every model look broken. The profiles are still real and still importable.
     var detail: MWProfileDetail?
+    /// The uploader's own blurb for THIS profile, already reduced to plain text. `nil` when they
+    /// wrote none — which is most of them, so the preview must not reserve space for it.
+    var summary: String?
+    /// Extra photos attached to this profile, beyond `coverUrl`. Usually empty.
+    var pictures: [String] = []
 }
 
 // MARK: - Licence
@@ -322,6 +327,39 @@ enum MakerWorld {
     /// So the hits are the ROW SET and the records are a metadata sidecar. Building rows from the
     /// records instead would drop 51 real, named, importable profiles the owner can see on the
     /// website — the recurring bug running in reverse, hiding a capability that exists.
+    /// A profile's blurb, unless it merely repeats the title.
+    ///
+    /// MakerWorld auto-names most profiles after their slicer settings — "0.2mm layer, 2 walls, 15%
+    /// infill" — and uploaders routinely paste the same sentence into the description. Rendering
+    /// both puts the identical line on screen twice, one inch apart, which reads as a rendering
+    /// fault. Compared loosely, because the two differ by trailing whitespace as often as not.
+    private static func blurb(_ html: String?, title: String) -> String? {
+        guard let text = MakerWorldSearch.plainText(html) else { return nil }
+        let normalise = { (s: String) in
+            s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        return normalise(text) == normalise(title) ? nil : text
+    }
+
+    /// Photos beyond the cover, de-duplicated against it.
+    ///
+    /// `pictures` routinely repeats the cover as its first entry, and a preview that shows the same
+    /// image twice reads as a rendering fault rather than a gallery.
+    ///
+    /// Both covers are excluded, because the row shows the HIT's cover while `pictures` lives on the
+    /// RECORD, and the two are not always the same string. De-duplicating against only one of them
+    /// is exactly the near-miss predicate this codebase keeps shipping.
+    private static func extraPictures(_ record: MWInstance?, shownCover: String?) -> [String] {
+        guard let record else { return [] }
+        var seen = Set([record.cover, shownCover].compactMap { $0 })
+        var out: [String] = []
+        for url in (record.pictures ?? []).compactMap(\.url) where !url.isEmpty && !seen.contains(url) {
+            seen.insert(url)
+            out.append(url)
+        }
+        return out
+    }
+
     static func rows(_ resolved: MakerWorldResolved) -> [MWProfileRow] {
         let records = resolved.design.instances ?? []
         var byProfile: [Int: MWInstance] = [:]
@@ -337,7 +375,9 @@ enum MakerWorld {
                 profileId: hit.profileId,
                 title: title(hit),
                 coverUrl: hit.cover,
-                detail: hit.profileId.flatMap { byProfile[$0] }.flatMap(detail)
+                detail: hit.profileId.flatMap { byProfile[$0] }.flatMap(detail),
+                summary: blurb(hit.profileId.flatMap { byProfile[$0] }?.summary, title: title(hit)),
+                pictures: extraPictures(hit.profileId.flatMap { byProfile[$0] }, shownCover: hit.cover)
             )
         }
 
@@ -351,7 +391,9 @@ enum MakerWorld {
         let seenIds = Set(rows.map(\.id))
         for r in records where (r.profileId.map { !seen.contains($0) } ?? false) && !seenIds.contains(r.id) {
             rows.append(MWProfileRow(id: r.id, profileId: r.profileId, title: title(r),
-                                     coverUrl: r.cover, detail: detail(r)))
+                                     coverUrl: r.cover, detail: detail(r),
+                                     summary: blurb(r.summary, title: title(r)),
+                                     pictures: extraPictures(r, shownCover: r.cover)))
         }
         return rows
     }

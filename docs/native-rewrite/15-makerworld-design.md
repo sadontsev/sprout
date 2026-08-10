@@ -167,9 +167,12 @@ enough for a grid tile and nothing more — the detail sheet still has to `resol
 A hit maps to a resolvable URL by construction: `https://makerworld.com/models/{id}` (the slug and
 locale are optional; `MakerWorldService.parse_url` only needs `/models/{digits}`).
 
-**Sorting and filtering are unverified.** `&sort=new`, `&sort=hot` and `&filterMultiColor=true` were
-all silently ignored (identical `total` and first hit). Either the parameter names differ or the
-endpoint only does relevance. This is a spike (§10, S-2), not a design assumption.
+**Sorting is not a server capability — settled by measurement, see S-2.** Every ordering parameter
+name tried (`sort`, `order`, `orderby`, `orderBy`, `sortBy`, `sortType`, `sortField`, `rank`) leaves
+the returned `downloadCount`/`likeCount` sequence unordered, and a nonsense value perturbs the list
+as much as a documented one. The app therefore sorts **the hits it has loaded**, in
+`MakerWorldSearch.sorted`, and the results header says so whenever more pages exist. `filterMultiColor`
+is likewise ignored and no filter ships.
 
 ---
 
@@ -1210,7 +1213,7 @@ same panel as the paste field. What changed against §10's Phase 2 sketch, and w
 
 | # | Answer |
 |---|---|
-| **S-2** | **`sort` is NOT honoured — no sort control shipped.** `sort=new`, `sort=hot`, `sort=zzzz` and `sort=` all return the same leading hits (`2842356, 3047341, 918737`); only the tail differs, and the tail differs between identical calls anyway. A nonsense value behaves exactly like a valid one, which is the signature of a parameter that is parsed and discarded. Shipping a sort picker would have been a control that does nothing — the codebase's recurring bug, in a new place. |
+| **S-2** | **No ordering parameter is honoured — sorting is client-side, and labelled as such.** `sort=new|hot|zzzz|` all return the same leading hits (`2842356, 3047341, 918737`). Re-probed later with `order`, `orderby`, `orderBy`, `sortBy`, `sortType`, `sortField`, `rank` and pairs of them: two (`order=`, `orderby=`) *appeared* to change the result, which is why the check was repeated against the VALUES rather than the ids — over `limit=10`, `downloadCount` and `likeCount` come back unordered for every one of `score`/`downloadCount`/`likeCount`/`newUploads`, and `orderby=zzzz` reorders just as much. That apparent change is the endpoint's own instability, not sorting. **A near-miss worth remembering: "the parameter changed the output" is not "the parameter sorted the output".** `makerworld.com/_next/data/<buildId>/…/search/models.json` does honour `orderBy`, but returns 403 "Just a moment…" without a browser `cf_clearance` cookie — and the homepage 403s too, so the `buildId` cannot even be discovered. Shipped instead: `MakerWorldSearch.sorted` reorders the loaded hits, with the scope stated on screen ("Sorted within the 20 loaded") whenever `total` exceeds them. |
 | **S-3** | **`homepage/nav` answers anonymously with a real taxonomy** — 15 entries: `Trending`, `category_400` Household, `category_800` Toys & Games, `category_700` Tools, `category_300` Hobby & DIY, `category_900` 3D Printer, `category_100` Art, `category_600` Miniatures, `category_1000` Props & Cosplays, `category_200` Fashion, `category_2000` Generative 3D Model, `category_500` Education, `LaserCut`, plus `Following` and `Foryou`. The chips are built from this at runtime rather than hardcoded: the list is MakerWorld's to change. |
 | **S-8** | Still open — every probe ran from a fixed IP. Whether a mobile carrier's CGNAT egress gets challenged is unmeasured, and the risk register's "Low" rating remains an argument rather than a measurement. |
 

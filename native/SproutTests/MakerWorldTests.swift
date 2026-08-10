@@ -25,7 +25,7 @@ final class MakerWorldTests: XCTestCase {
     /// Sliced for an X1 Carbon and *also* marked H2C — like 36 of 37 profiles on the Benchy, which is
     /// why that marking is not a badge.
     private static let seedTray = #"""
-    {"model_id":1400373,"instances":[{"id":1452154,"profileId":298919107,"title":"Seed Starter Tray – 9 Cells","cover":"https://makerworld.bblmw.com/c/1452154.png"},{"id":1452158,"profileId":298919564,"title":"Seed Starter Tray – 6 Cells","cover":"https://makerworld.bblmw.com/c/1452158.png"}],"design":{"id":1400373,"title":"Self Watering Seed Starter with Modular Grow Kit","coverUrl":"https://makerworld.bblmw.com/cover.png","downloadCount":16127,"designCreator":{"name":"Meyui"},"defaultInstanceId":1452154,"license":"Standard Digital File License","licenseDescriptionInfo":{"title":"This user content is licensed under a Standard Digital File License.","content":"You shall not share, sub-license, sell, rent, host, transfer, or distribute in any way the digital or 3D printed versions of this object."},"paidSetting":{"isPaid":false,"crowdfunding":0},"isPointRedeemable":false,"isExclusive":true,"instances":[{"id":1452154,"profileId":298919107,"title":"Seed Starter Tray – 9 Cells","prediction":40048,"weight":322,"needAms":false,"materialCnt":3,"materialColorCnt":3,"isDefault":false,"appCanPrint":true,"instanceFilaments":[{"type":"PLA","color":"#646941","usedG":"230"},{"type":"PLA","color":"#C0C0C0","usedG":"35"},{"type":"PETG","color":"#FFFFFF","usedG":"57"}],"extention":{"modelInfo":{"compatibility":{"devModelName":"BL-P001","devProductName":"X1 Carbon","nozzleDiameter":0.4},"otherCompatibility":[{"devModelName":"O1C2","devProductName":"H2C","nozzleDiameter":0.4},{"devModelName":"N2S","devProductName":"A1","nozzleDiameter":0.4}],"projectSettings":{"layerHeight":"0.2","wallLoops":"2","sparseInfillDensity":"15%"},"plates":[{"index":1,"prediction":15324,"weight":107,"thumbnail":{"url":"https://makerworld.bblmw.com/p/1.png"}},{"index":2,"prediction":3491,"weight":35},{"index":3,"prediction":12055,"weight":123},{"index":4,"prediction":9178,"weight":57}]}}},{"id":1452158,"profileId":298919564,"title":"Seed Starter Tray – 6 Cells","prediction":29499,"weight":226,"needAms":false,"materialCnt":3,"materialColorCnt":3,"isDefault":false,"appCanPrint":true,"instanceFilaments":[{"type":"PLA","color":"#A57E60","usedG":"164"},{"type":"PLA","color":"#C0C0C0","usedG":"25"},{"type":"PETG","color":"#FFFFFF","usedG":"37"}],"extention":{"modelInfo":{"compatibility":{"devModelName":"BL-P001","devProductName":"X1 Carbon","nozzleDiameter":0.4},"otherCompatibility":[{"devModelName":"O1C2","devProductName":"H2C","nozzleDiameter":0.4}],"projectSettings":{"layerHeight":"0.2","wallLoops":"2","sparseInfillDensity":"15%"},"plates":[{"index":1,"prediction":12591,"weight":82},{"index":2,"prediction":2596,"weight":25},{"index":3,"prediction":8162,"weight":82},{"index":4,"prediction":6150,"weight":37}]}}}]}}
+    {"model_id":1400373,"instances":[{"id":1452154,"profileId":298919107,"title":"Seed Starter Tray – 9 Cells","cover":"https://makerworld.bblmw.com/c/1452154.png"},{"id":1452158,"profileId":298919564,"title":"Seed Starter Tray – 6 Cells","cover":"https://makerworld.bblmw.com/c/1452158.png"}],"design":{"id":1400373,"title":"Self Watering Seed Starter with Modular Grow Kit","coverUrl":"https://makerworld.bblmw.com/cover.png","downloadCount":16127,"designCreator":{"name":"Meyui"},"defaultInstanceId":1452154,"license":"Standard Digital File License","licenseDescriptionInfo":{"title":"This user content is licensed under a Standard Digital File License.","content":"You shall not share, sub-license, sell, rent, host, transfer, or distribute in any way the digital or 3D printed versions of this object."},"paidSetting":{"isPaid":false,"crowdfunding":0},"isPointRedeemable":false,"isExclusive":true,"instances":[{"id":1452154,"profileId":298919107,"title":"Seed Starter Tray – 9 Cells","summary":"<p>0.2mm layer, 2 walls, 15% infill</p>","pictures":[{"name":"a.png","url":"https://makerworld.bblmw.com/c/1452154.png"},{"name":"b.png","url":"https://makerworld.bblmw.com/extra/b.png"},{"name":"c.png","url":"https://makerworld.bblmw.com/extra/c.png"}],"prediction":40048,"weight":322,"needAms":false,"materialCnt":3,"materialColorCnt":3,"isDefault":false,"appCanPrint":true,"instanceFilaments":[{"type":"PLA","color":"#646941","usedG":"230"},{"type":"PLA","color":"#C0C0C0","usedG":"35"},{"type":"PETG","color":"#FFFFFF","usedG":"57"}],"extention":{"modelInfo":{"compatibility":{"devModelName":"BL-P001","devProductName":"X1 Carbon","nozzleDiameter":0.4},"otherCompatibility":[{"devModelName":"O1C2","devProductName":"H2C","nozzleDiameter":0.4},{"devModelName":"N2S","devProductName":"A1","nozzleDiameter":0.4}],"projectSettings":{"layerHeight":"0.2","wallLoops":"2","sparseInfillDensity":"15%"},"plates":[{"index":1,"prediction":15324,"weight":107,"thumbnail":{"url":"https://makerworld.bblmw.com/p/1.png"}},{"index":2,"prediction":3491,"weight":35},{"index":3,"prediction":12055,"weight":123},{"index":4,"prediction":9178,"weight":57}]}}},{"id":1452158,"profileId":298919564,"title":"Seed Starter Tray – 6 Cells","prediction":29499,"weight":226,"needAms":false,"materialCnt":3,"materialColorCnt":3,"isDefault":false,"appCanPrint":true,"instanceFilaments":[{"type":"PLA","color":"#A57E60","usedG":"164"},{"type":"PLA","color":"#C0C0C0","usedG":"25"},{"type":"PETG","color":"#FFFFFF","usedG":"37"}],"extention":{"modelInfo":{"compatibility":{"devModelName":"BL-P001","devProductName":"X1 Carbon","nozzleDiameter":0.4},"otherCompatibility":[{"devModelName":"O1C2","devProductName":"H2C","nozzleDiameter":0.4}],"projectSettings":{"layerHeight":"0.2","wallLoops":"2","sparseInfillDensity":"15%"},"plates":[{"index":1,"prediction":12591,"weight":82},{"index":2,"prediction":2596,"weight":25},{"index":3,"prediction":8162,"weight":82},{"index":4,"prediction":6150,"weight":37}]}}}]}}
     """#
 
     private func decode(_ json: String) throws -> MakerWorldResolved {
@@ -737,4 +737,43 @@ final class MakerWorldTests: XCTestCase {
         XCTAssertEqual(MakerWorld.webUrl(modelId: 40146)?.absoluteString,
                        "https://makerworld.com/models/40146")
     }
+    // MARK: - The preview a chosen profile can show
+
+    func testARowCarriesItsBlurbAsPlainTextAndItsExtraPhotos() throws {
+        let rows = MakerWorld.rows(try seedResolved())
+        let row = try XCTUnwrap(rows.first { $0.id == 1452154 })
+        XCTAssertEqual(row.summary, "0.2mm layer, 2 walls, 15% infill", "HTML must not reach SwiftUI")
+        XCTAssertEqual(row.pictures, ["https://makerworld.bblmw.com/extra/b.png",
+                                      "https://makerworld.bblmw.com/extra/c.png"],
+                       "the entry repeating the row's own cover must be dropped, not shown twice")
+    }
+
+    /// Most profiles publish neither, and the preview reserves space for neither.
+    func testAProfileWithNoBlurbOrPhotosSaysSoWithNil() throws {
+        let rows = MakerWorld.rows(try seedResolved())
+        let row = try XCTUnwrap(rows.first { $0.id == 1452158 })
+        XCTAssertNil(row.summary)
+        XCTAssertTrue(row.pictures.isEmpty)
+    }
+
+    /// An undescribed profile has no record at all, so there is nothing to preview but its cover —
+    /// and asking for one must not crash or invent.
+    func testAnUndescribedProfileHasNoBlurbOrPhotos() throws {
+        let rows = MakerWorld.rows(try benchyResolved())
+        let orphan = try XCTUnwrap(rows.first { $0.id == 42179 })
+        XCTAssertNil(orphan.summary)
+        XCTAssertTrue(orphan.pictures.isEmpty)
+    }
+
+    /// MakerWorld auto-names profiles after their settings, and uploaders paste the same sentence
+    /// into the description — the preview must not print it twice.
+    func testABlurbThatOnlyRepeatsTheTitleIsDropped() throws {
+        let fixture = Self.seedTray.replacingOccurrences(
+            of: "\"summary\":\"<p>0.2mm layer, 2 walls, 15% infill</p>\"",
+            with: "\"summary\":\"<p>Seed Starter Tray – 9 Cells </p>\"")
+        let rows = MakerWorld.rows(try decode(fixture))
+        XCTAssertNil(try XCTUnwrap(rows.first { $0.id == 1452154 }).summary,
+                     "whitespace and case must not smuggle the title back in as a description")
+    }
+
 }

@@ -105,6 +105,101 @@ enum MakerWorldSearch {
     /// value. Rendering a negative claim from a missing field is the recurring bug in its purest
     /// form — the answer to "did MakerWorld say this is unprintable" is "MakerWorld said nothing".
 
+    // MARK: Sorting
+
+    /// How to order the results already on screen.
+    ///
+    /// **Client-side, and it has to be.** MakerWorld's own search API does not sort: `orderBy`,
+    /// `order`, `sortBy`, `sortType` and friends were each probed against
+    /// `search-service/search/design` and the returned `likeCount`/`downloadCount` sequences came
+    /// back unordered for every value — and a nonsense value shuffled the list exactly as much as a
+    /// real one, which is the endpoint's unstable ordering rather than sorting. The route that DOES
+    /// honour `orderBy` is the website's own Next.js data endpoint, which sits behind a Cloudflare
+    /// challenge and needs a browser's `cf_clearance` cookie, so the app cannot reach it.
+    ///
+    /// So this reorders **what has been loaded**, and the UI says so. A chip labelled "Most
+    /// downloaded" that silently meant "most downloaded of the 20 on screen" would be the recurring
+    /// bug; saying it out loud makes it a useful tool instead.
+    enum Sort: String, CaseIterable, Identifiable, Sendable {
+        case relevance, downloads, likes, newest
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .relevance: return "Relevance"
+            case .downloads: return "Most downloaded"
+            case .likes: return "Most liked"
+            case .newest: return "Newest"
+            }
+        }
+
+        /// Whether this ordering is MakerWorld's own. Only `.relevance` is; the rest are local.
+        var isServerOrder: Bool { self == .relevance }
+    }
+
+    /// Reorder loaded hits. `.relevance` is identity — MakerWorld's own order, untouched.
+    ///
+    /// Ties keep their existing relative order (the sort is stable via the index tiebreak), so
+    /// switching sorts and back does not reshuffle equal rows under the reader.
+    static func sorted(_ hits: [MWSearchHit], by sort: Sort) -> [MWSearchHit] {
+        guard sort != .relevance else { return hits }
+        let keyed = hits.enumerated()
+        switch sort {
+        case .relevance:
+            return hits
+        case .downloads:
+            return keyed.sorted { rank($0.element.downloadCount, $0.offset, $1.element.downloadCount, $1.offset) }
+                .map(\.element)
+        case .likes:
+            return keyed.sorted { rank($0.element.likeCount, $0.offset, $1.element.likeCount, $1.offset) }
+                .map(\.element)
+        case .newest:
+            // No date on a hit, so this is by id: MakerWorld's model ids increase over time (40146 is
+            // a 2023 Benchy, 3047341 a recent one). An approximation, and named "Newest" rather than
+            // "Newest first" because it is ordering, not a timestamp anyone can check.
+            return keyed.sorted { rank($0.element.id, $0.offset, $1.element.id, $1.offset) }.map(\.element)
+        }
+    }
+
+    /// Descending by value, ascending by original position on a tie. A missing count sorts last —
+    /// absent is not zero, and it must not outrank a genuine 0.
+    private static func rank(_ a: Int?, _ ai: Int, _ b: Int?, _ bi: Int) -> Bool {
+        switch (a, b) {
+        case let (x?, y?): return x == y ? ai < bi : x > y
+        case (nil, _?): return false
+        case (_?, nil): return true
+        default: return ai < bi
+        }
+    }
+
+    // MARK: Descriptions
+
+    /// A profile's own blurb, as plain text.
+    ///
+    /// MakerWorld returns it as HTML (`<p>0.2mm layer, 2 walls, 15% infill</p>`). SwiftUI renders
+    /// markup literally, so the tags have to go — and the few entities that actually appear have to
+    /// be decoded, or a description reads `Bambu &amp; friends`.
+    static func plainText(_ html: String?) -> String? {
+        guard let html, !html.isEmpty else { return nil }
+        var text = html
+        // Block-level tags become breaks so a multi-paragraph blurb does not run together.
+        for tag in ["</p>", "<br>", "<br/>", "<br />", "</div>", "</li>"] {
+            text = text.replacingOccurrences(of: tag, with: "\n", options: .caseInsensitive)
+        }
+        text = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        for (entity, char) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""),
+                              ("&#39;", "'"), ("&apos;", "'"), ("&nbsp;", " ")] {
+            text = text.replacingOccurrences(of: entity, with: char)
+        }
+        // Collapse the blank lines the tag substitution leaves behind.
+        let lines = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let joined = lines.joined(separator: "\n")
+        return joined.isEmpty ? nil : joined
+    }
+
     // MARK: Paging
 
     /// Whether another page exists, given what has been loaded so far.

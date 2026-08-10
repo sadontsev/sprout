@@ -229,4 +229,79 @@ final class MakerWorldSearchTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(MakerWorldSearchError(status: 429).errorDescription).contains("rate-limit"))
         XCTAssertTrue(try XCTUnwrap(MakerWorldSearchError(status: 418).errorDescription).contains("CAPTCHA"))
     }
+    // MARK: Sorting
+
+    /// The premise of the whole feature: MakerWorld's search API does not sort, so this must.
+    ///
+    /// Recorded here because it was *measured*, not assumed — `orderBy`, `order`, `orderby`, `sortBy`
+    /// and `sortType` were each sent against live search and the returned `downloadCount` sequence
+    /// came back unordered every time, while a nonsense value shuffled the list exactly as much as a
+    /// real one. If a future reader is tempted to "just pass the sort upstream", that is why not.
+    private func hit(_ id: Int, dl: Int? = nil, likes: Int? = nil) -> MWSearchHit {
+        var h = MWSearchHit(id: id)
+        h.downloadCount = dl
+        h.likeCount = likes
+        return h
+    }
+
+    func testRelevanceIsMakerWorldsOwnOrderUntouched() {
+        let hits = [hit(3, dl: 1), hit(1, dl: 99), hit(2, dl: 50)]
+        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .relevance).map(\.id), [3, 1, 2])
+        XCTAssertTrue(MakerWorldSearch.Sort.relevance.isServerOrder)
+        for other in MakerWorldSearch.Sort.allCases where other != .relevance {
+            XCTAssertFalse(other.isServerOrder, "\(other) is a local reordering and must say so")
+        }
+    }
+
+    func testSortsDescendingByTheNamedField() {
+        let hits = [hit(3, dl: 1, likes: 900), hit(1, dl: 99, likes: 2), hit(2, dl: 50, likes: 30)]
+        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .downloads).map(\.id), [1, 2, 3])
+        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .likes).map(\.id), [3, 2, 1])
+        // Newest approximates by id, because a hit carries no date at all.
+        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .newest).map(\.id), [3, 2, 1])
+    }
+
+    /// Absent is not zero — the distinction `stats` already makes, kept here.
+    ///
+    /// A hit with no `downloadCount` must not outrank one that genuinely reports 0: the first says
+    /// nothing, the second says none, and promoting silence over a real answer is the recurring bug.
+    func testMissingCountsSortLastNotAsZero() {
+        let hits = [hit(1), hit(2, dl: 0), hit(3, dl: 5)]
+        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .downloads).map(\.id), [3, 2, 1])
+    }
+
+    /// Equal values keep their incoming order, so toggling a sort and back is a round trip rather
+    /// than a reshuffle under the reader's finger.
+    func testTiesAreStableAndSortingIsReversible() {
+        let hits = [hit(7, dl: 4), hit(8, dl: 4), hit(9, dl: 4)]
+        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .downloads).map(\.id), [7, 8, 9])
+        let there = MakerWorldSearch.sorted(hits, by: .likes)
+        XCTAssertEqual(MakerWorldSearch.sorted(there, by: .relevance).map(\.id), there.map(\.id))
+    }
+
+    func testSortingAnEmptyOrSingleListIsSafe() {
+        XCTAssertTrue(MakerWorldSearch.sorted([], by: .downloads).isEmpty)
+        XCTAssertEqual(MakerWorldSearch.sorted([hit(1)], by: .likes).map(\.id), [1])
+    }
+
+    // MARK: Descriptions
+
+    func testProfileBlurbIsReducedToPlainText() {
+        // The exact shape MakerWorld returned for a live profile.
+        XCTAssertEqual(MakerWorldSearch.plainText("<p>0.2mm layer, 2 walls, 15% infill</p>"),
+                       "0.2mm layer, 2 walls, 15% infill")
+        XCTAssertEqual(MakerWorldSearch.plainText("<p>One</p><p>Two</p>"), "One\nTwo")
+        XCTAssertEqual(MakerWorldSearch.plainText("Bambu &amp; friends &lt;3"), "Bambu & friends <3")
+        XCTAssertEqual(MakerWorldSearch.plainText("<b>Bold</b> and <i>italic</i>"), "Bold and italic")
+    }
+
+    /// A blurb that is only markup is the same as no blurb, and the preview must not reserve space
+    /// for an empty paragraph.
+    func testEmptyBlurbsBecomeNil() {
+        XCTAssertNil(MakerWorldSearch.plainText(nil))
+        XCTAssertNil(MakerWorldSearch.plainText(""))
+        XCTAssertNil(MakerWorldSearch.plainText("<p></p>"))
+        XCTAssertNil(MakerWorldSearch.plainText("<p>   </p><br/>"))
+    }
+
 }
