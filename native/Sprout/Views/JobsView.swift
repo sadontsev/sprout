@@ -830,8 +830,8 @@ private struct JobsPage<Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 8)
-            // Clears the floating tab bar and leaves the last row reachable with a thumb.
-            .padding(.bottom, 120)
+            // End-of-content breathing room only — the system tab bar insets the safe area for us.
+            .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
         .refreshable { await onRefresh() }
