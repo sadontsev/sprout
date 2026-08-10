@@ -1115,9 +1115,17 @@ So the implemented behaviour is: **list every hit, pre-select only a described o
 publish no metadata stay visible and selectable, because one of them does import and hiding it would
 hide real capability; but `MakerWorld.preselect` skips `defaultInstanceId` when that profile has no
 record, because on this model MakerWorld's own default pick answers `400` — pre-selecting it would
-have made the default action a guaranteed failure. A `400` **at import** now reads "MakerWorld has no
-downloadable file for this profile, try another", not "that isn't a MakerWorld link": same status,
-different question, on either side of the import.
+have made the default action a guaranteed failure. The refusal copy now names the next thing to try rather than
+reporting a dead end.
+
+**Correction, measured after the first pass:** the refusal does **not** reach the app as a `400`.
+Bambuddy wraps MakerWorld's status in a **`502`** of its own —
+`{"detail": "Bambu Lab API unexpected status 400 for profile 21931235"}` — and through the public
+tunnel the proxy replaces even that body, so the app sees a `502` with no detail at all. The first
+implementation branched on `400` and therefore shipped its actionable remedy as dead code, showing a
+generic "your server couldn't download this model" instead. Verified in the simulator, fixed, and
+pinned by a test. The wrapper's own text is also deliberately discarded: naming an upstream status
+code explains nothing to the person holding the phone.
 
 Note this is *not* the recurring bug. The affordance is not gated on a proxy — it is left open
 precisely because the exact capability is unknowable before the attempt (`modelIsGettable`, §3.1),

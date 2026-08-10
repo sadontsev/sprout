@@ -491,8 +491,34 @@ final class MakerWorldTests: XCTestCase {
     func testA400AtImportIsNotReportedAsABadLink() {
         let f = MakerWorld.failure(step: .importing, status: 400, detail: nil)
         XCTAssertFalse(f.message.contains("makerworld.com/models/"))
-        XCTAssertTrue(f.message.contains("Try another one"))
+        XCTAssertTrue(f.message.contains("try one that shows print details"))
         XCTAssertTrue(f.offerWebLink)
+    }
+
+    /// The refusal measured in practice is a **502**, not a 400: Bambuddy wraps MakerWorld's status
+    /// in one of its own. Assuming the upstream status reached the app left the actionable remedy as
+    /// dead code and shipped "your server couldn't download this model" instead.
+    func testTheRefusalThatActuallyArrivesIsA502AndStillExplainsWhatToDo() {
+        let f = MakerWorld.failure(step: .importing, status: 502,
+                                   detail: "Bambu Lab API unexpected status 400 for profile 21931235")
+        XCTAssertTrue(f.message.contains("try one that shows print details"))
+        XCTAssertFalse(f.message.contains("unexpected status"), "the wrapper names a status and explains nothing")
+        XCTAssertTrue(f.offerWebLink)
+    }
+
+    /// Through the public tunnel the proxy replaces Bambuddy's JSON body, so `detail` is nil. The arm
+    /// has to stand on its own words rather than degrade to a generic sentence.
+    func testTheSameRefusalReadsTheSameWhenAProxyStripsTheDetail() {
+        XCTAssertEqual(MakerWorld.failure(step: .importing, status: 502, detail: nil).message,
+                       MakerWorld.failure(step: .importing, status: 502,
+                                          detail: "Bambu Lab API unexpected status 400").message)
+    }
+
+    /// …but a 502 that carries a real explanation still forwards it.
+    func testAnInformativeUpstreamDetailIsStillPreferredAtImport() {
+        let f = MakerWorld.failure(step: .importing, status: 502,
+                                   detail: "Upstream download exceeded the request timeout.")
+        XCTAssertEqual(f.message, "Upstream download exceeded the request timeout.")
     }
 
     func testAMissingModelIsNotReportedAsAServerProblem() {
@@ -540,13 +566,19 @@ final class MakerWorldTests: XCTestCase {
         }
     }
 
-    /// The live 400 always carries a `detail`; the fixed copy has to win over it, because MakerWorld's
-    /// raw text here ("Bambu Lab API unexpected status 400 for profile 21931235") explains nothing.
     func testA400AtImportKeepsItsOwnCopyOverAnUnhelpfulUpstreamDetail() {
         let f = MakerWorld.failure(step: .importing, status: 400,
                                    detail: "Bambu Lab API unexpected status 400 for profile 21931235")
-        XCTAssertTrue(f.message.contains("Try another one"))
+        XCTAssertTrue(f.message.contains("try one that shows print details"))
         XCTAssertFalse(f.message.contains("unexpected status"))
+    }
+
+    /// A generic 502 at RESOLVE is a different question — nothing was being downloaded — so it must
+    /// not inherit the "try another profile" advice.
+    func testAResolveFailureDoesNotSuggestPickingAnotherProfile() {
+        let f = MakerWorld.failure(step: .resolve, status: 502, detail: nil)
+        XCTAssertTrue(f.message.contains("look up"))
+        XCTAssertFalse(f.message.contains("print details"))
     }
 
     func testRateLimitingAsksForPatienceRatherThanRetryingInALoop() {
