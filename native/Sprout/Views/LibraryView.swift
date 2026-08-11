@@ -360,16 +360,9 @@ struct LibraryView: View {
                         Label("From Files", systemImage: "folder")
                     }
                     Button {
-                        explore.wantsFieldFocus = false
                         model.overlay = .upload
                     } label: {
                         Label("From MakerWorld", systemImage: "globe")
-                    }
-                    Button {
-                        explore.wantsFieldFocus = true
-                        model.overlay = .upload
-                    } label: {
-                        Label("Paste a link", systemImage: "link")
                     }
                 } label: {
                     Group {
@@ -391,6 +384,16 @@ struct LibraryView: View {
         }
         .padding(.horizontal, 20)
     }
+
+    // No "Paste a link" item. It was a second door to the same room — both items opened Explore
+    // and the only difference was a focus flag — and making it genuinely different by reading the
+    // clipboard does not work: since iOS 16 a programmatic `UIPasteboard` read needs user consent,
+    // and from a menu action it simply returns nil. Verified with a real MakerWorld URL on the
+    // simulator's pasteboard: `simctl pbpaste` showed the link, the app got nothing.
+    //
+    // The paste path already exists and already works, because the user does the pasting: the
+    // search field says "Search or paste a link" and a pasted URL becomes an "Open model N" row.
+    // One door, and it is the one the platform lets us open.
 
     private var sourcePicker: some View {
         HStack(spacing: 4) {
