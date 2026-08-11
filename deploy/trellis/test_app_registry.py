@@ -21,11 +21,19 @@ os.environ.setdefault("APNS_TOPIC", "com.example.app.push-type.liveactivity")
 
 try:
     from fastapi.testclient import TestClient
+except ImportError:  # the service's own deps are absent; see scripts-test.sh
+    HAVE_DEPS = False
+else:
+    HAVE_DEPS = True
+    # Deliberately OUTSIDE the guard, and catching ImportError only. With the
+    # dependencies present, a failure to import app is a bug IN APP, and the
+    # first version of this file swallowed it: `except Exception` around both
+    # imports turned "app.py is broken" into twelve silent skips and a green
+    # run. That is the exact shape this codebase keeps rediscovering — a guard
+    # answering a nearby question ("did anything go wrong?") instead of the
+    # real one ("are the dependencies installed?").
     import app as la
     import registry
-    HAVE_DEPS = True
-except Exception:  # noqa: BLE001 - missing service deps outside the container
-    HAVE_DEPS = False
 
 
 @unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
