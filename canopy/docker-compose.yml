@@ -7,12 +7,13 @@ services:
     # is writable without loosening its permissions. The image itself carries no shell and no libc;
     # this only changes which uid the single binary runs under.
     user: "${CANOPY_UID:-1000}:${CANOPY_GID:-1000}"
-    # Bound to loopback deliberately. Right now the only tenant is Trellis on this same host, and
-    # this is the one process holding the APNs signing keys — there is no reason for it to be
-    # reachable from anywhere else yet. Publishing it (cloudflared / Tailscale ingress) is the step
-    # that comes with the first self-hoster, not before.
+    # Reachable from the host LAN so a tunnel can front it. This is the process holding the APNs
+    # signing keys, so publishing it comes with a condition rather than on its own: set
+    # CANOPY_INVITE_CODE. Every other endpoint needs a tenant bearer, but enrolment is open by
+    # design, and open enrolment on a public address is an invitation to accumulate tenants nobody
+    # asked for. The invite gate is the valve the design specifies for exactly this moment.
     ports:
-      - "127.0.0.1:8914:8914"
+      - "8914:8914"
     environment:
       CANOPY_ADDR: "0.0.0.0:8914"
       CANOPY_DB: /data/canopy.db
