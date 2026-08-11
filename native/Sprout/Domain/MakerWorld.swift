@@ -133,9 +133,16 @@ struct MWProfileRow: Identifiable, Hashable, Sendable {
     /// picker must say so in words; rendering "—" for time and no swatches is what made every row on
     /// every model look broken. The profiles are still real and still importable.
     var detail: MWProfileDetail?
-    /// The uploader's own blurb for THIS profile, already reduced to plain text. `nil` when they
-    /// wrote none — which is most of them, so the preview must not reserve space for it.
+    /// The uploader's own blurb for THIS profile, reduced to plain text. `nil` when they wrote none
+    /// — which is most of them, so the preview must not reserve space for it.
+    ///
+    /// Plain because this is what gets *tested*: the "has notes" check, the photos-or-notes filter
+    /// and the length used to decide whether a More control is worth showing. Rendering uses
+    /// `summaryHTML`, so formatting survives on screen without markup leaking into predicates.
     var summary: String?
+    /// The same blurb as MakerWorld sent it, for `RichDescription`. Kept beside the plain form
+    /// rather than replacing it — one is for reading, the other for deciding.
+    var summaryHTML: String?
     /// Extra photos attached to this profile, beyond `coverUrl`. Usually empty.
     var pictures: [String] = []
 }
@@ -377,6 +384,8 @@ enum MakerWorld {
                 coverUrl: hit.cover,
                 detail: hit.profileId.flatMap { byProfile[$0] }.flatMap(detail),
                 summary: blurb(hit.profileId.flatMap { byProfile[$0] }?.summary, title: title(hit)),
+                summaryHTML: blurb(hit.profileId.flatMap { byProfile[$0] }?.summary, title: title(hit)) == nil
+                    ? nil : hit.profileId.flatMap { byProfile[$0] }?.summary,
                 pictures: extraPictures(hit.profileId.flatMap { byProfile[$0] }, shownCover: hit.cover)
             )
         }
@@ -393,6 +402,7 @@ enum MakerWorld {
             rows.append(MWProfileRow(id: r.id, profileId: r.profileId, title: title(r),
                                      coverUrl: r.cover, detail: detail(r),
                                      summary: blurb(r.summary, title: title(r)),
+                                     summaryHTML: blurb(r.summary, title: title(r)) == nil ? nil : r.summary,
                                      pictures: extraPictures(r, shownCover: r.cover)))
         }
         return rows

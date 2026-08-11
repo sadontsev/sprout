@@ -11,15 +11,15 @@ and wouldn't carry over, so nobody burns a weekend discovering it the hard way.
   cross-platform), reanimated animation kit, Keychain equivalent (expo-secure-store uses
   Android Keystore).
 - The Bambuddy client and all backend behavior — nothing server-side is Apple-specific
-  except the APNs half of `la-push`.
+  except the APNs half of Trellis.
 
 ## What breaks and what it would take
 
 | iOS feature | Android reality |
 |---|---|
 | **Live Activities** (lock screen + Dynamic Island) | No equivalent API. Closest match: a foreground-service **ongoing notification** with a progress bar, or Android 16's "Live Updates". Would be a new module — nothing reusable from `src/liveactivity/` (expo-widgets `'widget'` directive is SwiftUI-only). |
-| **APNs pushes** (`la-push`) | Android needs **FCM**. `la-push` would need a second sender path (Firebase Admin SDK or HTTP v1 API) and the app a `google-services.json` + `expo-notifications` FCM setup. The polling/edge-detection logic is reusable; only the delivery leg differs. |
-| `getDevicePushTokenAsync()` | Returns an FCM token on Android — `/register-device` would need a `platform` field so `la-push` routes to the right sender. |
+| **APNs pushes** (Trellis) | Android needs **FCM**. Trellis would need a second sender path (Firebase Admin SDK or HTTP v1 API) and the app a `google-services.json` + `expo-notifications` FCM setup. The polling/edge-detection logic is reusable; only the delivery leg differs. |
+| `getDevicePushTokenAsync()` | Returns an FCM token on Android — `/register-device` would need a `platform` field so Trellis routes to the right sender. |
 | MJPEG camera in WebView | Android WebView also decodes MJPEG, but the warm-up/stall behavior differs — the watchdog in `mjpegHtml.ts` would need re-verification on-device. |
 | Xcode build recipe | Replaced by `expo prebuild -p android` + Gradle; none of the iOS 27 gotchas apply, but expect an equivalent set of new ones. |
 
@@ -27,7 +27,7 @@ and wouldn't carry over, so nobody burns a weekend discovering it the hard way.
 
 1. `npx expo prebuild -p android` + get the core app running on a device (probably days,
    not weeks — the RN code is platform-clean).
-2. FCM: Firebase project → `google-services.json` → extend `la-push` `/register-device`
+2. FCM: Firebase project → `google-services.json` → extend Trellis `/register-device`
    with `platform`, add an FCM sender next to `_notify()`.
 3. Ongoing-notification print card as the Live Activity stand-in (foreground service).
 4. Re-verify the camera WebView + file downloads (`expo-file-system` paths differ).

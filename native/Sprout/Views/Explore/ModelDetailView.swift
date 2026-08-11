@@ -107,21 +107,19 @@ struct ModelDetailView: View {
                 }
             }
 
-            if let blurb = MakerWorldSearch.plainText(design?.summary) {
-                // The uploader's description of the MODEL, which is a different thing from a
-                // version's settings note — this is what the object IS, not how one profile slices
-                // it. Collapsed by default because these run long, and the versions are what the
-                // page is for.
+            if let summary = design?.summary,
+               MakerWorldSearch.markdown(fromHTML: summary) != nil {
+                // The uploader's description of the MODEL — what the object IS, as opposed to how one
+                // profile slices it. Rendered with its formatting: these are real HTML documents with
+                // headings, emphasis and numbered steps, and flattening them loses most of the
+                // meaning.
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(verbatim: blurb)
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(c.t2)
-                        .lineLimit(descriptionExpanded ? nil : 4)
-                        .fixedSize(horizontal: false, vertical: true)
+                    RichDescription(html: summary,
+                                    lineLimit: descriptionExpanded ? nil : 6)
                     // Only offered when there is more to see — a "More" that reveals nothing is the
                     // same lie as a control for a capability the build lacks.
-                    if blurb.count > 220 {
-                        Tap { descriptionExpanded.toggle() } content: {
+                    if (MakerWorldSearch.plainText(summary)?.count ?? 0) > 280 {
+                        Tap { withAnimation(Motion.standard(0.2)) { descriptionExpanded.toggle() } } content: {
                             Text(descriptionExpanded ? "Less" : "More")
                                 .font(.system(size: 12.5, weight: .semibold))
                                 .foregroundStyle(c.accent)

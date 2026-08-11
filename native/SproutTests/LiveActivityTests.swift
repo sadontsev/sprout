@@ -2,7 +2,7 @@ import XCTest
 @testable import Sprout
 
 /// The content mapping and change gating behind Live Activity cards. The wire format matters as much
-/// as the logic: la-push pushes this exact shape over APNs.
+/// as the logic: Trellis pushes this exact shape over APNs.
 final class LiveActivityTests: XCTestCase {
 
     private func running(progress: Double = 40, remaining: Double = 90) -> PrinterStatus {
@@ -23,7 +23,7 @@ final class LiveActivityTests: XCTestCase {
 
     // MARK: - Wire format
 
-    /// The property names are what la-push sends. A rename breaks remote updates silently.
+    /// The property names are what Trellis sends. A rename breaks remote updates silently.
     func testContentStateEncodesTheServersFieldNames() throws {
         let state = LiveActivityController.content(vm: Dash.present(running()), status: running(), printerName: "H2C")
         let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as? [String: Any]

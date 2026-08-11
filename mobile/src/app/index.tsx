@@ -203,11 +203,11 @@ function Shell({ config, onRetry }: { config: AppConfig; onRetry: () => void }) 
       })),
     [printers, statuses, printerId, vm],
   );
-  // la-push endpoint (null ⇒ LOCAL Live-Activity mode, no server). Explicit URL, else derived from
+  // Trellis endpoint (null ⇒ LOCAL Live-Activity mode, no server). Explicit URL, else derived from
   // the bambuddy host, gated by the serverPush toggle. See config/pushConfig.ts.
   const pushUrl = useMemo(() => resolvePushUrl(config), [config.pushUrl, config.baseUrl, config.serverPush]);
   usePrinterActivities(activityEntries, pushUrl, config.apiKey);
-  useStatusNotifications(pushUrl, config.apiKey); // print-done / error banners via la-push (X-API-Key gated)
+  useStatusNotifications(pushUrl, config.apiKey); // print-done / error banners via Trellis (X-API-Key gated)
 
   const [tab, setTab] = useState<TabKey>('printer');
   const [overlay, setOverlay] = useState<'camera' | 'upload' | null>(null);

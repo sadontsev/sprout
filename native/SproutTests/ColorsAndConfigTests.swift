@@ -134,9 +134,9 @@ final class ConfigRulesTests: XCTestCase {
         XCTAssertNil(ConfigRules.resolvePushUrl(config(serverPush: false)))
     }
 
-    /// "Where is la-push" is a different question from "should Live Activities be pushed through it".
+    /// "Where is Trellis" is a different question from "should Live Activities be pushed through it".
     ///
-    /// la-push also serves MakerWorld collections — plain authenticated HTTP, no APNs — so turning
+    /// Trellis also serves MakerWorld collections — plain authenticated HTTP, no APNs — so turning
     /// Live-Activity push off must not take the Collections tab with it. That matters most for
     /// someone running a TestFlight build signed by a different Apple team: push cannot work for
     /// them at all, so switching it off is exactly right, and exactly when collections should stay.
@@ -149,7 +149,7 @@ final class ConfigRulesTests: XCTestCase {
         XCTAssertNil(ConfigRules.resolvePushUrl(config(serverPush: false)), "push itself stays off")
     }
 
-    /// Everything else about the two must agree, or the app would reach one la-push for cards and
+    /// Everything else about the two must agree, or the app would reach one Trellis for cards and
     /// another for collections.
     func testTheTwoAgreeWheneverPushIsOn() {
         for cfg in [config(), config(pushUrl: "https://push.example.com"),

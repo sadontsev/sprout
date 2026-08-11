@@ -23,7 +23,7 @@ fired* on a single input rather than testing rules in isolation.
 
 ## 1. Context and goals
 
-Today the app is single-user: la-push runs next to the owner's Bambuddy, holds the owner's
+Today the app is single-user: Trellis runs next to the owner's Bambuddy, holds the owner's
 APNs `.p8` auth key, and pushes Live Activities and alert banners directly to APNs. A key
 authorises push for **every install of every app it covers**, which is why the current design
 cannot be shared: `docs/guides/push-notifications.md` tells other people to self-host with
@@ -60,7 +60,7 @@ The goal: ship the native app (Sprout) on the App Store so strangers can install
 The companion service outgrew its name — it serves MakerWorld collections as well as push,
 and this design adds pairing forwarding. Renames:
 
-- **la-push → Trellis** — the user-side companion (`deploy/la-push/` → `deploy/trellis/`,
+- **Trellis → Trellis** — the user-side companion (`deploy/trellis/` → `deploy/trellis/`,
   container `bambu-trellis`, port 8911 unchanged). A trellis is the structure in your own
   garden that supports a growing plant (the app is Sprout).
 - **Canopy** — the new, owner-hosted APNs relay (top-level `canopy/` in the monorepo; it does
@@ -620,7 +620,7 @@ never per-request IPs.
    release that binding.
 
 **Stale dates are a change this design makes, not a capability it inherits.** Nothing sets one
-today: la-push emits `timestamp`, `event`, `content-state`, `attributes`, `alert`, and
+today: Trellis emits `timestamp`, `event`, `content-state`, `attributes`, `alert`, and
 `dismissal-date` but no `stale-date` (`app.py:328-354`), `07-realtime.md:898` is a
 *recommendation to the app* rather than a record of server behaviour, and the native app passes
 `staleDate: nil` (`LiveActivityController.swift:291`, `:310`). So §11's "cards go visibly
@@ -731,7 +731,7 @@ pairing secret.
   token to `needs_claim`, which the app acts on. Conflating them would make ordinary
   housekeeping look like an attack and suspend every token on a Trellis at once.
 - **Multiple phones per printer.** `_regs[key]` becomes a **list** of registrations. This is
-  larger than one call site — `grep -c _regs deploy/la-push/app.py` is 27 — and the plan must
+  larger than one call site — `grep -c _regs deploy/trellis/app.py` is 27 — and the plan must
   sweep all of them. Specifically: `lastState`, `lastPush`, `client`, `iconUri`, and
   `printerName` are **per registration**, so gating (`meaningful_change`, `MIN_UPDATE_S`) and
   envelope construction happen per entry — otherwise a phone joining mid-print shares a gate it
@@ -951,7 +951,7 @@ attestation tests need real-device artefacts, so the harness comes first.
    vouch), the Keychain moves and migration, entitlement-derived
    environment, the pending-claim queue, dismissal reconcile, push-health UI, and the new body
    fields. The first true end-to-end sandbox test happens here, on a real device.
-4. **Rename, dogfood, distribute** — la-push → Trellis across dirs, container, and docs; owner
+4. **Rename, dogfood, distribute** — Trellis → Trellis across dirs, container, and docs; owner
    DNS gains `trellis.<domain>` and keeps `lapush.<domain>` as a CNAME; the owner flips his own
    Trellis to relay mode (DIRECT stays supported and tested); write the self-hoster guide with a
    one-file compose bringing up Bambuddy + Trellis with `CANOPY_URL` preset **and instructions

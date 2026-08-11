@@ -1,7 +1,7 @@
 services:
-  la-push:
+  trellis:
     build: .
-    container_name: bambu-la-push
+    container_name: bambu-trellis
     restart: unless-stopped
     # Host network so it reaches Bambuddy at localhost:8910 and exposes its own :8911 on the host.
     network_mode: host

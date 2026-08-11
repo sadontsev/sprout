@@ -1,4 +1,4 @@
-"""Unit tests for the per-client Live-Activity wire shapes. Run: python3 -m unittest discover deploy/la-push
+"""Unit tests for the per-client Live-Activity wire shapes. Run: python3 -m unittest discover deploy/Trellis
 
 Deliberately dependency-free (stdlib unittest, no pytest/httpx/fastapi) so it runs anywhere the
 service does, including inside the container — same rule as test_cooldown.py / test_p2s.py.
@@ -44,7 +44,7 @@ class TestNormClient(unittest.TestCase):
             self.assertEqual(norm_client(v), NATIVE)
 
     def test_an_unknown_value_degrades_to_expo_rather_than_erroring(self):
-        # A refused registration is a card frozen at 0 % that looks exactly like la-push being down.
+        # A refused registration is a card frozen at 0 % that looks exactly like Trellis being down.
         self.assertEqual(norm_client("swiftui"), EXPO)
         self.assertEqual(norm_client("expo "), EXPO)
 

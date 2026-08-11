@@ -3,18 +3,18 @@ import Foundation
 
 /// Fixed palette for Live Activity content — deliberately NOT the app's theme tokens.
 ///
-/// A card lives on the lock screen, which has no relationship to the in-app theme, and la-push
+/// A card lives on the lock screen, which has no relationship to the in-app theme, and Trellis
 /// (which owns cards in server mode) has no idea what theme the phone is on: it always sends these
 /// values. Reading the themed colour meant a light-mode app produced #23B24A while an identical card
 /// pushed from the server produced #30D158 — the same print rendering in two different greens
-/// depending on which side created it. **These MUST equal la-push's COLORS.**
+/// depending on which side created it. **These MUST equal Trellis's COLORS.**
 enum LAColors {
     static let running = "#30D158"
     static let heating = "#FF9F0A"
     static let paused = "#0A84FF"
     static let error = "#FF453A"
     static let idle = "#8E9398"
-    /// Drying amber — matches la-push's `dry_state`.
+    /// Drying amber — matches Trellis's `dry_state`.
     static let drying = "#FFB86C"
 }
 
@@ -22,7 +22,7 @@ enum LAColors {
 /// them). Lives in `Shared/` so both targets compile one definition — a mismatch silently produces a
 /// blank card.
 ///
-/// **The property names are a wire format.** la-push pushes this content state as JSON over APNs, so
+/// **The property names are a wire format.** Trellis pushes this content state as JSON over APNs, so
 /// every name here has to match what the server sends, field for field. Renaming one breaks remote
 /// updates without breaking the build.
 struct PrintActivityAttributes: ActivityAttributes {

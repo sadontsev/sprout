@@ -11,17 +11,17 @@ struct MakerWorldCollection: Decodable, Identifiable, Hashable, Sendable {
     var isDefault: Bool?
 }
 
-/// The owner's MakerWorld collections, served by their own la-push.
+/// The owner's MakerWorld collections, served by their own Trellis.
 ///
 /// Collections are Bearer-gated and that bearer is the whole Bambu account, so it stays on the
-/// server that already holds it — this app asks la-push, which it already trusts and already sends
+/// server that already holds it — this app asks Trellis, which it already trusts and already sends
 /// its API key to. Nothing here can reach a Bambu Cloud token, by construction.
 ///
 /// Separate from `MakerWorldSearchClient` on purpose even though both end up showing the same tiles:
 /// that one talks to Bambu anonymously and may be gated out of existence at any time, this one talks
 /// to the owner's own machine. Different owners, different failure modes, different remedies.
 struct CollectionsClient: Sendable {
-    /// la-push's base URL, already resolved from config. `nil` in LOCAL-only push mode, in which case
+    /// Trellis's base URL, already resolved from config. `nil` in LOCAL-only push mode, in which case
     /// there is no server to ask and the feature says so rather than showing nothing.
     let baseUrl: String?
     let apiKey: String
@@ -34,7 +34,7 @@ struct CollectionsClient: Sendable {
     }
 
     /// The designs inside one collection. The hits are MakerWorld's own shape, passed straight
-    /// through by la-push, so `MWSearchHit` decodes them and the search tile renders them unchanged.
+    /// through by Trellis, so `MWSearchHit` decodes them and the search tile renders them unchanged.
     func designs(in collectionId: Int, offset: Int = 0, limit: Int = 20) async throws -> MWSearchPage {
         try await get("/makerworld/collections/\(collectionId)/designs?offset=\(offset)&limit=\(limit)",
                       as: MWSearchPage.self)
@@ -77,12 +77,12 @@ struct CollectionsClient: Sendable {
         let (data, response) = try await URLSession.shared.data(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            // la-push answers with the REASON, and the reason is the whole point: "your Bambuddy
+            // Trellis answers with the REASON, and the reason is the whole point: "your Bambuddy
             // isn't signed in to Bambu Cloud" and "MakerWorld refused" are different machines to go
             // and look at. Replacing that with "couldn't load collections" throws it away.
             throw SproutError(Self.detail(data) ?? "Couldn’t load your collections (HTTP \(status)).")
         }
-        // `.convertFromSnakeCase` serves BOTH shapes: la-push's own `is_default` becomes `isDefault`,
+        // `.convertFromSnakeCase` serves BOTH shapes: Trellis's own `is_default` becomes `isDefault`,
         // while MakerWorld's already-camelCase hit keys contain no underscores and pass through.
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -91,10 +91,10 @@ struct CollectionsClient: Sendable {
         } catch {
             // Foundation's own text here is "The data couldn't be read because it isn't in the
             // correct format", which tells the owner nothing about which of three machines to look
-            // at. A decode failure means la-push answered with a shape this build does not know —
+            // at. A decode failure means Trellis answered with a shape this build does not know —
             // in practice, the two are out of step.
             throw SproutError("Your push server sent collections in a shape this app doesn’t "
-                              + "recognise. Update la-push and the app to matching versions.")
+                              + "recognise. Update Trellis and the app to matching versions.")
         }
     }
 

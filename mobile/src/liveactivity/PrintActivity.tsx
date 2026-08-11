@@ -23,7 +23,7 @@ const PrintActivity = (p: PrintActivityProps, _env: LiveActivityEnvironment) => 
   const dim = (s: string) => <Text modifiers={[font({ size: 11 }), foregroundStyle(T2)]}>{s}</Text>;
   // Nozzle temps row: dual-nozzle machines (H2-series) show BOTH heads — the driven one bright, the
   // idle one dimmed — so a right-nozzle print never reads as the (idle, cool) left. Single machines
-  // show one "Nozzle". `activeNozzle` (0=left, 1=right) is decided upstream in present.ts / la-push.
+  // show one "Nozzle". `activeNozzle` (0=left, 1=right) is decided upstream in present.ts / Trellis.
   const nozSeg = (label: string, cur: number, target: number, active: boolean) => (
     <HStack spacing={3}>
       {dim(label)}

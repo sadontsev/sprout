@@ -269,7 +269,7 @@ private struct ProgressBar: View {
 }
 
 extension Color {
-    /// Parses the `#RRGGBB` strings the content state carries. These come off the wire from la-push,
+    /// Parses the `#RRGGBB` strings the content state carries. These come off the wire from Trellis,
     /// so an unparseable value falls back to grey rather than crashing the widget.
     init(hexString: String) {
         let hex = hexString.hasPrefix("#") ? String(hexString.dropFirst()) : hexString

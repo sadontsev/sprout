@@ -68,7 +68,7 @@ final class PrintActivityCountdownTests: XCTestCase {
 
     // MARK: - Wire garbage
 
-    /// Every field arrives as JSON from la-push; a negative or non-finite ETA must not reach `Date`.
+    /// Every field arrives as JSON from Trellis; a negative or non-finite ETA must not reach `Date`.
     func testNonsenseEtaValuesAreHidden() {
         let bogusValues: [Double] = [0, -1, -1_786_000_000_000, .nan, .infinity, -.infinity]
         for bogus in bogusValues {
@@ -93,7 +93,7 @@ final class PrintActivityCountdownTests: XCTestCase {
 
     // MARK: - The wire format is untouched
 
-    /// `countdown()` and `etaDate` are computed, so they must not have added encoded keys — la-push
+    /// `countdown()` and `etaDate` are computed, so they must not have added encoded keys — Trellis
     /// decodes this shape field for field.
     func testCountdownHelpersAddNoWireFields() throws {
         var s = PrintActivityAttributes.ContentState()

@@ -9,7 +9,7 @@ Files covered (all absolute):
 - `/Users/max/ai-projects/bambu-app/mobile/src/liveactivity/useLiveActivity.ts` (note: **not** in `src/realtime/`)
 - `/Users/max/ai-projects/bambu-app/mobile/src/liveactivity/PrintActivity.tsx`
 - `/Users/max/ai-projects/bambu-app/mobile/src/liveactivity/contentState.ts`
-- Supporting: `/Users/max/ai-projects/bambu-app/mobile/src/liveactivity/nozzleIcon.ts`, `modelThumb.ts`, `/Users/max/ai-projects/bambu-app/mobile/src/app/index.tsx` (the only caller), `/Users/max/ai-projects/bambu-app/mobile/src/config/pushConfig.ts`, `/Users/max/ai-projects/bambu-app/mobile/src/notifications/useStatusNotifications.ts`, `/Users/max/ai-projects/bambu-app/deploy/la-push/app.py` (the server side of the same contract)
+- Supporting: `/Users/max/ai-projects/bambu-app/mobile/src/liveactivity/nozzleIcon.ts`, `modelThumb.ts`, `/Users/max/ai-projects/bambu-app/mobile/src/app/index.tsx` (the only caller), `/Users/max/ai-projects/bambu-app/mobile/src/config/pushConfig.ts`, `/Users/max/ai-projects/bambu-app/mobile/src/notifications/useStatusNotifications.ts`, `/Users/max/ai-projects/bambu-app/deploy/trellis/app.py` (the server side of the same contract)
 
 Hosts below are placeholders: `https://<bambuddy-host>`, `https://<lapush-host>`. No real key/token/host values appear anywhere in this document.
 
@@ -294,7 +294,7 @@ export type LiveActivityExtras = { modelUri?: string | null; queueCount?: number
 
 **All numbers are integers** (`Math.round`). **The state is flat and JSON-serializable** — this is load-bearing, see §3.9.
 
-Current-app note: `index.tsx` builds `ActivityEntry[]` **without** `extras`, so `modelUri`/`queueCount`/`nextName` are always `''`/`0`/`''` today; la-push also hardcodes them to `''`/`0`/`''`. The widget already renders them (`lead()` and the "Up next" row), so the plumbing is there and unused. `writeModelThumb()` (`modelThumb.ts`) exists to populate `modelUri` and is currently called from nowhere.
+Current-app note: `index.tsx` builds `ActivityEntry[]` **without** `extras`, so `modelUri`/`queueCount`/`nextName` are always `''`/`0`/`''` today; Trellis also hardcodes them to `''`/`0`/`''`. The widget already renders them (`lead()` and the "Up next" row), so the plumbing is there and unused. `writeModelThumb()` (`modelThumb.ts`) exists to populate `modelUri` and is currently called from nowhere.
 
 #### 3.2 Fixed palette — `LA_COLORS` and `laTint`
 
@@ -316,11 +316,11 @@ export function laTint(vm: DashVM): string {
 }
 ```
 
-**Gotcha (documented at length in the source):** this palette is deliberately **NOT** the app theme's `c.*`. The lock screen has no relationship to the in-app theme, and la-push (which owns cards in server mode) does not know the phone's theme — it always sends these values. Reading `vm.stateColor` meant a light-mode app produced `#23B24A` while an identical card pushed from the server produced `#30D158`: the same print rendering in two different greens depending on which side made the card. **These five values must equal la-push's `COLORS` dict exactly** (verified: `app.py:51` is byte-identical).
+**Gotcha (documented at length in the source):** this palette is deliberately **NOT** the app theme's `c.*`. The lock screen has no relationship to the in-app theme, and Trellis (which owns cards in server mode) does not know the phone's theme — it always sends these values. Reading `vm.stateColor` meant a light-mode app produced `#23B24A` while an identical card pushed from the server produced `#30D158`: the same print rendering in two different greens depending on which side made the card. **These five values must equal Trellis's `COLORS` dict exactly** (verified: `app.py:51` is byte-identical).
 
 Note the dark-theme tokens happen to match `LA_COLORS`; the **light** theme tokens (`#23B24A`, `#E0860A`, `#0A84FF`, `#E5392E`, `#9AA0A6`) are what must never leak into a card. The `laTint` heating branch compares against the *themed* token `c.heating` purely as a "is this the heating classification" probe.
 
-Drying tint is a sixth, separate colour: **`#FFB86C`** (also hardcoded identically in la-push's `dry_state`).
+Drying tint is a sixth, separate colour: **`#FFB86C`** (also hardcoded identically in Trellis's `dry_state`).
 
 #### 3.3 SF Symbols
 
@@ -385,7 +385,7 @@ if (nozzles.length > 1) {
 }
 ```
 
-Regression tests that pin this live in `/Users/max/ai-projects/bambu-app/mobile/src/liveactivity/__tests__/contentState.test.ts`: right-active H2C (`nozzle 41/0`, `nozzle_2 220/220` → `activeNozzle === 1`), mid-tool-change (driven-but-cooler head still active), and "contradictory `active_extruder=1` while `nozzle` idx0 is driven at 245/245 → left is active". **la-push's `classify()` ignores `active_extruder` entirely** (driven, then hotter) — a small, known divergence from the app.
+Regression tests that pin this live in `/Users/max/ai-projects/bambu-app/mobile/src/liveactivity/__tests__/contentState.test.ts`: right-active H2C (`nozzle 41/0`, `nozzle_2 220/220` → `activeNozzle === 1`), mid-tool-change (driven-but-cooler head still active), and "contradictory `active_extruder=1` while `nozzle` idx0 is driven at 245/245 → left is active". **Trellis's `classify()` ignores `active_extruder` entirely** (driven, then hotter) — a small, known divergence from the app.
 
 #### 3.5 `meaningfulChange` — the exact push filter
 
@@ -417,7 +417,7 @@ Thresholds, verbatim: progress **≥ 1 %**, either nozzle **≥ 2 °C**, bed **�
 
 **Gotcha (from the comment):** temps and ETA are on the lock screen — *without* the temperature clauses a heat-up that doesn't advance progress or layer never pushes, and the card shows cold temps for minutes. Both nozzles and the active head matter now that dual machines render side by side.
 
-la-push's `meaningful_change()` mirrors this.
+Trellis's `meaningful_change()` mirrors this.
 
 #### 3.6 Drying cards
 
@@ -454,7 +454,7 @@ export function toDryContentState(status, nowMs, iconUri = '', printerName = '',
     printerName, iconUri,
     dry: true, stateLabel: 'Drying',
     name: [unitLabel, target > 0 ? `${fil} @ ${target}°` : fil].filter(Boolean).join(' · '),
-    tint: '#FFB86C',                    // drying amber — fixed, matches la-push's dry_state
+    tint: '#FFB86C',                    // drying amber — fixed, matches Trellis's dry_state
     symbol: 'humidity.fill',
     finished: false, progress: 0,
     etaEpochMs: nowMs + mins * 60000,
@@ -500,15 +500,15 @@ Constants and predicates:
 | platform gate | everything returns early unless `Platform.OS === 'ios'` |
 | deep link | `printActivity.start(state, 'bambu://')` |
 
-**Ownership modes — the central design (verbatim rationale worth carrying over).** The old design had two independent producers (this hook started cards locally *and* la-push push-to-started them) with nothing able to reconcile them, because `expo-widgets` exposes no id and no content on an adopted activity — `getInstances()` returns opaque handles. That produced all three reported failures at once: duplicate cards for one print, cards frozen at 0 % that nobody owned, and local-vs-remote cards rendering different colours/icons. Ownership is now decided by **mode**, so a conflict cannot arise.
+**Ownership modes — the central design (verbatim rationale worth carrying over).** The old design had two independent producers (this hook started cards locally *and* Trellis push-to-started them) with nothing able to reconcile them, because `expo-widgets` exposes no id and no content on an adopted activity — `getInstances()` returns opaque handles. That produced all three reported failures at once: duplicate cards for one print, cards frozen at 0 % that nobody owned, and local-vs-remote cards rendering different colours/icons. Ownership is now decided by **mode**, so a conflict cannot arise.
 
 ```
 serverMode = !!(pushUrl && apiKey)          // pushUrl from resolvePushUrl(config)
 
-SERVER mode — la-push owns every card. This hook NEVER calls start().
+SERVER mode — Trellis owns every card. This hook NEVER calls start().
   jobs: (a) hand over the device push-to-start token, (b) reconcile every 45 s.
-  Tradeoff, deliberately taken: a card appears on la-push's next poll (≤ 5 s) rather than
-  instantly, and if la-push is down there is no card at all. Predictable beats partially-working.
+  Tradeoff, deliberately taken: a card appears on Trellis's next poll (≤ 5 s) rather than
+  instantly, and if Trellis is down there is no card at all. Predictable beats partially-working.
 
 LOCAL mode — this hook owns every card: sweep-on-first-run, start on live, throttled updates,
   end on terminal. No server, no push, no reconciliation.
@@ -614,14 +614,14 @@ const reconcile = async () => {
       headers: { 'content-type': 'application/json', 'X-API-Key': apiKey },
       body: JSON.stringify({ tokens: [...byToken.keys()], icon_uri: nozzleIconUri() }),
     });
-    if (!res.ok) return;                       // la-push unreachable -> leave every card alone; never destroy on doubt
+    if (!res.ok) return;                       // Trellis unreachable -> leave every card alone; never destroy on doubt
     const { end = [] } = (await res.json()) as { end?: string[] };
     for (const tok of end) await byToken.get(tok)?.end('immediate', GENERIC_END, new Date()).catch(() => {});
   } catch { /* offline -> try again on the next pass */ }
 };
 ```
 
-**Why the FULL set, not one token at a time:** APNs answers `200` for a card the user has swiped away, so la-push cannot detect a dismissal on its own — it kept believing it owned a vanished card and refused to start a replacement (an empty lock screen mid-print). The app is the only party that can see the truth, so it reports all of it and the server converges: forget vanished cards, bind an unknown token to a card it just remote-started (this is what un-freezes a card stuck at 0 %), and hand back anything nothing accounts for, which the app ends.
+**Why the FULL set, not one token at a time:** APNs answers `200` for a card the user has swiped away, so Trellis cannot detect a dismissal on its own — it kept believing it owned a vanished card and refused to start a replacement (an empty lock screen mid-print). The app is the only party that can see the truth, so it reports all of it and the server converges: forget vanished cards, bind an unknown token to a card it just remote-started (this is what un-freezes a card stuck at 0 %), and hand back anything nothing accounts for, which the app ends.
 
 Two absolute rules: an activity with **no token yet** is skipped (picked up next pass), and a **non-OK `/sync`** means *do nothing* — never destroy a card on doubt.
 
@@ -654,9 +654,9 @@ sub = addPushToStartTokenListener((ev) => {
 });
 ```
 
-The native module emits the current token as soon as the listener attaches, then again on rotation. **The `icon_uri` is handed over deliberately:** la-push has no way to know the App-Group glyph path, and without it remotely-started cards render the SF-symbol fallback while app-started ones show the brand nozzle — the visual tell that exposed the whole duplicate-ownership bug.
+The native module emits the current token as soon as the listener attaches, then again on rotation. **The `icon_uri` is handed over deliberately:** Trellis has no way to know the App-Group glyph path, and without it remotely-started cards render the SF-symbol fallback while app-started ones show the brand nozzle — the visual tell that exposed the whole duplicate-ownership bug.
 
-#### 3.9 la-push HTTP contract (all `X-API-Key` gated)
+#### 3.9 Trellis HTTP contract (all `X-API-Key` gated)
 
 | Endpoint | Body | Purpose |
 |---|---|---|
@@ -799,7 +799,7 @@ const dryStats = (
 | `expandedTrailing` | `VStack trailing spacing={1}` + `padding(trailing:6)`: only when `eta` → `Text date dateStyle="timer"` (17 bold rounded, tint) |
 | `expandedBottom` | `VStack spacing={6}` + `padding(horizontal:6, top:4)`: `HStack spacing={8}` → `dryStats`, `Spacer`, if `eta` → `"ends"` (11, T2) + `time` (11 medium, T1) |
 
-Registration: `export const printActivity = createLiveActivity<PrintActivityProps>('PrintActivity', PrintActivity);` — the string `'PrintActivity'` is the name la-push puts in the push envelope's `name` field. **It must match exactly.**
+Registration: `export const printActivity = createLiveActivity<PrintActivityProps>('PrintActivity', PrintActivity);` — the string `'PrintActivity'` is the name Trellis puts in the push envelope's `name` field. **It must match exactly.**
 
 #### 3.11 Asset pipeline into the App Group
 
@@ -843,7 +843,7 @@ Fixed filename `model.png` — **one slot for the whole fleet**, which would col
 
 #### 3.12 Companion: status banner notifications (`src/notifications/useStatusNotifications.ts`)
 
-Separate from Live Activities but part of the same push story. Requests notification permission, gets the **raw APNs device token** (`Notifications.getDevicePushTokenAsync()` → `{type:'ios', data:'<hex>'}`), POSTs it to `{pushUrl}/register-device` with `X-API-Key`. iOS-only, no-ops without both `pushUrl` and `apiKey`, all failures swallowed. A `setNotificationHandler` at module scope sets `shouldShowBanner/shouldShowList/shouldPlaySound = true`, `shouldSetBadge = false`, so banners appear even in the foreground. la-push sends print-done and error banners plus a "💨 <printer> — drying finished" banner (only when `dry_time` fell from a value **≤ 15** min, so a manual stop stays silent).
+Separate from Live Activities but part of the same push story. Requests notification permission, gets the **raw APNs device token** (`Notifications.getDevicePushTokenAsync()` → `{type:'ios', data:'<hex>'}`), POSTs it to `{pushUrl}/register-device` with `X-API-Key`. iOS-only, no-ops without both `pushUrl` and `apiKey`, all failures swallowed. A `setNotificationHandler` at module scope sets `shouldShowBanner/shouldShowList/shouldPlaySound = true`, `shouldSetBadge = false`, so banners appear even in the foreground. Trellis sends print-done and error banners plus a "💨 <printer> — drying finished" banner (only when `dry_time` fell from a value **≤ 15** min, so a manual stop stays silent).
 
 ---
 
@@ -889,16 +889,16 @@ Gotchas that must be re-encoded in the Swift client:
 
 | RN piece | Swift equivalent |
 |---|---|
-| `PrintActivityProps` | `struct PrintAttributes: ActivityAttributes { struct ContentState: Codable, Hashable { … } }`. **This is where the port gets much better**: the `expo-widgets` `{name: String, props: String}` double-encoding envelope disappears — but **la-push must be updated in lockstep** (`_envelope()` in `app.py`), or every pushed update will fail to decode on-device while APNs still answers 200. This is the single highest-risk item in the whole port. |
+| `PrintActivityProps` | `struct PrintAttributes: ActivityAttributes { struct ContentState: Codable, Hashable { … } }`. **This is where the port gets much better**: the `expo-widgets` `{name: String, props: String}` double-encoding envelope disappears — but **Trellis must be updated in lockstep** (`_envelope()` in `app.py`), or every pushed update will fail to decode on-device while APNs still answers 200. This is the single highest-risk item in the whole port. |
 | `createLiveActivity('PrintActivity', fn)` + the `'widget'` directive | A real Widget Extension target with `ActivityConfiguration(for: PrintAttributes.self)`. **All the self-containment restrictions evaporate** — you can share constants, colours, and helper views with the app via a shared framework/target membership. Delete the "everything must be inline" contortions. |
 | `HStack/VStack/Text/Image/Spacer/ProgressView` + modifier arrays | Native SwiftUI 1:1. `font({size:15, weight:'semibold'})` → `.font(.system(size: 15, weight: .semibold))`; `design:'rounded'` → `.system(size:, weight:, design: .rounded)`; `foregroundStyle(hex)` → `.foregroundStyle(Color(hex:))`; `tint(hex)` → `.tint(...)` on `ProgressView(value:)`. |
 | `Text date={endDate} dateStyle="timer"` | `Text(endDate, style: .timer)`; `dateStyle="time"` → `Text(endDate, style: .time)`. Same client-side ticking, same reason: the card must stay live between pushes. |
-| `Image uiImage={file://…}` from the App Group | `Image(uiImage: UIImage(contentsOfFile:))` reading from `FileManager.containerURL(forSecurityApplicationGroupIdentifier:)`. **Keep the App Group** — the widget is still a separate process. Prefer shipping the nozzle glyph as an **asset in the widget extension's bundle** instead of a base64 PNG written at runtime; that deletes `nozzleIcon.ts` entirely and, with it, the `icon_uri` field on `/register`, `/register-start`, and `/sync` (coordinate with la-push before removing it). Plate thumbnails still need the App Group, and the fixed `model.png` filename should become `model-<printerId>.png` to fix the latent fleet collision. |
+| `Image uiImage={file://…}` from the App Group | `Image(uiImage: UIImage(contentsOfFile:))` reading from `FileManager.containerURL(forSecurityApplicationGroupIdentifier:)`. **Keep the App Group** — the widget is still a separate process. Prefer shipping the nozzle glyph as an **asset in the widget extension's bundle** instead of a base64 PNG written at runtime; that deletes `nozzleIcon.ts` entirely and, with it, the `icon_uri` field on `/register`, `/register-start`, and `/sync` (coordinate with Trellis before removing it). Plate thumbnails still need the App Group, and the fixed `model.png` filename should become `model-<printerId>.png` to fix the latent fleet collision. |
 | `printActivity.start(state, 'bambu://')` | `Activity.request(attributes:content:pushType:)`. **Deep link**: Live Activities use `.widgetURL(URL(string: "bambu://"))` on the view rather than a start parameter — set it in the widget body. |
 | `inst.update(state)` | `await activity.update(ActivityContent(state:staleDate:))`. Consider setting `staleDate` (RN never did) so a card whose feed dies visibly goes stale instead of lying. |
 | `inst.end('default'\|'immediate', state, date)` | `await activity.end(content, dismissalPolicy: .default / .immediate)`. Map: terminal print card → `.default`; orphan sweep and `/sync`-disowned cards → `.immediate`; drying finish → `.default`. |
 | `printActivity.getInstances()` | `Activity<PrintAttributes>.activities` — **and this is strictly better than what RN had.** The whole reconcile-by-push-token dance exists because `expo-widgets` exposes no id and no content on an adopted activity. Natively you get `activity.id`, `activity.attributes`, and `activity.content.state`. Consider putting `printerId` (and `amsId`) into **`ActivityAttributes` (static)**, which makes every card self-identifying and lets you replace token-matching with id-matching. That is the single biggest simplification available — but see the warning below. |
-| `inst.getPushToken()` / `addPushTokenListener` | `activity.pushToken` (`Data?`) and `for await tok in activity.pushTokenUpdates`. Hex-encode: `tok.map { String(format: "%02x", $0) }.joined()` — la-push expects the hex string form. |
+| `inst.getPushToken()` / `addPushTokenListener` | `activity.pushToken` (`Data?`) and `for await tok in activity.pushTokenUpdates`. Hex-encode: `tok.map { String(format: "%02x", $0) }.joined()` — Trellis expects the hex string form. |
 | `addPushToStartTokenListener` | `for await data in Activity<PrintAttributes>.pushToStartTokenUpdates` (iOS 17.2+). Same hex encoding, same `/register-start` POST. |
 | `Platform.OS !== 'ios'` guards | Delete. But keep `ActivityAuthorizationInfo().areActivitiesEnabled` checks — the RN code's bare `try/catch` around `start()` was covering "user disabled Live Activities" and must not become a crash. |
 | refs (`instances`, `lastPush`, `lastState`, `subs`, dry variants) | Plain properties on an `@MainActor final class LiveActivityCoordinator`. Keys: `Int` for print cards, a `struct DryKey: Hashable { let printerId: Int; let amsId: Int }` for drying cards (better than the `"pid:amsId"` string). |
@@ -906,14 +906,14 @@ Gotchas that must be re-encoded in the Swift client:
 
 Things that will be **hard** or need a different approach:
 
-1. **Changing the ContentState wire format breaks server push.** `_envelope()` in `/Users/max/ai-projects/bambu-app/deploy/la-push/app.py` stringifies props because of `expo-widgets`. A native `ContentState` wants the fields **flat** under `content-state`. Plan this as a coordinated change (and note the failure mode is *silent*: APNs 200, no visible update). Consider keeping the exact same field names and types so only the envelope changes.
-2. **`registerPushToken` is the identity of a card.** If you switch reconciliation to `activity.id`, la-push's `/sync` contract (`{tokens:[…]} → {end:[…]}`) needs rethinking — but do **not** remove `/sync` naively: the reason it exists is that **APNs answers 200 for a card the user swiped away**, so the server can never detect dismissal on its own. Natively you can detect dismissal properly via `activity.activityStateUpdates` (`.dismissed` / `.ended`) and proactively tell the server — that is the right redesign, and it makes the 45 s polling reconcile unnecessary. Until that lands, port `/sync` as-is.
-3. **Keep the two-mode ownership model.** The temptation natively is "the app can now do everything, drop server mode" — but the whole point of la-push is cards that keep updating and starting **while the app is not running**. Both modes must survive, and the invariant "exactly one owner per card" is what killed the duplicate/zombie/mismatched-colour bugs. In server mode the native app must still never call `Activity.request`, including for drying cards (the RN code returns before the drying block).
-4. **`LA_COLORS` must stay a fixed, theme-independent palette** shared verbatim with la-push. In SwiftUI it is tempting to use `Color.green`/`.orange` or semantic colours — don't. Hardcode `#30D158 / #FF9F0A / #0A84FF / #FF453A / #8E9398` and `#FFB86C`, plus `T1 #F3F5F7` / `T2 #A4ABB2`, in a `LiveActivityPalette` enum that the widget target and the app share, and add a test asserting they equal the server's values.
+1. **Changing the ContentState wire format breaks server push.** `_envelope()` in `/Users/max/ai-projects/bambu-app/deploy/trellis/app.py` stringifies props because of `expo-widgets`. A native `ContentState` wants the fields **flat** under `content-state`. Plan this as a coordinated change (and note the failure mode is *silent*: APNs 200, no visible update). Consider keeping the exact same field names and types so only the envelope changes.
+2. **`registerPushToken` is the identity of a card.** If you switch reconciliation to `activity.id`, Trellis's `/sync` contract (`{tokens:[…]} → {end:[…]}`) needs rethinking — but do **not** remove `/sync` naively: the reason it exists is that **APNs answers 200 for a card the user swiped away**, so the server can never detect dismissal on its own. Natively you can detect dismissal properly via `activity.activityStateUpdates` (`.dismissed` / `.ended`) and proactively tell the server — that is the right redesign, and it makes the 45 s polling reconcile unnecessary. Until that lands, port `/sync` as-is.
+3. **Keep the two-mode ownership model.** The temptation natively is "the app can now do everything, drop server mode" — but the whole point of Trellis is cards that keep updating and starting **while the app is not running**. Both modes must survive, and the invariant "exactly one owner per card" is what killed the duplicate/zombie/mismatched-colour bugs. In server mode the native app must still never call `Activity.request`, including for drying cards (the RN code returns before the drying block).
+4. **`LA_COLORS` must stay a fixed, theme-independent palette** shared verbatim with Trellis. In SwiftUI it is tempting to use `Color.green`/`.orange` or semantic colours — don't. Hardcode `#30D158 / #FF9F0A / #0A84FF / #FF453A / #8E9398` and `#FFB86C`, plus `T1 #F3F5F7` / `T2 #A4ABB2`, in a `LiveActivityPalette` enum that the widget target and the app share, and add a test asserting they equal the server's values.
 5. **Every numeric threshold is load-bearing** and should move into a shared `LiveActivityTuning` enum with the comments intact: `minUpdate = 4 s`, `reconcile = 45 s`, `progressEps = 1 %`, `nozzleEps = 2 °C`, `bedEps = 2 °C`, `etaEps = 60 s`, `amsTempEps = 1 °C`, `humidityEps = 2 %`. The temperature clauses in particular were added because a heat-up that doesn't move progress/layer otherwise never pushes.
 6. **`offline` and `connecting` must remain no-ops.** A WS blip must never end a card. Only `complete | error | idle` ends one. This is easy to lose when rewriting the branch as a `switch` with a `default:`.
 7. **Drying detection**: `dry_time > 0` only — never `dry_status`. Values may arrive as **strings** on the WebSocket, so the Swift `PrinterStatus` decoder needs a lenient number decoder (`@LenientNumber` property wrapper or a custom `init(from:)`) for `dry_time`, `dry_target_temp`, `temp`, `humidity`, and `id`. This is a real risk: a strict `Codable` will throw and silently drop the whole AMS array.
 8. **AMS HT identification**: `is_ams_ht == true || id >= 128`. Unit labels are one-based (`AMS 1`, `AMS 2`, `AMS HT`) and only shown when more than one unit is fitted.
-9. **`activeNozzle` must come from the shared view-model**, not be re-derived in the widget. Port `present.ts`'s three-tier rule (driven → mapped `active_extruder` where **0 = RIGHT, 1 = LEFT** → hotter) and port its regression tests. Note la-push deliberately ignores `active_extruder`; decide whether to align the server up or the app down, but document the choice.
+9. **`activeNozzle` must come from the shared view-model**, not be re-derived in the widget. Port `present.ts`'s three-tier rule (driven → mapped `active_extruder` where **0 = RIGHT, 1 = LEFT** → hotter) and port its regression tests. Note Trellis deliberately ignores `active_extruder`; decide whether to align the server up or the app down, but document the choice.
 10. **Push-to-start payloads need the `alert` block.** Apple's spec requires it and starts without it are accepted (200) then silently discarded. Whoever owns the server side must not "clean that up".
 11. Live Activity **budget**: APNs priority 10 spends the device's budget, 5 is opportunistic. The server already splits these (`_urgent()`: first push, `stateLabel` flip, or `finished` flip → 10; drift → 5). If the native app starts pushing more often than the RN one, that budget becomes the limiting factor.

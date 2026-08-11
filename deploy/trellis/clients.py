@@ -57,7 +57,7 @@ def norm_client(value: Any) -> str:
     Deliberately lenient rather than a 422: a typo'd or future value must degrade to the behaviour
     the installed RN app already depends on, not reject the registration outright — a refused
     registration is a card frozen at the content it was created with, and the app has no way to tell
-    that apart from la-push being down.
+    that apart from Trellis being down.
     """
     return NATIVE if isinstance(value, str) and value.strip().lower() == NATIVE else EXPO
 

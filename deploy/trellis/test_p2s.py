@@ -1,4 +1,4 @@
-"""Unit tests for the push-to-start rule. Run: python3 -m unittest discover deploy/la-push"""
+"""Unit tests for the push-to-start rule. Run: python3 -m unittest discover deploy/Trellis"""
 from __future__ import annotations
 
 import unittest

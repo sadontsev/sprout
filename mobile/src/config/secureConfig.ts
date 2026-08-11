@@ -14,11 +14,11 @@ export type AppConfig = {
   /** Last-selected printer (restored on launch). */
   printerId?: number;
   printerName?: string;
-  /** la-push base URL for Live-Activity APNs push. Blank ⇒ derived from the bambuddy host as
+  /** Trellis base URL for Live-Activity APNs push. Blank ⇒ derived from the bambuddy host as
    *  lapush.* (owner convenience); anyone self-hosting with a different host sets it explicitly. */
   pushUrl?: string;
-  /** Live-Activity mode. true/undefined ⇒ register with la-push so cards persist after the app is
-   *  suspended + status banners fire (needs a reachable la-push). false ⇒ LOCAL only: cards update
+  /** Live-Activity mode. true/undefined ⇒ register with Trellis so cards persist after the app is
+   *  suspended + status banners fire (needs a reachable Trellis). false ⇒ LOCAL only: cards update
    *  while the app runs, no banners, no server. See resolvePushUrl() in config/pushConfig.ts. */
   serverPush?: boolean;
   /** stl-texturize sidecar URL. Blank ⇒ derived from the bambuddy host as texturize.*; set it if the

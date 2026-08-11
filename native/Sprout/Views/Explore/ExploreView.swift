@@ -90,7 +90,7 @@ private struct ExploreRoot: View {
     @Environment(\.palette) private var c
     @Environment(ExploreModel.self) private var explore
 
-    /// The owner's own collections, from their la-push.
+    /// The owner's own collections, from their Trellis.
     ///
     /// `laPushUrl`, **not** `resolvePushUrl`: collections are plain authenticated HTTP with no APNs
     /// involved, so they must not disappear when Live-Activity push is switched off.

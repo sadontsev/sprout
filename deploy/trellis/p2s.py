@@ -1,4 +1,4 @@
-"""When may la-push remotely start a Live Activity?
+"""When may Trellis remotely start a Live Activity?
 
 THE BUG THIS EXISTS TO KILL. A push-to-started card is unreachable until the app hands us its push
 token — we can neither update nor end it. The old rule allowed one outstanding start at a time and

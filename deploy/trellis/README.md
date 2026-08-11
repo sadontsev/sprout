@@ -1,4 +1,4 @@
-# la-push — Live Activity APNs push, and MakerWorld collections, for Sprout
+# Trellis — Live Activity APNs push, and MakerWorld collections, for Sprout
 
 Two jobs, one service, because the second one needs a machine the first one already is.
 
@@ -14,10 +14,27 @@ Bambu Cloud bearer, that bearer must not go on a phone, and this is the machine 
 The pushed ContentState must match `PrintActivityProps` in
 `mobile/src/liveactivity/PrintActivity.tsx`; the state/colour mapping mirrors `present.ts`.
 
+## Two modes
+
+**RELAY** (`CANOPY_URL`) — no APNs key here at all. Pushes go to Canopy, which holds the signing
+key for App Store builds and decides whether this tenant may push to a token. Nothing
+Apple-specific lives on this box, so the owner can rotate the key without any self-hoster acting.
+
+**DIRECT** (the `APNS_*` set) — sign locally with your own `.p8`, for a build signed by your own
+Apple team.
+
+Exactly one must be configured. Both, or neither, exits at startup rather than failing at the
+first push, because "which key is expected to sign" has no sensible default.
+
+In relay mode the service enrols itself on first boot and prints a **recovery code, once, to the
+log**. Save it somewhere that outlives the data volume: it is what lets a rebuilt server re-adopt
+its existing bindings instead of enrolling as a stranger, and it is deliberately never served from
+an endpoint, because it confers tenant identity.
+
 ## Deploy (on the home server)
 
 ```bash
-mkdir -p <deploy-dir>/la-push && cd <deploy-dir>/la-push
+mkdir -p <deploy-dir>/trellis && cd <deploy-dir>/trellis
 # copy EVERY *.py the Dockerfile COPYs, plus Dockerfile, docker-compose.yml, requirements.txt.
 # A module you forget fails at IMPORT, after the build reports success — the container restarts in a
 # loop and `docker logs` is the only place it says so. Adding a new module means editing the
@@ -38,16 +55,16 @@ the deploy rather than surfacing as an APNs `403 InvalidProviderToken` at the fi
 Stdlib `unittest`, no pytest, no network — deliberately, so they run anywhere the service runs:
 
 ```bash
-python3 -m unittest discover deploy/la-push
+python3 -m unittest discover deploy/Trellis
 ```
 
 `test_makerworld.py` additionally needs `httpx`, which the service already depends on, so run it
 inside the container if your host python lacks it:
 
 ```bash
-docker cp deploy/la-push/makerworld.py bambu-la-push:/tmp/
-docker cp deploy/la-push/test_makerworld.py bambu-la-push:/tmp/
-docker exec bambu-la-push sh -c 'cd /tmp && python3 -m unittest test_makerworld'
+docker cp deploy/Trellis/makerworld.py bambu-trellis:/tmp/
+docker cp deploy/Trellis/test_makerworld.py bambu-trellis:/tmp/
+docker exec bambu-trellis sh -c 'cd /tmp && python3 -m unittest test_makerworld'
 ```
 
 ## APNs environment (important)
@@ -137,17 +154,17 @@ makes empty folders nothing can be put into.
 ## Sharing someone else's build
 
 If you install a TestFlight build signed by **someone else's** Apple team and point it at your own
-Bambuddy and your own la-push, you get most of the app — but **not push**, and the reason is not
+Bambuddy and your own Trellis, you get most of the app — but **not push**, and the reason is not
 fixable by configuration.
 
 | | works? | why |
 |---|---|---|
 | Everything through Bambuddy | ✅ | your server, your API key |
 | MakerWorld search / browse | ✅ | anonymous calls straight to `api.bambulab.com` |
-| **MakerWorld collections** | ✅ | plain authenticated HTTP to *your* la-push; `_require_key` validates the key against *your* Bambuddy. No Apple involvement |
+| **MakerWorld collections** | ✅ | plain authenticated HTTP to *your* Trellis; `_require_key` validates the key against *your* Bambuddy. No Apple involvement |
 | **Live Activities / push banners** | ❌ | see below |
 
-la-push signs its APNs JWT with `iss = APNS_TEAM_ID` / `kid = APNS_KEY_ID` and sends
+Trellis signs its APNs JWT with `iss = APNS_TEAM_ID` / `kid = APNS_KEY_ID` and sends
 `apns-topic: <the installed app's bundle id>.push-type.liveactivity`. **Apple checks that the signing
 key's team owns that topic.** Your key does not own someone else's bundle id, so you get
 `403 InvalidProviderToken`; change `APNS_TOPIC` to a bundle id you *do* own and you get
@@ -156,7 +173,7 @@ given that team's `.p8`, which is a credential for their entire team's push — 
 don't hand yours out.
 
 **So configure it like this:** Settings → turn **off** "Live Activity via server", and set
-**Push server URL** to your own la-push. Collections keep working; lock-screen cards simply update
+**Push server URL** to your own Trellis. Collections keep working; lock-screen cards simply update
 only while the app is open.
 
 > Those two settings used to fight each other: the app read the push toggle to decide whether
@@ -165,7 +182,7 @@ only while the app is open.
 
 For real push, build the app yourself under your own team — the repo takes `DEVELOPMENT_TEAM` from
 the environment for exactly this reason (`native/.env-local.example`). Then your bundle id, your
-APNs key and your la-push all belong to you and everything above turns green.
+APNs key and your Trellis all belong to you and everything above turns green.
 
 ## Two clients
 
