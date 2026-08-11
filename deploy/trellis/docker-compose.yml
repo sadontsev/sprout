@@ -6,26 +6,34 @@ services:
     # Host network so it reaches Bambuddy at localhost:8910 and exposes its own :8911 on the host.
     network_mode: host
     # Everything in .env reaches the container, so an optional setting needs no line here.
-    # .env.example is the reference for what may go in it — self-hosting the push path, MakerWorld
-    # collections, and so on. Listing those here meant this file grew a paragraph of explanation
-    # per variable and read as though six Apple credentials were mandatory. They are not; the
-    # normal deployment sets exactly one thing.
+    # .env.example groups them by what they are FOR: push, or MakerWorld collections.
     env_file:
       - .env
     environment:
-      # The ONLY line here, because every other setting either has the same default in app.py or
-      # belongs in .env. `:?` so an unset or empty key stops the deploy: written as a bare
-      # ${BAMBUDDY_API_KEY} it interpolated to the EMPTY STRING, which os.environ reports as
-      # present, so Trellis booted fine and every Bambuddy call answered 401 — which reads as
-      # "Bambuddy is broken" and sends you to the wrong service.
+      # Required for BOTH features, and the only value most deployments set. Trellis polls Bambuddy
+      # with it and validates the key the app presents against Bambuddy too.
+      #
+      # `:?` so an unset or empty key stops the deploy: written as a bare ${BAMBUDDY_API_KEY} it
+      # interpolated to the EMPTY STRING, which os.environ reports as present, so Trellis booted
+      # fine and every Bambuddy call answered 401 — which reads as "Bambuddy is broken" and sends
+      # you to the wrong service.
       BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY:?set BAMBUDDY_API_KEY in .env — see .env.example}
     volumes:
+      # PUSH + everything: Trellis's own state — registrations, tenant credentials, edge-detection.
       - ./data:/data
-      # READ-ONLY, deliberately: this service must never be able to write another app's database.
-      # Comment this out (and BAMBUDDY_DB above) if you do not want the MakerWorld collection
-      # endpoints — everything else works without it.
+      # MAKERWORLD COLLECTIONS ONLY. Read-only, deliberately: this service must never be able to
+      # write another app's database.
+      #
+      # ⚠️ COMMENT THIS LINE OUT (and the `volumes:` block at the bottom) IF YOU DO NOT RUN
+      # BAMBUDDY IN DOCKER, or your volume is named differently and you do not care about
+      # collections. The volume is declared `external`, so if it does not exist compose refuses to
+      # start the container AT ALL — and the error names a volume, not the feature, so it reads as
+      # "Trellis is broken" when what you actually lost is push, which does not need this mount.
       - bambuddy_data:/bambuddy:ro
 
+# MAKERWORLD COLLECTIONS ONLY — delete this whole block along with the mount above if you do not
+# want them. `external: true` is deliberate: without it `docker compose down -v` would DELETE
+# Bambuddy's database, and this service is a guest in that volume.
 volumes:
   # Bambuddy's own volume, joined from outside its compose project. The name is the one docker
   # compose generated for it — `bambuddy_bambuddy_data`, project prefix and all — NOT the bare

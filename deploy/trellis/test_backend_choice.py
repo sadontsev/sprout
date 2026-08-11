@@ -168,3 +168,34 @@ class TheRequiredCredentialIsActuallyRequired(unittest.TestCase):
         # The comment that made this file look credential-heavy described a `:?` that had already
         # been changed to `:-` two lines below it.
         self.assertNotIn("`:?` fails the deploy loudly instead of at the first push", self.compose)
+
+
+class ConfigIsGroupedByWhatItIsFor(unittest.TestCase):
+    """Trellis does two independent things and they need different setup.
+
+    Someone who only wants push should be able to see that at a glance, and — more importantly —
+    should not be stopped by a MakerWorld dependency. The collections volume is declared `external`,
+    so a name that does not exist refuses to start the container at all, which takes push down with
+    it and reports a volume rather than the feature.
+    """
+
+    def setUp(self):
+        import pathlib as _p
+        here = _p.Path(__file__).parent
+        self.example = (here / ".env.example").read_text()
+        self.compose = (here / "docker-compose.yml").read_text()
+
+    def test_the_example_says_what_each_feature_needs(self):
+        self.assertIn("PUSH", self.example)
+        self.assertIn("COLLECTIONS", self.example)
+        self.assertIn("Either works without the other", self.example)
+
+    def test_the_collections_mount_warns_that_it_blocks_startup(self):
+        # The trap: the error names a volume, so it reads as "Trellis is broken" when what was
+        # actually lost is push, which never touches this mount.
+        self.assertIn("MAKERWORLD COLLECTIONS ONLY", self.compose)
+        self.assertIn("start the container AT ALL", self.compose)
+
+    def test_the_only_required_value_is_marked_as_required_for_both(self):
+        self.assertIn("required for BOTH", self.example)
+        self.assertIn("Required for BOTH features", self.compose)

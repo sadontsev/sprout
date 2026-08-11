@@ -14,6 +14,19 @@ Bambu Cloud bearer, that bearer must not go on a phone, and this is the machine 
 The pushed ContentState must match `PrintActivityProps` in
 `mobile/src/liveactivity/PrintActivity.tsx`; the state/colour mapping mirrors `present.ts`.
 
+## Two features, two sets of requirements
+
+| | needs | independent of |
+|---|---|---|
+| **Push** — Live Activities, status banners | `BAMBUDDY_API_KEY`, and that is all | collections entirely |
+| **MakerWorld collections** | `BAMBUDDY_API_KEY` + Bambuddy's docker volume mounted read-only + the server signed in to Bambu Cloud | push entirely |
+
+One caveat that is not obvious from that table: the collections mount is declared `external` in
+`docker-compose.yml`, so if the named volume does not exist **compose refuses to start the container
+at all** — and the error names a volume, not a feature, so it reads as "Trellis is broken" when what
+you actually lost is push, which never touches that mount. If you do not run Bambuddy in Docker,
+comment out the mount and the `volumes:` block rather than guessing a name.
+
 ## Where the push goes
 
 Every push goes through **Canopy**, which holds the APNs signing keys. Trellis holds none: no key,
