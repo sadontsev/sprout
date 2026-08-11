@@ -2,12 +2,17 @@
 
 **Status:** approved design, not yet implemented
 **Date:** 2026-08-11
-**Revision:** 4 — after three adversarial review rounds. Revision 1 shipped a cross-user push
-path (lease-expiry rebind). Revision 2 replaced it with App Attest but omitted two of Apple's
-verification steps, ordered its own clocks wrong, and made claims unretryable. Revision 3
-fixed those and introduced a new crop in the replacement machinery: an expired row read as
-first-claimable, a single overwritable elder slot, an unchecked challenge binding, and a
-`stale-date` capability the code does not have. §5 and §6 carry most of the change.
+**Revision:** 5 — after four adversarial review rounds, the last one a formal enumeration of
+§5's input space. Revision 1 shipped a cross-user push path (lease-expiry rebind). Revision 2
+replaced it with App Attest but omitted two of Apple's verification steps, ordered its own
+clocks wrong, and made claims unretryable. Revision 3 fixed those and introduced an expired row
+read as first-claimable, a single overwritable elder slot, an unchecked challenge binding, and
+a `stale-date` capability the code does not have. Revision 4 fixed those and left four defects
+in the *action* columns nobody had enumerated: R1 rewriting the pairing hash (the closing move
+of every takeover), R2 seizing a row with no elder retained, R3 evicting without re-pointing
+the tenant, and `released_at` that no rule ever cleared. **The lesson worth carrying into
+implementation: prose review kept finding real bugs, but only formal enumeration of the state
+machine found these.** §12's tests are written to assert *which rule fired*, for that reason.
 
 ## 1. Context and goals
 
@@ -106,7 +111,7 @@ tenant credentials.
 | Attacker steals a push token and tries to bind it with `curl` | Fails. Every claim requires an App Attest assertion from a genuine Sprout install, signed over the exact claim contents and verified against a stored public key (§6). A tenant credential alone is not enough. |
 | Attacker with a **hooked genuine app on a jailbroken device** claims a token Canopy has never seen | **Succeeds — this is the design's residual risk, stated plainly.** A token that has never been claimed is bound first-come (there is no prior anchor to check against), so an attacker who both obtains a live unseen token and runs a hooked build can take it, and the victim's later claim is refused. Bounds: re-signing under another team fails the App ID check, so it takes a jailbroken device; one attest key may hold live bindings across at most three tenants; repeated `pairing_mismatch` from a consistent claimant raises an operator alert *and* a user-visible "push pairing was taken over" row (§10); and Apple's fraud-assessment metric closes it further once enabled (§14). Recovery is operator unbind (§14, in scope). |
 | Attacker tries to take over a token that **is** already anchored | Refused. A row's anchors are checked on every claim regardless of lease state — an expired or released row is *not* first-claimable, only a hard-deleted one is (§5). |
-| Attacker waits out a lease | Closed. Leases renew on successful delivery as well as on claims, and lease expiry no longer opens a token to anyone. The rebind paths need either the tenant already on the row (with a previously-unseen attest key, once per elder window) or 90 days of total inactivity — and both retain the outgoing anchors as elder so the original device evicts them on its next claim. |
+| Attacker waits out a lease | Closed. Leases renew on successful delivery as well as on claims, and lease expiry no longer opens a token to anyone. The rebind paths need either the tenant *and* device already on the row (with a key not walked across tenants, at most once per 90 days on a monotonic clock) or 90 days of total inactivity — and both retain the outgoing anchors as elder so the original device evicts them on its next claim. Waiting past the 120 d retention horizon does not help either: hard deletion leaves a tombstone whose anchors R0 reinstates as elder. |
 | Attacker enrolls tenants and probes tokens | Tokens are 32-byte APNs-generated values; guessing is infeasible. Cheap checks run before expensive ones (§6), so a failed claim costs no X.509 work. Per-IP and per-tenant limits, per-token-hash failed-claim backoff, a bounded tenant count, and an auto-arming invite code cap the probe rate. Attestation verification has its own bounded worker pool so claim floods cannot starve `/v1/push`. |
 | A user's Trellis box is fully compromised | The attacker gets that user's tokens, tenant credential, and observes pairing secrets and assertions in transit. They can push junk **to that user's own devices only**. They can replay a captured claim, but only under the tenant it was issued to (§6 checks the challenge's tenant), and cannot forge a different one. If they use a hooked app to seize a binding via the same-tenant recovery row, the outgoing anchors are retained as elder and the victim's next claim evicts them; the row is rate-limited to once per token per elder window so it cannot be used to ping-pong the victim out. |
 | A tenant floods pushes (hostile or broken) | Per-token, per-tenant, and per-IP limits. Shedding is tenant-scoped first; the global breaker is a last resort, so one abuser cannot deny push to everyone. |
@@ -163,9 +168,9 @@ state. What the app queues (§10) is therefore an *intent* to claim, never a sig
    seconds for assertions. Canopy records the issuing tenant and the purpose and **checks both
    when the challenge is presented** (§6).
 2. The app builds `client_data`, a JSON object over
-   `{challenge, token, pairing_secret, binding_kind, apns_environment}`, and produces either
-   an **attestation** (first use of a new attest key) or an **assertion** (every later claim)
-   over `SHA-256(client_data)`.
+   `{challenge, token, pairing_secret, device_id, binding_kind, apns_environment}`, and
+   produces either an **attestation** (first use of a new attest key) or an **assertion**
+   (every later claim) over `SHA-256(client_data)`.
 3. The app POSTs its normal registration to Trellis (`/register`, `/register-start`,
    `/register-device`) with the new fields; Trellis forwards them to Canopy `/v1/claims`.
 4. Canopy verifies the attestation or assertion (§6) against **the exact `client_data` bytes
@@ -190,36 +195,68 @@ elder rules intact.
 
 ### Binding state machine
 
-Binding row: `{token_hash, binding_kind, apns_environment, tenant, attest_key_id,
-pairing_hash, elder_attest_key_id, elder_pairing_hash, elder_until, elder_rebinds_used,
-lease_expiry, last_delivery_at, last_claim_at, released_at, created_at}`. Attest keys live in
-their **own table** with a lifetime independent of any binding (§6) — they must outlive the
-bindings they were used to claim.
+Binding row: `{token_hash, binding_kind, apns_environment, tenant, device_id, attest_key_id,
+pairing_hash, elder_attest_key_id, elder_pairing_hash, elder_until, lease_expiry,
+last_delivery_at, last_successful_claim_at, last_failed_claim_at, last_rebind_at,
+released_at, created_at}`. Attest keys live in their **own table** with a lifetime independent
+of any binding (§6) — they must outlive the bindings they were used to claim. When a row is
+hard-deleted (§6) a **tombstone** `{token_hash, elder_attest_key_id, elder_pairing_hash}`
+survives it, so a device that returns after the retention horizon can still prove ownership;
+without it, waiting 30 days longer than the dormancy threshold would be strictly better for an
+attacker than triggering R5.
+
+**Anchor test, computed once before rule evaluation**, producing three separately-named results
+rather than one boolean — invariant 7 applies inside the machine, not only across it:
+`matchedCurrentAttest`, `matchedCurrentPairing`, and `matchedLiveElder` (either elder anchor,
+and `now < elder_until`). An **expired** elder matches nothing: elder fields are lazily cleared
+at claim time when `now >= elder_until`, before evaluation, so "no anchor matched" is never
+ambiguous about a stale one.
 
 Every rule requires a verified attestation or assertion first; a claim without one is `403
-attestation_required` and never reaches the machine. **Rules are evaluated in order and the
-first match wins**; the guards make them mutually exclusive. Any claim that reaches the
-machine stamps `last_claim_at`, including a rejected one — a token under active attack is not
-abandoned.
+attestation_required` and never reaches the machine. A claim whose `binding_kind` disagrees
+with the row is `403 kind_mismatch` — **`binding_kind` is immutable after R0**, for the same
+reason `apns_environment` is: it is a property of the token, not of whoever holds it, and it
+selects the lease and hard-delete horizons. Letting a claim rewrite it would let an attacker
+relabel a `device` row as `activity`, collapse retention from 120 days to 10, and destroy the
+victim's elder anchors along with the row.
+
+**Rules are evaluated in order and the first match wins.** The guards are *not* independently
+exclusive; ordering is what resolves the overlaps, and the tests in §12 assert which rule fired
+rather than testing rules in isolation.
+
+**Every accepting rule (R0–R5) also renews the lease and sets `released_at = NULL`** — a
+successful claim is by definition a re-assertion of ownership, so the row is live again. Stated
+once here because stating it per-rule is how revision 4 lost it: release set the flag, no rule
+cleared it, and a released-then-reclaimed token livelocked between a `204` claim and a
+`403 not_bound` push forever. Accepting rules stamp `last_successful_claim_at`; rejected claims
+stamp `last_failed_claim_at` only.
 
 | # | Guard | Action |
 |---|---|---|
-| R0 | Token is UNSEEN | Bind: store both anchors, tenant, `binding_kind`, `apns_environment`; `lease_expiry = now + lease(binding_kind)`. |
-| R1 | Claim's attest key **equals the current** `attest_key_id` | Accept (primary path). Re-point tenant, refresh pairing hash, renew lease. **Elder is left untouched** — this claim did not need it, and clearing it here was revision 3's bug: it let an attacker who had just seized a row erase the victim's recovery anchor with one ordinary claim. |
-| R2 | Claim's pairing secret **equals the current** `pairing_hash`, and the claim carries a **fresh attestation** (the attest key is new, so there is no stored public key to verify an assertion against) | Accept — the app-reinstall case. Store the new attest key, re-point tenant, renew lease. Elder untouched. |
-| R3 | Claim matches **an elder anchor** (either kind) and `now < elder_until` | Accept and evict: install the claim's anchors as current, then **clear elder and reset `elder_rebinds_used`** — elder has done its job. This is the row that returns a token to its rightful device after any rebind. |
-| R4 | No anchor matched; the claim carries a fresh attestation whose `attest_key_id` is **previously unseen by Canopy**; the claim comes from **the tenant currently on the row**; there is no live elder; and `elder_rebinds_used = 0` | Same-tenant recovery rebind, for a phone that lost *both* anchors. Retain the outgoing anchors as elder (`elder_until = now + 90d`), set `elder_rebinds_used = 1`. |
-| R5 | No anchor matched and the token is **dormant**: `now - max(last_delivery_at, last_claim_at, created_at) > 90 d` | Dormancy rebind. Retain the outgoing anchors as elder for 90 d. |
-| R6 | Otherwise | `403 pairing_mismatch`, counted per token-hash for backoff and operator alerting (§6). |
+| R0 | Token is UNSEEN (no row) | Bind: store both anchors, tenant, `device_id`, `binding_kind`, `apns_environment`. If a tombstone exists, seed `elder_*` from it with `elder_until = now + 90d` unless this claim itself matches the tombstone's anchors — so a first-come claim on a long-dead token can still be evicted by the device that owned it. |
+| R1 | `matchedCurrentAttest` | Accept (primary path). Re-point tenant and `device_id`. **`pairing_hash` is not written** — no legitimate client ever presents a matching attest key with a different pairing secret (both live in the same Keychain, and the attest key is the more fragile of the two), so this write was reachable only by an attacker who already held the row, and it was the closing move that burned the victim's last anchor. Rotation is §14's problem, not R1's. Elder untouched. |
+| R2 | `!matchedCurrentAttest` and `matchedCurrentPairing`, and the proof is either a **fresh attestation** or an **assertion from a key already in `attest_keys` that is not the row's current key** | Accept — the app-reinstall case. Store the new attest key, re-point tenant and `device_id`, and **retain the outgoing attest key as elder** (`elder_until = now + 90d`). The assertion branch exists because a device holds *two* durable bindings (`start` and `device`): after a reinstall the first claim attests the new key and the second can only assert with it, and an attestation-only guard sent that second token to permanent `pairing_mismatch` — a false takeover alarm raised by an ordinary reinstall. The elder retention is what stops a compromised Trellis, which observes pairing secrets in transit, from seizing a row through this rule with nothing left for the victim to evict with. |
+| R3 | `matchedLiveElder` | Accept and evict: install the claim's anchors as current, **re-point tenant and `device_id`**, clear elder. The tenant re-point is not optional — without it an eviction leaves push authority with the attacker while the victim holds the anchors, and §9's suspension loop spins forever on `not_owner`. |
+| R4 | Nothing matched; proof is a fresh attestation whose key **holds no live binding under any tenant other than this claim's**; same tenant **and** same `device_id` as the row; and `last_rebind_at` is null or older than 90 d | Same-tenant recovery rebind, for a phone that lost *both* anchors. Retain the outgoing anchors as elder (`elder_until = now + 90d`) and set `last_rebind_at = now`. |
+| R5 | Nothing matched and the token is **dormant**: `now - max(last_delivery_at, last_successful_claim_at, created_at) > 90 d` | Dormancy rebind. Retain the outgoing anchors as elder for 90 d, set `last_rebind_at = now`. |
+| R6a | Nothing matched and the claim satisfies every R4 conjunct **except** tenant or `device_id` | `403 wrong_tenant`. **Not** counted toward the takeover alert — the common cause is a self-hoster who rebuilt without the recovery code, and counting it would show an innocent rebuild to both operator and user as an attack. |
+| R6b | Otherwise | `403 pairing_mismatch`, counted per token-hash for backoff and operator alerting (§6). |
 
-R4 needs its justification stated correctly, because revision 3's was wrong. It is **not**
-"the tenant could release the token anyway, so this grants nothing new" — release deliberately
-retains anchors and does not reopen a token, so release is a strictly weaker authority than
-anchor replacement. The real argument is narrower: R4 exists only to rescue a genuine reinstall
-that lost the Keychain, and it is fenced so a compromised Trellis cannot use it to durably
-seize a binding — a previously-unseen attest key (so a hooked device cannot reuse one key
-across victims), no live elder, at most once per elder window, and the outgoing anchors always
-retained so the real device evicts on its next claim via R3.
+R4's justification, stated correctly (revision 3's was wrong and revision 4's was incomplete):
+it is **not** "the tenant could release the token anyway, so this grants nothing new" — release
+deliberately retains anchors and does not reopen a token, so release is a strictly weaker
+authority than anchor replacement. The real argument is narrower: R4 exists only to rescue a
+genuine reinstall that lost the Keychain, and it is fenced so a compromised Trellis cannot use
+it to durably seize a binding — a key not being walked across tenants, matching tenant *and*
+device, at most one rebind per 90 days on a **monotonic** `last_rebind_at` that R3 does not
+reset (revision 4 reset the counter on eviction, which made R4→R3→R4 an unbounded ping-pong),
+and the outgoing anchors always retained so the real device evicts via R3.
+
+`device_id` travels **inside the signed `client_data`**, not as a Trellis-added field: a value
+Trellis could set would be enforced by the party the threat model assumes hostile. It is a
+scoping anchor rather than a security anchor — a hooked app signs its own `client_data` and can
+assert any value — but it is what stops two honest phones in one household from rebinding each
+other's tokens under a shared tenant.
 
 A single attest key legitimately covers many tokens for one device across a household rebuild,
 but **the same key holding live bindings across more than three tenants** is the signature of
@@ -232,8 +269,8 @@ Other transitions:
 | Push from the tenant on a row with a live lease | Allowed. **A successful APNs delivery renews the lease** and stamps `last_delivery_at`, so an actively-used token never drifts toward dormancy. |
 | Push from another tenant | `403 not_owner` — authority was taken; the suspension condition (§9). |
 | Push with no row, or a released/expired row | `403 not_bound` — routine housekeeping, **not** a suspension condition; it means "re-claim", not "you were evicted". |
-| APNs answers 410 / 400 `BadDeviceToken` after the §6 gateway retry | Delete the row — the token is genuinely dead. |
-| `POST /v1/bindings/release` (raw token in the body, bound tenant only) | Set `released_at = now`. **`lease_expiry` is not touched** — overloading it, as revision 3 did, silently collapsed the retention horizon and erased the margin that makes R5 reachable. Cap counting reads `released_at IS NULL AND now < lease_expiry`; retention reads `lease_expiry`. |
+| APNs answers 410 / 400 `BadDeviceToken` after the §6 gateway retry | Delete the row (leaving a tombstone) — the token is genuinely dead. |
+| `POST /v1/bindings/release` (raw token in the body, bound tenant only) | Set `released_at = now`. **`lease_expiry` is not touched** — overloading it, as revision 3 did, silently collapsed the retention horizon and erased the margin that makes R5 reachable. Cap counting reads `released_at IS NULL AND now < lease_expiry`; retention reads `lease_expiry`; the next accepting claim clears `released_at`. |
 
 What each anchor buys, walked through the real lifecycle events:
 
@@ -282,23 +319,24 @@ Endpoints (JSON over HTTPS; tenant auth is `Authorization: Bearer <tenant_id>.<t
 - `POST /v1/challenges` `{purpose: "attestation"|"assertion"}` → `201 {challenge,
   expires_at}`. Tenant-authed, rate-limited per tenant and per IP. Single-use **on success**;
   TTL 15 min for attestation, 120 s for assertion.
-- `POST /v1/claims` `{token, client_data, pairing_secret, binding_kind, apns_environment,
-  attest_key_id, attestation? | assertion?}` → `204`, or `403 attestation_required |
-  attestation_invalid | reattest_required | pairing_mismatch | wrong_tenant |
-  key_tenant_limit`, or `429 binding_limit`. Implements §5. **Not idempotent** — see the claim
-  protocol. `reattest_required` means "Canopy does not know this key; generate a new App
-  Attest key and send an attestation, not an assertion", which is what makes a Canopy
-  restore-gap recoverable rather than indistinguishable from an attack. `wrong_tenant` is
-  distinct from `pairing_mismatch` so Trellis can tell "R4 refused you" from "your anchors are
-  wrong".
+- `POST /v1/claims` `{token, client_data, pairing_secret, device_id, binding_kind,
+  apns_environment, attest_key_id, attestation? | assertion?}` → `204`, or `403
+  attestation_required | attestation_invalid | reattest_required | challenge_unknown |
+  challenge_expired | challenge_wrong_tenant | challenge_wrong_purpose | kind_mismatch |
+  pairing_mismatch | wrong_tenant | key_tenant_limit`, or `429 binding_limit`. Implements §5.
+  **Not idempotent** — see the claim protocol. Each reason is emitted by exactly one named
+  rule or check, so Trellis and §10's UI can say something true rather than reporting every
+  refusal as a takeover. `reattest_required` means "Canopy does not know this key; generate a
+  new App Attest key and send an attestation, not an assertion", which is what makes a Canopy
+  restore-gap recoverable rather than indistinguishable from an attack.
 
   **Challenge binding.** Before anything else, the presented challenge must exist, be
   unconsumed, be unexpired, have been **issued to the authenticated tenant**, and match the
   **purpose** of the proof presented (`attestation` for attestations, `assertion` for
-  assertions). Revision 3 stored both columns and read neither, which left a claim replayable
-  under a *different* tenant — materially worse than verbatim replay, since every accepting
-  rule re-points the tenant — and let a 15-minute attestation challenge extend the assertion
-  replay window 7.5×.
+  assertions), each with its own reason code above. Revision 3 stored both columns and read
+  neither, which left a claim replayable under a *different* tenant — materially worse than
+  verbatim replay, since every accepting rule re-points the tenant — and let a 15-minute
+  attestation challenge extend the assertion replay window 7.5×.
 
   *Attestation verification* follows Apple's published procedure in full, in order:
   (1) `fmt` is `apple-appattest` and the CBOR has the expected `attStmt {x5c, receipt}` and
@@ -401,8 +439,12 @@ while leaving the third inconsistent:
 
 | `binding_kind` | lease | hard delete | dormancy (R5) |
 |---|---|---|---|
-| `activity` | 72 h, renewed on delivery | `lease_expiry + 7 d` (total 10 d) | **Not applicable** — the token dies with its card, so the row is deleted long before 90 d and returns to UNSEEN. This is safe precisely because the token is dead by then; it is stated rather than left to arithmetic. |
-| `start`, `device` | 30 d, renewed on delivery or claim | `lease_expiry + 90 d` (total 120 d) | Reachable in the window [90 d, 120 d], so a returning device still finds its elder anchors. |
+| `activity` | 72 h, renewed on delivery or claim | `lease_expiry + 7 d` (total 10 d) | **Not applicable** — the token dies with its card, so the row is deleted long before 90 d. This is safe precisely because the token is dead by then; it is stated rather than left to arithmetic. |
+| `start`, `device` | 30 d, renewed on delivery or claim | `lease_expiry + 90 d` (total 120 d) | Reachable in the window [90 d, 120 d]. |
+
+Hard deletion leaves a **tombstone** (§5) carrying only the two elder anchor hashes, so
+returning to UNSEEN never means "whoever claims next owns it outright": R0 seeds elder from the
+tombstone. Tombstones are two hashes per dead token and are themselves swept after a year.
 
 Trellis calls release when it drops a registration — after an end push, on a 400/410 drop, and
 on a dismissal disown — which is what keeps completed cards from lingering (Trellis stops
@@ -414,8 +456,10 @@ binding_limit`, surfaced in Trellis's `/health`.
 **Storage:** SQLite (WAL). `tenants` (id, secret_hash, recovery_hash, created_at, last_seen);
 `bindings` (as in §5); **`attest_keys` (key_id, public_key, counter, attest_environment,
 receipt, first_seen, last_seen)** — never garbage-collected with bindings, because assertions
-must verify long after any particular card is gone; `challenges` (nonce_hash, tenant, purpose,
-expires_at); plus in-memory rate buckets. Raw tokens arrive per-request and die with it.
+must verify long after any particular card is gone; `tombstones` (token_hash,
+elder_attest_key_id, elder_pairing_hash, deleted_at); `challenges` (nonce_hash, tenant,
+purpose, expires_at); plus in-memory rate buckets. Raw tokens arrive per-request and die with
+it.
 
 **Bindings and attest keys are durable state, not a cache.** WAL plus a daily off-box backup,
 and restore-from-backup is the recovery path (§11). The design does not assume clients can
@@ -456,12 +500,20 @@ today: la-push emits `timestamp`, `event`, `content-state`, `attributes`, `alert
 `dismissal-date` but no `stale-date` (`app.py:328-354`), `07-realtime.md:898` is a
 *recommendation to the app* rather than a record of server behaviour, and the native app passes
 `staleDate: nil` (`LiveActivityController.swift:291`, `:310`). So §11's "cards go visibly
-stale" needs building: **Trellis gains a `stale-date` on every card push**, a small multiple of
-`MIN_UPDATE_S` ahead of now, and Sprout's LOCAL-mode `ActivityContent(state:staleDate:)` stops
-passing `nil`. Without this, a Canopy outage looks exactly like a slow print — a card showing
-stale content with an ETA counting past zero, which is the lying card this is supposed to
-prevent. Claiming it was already true was itself an instance of the repo's recurring bug,
-inside the document that names it.
+stale" needs building: **Trellis gains a `stale-date` on every card push**, and Sprout's
+LOCAL-mode `ActivityContent(state:staleDate:)` stops passing `nil`.
+
+The interval must **not** be derived from `MIN_UPDATE_S`. That constant answers "how often at
+most may we push?" — it is a floor on the gap between pushes, gating a `meaningful_change`
+gate (`app.py:586`), with no heartbeat anywhere in the poll loop. "How long may silence last
+before the card is lying?" is a different question, and a paused print at 3 a.m. or a drying
+cycle sitting at target produces no meaningful change for a long time while everything is
+perfectly healthy. Deriving one from the other would mark healthy cards stale within a minute —
+the same lying card, inverted. So: a named `STALE_AFTER_S` (default 900 s), plus a **heartbeat
+re-push of the current content state at `STALE_AFTER_S / 2` when nothing meaningful has
+changed**, at priority 5 per the existing `_urgent` split (`app.py:315-320`), so a healthy
+pipeline continuously renews the stale date. The test is not "a stale-date is present" but "a
+card with no meaningful change still receives a push before its stale date elapses".
 
 **Encryption, stated accurately.** The APNs *envelope* cannot be encrypted: `event`,
 `dismissal-date`, `stale-date`, the push-to-start `attributes`, and the mandatory start `alert`
@@ -500,15 +552,19 @@ pairing secret.
   and both backends must be observably equivalent to the existing token-hygiene code.
 - **Enrollment and recovery**: in relay mode, on first boot with no stored credential, Trellis
   calls `/v1/enroll` and stores the tenant credential **and the recovery code** at
-  `DATA_DIR / "tenant.json"` (`DATA_DIR` defaults to `/data`, `app.py:54`). It also logs the
-  recovery code once at startup and exposes it on the authenticated `/health`, so the
-  self-hoster can save it somewhere that survives the data volume. A rebuild that supplies the
-  recovery code re-adopts the same tenant, which is what keeps §1's "zero manual unbinding"
-  promise true when the server *and* the app's anchors are lost together — otherwise that
-  combination (new tenant, no anchors, token still live) has no path but an operator unbind.
-  Enrollment failure is **not** fatal: retry with the §6 backoff, serve everything except push,
-  report `enrolled: false` on the authenticated `/health`.
-- **`stale-date` on every card push** (§7) — new behaviour, not a rename.
+  `DATA_DIR / "tenant.json"` (`DATA_DIR` defaults to `/data`, `app.py:54`). A rebuild that
+  supplies the recovery code re-adopts the same tenant, which is what keeps §1's "zero manual
+  unbinding" promise true when the server *and* the app's anchors are lost together —
+  otherwise that combination (new tenant, no anchors, token still live) has no path but an
+  operator unbind. The code is printed **once, on the startup log line**, and `/health` reports
+  only `recovery_code_saved: true|false` so the app can nag. It is deliberately **not** served
+  on `_require_key`: that gate accepts any key Bambuddy answers 200 to (`app.py:753-777`),
+  including the read-scoped app key, and the recovery code confers tenant identity — which is
+  exactly R4's precondition. Re-reading it requires the admin key by equality (the
+  `x_api_key == BAMBUDDY_API_KEY` fast path, `app.py:764`). Enrollment failure is **not** fatal:
+  retry with the §6 backoff, serve everything except push, report `enrolled: false` on the
+  authenticated `/health`.
+- **`stale-date` plus the `STALE_AFTER_S` heartbeat push** (§7) — new behaviour, not a rename.
 - **Phone-facing authentication is unchanged.** Every phone-facing endpoint — registrations,
   `/sync`, `/unregister`, collections — remains gated by `_require_key`, the existing
   `X-API-Key` check delegated to that user's Bambuddy (`app.py:753-777`). **The pairing secret
@@ -516,14 +572,19 @@ pairing secret.
 - **`/health` is split.** The unauthenticated route keeps `{ok: true}` for container health
   checks; counts, `push_suspended`, `needs_claim`, `enrolled`, the recovery code, and anything
   token-derived move behind `_require_key`.
-- **A device identity, because three new behaviours need one.** Both phones in a household
-  present the same Bambuddy API key, so Trellis currently cannot tell them apart — yet §9
-  requires per-device scoping in three places. Trellis mints a `device_id` at `/register-start`
-  and the app echoes it on every subsequent call. `/sync` then drops only the reporting
-  device's own tokens, `needs_claim` returns only the requesting device's tokens, and the p2s
-  pending claim is keyed per device. Without it, phone A's `needs_claim` would list phone B's
-  tokens, phone A would assert over them, R4 would accept (same tenant), and the two phones
-  would ping-pong each other's bindings until the elder budget ran out.
+- **A device identity, minted on the phone.** Both phones in a household present the same
+  Bambuddy API key, so Trellis cannot tell them apart — yet three behaviours need per-device
+  scoping. The `device_id` is 16 random bytes generated by the app and stored beside the
+  pairing secret (§10), **not** minted by Trellis at `/register-start`: that endpoint never
+  fires for a user who has Live Activities switched off, and such a user can still want alert
+  banners, so the one registration that would have no identity is `/register-device`. Minting
+  on the phone also means the value can travel inside the signed `client_data`, where Trellis
+  cannot alter it. `/sync` then drops only the reporting device's own tokens, `needs_claim`
+  returns only the requesting device's tokens, and the p2s pending claim is keyed per device.
+  Trellis rejects a relay-mode registration that omits it, with a stated reason. Without this,
+  phone A's `needs_claim` lists phone B's tokens, phone A claims over them, and both phones
+  land on repeated `pairing_mismatch` — raising the operator takeover alert and §10's "push
+  pairing was taken over" row for an ordinary two-phone household.
 - **Claim forwarding**: every registration forwards a claim synchronously. "Forward and forget"
   means Trellis never *persists* the pairing secret — it must still act on the response. A
   registration succeeds to the phone only when the claim returned a definitive answer; a
@@ -580,24 +641,29 @@ pairing secret.
   devices. Those installs show the explicit push-health row — "Push isn't available on this
   device" — rather than silently 403ing into nothing. No secretless fallback: the correct answer
   is a stated limitation, not a hole.
-- **Pairing secret**: 32 bytes, Keychain item `bambu.pairing`, separate from `AppConfig` so
-  sign-out or re-onboarding never destroys it.
+- **Pairing secret and device id**: 32 and 16 random bytes, generated at first launch and
+  stored in one Keychain item `bambu.pairing` alongside the attest key id, separate from
+  `AppConfig` so sign-out or re-onboarding never destroys them. The `device_id` exists before
+  any registration of any kind, which is why Trellis does not mint it (§9).
 - **Keychain accessibility, including a migration for existing installs.** The whole
   registration credential set must be background-readable: the POST also needs the API key and
   the Trellis URL, which live in `AppConfig` under `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
   (`SecureConfig.swift:92`). The canonical background wake is a push-to-start arriving while the
   phone is locked in a pocket — Apple grants background runtime there — and a `WhenUnlocked`
   read fails at exactly that moment, so the claim never leaves the phone and the
-  remotely-started card freezes at its start content. Move the pairing item, the attest key id,
-  and a minimal `{pushUrl, apiKey}` item to `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`,
-  still `ThisDeviceOnly`. **Changing that line alone fixes nothing for anyone already
+  remotely-started card freezes at its start content. Move **the `bambu.pairing` item and
+  `AppConfig` itself** to `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, still
+  `ThisDeviceOnly` — moving the whole config blob rather than duplicating `{pushUrl, apiKey}`
+  into a second item avoids inventing a sync rule between two copies of the same credentials.
+  **Changing that line alone fixes nothing for anyone already
   onboarded**: `kSecAttrAccessible` is set only on the add branch (`SecureConfig.swift:80-94`),
   and the update branch never re-states it, so every existing install would keep `WhenUnlocked`
   forever. Add a one-shot launch migration that re-states the attribute via `SecItemUpdate`'s
   attributes dictionary (no delete needed, so the device is never briefly credential-less).
 - **A persisted pending-claim queue covering all three registrations.** Today only `/register`
-  retries: `flushRegistrations()` runs every 4 s against a `registered` set
-  (`LiveActivityController.swift:455-471`). `/register-start` is a fire-and-forget POST inside
+  retries: `flushRegistrations()` (`LiveActivityController.swift:455-460`) is driven by the 4 s
+  `sync` (`:239-242`) against a `registered` set, with a 30 s per-pair backoff.
+  `/register-start` is a fire-and-forget POST inside
   the `pushToStartTokenUpdates` loop whose result is discarded and which only iterates again on
   token rotation (`:346-355`), and `/register-device` does not exist on the client at all
   (`00-overview.md:116`). So a brand-new install whose first claim meets a down Canopy never
@@ -627,10 +693,10 @@ pairing secret.
   help, and never after a force-quit. The deterministic paths are re-claim on foreground, on
   every token-stream emission, and in response to `needs_claim`; and Canopy treats its own
   database as durable state rather than something clients rebuild (§6).
-- **Registration bodies** gain `client_data`, `pairing_secret`, `binding_kind`,
-  `apns_environment`, `attest_key_id`, `attestation`/`assertion`, and the `device_id` echo —
-  snake_case, tested like the existing fields. `binding_kind` is distinct from the existing
-  `kind` (`print | dry`) in the same body.
+- **Registration bodies** gain `client_data`, `pairing_secret`, `device_id`, `binding_kind`,
+  `apns_environment`, `attest_key_id`, and `attestation`/`assertion` — snake_case, tested like
+  the existing fields. `binding_kind` (`activity | start | device`) is distinct from the
+  existing `kind` (`print | dry`) in the same body, and the app must send both.
 - **URL sourcing**: challenges, claims, and the push-health read use `resolvePushUrl` (they are
   push); collections keep `laPushUrl` (they are not).
 - `ConfigRules` derivation becomes `bambuddy.` → `trellis.`; explicit `pushUrl` still wins; the
@@ -650,10 +716,11 @@ pairing secret.
 | Trellis down / server rebuilt, credential restored or recovery code used | No pushes meanwhile; the phone's next registration restores everything (R1). |
 | Server rebuilt **and** the app lost both anchors, recovery code available | Recovery code preserves tenant identity → R4 accepts a fresh attestation → self-heals. |
 | Server rebuilt **and** the app lost both anchors **and** no recovery code | The one combination with no automatic path: new tenant, no anchors, and a token still live enough never to go dormant. Operator unbind (§14). The self-hoster guide must say to save the recovery code; §9 logs it and exposes it on `/health` for that reason. |
-| Attacker seizes a binding (compromised Trellis, hooked app via R4) | Junk pushes to that user's own devices only. R3 evicts on the phone's next claim inside the 90 d elder window; R4 is capped at once per window so it cannot be replayed to lock the victim out. |
+| Attacker seizes a binding (compromised Trellis, hooked app via R2 or R4) | Junk pushes to that user's own devices only. Both rules retain the outgoing anchors as elder, so R3 evicts on the phone's next claim inside the 90 d window; `last_rebind_at` is monotonic and survives eviction, so R4 cannot be re-armed by evicting and cannot ping-pong the victim out. |
 | Someone else first-claimed a token Canopy had never seen | The residual in §4. The victim's claims get `pairing_mismatch`; the consistent-claimant alert fires for the operator and surfaces in the app; recovery is operator unbind. |
-| Phone loses both anchors, same tenant | R4 accepts a fresh, previously-unseen attest key and self-heals silently. |
-| Token genuinely abandoned (no delivery or claim for 90 d) | R5 rebinds, prior anchors retained as elder for 90 d — reachable because `start`/`device` rows survive to 120 d (§6). |
+| Phone loses both anchors, same tenant and device | R4 accepts a fresh attestation and self-heals silently, once per 90 d per row. |
+| Token genuinely abandoned (no delivery or *successful* claim for 90 d) | R5 rebinds, prior anchors retained as elder — reachable because `start`/`device` rows survive to 120 d and because rejected claims stamp `last_failed_claim_at`, not the dormancy clock. Revision 4 had them share one column, which meant a phone retrying every 5 minutes held its own row non-dormant forever and made R5 unreachable for the very user it protects. |
+| Row hard-deleted at 120 d, then claimed by someone else | R0 seeds elder from the tombstone, so a returning device still evicts via R3. Without tombstones, waiting 30 days past dormancy was strictly better for an attacker than triggering R5. |
 | Wrong APNs environment on a claim | The first `BadDeviceToken` triggers the other-gateway retry with that gateway's key, correcting the stored `apns_environment` for the row's lifetime (§6). |
 | APNs key compromised | Owner revokes and uploads a new key; zero tenant or user action (invariant 5). Bundle-scoped keys keep the blast radius inside this app. |
 
@@ -662,12 +729,24 @@ pairing secret.
 - **Canopy (Go)**: table-driven tests over the binding state machine that **feed one claim and
   assert which rule fired**, not one test per rule — a per-rule suite is structurally incapable
   of catching two rules matching one input, which is how revision 3's overlaps survived. Cases
-  must include: R1 does not clear elder; R3 clears elder and evicts; R4 refused for a
-  previously-seen attest key, refused for a different tenant (`wrong_tenant`, distinct from
-  `pairing_mismatch`), refused twice in one elder window, and retaining elder when accepted; R5
-  reachable at 91 d and refused at 89 d; a stranger-tenant claim against a lease-expired row
-  refused, and against a released row refused; per-kind arithmetic asserted as
-  `hard_delete(kind) - lease(kind) > dormancy` for every kind where R5 applies. Crypto: real
+  must include every rule R0–R6b, and specifically: R0 seeding elder from a tombstone; R1
+  leaving `pairing_hash` byte-identical when the claim carries a different pairing secret, and
+  the original secret still matching afterwards; R1 not clearing elder; R2 accepting an
+  assertion from a known non-current key so **one reinstall recovers both durable tokens**, and
+  R2 retaining elder such that a following R3 evicts it; R3 re-pointing the tenant, verified by
+  a push from the pre-R3 tenant returning `not_owner` and from the claiming tenant returning
+  200; R4 refused for a key holding live bindings under another tenant, refused for a different
+  tenant or `device_id` with `wrong_tenant` (not counted toward the takeover alert), refused
+  twice inside 90 d, and R4→R3→R4 refusing the second R4; R4 accepted again after the window
+  lapses unused; R5 reachable at 91 d and refused at 89 d, and *not* held off by a phone
+  retrying a failing claim every 5 minutes; a stranger-tenant claim against a lease-expired row
+  and against a released row both refused; **release then re-claim then push returns 200**, and
+  the row counts against the cap again; an `activity`-labelled claim against a `device` row
+  refused with `kind_mismatch` and leaving the horizons unchanged; a day-89/day-91 pair for a
+  device presenting only an elder anchor. Per-kind arithmetic is asserted as
+  `lease(kind) + retention_after_lease(kind) > dormancy` — both terms measured from the same
+  last-activity epoch, giving 120 > 90 with a 30 d margin; revision 4's formula subtracted the
+  lease term, double-counting it, and would have failed on its own constants. Crypto: real
   captured fixtures plus negatives for a missing or altered credCert nonce extension, a resigned
   assertion, swapped `authenticatorData`, wrong `rpIdHash`, an aaguid with a valid `appattest`
   prefix and **non-zero** suffix bytes (the only input that distinguishes exact from prefix
@@ -689,11 +768,15 @@ pairing secret.
   across restart; multi-registration fan-out for two phones on one printer, per-registration
   gating state, token-scoped `/unregister`, phone A's `/sync` not dropping phone B's
   registrations, phone A's `/health` not listing phone B's `needs_claim` tokens, two pending
-  starts for one device binding correctly or not at all (never arbitrarily), and the
-  `registrations.json` dict→list migration; release on card end; every card push carrying a
-  future `stale-date`; unauthenticated `/health` revealing no token prefixes or recovery code;
-  enrollment failure non-fatal and recovery-code re-adoption; startup fail-hard on ambiguous
-  backend config; rejection of unattested registrations in relay mode.
+  starts for one device binding correctly or not at all (never arbitrarily), `/register-device`
+  correctly device-scoped with no prior `/register-start`, and the `registrations.json`
+  dict→list migration; release on card end; **a card with no meaningful change for
+  `STALE_AFTER_S / 2` still receiving a heartbeat push, so its stale date never elapses while
+  the poll loop runs** — a presence assertion on the field cannot catch the interval being
+  wrong; `/health` with a Bambuddy-valid but non-admin key returning neither token prefixes nor
+  the recovery code; enrollment failure non-fatal and recovery-code re-adoption; startup
+  fail-hard on ambiguous backend config; rejection of unattested or `device_id`-less
+  registrations in relay mode.
 - **Sprout (XCTest)**: registration body encoding and the `client_data` golden fixture, asserting
   `binding_kind: "activity"` on a `/register` post whose `kind` is `"dry"`; Keychain pairing and
   attest-key lifecycle, survival of a config wipe, readability after first unlock, and **the
@@ -749,5 +832,7 @@ attestation tests need real-device artefacts, so the harness comes first.
   (`docs/guides/android.md`); Canopy would gain an FCM credential and a topic-table entry, with
   Play Integrity replacing App Attest as the device anchor.
 - A payload-scrubbing knob (user opts filenames out of push payloads at the Trellis level).
-- Operator tooling beyond manual unbind by token hash, which **is** in scope as the support
-  backstop for a stuck or seized binding.
+- Operator tooling beyond manual unbind, which **is** in scope as the support backstop for a
+  stuck or seized binding. It takes the **raw token**, like every other endpoint — a
+  `token_hash` argument would reintroduce the unpinned cross-language hash contract that the
+  release endpoint was changed to eliminate.
