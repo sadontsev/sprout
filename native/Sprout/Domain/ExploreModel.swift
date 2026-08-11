@@ -68,6 +68,67 @@ final class ExploreModel {
     /// and `activeQuery`/`activeNav` still act as the write barrier so a straggler cannot land.
     private var fetch: Task<Void, Never>?
 
+    /// What was on screen before the current mode was entered, so leaving it is instant and lands
+    /// where the user actually was.
+    ///
+    /// The bug this fixes: tapping "My collections" during a search replaced the results with the
+    /// folder list, the chip rendered as selected, and **nothing turned it off**. The query was
+    /// still in the field, so the app looked like it was showing a search it had thrown away. A
+    /// control that can be switched on must be able to be switched off, and "off" has to mean
+    /// something — here it means the results you were looking at, restored without a refetch.
+    private var previous: Snapshot?
+
+    private struct Snapshot {
+        var query: String?
+        var nav: String?
+        var hits: [MWSearchHit]
+        var total: Int?
+        var sort: MakerWorldSearch.Sort
+    }
+
+    /// True when there is a mode to leave — drives whether a selected chip is a toggle.
+    var canExitMode: Bool { showingCollections || activeCollection != nil || activeNav != nil }
+
+    /// Remember the result set being replaced, but only if it is one worth coming back to.
+    private func rememberCurrent() {
+        guard activeQuery != nil || activeNav != nil, !showingCollections, activeCollection == nil
+        else { return }
+        previous = Snapshot(query: activeQuery, nav: activeNav, hits: hits, total: hitTotal, sort: sort)
+    }
+
+    /// Turn the current mode off and go back to what was underneath.
+    ///
+    /// Restores from the snapshot rather than refetching: the results were correct when they were
+    /// replaced, and a round trip to un-tap a chip would make leaving slower than entering.
+    func exitMode() {
+        // You cannot leave a mode you are not in. Without this guard, calling it while a plain
+        // search is showing takes the no-snapshot branch and wipes the live results — which a test
+        // caught: search, enter collections, search again, exit → an empty grid and no query.
+        guard canExitMode else { return }
+        fetch?.cancel()
+        loading = false
+        showingCollections = false
+        activeCollection = nil
+        searchError = nil
+
+        if let previous {
+            activeQuery = previous.query
+            activeNav = previous.nav
+            hits = previous.hits
+            hitTotal = previous.total
+            sort = previous.sort
+            self.previous = nil
+        } else {
+            // Nothing underneath — go back to the cold screen rather than an empty grid that looks
+            // like a search returning nothing.
+            activeQuery = nil
+            activeNav = nil
+            hits = []
+            hitTotal = nil
+            sort = .relevance
+        }
+    }
+
     /// Resolve responses for this session, keyed by model id, so back-then-forward is instant.
     private var resolveCache: [Int: MakerWorldResolved] = [:]
 
@@ -127,6 +188,7 @@ final class ExploreModel {
         activeCollection = nil
         activeNav = nil
         activeQuery = trimmed
+        previous = nil          // searching IS the way out; there is nothing left to go back to
         startFetch { m in
             let page = try await m.searchClient.search(trimmed)
             guard m.activeQuery == trimmed else { return }   // a newer query won
@@ -136,6 +198,7 @@ final class ExploreModel {
     }
 
     func browse(_ nav: MWNav) {
+        rememberCurrent()
         showingCollections = false
         activeCollection = nil
         activeQuery = nil
@@ -153,6 +216,7 @@ final class ExploreModel {
     /// `laPushUrl`, **not** `resolvePushUrl`: collections are plain authenticated HTTP with no APNs
     /// involved, so they must not disappear when Live-Activity push is switched off.
     func openCollections(_ client: CollectionsClient) {
+        rememberCurrent()
         showingCollections = true
         activeCollection = nil
         activeNav = nil
