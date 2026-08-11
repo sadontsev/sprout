@@ -1268,6 +1268,11 @@ class Sync(BaseModel):
     # indistinguishable, so one phone's reconcile deregisters the other's cards — they then freeze,
     # never updated and never ended, while the next tick starts duplicates underneath.
     device_id: str = ""
+    # Which app is reporting. A card adopted through this path is pushed to with the payload shape
+    # this names, and the shapes are not interchangeable: an expo-shaped start reaches a native
+    # widget as a push APNs accepts and the phone shows no card for. Defaulting to expo keeps the
+    # installed RN app working unchanged; the native app sends "native" explicitly.
+    client: str = ""
 
 
 @app.post("/sync")
@@ -1307,11 +1312,10 @@ async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
             "printerId": pid, "pushToken": tok, "deviceId": device,
             "printerName": _printers_cache.get(pid) or f"Printer {pid}",
             "iconUri": r.icon_uri, "kind": "dry" if key.startswith("dry:") else "print",
-            # /sync is the RN app's reconcile path and ONLY the RN app's — the native app hands a
-            # remotely-started card over through /register (with client:"native") when its push-token
-            # stream fires, and never posts here. Stated rather than left to default so a native app
-            # that grows a /sync call is an obvious edit rather than a silent expo-shaped push.
-            "client": EXPO,
+            # Taken from the reporting app, not assumed. This was EXPO with a note that the native
+            # app never posted here — it does now, and an unmarked adoption would push an
+            # expo-shaped payload at a native widget: accepted by APNs, no card on the phone.
+            "client": norm_client(r.client),
             "lastPush": 0, "lastState": None,
         })
         _p2s_pending.pop(_pending_id(key, device), None)

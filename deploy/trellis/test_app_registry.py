@@ -266,3 +266,89 @@ class RegistrationReportsWhetherItBound(unittest.TestCase):
         self.assertIs(device.json()["bound"], False)
         self.assertIn("start-1", la._needs_claim)
         self.assertIn("dev-1", la._needs_claim)
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class SyncCarriesTheReportingClient(unittest.TestCase):
+    """A card adopted through /sync is pushed to with the payload shape of whichever app reported it.
+
+    This path used to hardcode expo, with a note that the native app never posts here. It does now,
+    and an unmarked adoption pushes an expo-shaped start at a native widget — accepted by APNs, and
+    no card on the phone. Exactly the failure this codebase keeps rediscovering: a value that was
+    safe to assume right up until the moment it wasn't.
+    """
+
+    def setUp(self):
+        la.app.dependency_overrides[la._require_key] = lambda: None
+        self.client = TestClient(la.app)
+        la._regs = {}
+        la._needs_claim = {}
+        la._p2s_pending = {la._pending_id("2", "phoneA"): 9e12}  # an outstanding remote start
+        la._printers_cache = {2: "H2C"}
+        la._save = lambda: None
+
+    def tearDown(self):
+        la.app.dependency_overrides.clear()
+
+    def adopt(self, **extra):
+        self.client.post("/sync", json={"tokens": ["tok-new"], "device_id": "phoneA", **extra})
+        return la._regs["2"][0]
+
+    def test_a_native_report_adopts_the_card_as_native(self):
+        self.assertEqual(self.adopt(client="native")["client"], "native")
+
+    def test_an_unmarked_report_still_adopts_as_expo(self):
+        # The installed RN app does not send the field, and must keep working unchanged.
+        self.assertEqual(self.adopt()["client"], "expo")
+
+    def test_an_unknown_client_degrades_to_expo_rather_than_failing(self):
+        self.assertEqual(self.adopt(client="something-new")["client"], "expo")
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class SyncReconcilesGhostCards(unittest.TestCase):
+    """The deadlock this path exists to break.
+
+    A card that dies on the phone leaves a registration nothing can push into, and because Trellis
+    refuses to start a card for a key it already holds, no replacement is ever made. Observed live:
+    installing a new build terminated the running Live Activity, and the print then had no card at
+    all until the registry was cleared by hand.
+    """
+
+    def setUp(self):
+        la.app.dependency_overrides[la._require_key] = lambda: None
+        self.client = TestClient(la.app)
+        la._regs = {}
+        la._needs_claim = {}
+        la._p2s_pending = {}
+        la._save = lambda: None
+
+    def tearDown(self):
+        la.app.dependency_overrides.clear()
+
+    def test_a_card_the_device_can_no_longer_see_is_dropped(self):
+        self.client.post("/register", json={
+            "printer_id": 2, "push_token": "ghost", "printer_name": "H2C",
+            "device_id": "phoneA", "client": "native",
+        })
+        self.client.post("/sync", json={"tokens": [], "device_id": "phoneA", "client": "native"})
+
+        self.assertNotIn("2", la._regs,
+                         "the ghost row blocks push-to-start for the rest of the print")
+
+    def test_an_unclaimable_token_comes_back_for_the_app_to_end(self):
+        body = self.client.post("/sync", json={
+            "tokens": ["orphan"], "device_id": "phoneA", "client": "native",
+        }).json()
+
+        self.assertEqual(body["end"], ["orphan"])
+
+    def test_needs_claim_is_returned_scoped_to_the_reporting_device(self):
+        # The recovery signal the app acts on. Handing one phone another's tokens would have it
+        # claim tokens it does not hold, which is an attestation oracle.
+        la._needs_claim = {"mine": "phoneA", "theirs": "phoneB"}
+        body = self.client.post("/sync", json={
+            "tokens": [], "device_id": "phoneA", "client": "native",
+        }).json()
+
+        self.assertEqual(body["needs_claim"], ["mine"])
