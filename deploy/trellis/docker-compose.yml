@@ -7,30 +7,38 @@ services:
     network_mode: host
     environment:
       BAMBUDDY_URL: http://localhost:8910
-      BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY}   # from ./.env (never committed)
-      APNS_KEY_PATH: /keys/apns_key.p8
-      # From ./.env — see .env.example. These were literals for a while, which meant anyone else
-      # deploying this signed their pushes with THEIR .p8 while claiming the original owner's key id
-      # and team, and APNs answered 403 InvalidProviderToken / 400 TopicDisallowed. `:?` fails the
-      # deploy loudly instead of at the first push.
-      # DIRECT mode: this deployment signs with its own APNs key. Optional rather than fail-hard,
-      # because RELAY mode holds no key at all and must not be forced to invent these — app.py
-      # enforces "exactly one backend" at startup, which is where that check belongs. Compose
-      # refusing to interpolate would stop the container before that message could ever be printed.
+
+      # ── the ONE required value ──────────────────────────────────────────────────────────────
+      # `:?` so an unset or empty key stops the deploy. Written as a bare ${BAMBUDDY_API_KEY} it
+      # became the EMPTY STRING, which is set as far as os.environ is concerned — so Trellis booted
+      # happily and every Bambuddy call answered 401. That reads as "Bambuddy is broken" and sends
+      # you to look at the wrong service.
+      BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY:?set BAMBUDDY_API_KEY in .env — see .env.example}
+
+      # ── everything below is OPTIONAL: only for self-hosting the push path ───────────────────
+      #
+      # With all of it unset, Trellis relays through the push service run by the app's author. No
+      # Apple developer account, no APNs key, no push certificate. That is the normal deployment.
+      # docs/guides/self-hosting-push.md covers the alternatives and when they are worth it.
+      #
+      # All `:-` rather than `:?` on purpose: a relay-mode deployment holds no Apple credentials at
+      # all and must not be made to invent them. app.py enforces "exactly one push backend, and a
+      # complete one" at startup, which is where that check belongs — compose refusing to
+      # interpolate would kill the container before the message explaining why could be printed.
+
+      # Self-hosting your own relay: point at your Canopy instead of the author's.
+      CANOPY_URL: ${CANOPY_URL:-}
+      # Some relays gate enrolment while young. Without it a gated relay answers 403 and push simply
+      # stays off, so app.py logs this variable by name rather than a bare status.
+      CANOPY_INVITE_CODE: ${CANOPY_INVITE_CODE:-}
+
+      # Signing locally instead, with no relay. Setting APNS_KEY_ID is what opts out of the relay,
+      # and all three are then required together — app.py refuses a partial set, which used to boot
+      # and sign every JWT with an empty issuer (403 InvalidProviderToken on every push, forever).
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_TOPIC: ${APNS_TOPIC:-}
-      # Which push relay to use. LEAVE THIS UNSET unless you are self-hosting Canopy: app.py then
-      # defaults to the relay run by the app's author, which is what makes the App Store build work
-      # out of the box with no Apple developer account of your own.
-      #
-      # Setting it, together with the APNS_* set, is refused at startup — that is ambiguous about
-      # who signs. To sign locally instead, set APNS_KEY_ID and leave this empty.
-      # See docs/guides/self-hosting-push.md.
-      CANOPY_URL: ${CANOPY_URL:-}
-      # Some relays gate enrolment behind an invite while young. Without it a gated relay answers
-      # 403 and push simply stays off, so app.py logs the variable to set rather than a bare status.
-      CANOPY_INVITE_CODE: ${CANOPY_INVITE_CODE:-}
+      APNS_KEY_PATH: /keys/apns_key.p8
       # NOT set here on purpose: app.py derives it from APNS_TOPIC, and passing an empty value would
       # DEFEAT that default (os.environ.get returns "" rather than falling back), sending an empty
       # apns-topic on every alert banner. Add it to .env only if your bundle id is not APNS_TOPIC

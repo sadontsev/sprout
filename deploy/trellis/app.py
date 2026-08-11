@@ -39,7 +39,17 @@ from p2s import dry_identity, next_started_for, print_identity, should_start
 
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
-BAMBUDDY_API_KEY = os.environ["BAMBUDDY_API_KEY"]
+# Not os.environ["…"]: compose turns an unset variable into the EMPTY STRING, which is present as
+# far as os.environ is concerned, so the KeyError never fired. Trellis booted with a blank key and
+# every Bambuddy call answered 401 — a failure that reads as "Bambuddy is broken" and sends you to
+# the wrong service. Present-but-empty and absent are the same thing for a credential.
+BAMBUDDY_API_KEY = os.environ.get("BAMBUDDY_API_KEY", "").strip()
+if not BAMBUDDY_API_KEY:
+    raise SystemExit(
+        "BAMBUDDY_API_KEY is empty. Trellis polls Bambuddy with it and validates the app's key "
+        "against Bambuddy too, so without it nothing works and every call answers 401. "
+        "See deploy/trellis/.env.example."
+    )
 
 # The push relay run by the app's author, and the default for anyone installing the App Store
 # build. It is a public hostname, not a secret: it holds only APNs signing keys and per-device

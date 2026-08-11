@@ -182,3 +182,41 @@ class TheExampleEnvMatchesTheDefault(unittest.TestCase):
 
     def test_it_points_at_the_self_hosting_guide(self):
         self.assertIn("docs/guides/self-hosting-push.md", self.path.read_text())
+
+
+class TheRequiredCredentialIsActuallyRequired(unittest.TestCase):
+    """Present-but-empty and absent are the same thing for a credential.
+
+    compose turns an unset variable into the EMPTY STRING, so `os.environ["BAMBUDDY_API_KEY"]`
+    never raised: Trellis booted with a blank key and every Bambuddy call answered 401. That reads
+    as "Bambuddy is broken" and sends the operator to the wrong service entirely.
+
+    The inversion is what made it worth fixing: six OPTIONAL push variables carried a comment
+    claiming the deploy fails loudly without them, while the one genuinely required value failed
+    silently.
+    """
+
+    def setUp(self):
+        import pathlib
+        self.compose = (pathlib.Path(__file__).parent / "docker-compose.yml").read_text()
+        self.app = (pathlib.Path(__file__).parent / "app.py").read_text()
+
+    def test_compose_fails_the_deploy_without_it(self):
+        self.assertIn("BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY:?", self.compose,
+                      "a bare ${VAR} interpolates to empty, which is not the same as required")
+
+    def test_the_module_rejects_an_empty_key(self):
+        # For anyone running it outside compose, where nothing sets the variable at all.
+        self.assertIn('os.environ.get("BAMBUDDY_API_KEY", "").strip()', self.app)
+        self.assertIn("BAMBUDDY_API_KEY is empty", self.app)
+
+    def test_the_push_variables_stay_optional(self):
+        # A relay deployment holds no Apple credentials and must not be made to invent them.
+        for name in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC", "CANOPY_URL", "CANOPY_INVITE_CODE"):
+            self.assertIn(f"{name}: ${{{name}:-}}", self.compose,
+                          f"{name} must be optional; app.py owns the completeness check")
+
+    def test_no_stale_claim_that_the_apns_values_are_fail_hard(self):
+        # The comment that made this file look credential-heavy described a `:?` that had already
+        # been changed to `:-` two lines below it.
+        self.assertNotIn("`:?` fails the deploy loudly instead of at the first push", self.compose)
