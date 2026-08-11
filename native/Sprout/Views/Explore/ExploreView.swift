@@ -23,12 +23,13 @@ struct ExploreView: View {
     @Environment(ExploreModel.self) private var explore
 
     @FocusState private var fieldFocused: Bool
+    @Namespace private var tiles
 
     var body: some View {
         @Bindable var explore = explore
         return NavigationStack(path: $explore.path) {
             ExploreRoot(model: model, client: client, onImported: onImported,
-                        fieldFocused: $fieldFocused)
+                        fieldFocused: $fieldFocused, tiles: tiles)
                 .navigationTitle("MakerWorld")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -38,6 +39,9 @@ struct ExploreView: View {
                 }
                 .navigationDestination(for: MWSearchHit.self) { hit in
                     ModelDetailView(model: model, client: client, hit: hit, onImported: onImported)
+                        // C1's other half: the tapped tile visibly BECOMES the page, so the
+                        // transition itself is the feedback rather than a spinner somewhere above.
+                        .navigationTransition(.zoom(sourceID: hit.id, in: tiles))
                 }
         }
         .tint(c.accent)
@@ -71,6 +75,7 @@ private struct ExploreRoot: View {
     let client: BambuddyClient
     var onImported: (() -> Void)?
     @FocusState.Binding var fieldFocused: Bool
+    let tiles: Namespace.ID
 
     @Environment(\.palette) private var c
     @Environment(ExploreModel.self) private var explore
@@ -249,6 +254,7 @@ private struct ExploreRoot: View {
                         ExploreTile(hit: hit, client: client)
                     }
                     .buttonStyle(.plain)
+                    .matchedTransitionSource(id: hit.id, in: tiles)
                     .onAppear {
                         // Prefetch rather than a Load more button (F9): kick the next page when the
                         // 8th-from-last tile appears, so paging happens before the user reaches the end.
