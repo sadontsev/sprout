@@ -456,6 +456,16 @@ func (s *Server) push(w http.ResponseWriter, r *http.Request, tenantID string) {
 		writeErr(w, http.StatusBadRequest, "unknown_push_type")
 		return
 	}
+	// Owning the binding is not the same question as being allowed to send THIS
+	// kind of push through it. Without this, a device token bound under the
+	// claimant-chosen label "start" — which R0 binds with no vouch, because
+	// start tokens genuinely cannot be vouched — could carry an `alert`, whose
+	// topic is the bare bundle id, and APNs would deliver an attacker-authored
+	// banner to the victim's phone. Reproduced end to end before this existed.
+	if !row.Kind.Permits(body.PushType) {
+		writeErr(w, http.StatusForbidden, "push_type_not_permitted")
+		return
+	}
 
 	env := apns.Production
 	if row.APNSEnvironment == string(apns.Sandbox) {

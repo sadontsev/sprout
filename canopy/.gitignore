@@ -2,3 +2,7 @@
 *.db
 *.db-wal
 *.db-shm
+
+# The captured attestation is real: its app id is <TEAMID>.<bundle id>, and the team id
+# identifies an Apple developer account. This repo is public and commits nothing identifying.
+internal/appattest/testdata/attestation.appid
