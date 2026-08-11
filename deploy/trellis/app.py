@@ -34,33 +34,52 @@ import canopy
 import outbox as ob
 import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
-from cooldown import COOL_DEFAULT_C, COOL_MAX_C, COOL_MIN_C, READY, clamp_threshold, cool_step
-from p2s import dry_identity, next_started_for, print_identity, prune, should_start
+from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
+from p2s import dry_identity, next_started_for, print_identity, should_start
 
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
 BAMBUDDY_API_KEY = os.environ["BAMBUDDY_API_KEY"]
 
+# The push relay run by the app's author, and the default for anyone installing the App Store
+# build. It is a public hostname, not a secret: it holds only APNs signing keys and per-device
+# bindings, and every endpoint on it requires either a tenant bearer or a claim signed by App
+# Attest. Publishing it is what lets a fresh install work without the owner handing anything over.
+#
+# Overridable so a self-hoster can point at their own — see docs/guides/self-hosting-push.md, which
+# also explains why running your own Canopy means running your own BUILD of the app: APNs keys are
+# team-scoped and the topic is the bundle id, so another team's key cannot push to this app.
+DEFAULT_CANOPY_URL = "https://canopy.sadontsev.com"
+
 # Push backend. DIRECT signs with this deployment's own APNs key; RELAY forwards to Canopy, which
-# holds the key for App Store builds. Exactly one must be configured: both, or neither, is
-# ambiguous about who is expected to sign, and a deployment that guesses would fail at the first
-# push rather than at startup.
-CANOPY_URL = os.environ.get("CANOPY_URL", "").rstrip("/")
-APNS_KEY_PATH = os.environ.get("APNS_KEY_PATH", "/keys/apns_key.p8")
-# In RELAY mode nothing Apple-specific lives here: no key, no key id, no team id, no topic, no
-# host. That is the point — the owner can rotate the signing key without any self-hoster acting.
-RELAY_MODE = bool(CANOPY_URL)
-if RELAY_MODE and os.environ.get("APNS_KEY_ID"):
+# holds the key for App Store builds.
+#
+# The default is RELAY at DEFAULT_CANOPY_URL, because the overwhelmingly common deployment is
+# somebody running the App Store build who has no Apple developer account at all. Requiring them to
+# discover and set a URL to get any push at all would make the default experience "nothing works",
+# with nothing on screen saying why.
+#
+# Setting APNS_KEY_ID opts out: it says this deployment intends to sign for itself. Configuring
+# BOTH explicitly is still fatal — that is ambiguous about who signs, and guessing would fail at
+# the first push rather than at startup.
+_explicit_canopy = os.environ.get("CANOPY_URL", "").rstrip("/")
+_signs_locally = bool(os.environ.get("APNS_KEY_ID"))
+if _explicit_canopy and _signs_locally:
     raise SystemExit(
         "Both CANOPY_URL and APNS_KEY_ID are set. Exactly one push backend must be configured: "
         "CANOPY_URL to relay through Canopy, or the APNS_* set to sign locally. Configuring both "
         "leaves it ambiguous which key is expected to sign."
     )
-if not RELAY_MODE and not os.environ.get("APNS_KEY_ID"):
-    raise SystemExit(
-        "No push backend configured. Set CANOPY_URL to relay through Canopy, or the APNS_* set to "
-        "sign locally with your own key."
-    )
+CANOPY_URL = _explicit_canopy or ("" if _signs_locally else DEFAULT_CANOPY_URL)
+APNS_KEY_PATH = os.environ.get("APNS_KEY_PATH", "/keys/apns_key.p8")
+# In RELAY mode nothing Apple-specific lives here: no key, no key id, no team id, no topic, no
+# host. That is the point — the owner can rotate the signing key without any self-hoster acting.
+RELAY_MODE = bool(CANOPY_URL)
+
+# Some relays gate enrolment behind an invite while they are young. Read here and passed to
+# enrol; without it a gated relay answers 403 and push stays off, so the failure is logged with
+# the variable to set rather than as a bare HTTP status.
+CANOPY_INVITE_CODE = os.environ.get("CANOPY_INVITE_CODE", "")
 
 APNS_KEY_ID = os.environ.get("APNS_KEY_ID", "")
 APNS_TEAM_ID = os.environ.get("APNS_TEAM_ID", "")
@@ -855,7 +874,6 @@ async def _tick(client: httpx.AsyncClient) -> None:
         # 1c) Push-to-start: a print/dry began while NO card is registered (app closed) -> start the
         # Live Activity remotely. Edge-triggered exactly like the banners so it fires once per event.
         if _p2s_tokens:
-            prev_kind = _last_kind.get(pid)
             # STATE-based, not edge-based: "this printer is live and has no card" is the condition,
             # so a print that was ALREADY running when the service (or the card) went away still gets
             # one. Edge-triggering meant a mid-print restart, or a card the user swiped away, could
@@ -1165,9 +1183,17 @@ async def _ensure_enrolled() -> None:
         return
 
     try:
-        creds = await _canopy.enroll(recovery_code=stored.get("recovery_code", ""))
+        creds = await _canopy.enroll(
+            invite_code=CANOPY_INVITE_CODE,
+            recovery_code=stored.get("recovery_code", ""),
+        )
     except Exception as e:  # noqa: BLE001
-        print(f"[canopy] enrolment failed ({e}); push is off until it succeeds", flush=True)
+        hint = ""
+        if "403" in str(e) and not CANOPY_INVITE_CODE:
+            # The one failure a self-hoster cannot diagnose from the status alone.
+            hint = (" — this relay requires an invite; set CANOPY_INVITE_CODE, or point CANOPY_URL "
+                    "at your own Canopy (docs/guides/self-hosting-push.md)")
+        print(f"[canopy] enrolment failed ({e}){hint}; push is off until it succeeds", flush=True)
         _canopy.credentials = None
         return
 
