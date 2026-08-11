@@ -2,7 +2,10 @@
 
 **Status:** approved design, not yet implemented
 **Date:** 2026-08-11
-**Revision:** 6 — a simplification, after five adversarial review rounds in which *every round
+**Revision:** 7 — revision 6's simplification, plus **vouching** (§5): a token must prove it is
+reachable on the claiming device before it can be bound, which closes the stolen-token-value
+residual that every earlier revision treated as an inherent floor. Revision 6 was a
+simplification, after five adversarial review rounds in which *every round
 found blockers inside the machinery the previous round had added*. Revisions 1–5 chased one
 root cause without naming it: the pairing anchor was a **shared secret**, so it had to transit
 Trellis on every claim, so a compromised Trellis could replay it — and elder anchors,
@@ -37,8 +40,10 @@ The goal: ship the native app (Sprout) on the App Store so strangers can install
 
 - the owner (operator of the shared infrastructure) sees the minimum data required to
   operate — never printer libraries, cameras, credentials, or Bambuddy access;
-- no user can push notifications to another user's devices, even holding a stolen push token
-  — with one residual, stated in §4 rather than papered over;
+- no user can push notifications to another user's devices, even holding a stolen push token:
+  a token must prove it is reachable on the claiming device before it can be bound (§5), so a
+  stolen token *value* is worthless. The one residual left — a hooked app on the victim's own
+  jailbroken phone — is stated in §4 rather than papered over;
 - a user whose server dies and is rebuilt from scratch recovers push with zero manual
   unbinding, support tickets, or waiting, **provided the tenant credential is restored**
   (§9's recovery code makes that a saved string, not a backup requirement);
@@ -110,7 +115,8 @@ tenant credentials.
 | Adversary / scenario | Outcome under this design |
 |---|---|
 | Attacker steals a push token and tries to bind it with `curl` | Fails. Every claim carries two signatures over the exact claim contents — an App Attest proof from a genuine Sprout install and a P-256 signature by the pairing key — each verified against a value Canopy already holds. A tenant credential alone is not enough, and neither private key ever leaves the phone. |
-| Attacker with a **hooked genuine app on a jailbroken device** claims a token Canopy has never seen | **Succeeds — this is the design's residual risk, stated plainly.** A token that has never been claimed is bound first-come (there is no prior anchor to check against), so an attacker who both obtains a live unseen token and runs a hooked build can take it, and the victim's later claim is refused. Bounds: re-signing under another team fails the App ID check, so it takes a jailbroken device; one attest key may hold live bindings across at most three tenants; repeated `pairing_mismatch` from a consistent claimant raises an operator alert *and* a user-visible "push pairing was taken over" row (§10); and Apple's fraud-assessment metric closes it further once enabled (§14). Recovery is operator unbind (§14, in scope). |
+| Attacker with a **hooked genuine app on a jailbroken device** claims a token Canopy has never seen, **having obtained the token value only** (logs, LAN sniff, a stale `registrations.json`) | **Closed by vouching (§5).** Canopy silently pushes a nonce to the token itself and requires it echoed; an attacker who holds the value but does not receive the push cannot bind it. |
+| The same attacker, running the hooked app **on the victim's own device** | **Succeeds — the design's remaining residual, stated plainly.** A token that has never been claimed is bound first-come (there is no prior anchor to check against), so an attacker who both obtains a live unseen token and runs a hooked build can take it, and the victim's later claim is refused. Bounds: re-signing under another team fails the App ID check, so it takes a jailbroken device; one attest key may hold live bindings across at most three tenants; repeated `pairing_mismatch` from a consistent claimant raises an operator alert *and* a user-visible "push pairing was taken over" row (§10); and Apple's fraud-assessment metric closes it further once enabled (§14). Recovery is operator unbind (§14, in scope). |
 | Attacker tries to take over a token that **is** already anchored | Refused. A row's anchors are checked on every claim regardless of lease state — an expired or released row is *not* first-claimable, only a hard-deleted one is (§5). |
 | Attacker waits out a lease | Closed. Leases renew on successful delivery as well as on claims, and neither expiry nor release opens a token to a new claimant — only an explicit delete by the bound tenant, 90 days of total inactivity, or APNs declaring the token dead does. There is no timed rebind path to wait for. |
 | Attacker enrolls tenants and probes tokens | Tokens are 32-byte APNs-generated values; guessing is infeasible. Cheap checks run before expensive ones (§6), so a failed claim costs no X.509 work. Per-IP and per-tenant limits, per-token-hash failed-claim backoff, a bounded tenant count, and an auto-arming invite code cap the probe rate. Attestation verification has its own bounded worker pool so claim floods cannot starve `/v1/push`. |
@@ -220,14 +226,14 @@ of any binding (§6) — they must outlive the bindings they were used to claim.
 
 Every rule requires **both** proofs to verify cryptographically first; a claim missing or
 failing either is `403 attestation_required` / `403 attestation_invalid` and never reaches the
-machine. **Rules are evaluated in order, first match wins.** Every accepting rule renews the
+machine; so is a claim whose pairing signature fails (`403 pairing_signature_invalid`). **Rules are evaluated in order, first match wins.** Every accepting rule renews the
 lease, clears `released_at`, stamps `last_successful_claim_at`, and re-points `tenant` and
 `device_id` to the claimant — stated once here, because stating it per-rule is how revision 4
 lost `released_at` and revision 5 lost R3's tenant re-point.
 
 | # | Guard | Action |
 |---|---|---|
-| R0 | Token is UNSEEN | Bind: store `pairing_public_key`, `attest_key_id`, tenant, `device_id`, `binding_kind`, `apns_environment`. |
+| R0 | Token is UNSEEN, and the pairing key is **vouched** (below) | Bind: store `pairing_public_key`, `attest_key_id`, tenant, `device_id`, `binding_kind`, `apns_environment`. |
 | R1 | The pairing signature verifies against the row's stored `pairing_public_key` | Accept — the primary path, and the durable one. Update `attest_key_id` from this claim, since the attest key legitimately changes on every reinstall while the pairing key does not. |
 | R2 | The pairing key differs, but the App Attest proof verifies against the row's stored `attest_key_id` | Accept — the Keychain-lost-but-app-not-reinstalled case. Store the new `pairing_public_key`. |
 | R3 | Otherwise | `403 pairing_mismatch`, counted per token-hash for backoff and operator alerting (§6). |
@@ -235,6 +241,44 @@ lost `released_at` and revision 5 lost R3's tenant re-point.
 Three rules, and each is a signature check against a value the row already holds. There is no
 rule any party can satisfy by presenting something they merely *observed* — which is what
 collapsed the previous revisions' rule count from eight to three.
+
+### Vouching: the token proves itself
+
+R1 and R2 answer "is this the device that owned this token before?" R0 cannot — the token has
+no history — and for five revisions this document called that an inherent floor, on the
+grounds that only Apple knows which device an APNs token belongs to. That was wrong. **Canopy
+can ask the token.**
+
+Before a pairing key may bind anything, Canopy sends a **silent push** (`apns-push-type:
+background`, `content-available: 1`) carrying a random nonce **to the device token being
+claimed**, and requires the next claim to echo that nonce inside the signed `client_data`.
+Only the install that actually receives the push can answer. An attacker holding a stolen
+token *value* — from a victim's logs, a LAN sniff, a stale `registrations.json` backup —
+receives nothing and cannot bind it, no matter how genuine their App Attest proof. This closes
+the residual §4 previously conceded, and it costs one round-trip and no persistent state
+beyond the pending nonce.
+
+Mechanics, and why they work with the three token kinds:
+
+- Silent pushes are deliverable only to a **device** token, so vouching happens on the
+  `/register-device` claim. That registration does not exist on the client today
+  (`00-overview.md:116`), and §10 already lists building it as required work; this makes it
+  the *first* registration a fresh install performs rather than an afterthought.
+- Once a pairing key has been vouched by a device-token round-trip, it is **vouched for that
+  install**: subsequent `start` and `activity` claims signed by the same pairing key bind
+  without a further round-trip. They come from the same app on the same device, and their
+  tokens cannot be silently pushed to in any case.
+- A vouch is recorded on the `attest_keys` row's install (`vouched_at`), not per token, and
+  never expires — re-vouching would only re-ask a question already answered by the pairing
+  signature.
+- Delivery is best-effort: iOS throttles background pushes and may delay them on a
+  low-power device. A claim launched from the foreground — the normal case, since the app
+  registers at launch — takes the foreground delivery path and is prompt. If the nonce does not
+  arrive, the claim simply fails and the §10 queue retries; nothing is bound provisionally,
+  because "provisionally bound" is exactly the kind of extra state that generated this
+  document's previous defects.
+- A hooked app on the *victim's own* device does receive the push, so vouching does not close
+  §4's jailbroken-device row. It closes the far more reachable one: a stolen token value.
 
 Other transitions:
 
@@ -291,12 +335,20 @@ Endpoints (JSON over HTTPS; tenant auth is `Authorization: Bearer <tenant_id>.<t
 - `POST /v1/challenges` `{purpose: "attestation"|"assertion"}` → `201 {challenge,
   expires_at}`. Tenant-authed, rate-limited per tenant and per IP. Single-use **on success**;
   TTL 15 min for attestation, 120 s for assertion.
-- `POST /v1/claims` `{token, client_data, challenge, pairing_public_key, pairing_signature,
-  device_id, binding_kind, apns_environment, attest_key_id, attestation? | assertion?}` →
+- `POST /v1/vouch` `{token}` → `202`. Tenant-authed. Canopy mints a nonce and silently pushes
+  it to that device token (`apns-push-type: background`), storing `{token_hash, nonce_hash,
+  tenant, expires_at}` for 10 minutes. Rate-limited hard per token and per tenant — it is the
+  one endpoint that causes a push to a token nobody has yet proven they own.
+- `POST /v1/claims` `{token, client_data, challenge, vouch_nonce?, pairing_public_key,
+  pairing_signature, device_id, binding_kind, apns_environment, attest_key_id,
+  attestation? | assertion?}` →
   `204`, or `403 attestation_required | attestation_invalid | pairing_signature_invalid |
   reattest_required | challenge_unknown | challenge_expired | challenge_wrong_tenant |
   challenge_wrong_purpose | kind_mismatch | pairing_mismatch`, or `429 binding_limit`.
-  Implements §5. Exactly one of `attestation`/`assertion` may be present. Implements §5.
+  Implements §5. Exactly one of `attestation`/`assertion` may be present. `vouch_nonce` is
+  required — and is verified inside the signed `client_data` — whenever R0 would fire for a
+  pairing key that is not yet vouched; its absence or mismatch is `403 vouch_required` /
+  `403 vouch_invalid`.
   **Not idempotent** — see the claim protocol. Each reason is emitted by exactly one named
   rule or check, so Trellis and §10's UI can say something true rather than reporting every
   refusal as a takeover. `reattest_required` means "Canopy does not know this key; generate a
@@ -432,8 +484,10 @@ binding_limit`, surfaced in Trellis's `/health`.
 **Storage:** SQLite (WAL). `tenants` (id, secret_hash, recovery_hash, created_at, last_seen);
 `bindings` (as in §5); **`attest_keys` (key_id, public_key, counter, attest_environment,
 receipt, first_seen, last_seen)** — never garbage-collected with bindings, because assertions
-must verify long after any particular card is gone; `challenges` (nonce_hash, tenant, purpose,
-expires_at); plus in-memory rate buckets. Raw tokens arrive per-request and die with it.
+must verify long after any particular card is gone, and which now also carries `vouched_at`
+(§5); `challenges` (nonce_hash, tenant, purpose, expires_at); `vouches` (token_hash,
+nonce_hash, tenant, expires_at); plus in-memory rate buckets. Raw tokens arrive per-request and
+die with it.
 
 **Bindings and attest keys are durable state, not a cache.** WAL plus a daily off-box backup,
 and restore-from-backup is the recovery path (§11). The design does not assume clients can
@@ -559,6 +613,10 @@ pairing secret.
   phone A's `needs_claim` lists phone B's tokens, phone A claims over them, and both phones
   land on repeated `pairing_mismatch` — raising the operator takeover alert and §10's "push
   pairing was taken over" row for an ordinary two-phone household.
+- **Vouch forwarding**: a registration whose claim returns `403 vouch_required` triggers
+  `POST /v1/vouch` for that token; the silent push then reaches the app, which re-registers
+  with the nonce. Trellis never sees the nonce (it travels APNs → app → signed `client_data`),
+  so it cannot mint a vouch for a token it does not control.
 - **Claim forwarding**: every registration forwards a claim synchronously. "Forward and forget"
   means Trellis never *persists* the pairing secret — it must still act on the response. A
   registration succeeds to the phone only when the claim returned a definitive answer; a
@@ -651,6 +709,11 @@ pairing secret.
   header comment describes. All three go onto one persisted queue holding *intents* (token,
   `binding_kind`) with the same retry discipline, re-attempted on foreground, on every
   token-stream emission, and on the `needs_claim` list from Trellis's `/health`.
+- **Vouch handling**: register for remote notifications at launch (which `/register-device`
+  needs anyway), and on a silent push carrying a vouch nonce, stash it and re-run the pending
+  claim for that token with the nonce inside `client_data`. This is what makes a stolen token
+  value unusable (§5), and it puts `/register-device` first in the registration order rather
+  than last.
 - **APNs environment from the entitlement, not the build configuration.** Revision 1 derived it
   from `#if DEBUG`, a proxy for the real question: a `-configuration Release` build installed
   via Xcode/devicectl — the repo's everyday device recipe — is development-signed, so its tokens
@@ -709,7 +772,10 @@ pairing secret.
 - **Canopy (Go)**: table-driven tests over the binding state machine that **feed one claim and
   assert which rule fired**, not one test per rule — a per-rule suite is structurally incapable
   of catching two rules matching one input, which is how revision 3's overlaps survived. Cases
-  must include every rule R0–R3 and specifically: R1 accepted for a claim whose App Attest key
+  must include every rule R0–R3 and specifically: **an R0 claim without a vouch nonce refused
+  with `vouch_required`, with a nonce for a different token refused, with an expired nonce
+  refused, and accepted with the right one; a second token from an already-vouched pairing key
+  binding with no further round-trip;** R1 accepted for a claim whose App Attest key
   has changed (the reinstall path) and the row's `attest_key_id` updated; R1 refused when the
   pairing signature is over different `client_data` than the one presented; R2 accepted only
   when the App Attest proof verifies against the row's stored `attest_key_id`, and refused for
@@ -781,7 +847,9 @@ attestation tests need real-device artefacts, so the harness comes first.
    recovery codes and failure paths, claim forwarding, the suspension/needs-claim split,
    release, `stale-date`, `/health` gating, device identity, and the multi-registration registry
    change with its full 27-site sweep.
-3. **Sprout pairing** — App Attest, the Keychain moves and migration, entitlement-derived
+3. **Sprout pairing** — App Attest, the pairing keypair, `/register-device` and silent-push
+   vouch handling (which must land before the other two registrations, since they depend on the
+   vouch), the Keychain moves and migration, entitlement-derived
    environment, the pending-claim queue, dismissal reconcile, push-health UI, and the new body
    fields. The first true end-to-end sandbox test happens here, on a real device.
 4. **Rename, dogfood, distribute** — la-push → Trellis across dirs, container, and docs; owner
