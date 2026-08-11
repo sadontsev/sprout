@@ -56,6 +56,19 @@ CREATE INDEX IF NOT EXISTS tenants_recovery ON tenants (recovery_hash);
 -- issued for. Storing those columns and never reading them left a claim
 -- replayable under a different tenant, which is worse than a verbatim replay
 -- because every accepting rule re-points the tenant.
+-- Attest keys outlive the bindings they were used to claim: an assertion must
+-- still verify long after any particular card is gone. They are therefore never
+-- garbage-collected along with bindings.
+CREATE TABLE IF NOT EXISTS attest_keys (
+    key_id             TEXT PRIMARY KEY,
+    public_key         TEXT NOT NULL,
+    counter            INTEGER NOT NULL,
+    attest_environment TEXT NOT NULL,
+    receipt            BLOB,
+    first_seen         INTEGER NOT NULL,
+    last_seen          INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS challenges (
     nonce_hash TEXT PRIMARY KEY,
     tenant     TEXT NOT NULL,

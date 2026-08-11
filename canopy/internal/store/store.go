@@ -288,3 +288,63 @@ func (s *Store) SetAPNSEnvironment(tokenHash, env string) error {
 	_, err := s.db.Exec(`UPDATE bindings SET apns_environment = ? WHERE token_hash = ?`, env, tokenHash)
 	return err
 }
+
+// --- attest keys ---
+
+// AttestKey is a device's App Attest key as Canopy knows it.
+type AttestKey struct {
+	KeyID       string
+	PublicKey   string // base64url X9.63 uncompressed point
+	Counter     uint32
+	Environment string
+	Receipt     []byte
+}
+
+// PutAttestKey records a newly attested key. The receipt is captured here
+// because Apple only issues one at attestation time, and it is the input to the
+// fraud-assessment metric that eventually bounds the hooked-device residual.
+func (s *Store) PutAttestKey(k AttestKey, now time.Time) error {
+	const q = `INSERT INTO attest_keys
+	               (key_id, public_key, counter, attest_environment, receipt, first_seen, last_seen)
+	           VALUES (?,?,?,?,?,?,?)
+	           ON CONFLICT(key_id) DO UPDATE SET last_seen = excluded.last_seen`
+	_, err := s.db.Exec(q, k.KeyID, k.PublicKey, k.Counter, k.Environment, k.Receipt,
+		now.UnixMilli(), now.UnixMilli())
+	return err
+}
+
+// GetAttestKey returns the stored key, or (nil, nil) if Canopy has never seen
+// it — which is what tells a caller to answer reattest_required rather than
+// treating the claim as hostile.
+func (s *Store) GetAttestKey(keyID string) (*AttestKey, error) {
+	const q = `SELECT key_id, public_key, counter, attest_environment, receipt
+	             FROM attest_keys WHERE key_id = ?`
+	var k AttestKey
+	err := s.db.QueryRow(q, keyID).Scan(&k.KeyID, &k.PublicKey, &k.Counter, &k.Environment, &k.Receipt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &k, nil
+}
+
+// BumpAttestCounter persists the counter an assertion advanced to.
+func (s *Store) BumpAttestCounter(keyID string, counter uint32, now time.Time) error {
+	const q = `UPDATE attest_keys SET counter = ?, last_seen = ? WHERE key_id = ?`
+	_, err := s.db.Exec(q, counter, now.UnixMilli(), keyID)
+	return err
+}
+
+// CountAttestKeyTenants reports how many distinct tenants hold live bindings
+// under one attest key. One key legitimately covers several tokens for one
+// device across a household rebuild; the same key spread across many tenants is
+// the signature of a hooked device walking one key between victims.
+func (s *Store) CountAttestKeyTenants(keyID string, now time.Time) (int, error) {
+	const q = `SELECT COUNT(DISTINCT tenant) FROM bindings
+	            WHERE attest_key_id = ? AND released_at IS NULL AND lease_expiry > ?`
+	var n int
+	err := s.db.QueryRow(q, keyID, now.UnixMilli()).Scan(&n)
+	return n, err
+}
