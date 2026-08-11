@@ -87,7 +87,18 @@ func (s *Sweeper) Run(ctx context.Context, now time.Time) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		if s.redeemOne(ctx, k, now, &res) {
+		ok, err := s.redeemOne(ctx, k, now, &res)
+		if errors.Is(err, ErrUnauthorized) {
+			// Not this receipt's fault, and not the next forty-nine's either: Apple checks the
+			// token before it reads the receipt, so every remaining key would fail identically.
+			// Stop the pass, say so once, and leave every key DUE — deferring them would turn a
+			// misconfigured key into a day of silence in which nothing looks wrong.
+			s.log().Error("fraud: Apple rejected the DeviceCheck token, so no receipt could be "+
+				"assessed; check the key has the DeviceCheck service enabled in Certificates, "+
+				"Identifiers & Profiles", "key_id", k.KeyID, "err", err)
+			return res, err
+		}
+		if ok {
 			res.Redeemed++
 		} else {
 			res.Deferred++
@@ -96,22 +107,26 @@ func (s *Sweeper) Run(ctx context.Context, now time.Time) (Result, error) {
 	return res, nil
 }
 
-// redeemOne handles a single key, reporting whether it produced an assessment.
-func (s *Sweeper) redeemOne(ctx context.Context, k KeyRecord, now time.Time, res *Result) bool {
+// redeemOne handles a single key. It reports whether an assessment was produced, and returns the
+// error only when it is one the whole pass must react to.
+func (s *Sweeper) redeemOne(ctx context.Context, k KeyRecord, now time.Time, res *Result) (bool, error) {
 	// The environment travels with the key, so the client sends each receipt to the host matching
 	// where it was attested. Canopy's own environment is a different question and must not be
 	// substituted here.
 	a, err := s.Client.Redeem(ctx, k.Receipt, k.Environment, now)
 	switch {
 	case err == nil:
+	case errors.Is(err, ErrUnauthorized):
+		// Deliberately no defer_: the receipt is fine, the credential is not.
+		return false, err
 	case errors.Is(err, ErrThrottled):
 		s.defer_(k.KeyID, now.Add(ThrottleBackoff), now)
-		return false
+		return false, nil
 	default:
 		s.log().Warn("fraud: redemption failed",
 			"key_id", k.KeyID, "environment", k.Environment, "err", err)
 		s.defer_(k.KeyID, now.Add(FailureBackoff), now)
-		return false
+		return false, nil
 	}
 
 	if s.AppID != "" && a.AppID != "" && a.AppID != s.AppID {
@@ -120,7 +135,7 @@ func (s *Sweeper) redeemOne(ctx context.Context, k KeyRecord, now time.Time, res
 		s.log().Warn("fraud: receipt belongs to another app",
 			"key_id", k.KeyID, "receipt_app_id", a.AppID, "want", s.AppID)
 		s.defer_(k.KeyID, now.Add(FailureBackoff), now)
-		return false
+		return false, nil
 	}
 
 	// Apple states when it will next accept this receipt. Falling back to a fixed interval when it
@@ -131,7 +146,7 @@ func (s *Sweeper) redeemOne(ctx context.Context, k KeyRecord, now time.Time, res
 	}
 	if err := s.Keys.PutAttestRisk(k.KeyID, a.Keys, a.HasKeys, a.Receipt, next, now); err != nil {
 		s.log().Error("fraud: recording assessment", "key_id", k.KeyID, "err", err)
-		return false
+		return false, nil
 	}
 
 	if a.Suspicious() {
@@ -142,7 +157,7 @@ func (s *Sweeper) redeemOne(ctx context.Context, k KeyRecord, now time.Time, res
 			s.Alert(k.KeyID, a)
 		}
 	}
-	return true
+	return true, nil
 }
 
 func (s *Sweeper) defer_(keyID string, until, now time.Time) {

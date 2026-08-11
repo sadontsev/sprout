@@ -62,6 +62,10 @@ var (
 	ErrThrottled = errors.New("fraud: redemption throttled")
 	// ErrMalformed means the bytes are not a receipt Canopy can read.
 	ErrMalformed = errors.New("fraud: receipt is not in the expected form")
+	// ErrUnauthorized is Apple rejecting the token itself. It says nothing about any receipt, so it
+	// must not be charged against one: the honest cause is a key without the DeviceCheck service
+	// ticked, and backing off the receipts would hide the real fault behind a day of silence.
+	ErrUnauthorized = errors.New("fraud: Apple rejected the DeviceCheck token")
 )
 
 // Receipt types. Apple issues an ATTEST receipt at attestation; redeeming one yields a RECEIPT,
@@ -217,6 +221,12 @@ func (c *Client) Redeem(ctx context.Context, receipt []byte, environment string,
 	case http.StatusOK:
 	case http.StatusTooManyRequests:
 		return Assessment{}, ErrThrottled
+	case http.StatusUnauthorized, http.StatusForbidden:
+		// Apple sends an EMPTY body here, so there is nothing to quote and nothing that names the
+		// cause. In practice it is a key that lacks the DeviceCheck service — the endpoint checks
+		// the token before it looks at the receipt, which is why every receipt fails identically.
+		return Assessment{}, fmt.Errorf("%w (status %d): check the key has the DeviceCheck service enabled",
+			ErrUnauthorized, resp.StatusCode)
 	default:
 		return Assessment{}, fmt.Errorf("%w: status %d: %s", ErrRedeem, resp.StatusCode,
 			strings.TrimSpace(string(raw)))
