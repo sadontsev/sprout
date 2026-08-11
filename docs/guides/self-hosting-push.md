@@ -95,26 +95,6 @@ losing this costs every install a re-attestation round it has no way to know it 
 `canopy/scripts-deploy.sh` takes a WAL-correct backup before every deploy; if you deploy some other
 way, take one yourself.
 
-## The third option: sign locally, no relay at all
-
-If you build the app yourself and would rather not run a separate service, Trellis can sign its own
-pushes. Set the `APNS_*` variables and leave `CANOPY_URL` empty:
-
-```bash
-# deploy/trellis/.env
-APNS_KEY_ID=ABCD123456
-APNS_TEAM_ID=YOURTEAMID
-APNS_TOPIC=com.example.yourapp.push-type.liveactivity
-APNS_HOST=api.push.apple.com     # api.sandbox.push.apple.com for Xcode builds
-```
-
-and mount your key at `/keys/apns_key.p8`.
-
-This is the simplest self-hosted setup — one fewer service, one fewer thing to back up. What you give
-up is App Attest: nothing verifies that a claim came from a genuine build, because in this mode
-there is no relay to verify against and your Trellis is the only thing that can push to your own
-device anyway.
-
 ## Which am I running?
 
 Trellis says so on startup:

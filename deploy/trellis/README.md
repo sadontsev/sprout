@@ -14,30 +14,24 @@ Bambu Cloud bearer, that bearer must not go on a phone, and this is the machine 
 The pushed ContentState must match `PrintActivityProps` in
 `mobile/src/liveactivity/PrintActivity.tsx`; the state/colour mapping mirrors `present.ts`.
 
-## Two modes
+## Where the push goes
 
-**RELAY (the default)** — no APNs key here at all. Pushes go to Canopy, which holds the signing key
-and decides whether this tenant may push to a token. Nothing Apple-specific lives on this box, so
-the owner can rotate the key without any self-hoster acting.
+Every push goes through **Canopy**, which holds the APNs signing keys. Trellis holds none: no key,
+no key id, no team id, no topic, no host. It cannot reach Apple at all.
 
-`CANOPY_URL` defaults to the relay run by the app's author (`DEFAULT_CANOPY_URL` in `app.py`), which
-is what makes an App Store install work with no Apple developer account. Set it only to point at
-your own — see [docs/guides/self-hosting-push.md](../../docs/guides/self-hosting-push.md), which
-leads with the constraint that your own Canopy also means your own *build*.
+`CANOPY_URL` defaults to the relay run by the app's author, which is what makes an App Store install
+work with no Apple developer account. Want your own push service? Run your own Canopy and point
+`CANOPY_URL` at it — see [docs/guides/self-hosting-push.md](../../docs/guides/self-hosting-push.md),
+which leads with the constraint that your own Canopy also means your own *build*.
 
-**DIRECT** (the `APNS_*` set) — sign locally with your own `.p8`, for a build signed by your own
-Apple team. Setting `APNS_KEY_ID` is what opts out of the relay, and **all** of `APNS_KEY_ID`,
-`APNS_TEAM_ID` and `APNS_TOPIC` are then required: a partial set used to boot and sign every JWT
-with an empty issuer, which APNs answers with `InvalidProviderToken` forever — indistinguishable
-from Apple being down.
+Trellis used to have a second mode that signed locally with its own `.p8`. It is gone. Every bug it
+produced came from two backends having to agree about the same question — a JWT signed with an empty
+issuer, a compose guard that drifted out of step with the code, two files disagreeing about the
+default APNs host, a key mount naming a path that did not exist.
 
-Configuring `CANOPY_URL` **and** the `APNS_*` set exits at startup rather than failing at the first
-push, because "which key is expected to sign" has no sensible default.
-
-In relay mode the service enrols itself on first boot and prints a **recovery code, once, to the
-log**. Save it somewhere that outlives the data volume: it is what lets a rebuilt server re-adopt
-its existing bindings instead of enrolling as a stranger, and it is deliberately never served from
-an endpoint, because it confers tenant identity.
+On first start Trellis enrols itself and prints a **recovery code, once, to the log**. Save it
+somewhere that outlives the data volume: it is what lets a rebuilt server re-adopt its existing
+bindings instead of enrolling as a stranger, and it is deliberately never served from an endpoint.
 
 ## Deploy (on the home server)
 
@@ -53,10 +47,8 @@ docker compose up -d --build
 curl -s localhost:8911/health
 ```
 
-Needs your own APNs auth key `.p8` on the host — by default at
-`<secrets-dir>/apns_key.p8`, or wherever `APNS_KEY_FILE` points. `APNS_KEY_ID`,
-`APNS_TEAM_ID` and `APNS_TOPIC` use compose's fail-hard `${VAR:?}` form, so a missing one aborts
-the deploy rather than surfacing as an APNs `403 InvalidProviderToken` at the first push.
+`BAMBUDDY_API_KEY` is the only required value, and compose's fail-hard `${VAR:?}` form aborts the
+deploy without it. No Apple credentials of any kind: Canopy holds those.
 
 ### Tests
 
@@ -207,17 +199,14 @@ fixable by configuration.
 | **MakerWorld collections** | ✅ | plain authenticated HTTP to *your* Trellis; `_require_key` validates the key against *your* Bambuddy. No Apple involvement |
 | **Live Activities / push banners** | ❌ | see below |
 
-Trellis signs its APNs JWT with `iss = APNS_TEAM_ID` / `kid = APNS_KEY_ID` and sends
-`apns-topic: <the installed app's bundle id>.push-type.liveactivity`. **Apple checks that the signing
-key's team owns that topic.** Your key does not own someone else's bundle id, so you get
-`403 InvalidProviderToken`; change `APNS_TOPIC` to a bundle id you *do* own and you get
-`400 TopicDisallowed`, because the installed app is not that bundle. The only way round it is being
-given that team's `.p8`, which is a credential for their entire team's push — don't ask for it, and
-don't hand yours out.
+Push is signed by whichever Canopy holds a key for **the team that owns the installed app's bundle
+id** — Apple checks that, and no configuration works around it. Running your own Canopy against
+someone else's build gets you a relay that authenticates you correctly and then cannot deliver
+anything, because your key does not own their topic.
 
-**So configure it like this:** Settings → turn **off** "Live Activity via server", and set
-**Push server URL** to your own Trellis. Collections keep working; lock-screen cards simply update
-only while the app is open.
+So a build signed by another team can use their relay (the default, and it just works) or nothing.
+The only alternative is building the app yourself under your own team, at which point your own
+Canopy signs for your own bundle id and everything works.
 
 > Those two settings used to fight each other: the app read the push toggle to decide whether
 > collections existed, so turning push off removed the Collections tab. Fixed in build 13 — see

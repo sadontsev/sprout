@@ -13,116 +13,43 @@ import re
 import unittest
 
 
-def choose(env: dict, default_url: str = "https://canopy.sadontsev.com"):
-    """Returns (canopy_url, relay_mode) or raises SystemExit, mirroring app.py."""
-    explicit = env.get("CANOPY_URL", "").rstrip("/")
-    signs_locally = bool(env.get("APNS_KEY_ID"))
-    if explicit and signs_locally:
-        raise SystemExit("both configured")
-    url = explicit or ("" if signs_locally else default_url)
-    return url, bool(url)
+class TheRelayIsTheOnlyBackend(unittest.TestCase):
+    """Trellis holds no Apple credentials and has no second way to push.
 
-
-class BackendChoice(unittest.TestCase):
-    def test_a_bare_deployment_relays_to_the_authors_service(self):
-        # The default that makes the App Store build work for someone with no Apple developer
-        # account. Before this, an unconfigured deployment exited at startup and the user's only
-        # symptom was that nothing ever arrived.
-        url, relay = choose({})
-
-        self.assertEqual(url, "https://canopy.sadontsev.com")
-        self.assertTrue(relay)
-
-    def test_setting_an_apns_key_opts_out_of_the_relay(self):
-        # Signing locally is a deliberate choice, and it must not be overridden by a default that
-        # would then be refused as "both configured".
-        url, relay = choose({"APNS_KEY_ID": "ABCD123456"})
-
-        self.assertEqual(url, "")
-        self.assertFalse(relay)
-
-    def test_an_explicit_url_wins(self):
-        url, relay = choose({"CANOPY_URL": "https://canopy.example.com"})
-
-        self.assertEqual(url, "https://canopy.example.com")
-        self.assertTrue(relay)
-
-    def test_a_trailing_slash_is_stripped(self):
-        # Every path is concatenated onto this, so a trailing slash produces //v1/push.
-        url, _ = choose({"CANOPY_URL": "https://canopy.example.com/"})
-
-        self.assertEqual(url, "https://canopy.example.com")
-
-    def test_configuring_both_is_still_fatal(self):
-        # The default must not silently resolve this. Ambiguity about who signs would surface as a
-        # failure at the first push rather than at boot.
-        with self.assertRaises(SystemExit):
-            choose({"CANOPY_URL": "https://canopy.example.com", "APNS_KEY_ID": "ABCD123456"})
-
-    def test_an_empty_apns_key_id_does_not_count_as_opting_out(self):
-        # compose passes ${APNS_KEY_ID:-}, so the variable is PRESENT and empty on every deployment
-        # that did not set it. Treating presence as intent would disable the relay for everyone.
-        url, relay = choose({"APNS_KEY_ID": ""})
-
-        self.assertEqual(url, "https://canopy.sadontsev.com")
-        self.assertTrue(relay)
-
-    def test_an_empty_canopy_url_falls_back_to_the_default(self):
-        url, _ = choose({"CANOPY_URL": ""})
-
-        self.assertEqual(url, "https://canopy.sadontsev.com")
-
-    def test_matches_the_module_constant(self):
-        """The guard against this file drifting from the code it mirrors."""
-        source = (pathlib.Path(__file__).parent / "app.py").read_text()
-        match = re.search(r'^DEFAULT_CANOPY_URL = "([^"]+)"', source, re.M)
-
-        self.assertIsNotNone(match, "app.py must define DEFAULT_CANOPY_URL at module scope")
-        self.assertEqual(
-            match.group(1), "https://canopy.sadontsev.com",
-            "the default relay changed in app.py; update this test and the self-hosting guide",
-        )
-
-    def test_the_default_is_https(self):
-        # It carries a tenant bearer on every request. Plain http would put it on the wire.
-        url, _ = choose({})
-        self.assertTrue(url.startswith("https://"))
-
-
-class DirectModeNeedsTheWholeCredentialSet(unittest.TestCase):
-    """A key id alone is not a complete signing configuration.
-
-    compose enforced this with ${APNS_TEAM_ID:?...} until that had to become :- so an unset value
-    could reach app.py. The guard that replaced it checked only APNS_KEY_ID — a proxy for "the
-    DIRECT set is complete", not the same question — so a deployment with a key id and a blank team
-    id booted and signed every APNs JWT with an empty issuer, and APNs answered 403
-    InvalidProviderToken on every push forever.
+    It once chose between relaying and signing locally with its own .p8. That mode is gone: anyone
+    wanting their own push service runs their own Canopy, which is where the credentials belong.
+    Every bug the choice produced came from two backends having to agree — a JWT signed with an
+    empty issuer, a compose guard drifting out of step with the code, two files disagreeing about
+    the default APNs host, a key mount naming a path that did not exist.
     """
 
-    REQUIRED = ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC")
-
-    def missing(self, env: dict):
-        return [n for n in self.REQUIRED if not env.get(n)]
-
-    def test_a_complete_set_is_accepted(self):
-        env = {"APNS_KEY_ID": "K", "APNS_TEAM_ID": "T", "APNS_TOPIC": "com.example.app"}
-        self.assertEqual(self.missing(env), [])
-
-    def test_a_blank_team_id_is_caught(self):
-        env = {"APNS_KEY_ID": "K", "APNS_TEAM_ID": "", "APNS_TOPIC": "com.example.app"}
-        self.assertEqual(self.missing(env), ["APNS_TEAM_ID"])
-
-    def test_an_absent_topic_is_caught(self):
-        env = {"APNS_KEY_ID": "K", "APNS_TEAM_ID": "T"}
-        self.assertEqual(self.missing(env), ["APNS_TOPIC"])
-
-    def test_the_module_actually_checks_all_three(self):
+    def setUp(self):
         import pathlib as _p
-        source = (_p.Path(__file__).parent / "app.py").read_text()
-        for name in self.REQUIRED:
-            self.assertIn(f'"{name}"', source)
-        self.assertIn('_missing = [n for n in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC")', source,
-                      "the guard must name every variable a local signer needs")
+        self.app = (_p.Path(__file__).parent / "app.py").read_text()
+        self.compose = (_p.Path(__file__).parent / "docker-compose.yml").read_text()
+        self.example = (_p.Path(__file__).parent / ".env.example").read_text()
+        self.reqs = (_p.Path(__file__).parent / "requirements.txt").read_text()
+
+    def test_no_apns_configuration_survives(self):
+        for name in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC", "APNS_HOST",
+                     "APNS_KEY_PATH", "APNS_BUNDLE_ID"):
+            self.assertNotIn(name, self.app, f"{name} is Canopy's business, not Trellis's")
+            self.assertNotIn(name, self.compose)
+            self.assertNotIn(name, self.example)
+
+    def test_nothing_signs_a_push_here(self):
+        # The JWT minter and its dependency both go with the mode.
+        self.assertNotIn("import jwt", self.app)
+        self.assertNotIn("_apns_token", self.app)
+        self.assertNotIn("pyjwt", self.reqs.lower())
+
+    def test_there_is_no_mode_to_be_in(self):
+        self.assertNotIn("RELAY_MODE", self.app,
+                         "a flag with one possible value is a branch nobody can test")
+
+    def test_the_relay_defaults_and_is_overridable(self):
+        self.assertIn('CANOPY_URL = os.environ.get("CANOPY_URL", "").rstrip("/") or DEFAULT_CANOPY_URL',
+                      self.app)
 
 
 class SelfHostingGuideExists(unittest.TestCase):
@@ -226,12 +153,6 @@ class TheRequiredCredentialIsActuallyRequired(unittest.TestCase):
             self.assertNotIn(f"      {name}: {value}", self.compose,
                              f"{name} restates app.py's own default; delete the compose line")
 
-    def test_the_apns_key_mount_does_not_invent_a_directory(self):
-        # Docker creates a MISSING bind source as a DIRECTORY. Defaulting the mount to a
-        # plausible-looking path made <secrets-dir>/apns_key.p8 a folder on every machine
-        # without a key there — which is every relay deployment.
-        self.assertIn("${APNS_KEY_FILE:-/dev/null}", self.compose)
-
     def test_optional_settings_are_not_listed_in_compose_at_all(self):
         # env_file passes everything in .env to the container, so an optional setting needs no line
         # here. Listing them cost a paragraph of explanation each and made the file read as though
@@ -242,12 +163,6 @@ class TheRequiredCredentialIsActuallyRequired(unittest.TestCase):
             self.assertNotIn(f"{name}:", self.compose,
                              f"{name} is optional and reaches the container via env_file; a line "
                              f"here only invites another paragraph explaining it")
-
-    def test_they_are_documented_where_someone_configuring_would_look(self):
-        import pathlib as _p
-        example = (_p.Path(__file__).parent / ".env.example").read_text()
-        for name in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC", "CANOPY_URL", "CANOPY_INVITE_CODE"):
-            self.assertIn(name, example, "dropping it from compose must not lose it entirely")
 
     def test_no_stale_claim_that_the_apns_values_are_fail_hard(self):
         # The comment that made this file look credential-heavy described a `:?` that had already

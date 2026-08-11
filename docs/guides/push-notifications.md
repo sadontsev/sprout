@@ -3,7 +3,7 @@
 How Sprout keeps the lock-screen print cards updating **after iOS suspends the app**, and how the
 "print finished / needs attention / drying finished" banners work.
 
-There are three ways to run this, and the first needs no Apple account at all.
+Two ways to run it, and the first needs no Apple account at all.
 
 ```
                     ┌─────────── your server ───────────┐   ┌─ the app author's ─┐
@@ -23,8 +23,11 @@ use push without an Apple developer account while the author still cannot read y
 | | who signs | what you need | who can read your printer data |
 |---|---|---|---|
 | **Relay (default)** | the author's Canopy | nothing | nobody but you |
-| **Self-hosted relay** | your Canopy | Apple account + **your own build** | nobody but you |
-| **Direct** | your Trellis | Apple account + **your own build** | nobody but you |
+| **Your own relay** | your Canopy | Apple account + **your own build** | nobody but you |
+
+Trellis never signs a push in either. It holds no APNs key, key id, team id, topic or host, and
+cannot reach Apple at all — every credential lives in Canopy, which is the only thing that needs
+them. If you want your own push service, you run your own Canopy.
 
 Trellis says which on startup and at `GET /health`:
 
@@ -39,7 +42,7 @@ this already does.
 
 ---
 
-## Mode 1 — Relay (the default, nothing to configure)
+## Relay through the author's Canopy (the default, nothing to configure)
 
 Leave `CANOPY_URL` unset. Trellis defaults to `https://canopy.sadontsev.com`, enrols itself as a
 tenant on first start, and stores the credentials in `data/tenant.json`.
@@ -76,62 +79,11 @@ Trellis logs the unbound case rather than leaving it silent:
 
 ---
 
-## Mode 2 — Self-hosted relay
+## Run your own Canopy
 
 See **[self-hosting-push.md](self-hosting-push.md)**. Read the constraint at the top first: running
 your own Canopy also means running your own **build** of the app, because APNs keys are team-scoped
 and the topic is the bundle id, so another team's key cannot push to this app.
-
----
-
-## Mode 3 — Direct (Trellis signs its own pushes)
-
-The simplest self-hosted setup — one fewer service to run and back up. You still need your own
-Apple account and your own build, for the same reason.
-
-### 3a. Apple setup
-
-1. In [Apple Developer → Keys](https://developer.apple.com/account/resources/authkeys/list), create
-   an **APNs Auth Key**, download the `.p8`, note the **Key ID** and your **Team ID**.
-   - Apple caps you at **2 APNs keys per team**, team-wide. Audit before revoking — an
-     EAS-managed app on the same team may be using one.
-2. No push *certificate* is needed; this is token auth (ES256 JWT from the `.p8`).
-
-### 3b. Configure
-
-```bash
-# deploy/trellis/.env — leave CANOPY_URL unset/empty
-APNS_KEY_ID=XXXXXXXXXX
-APNS_TEAM_ID=YYYYYYYYYY
-APNS_TOPIC=<your-bundle-id>.push-type.liveactivity
-APNS_KEY_FILE=/path/to/your/apns_key.p8
-APNS_HOST=api.sandbox.push.apple.com     # see the table below
-```
-
-Setting `APNS_KEY_ID` is what opts out of the relay. Setting it **and** `CANOPY_URL` is refused at
-startup: that is ambiguous about who signs, and a deployment that guessed would fail at the first
-push rather than at boot.
-
-All three of `APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_TOPIC` are required together. A partial set
-used to boot and then sign every JWT with an empty issuer, which APNs answers with
-`403 InvalidProviderToken` forever — indistinguishable from Apple being down.
-
-Leave `APNS_BUNDLE_ID` **out** unless your bundle id is not `APNS_TOPIC` minus the suffix: an empty
-value defeats the derived default and sends an empty alert topic.
-
-### 3c. Sandbox vs production — the classic silent failure
-
-APNs has two gateways and **a token from one is invalid on the other**:
-
-| build | `aps-environment` | `APNS_HOST` |
-|---|---|---|
-| Xcode / local install | `development` | `api.sandbox.push.apple.com` |
-| TestFlight / App Store | `production` | `api.push.apple.com` |
-
-Wrong pairing ⇒ every push gets `400 BadDeviceToken`. Flip it when you move to TestFlight.
-
-(Canopy handles this for you in relay mode: it records the environment each token was claimed under
-and retries the other gateway on `BadDeviceToken`, swapping host *and* signing key together.)
 
 ---
 
@@ -204,8 +156,5 @@ relay refused or could not be reached, and the card is frozen at whatever it las
 | `reattest_required` | the relay holds no key for this install — usually a Canopy restore predating it. The app resolves this itself on the next claim |
 | Live Activity vanished after an app update | installing a build **terminates** running Live Activities. `/sync` reports the death and a replacement is pushed within ~45 s |
 | app asks for the server URL again, mid-session | fixed. The config keychain item was `WhenUnlocked`, so a background wake with the phone locked read `nil` and fell back to onboarding. Credentials were never deleted |
-| `403 InvalidProviderToken` (direct mode) | wrong Key ID / Team ID, a mangled `.p8`, or a blank `APNS_TEAM_ID` |
-| `400 BadDeviceToken` on real tokens (direct mode) | sandbox/production mismatch — see the table above |
-| `400 TopicDisallowed` (direct mode) | `APNS_TOPIC` does not match the bundle id (+ `.push-type.liveactivity` for cards) |
 | cards start but freeze when the app closes | the app never registered the token — check reachability from the phone and `/health` `registrations` |
 | banners never fire | no device token (`devices: 0`) — permission denied, or `/register-device` unreachable |

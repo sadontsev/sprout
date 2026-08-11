@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import jwt  # PyJWT
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
@@ -61,72 +60,23 @@ if not BAMBUDDY_API_KEY:
 # team-scoped and the topic is the bundle id, so another team's key cannot push to this app.
 DEFAULT_CANOPY_URL = "https://canopy.sadontsev.com"
 
-# Push backend. DIRECT signs with this deployment's own APNs key; RELAY forwards to Canopy, which
-# holds the key for App Store builds.
+# Where to relay. Trellis holds NO Apple credentials — no key, no key id, no team id, no topic, no
+# host — and that is the point of the split: the relay's owner can rotate a signing key without a
+# single self-hoster acting, and this box cannot push to anything on its own.
 #
-# The default is RELAY at DEFAULT_CANOPY_URL, because the overwhelmingly common deployment is
-# somebody running the App Store build who has no Apple developer account at all. Requiring them to
-# discover and set a URL to get any push at all would make the default experience "nothing works",
-# with nothing on screen saying why.
-#
-# Setting APNS_KEY_ID opts out: it says this deployment intends to sign for itself. Configuring
-# BOTH explicitly is still fatal — that is ambiguous about who signs, and guessing would fail at
-# the first push rather than at startup.
-_explicit_canopy = os.environ.get("CANOPY_URL", "").rstrip("/")
-_signs_locally = bool(os.environ.get("APNS_KEY_ID"))
-if _explicit_canopy and _signs_locally:
-    raise SystemExit(
-        "Both CANOPY_URL and APNS_KEY_ID are set. Exactly one push backend must be configured: "
-        "CANOPY_URL to relay through Canopy, or the APNS_* set to sign locally. Configuring both "
-        "leaves it ambiguous which key is expected to sign."
-    )
-CANOPY_URL = _explicit_canopy or ("" if _signs_locally else DEFAULT_CANOPY_URL)
-APNS_KEY_PATH = os.environ.get("APNS_KEY_PATH", "/keys/apns_key.p8")
-# In RELAY mode nothing Apple-specific lives here: no key, no key id, no team id, no topic, no
-# host. That is the point — the owner can rotate the signing key without any self-hoster acting.
-RELAY_MODE = bool(CANOPY_URL)
+# Anyone wanting their own push service runs their own Canopy, which is where every Apple
+# credential belongs. Trellis once had a second mode that signed locally with its own .p8. It was
+# removed because it made this file joint owner of a question it should have no opinion on, and
+# every bug it produced came from two backends having to agree: a JWT signed with an empty issuer,
+# a compose guard that drifted out of step with the code, two files disagreeing about the default
+# APNs host, and a key mount pointing at a path that did not exist.
+CANOPY_URL = os.environ.get("CANOPY_URL", "").rstrip("/") or DEFAULT_CANOPY_URL
 
-if not RELAY_MODE:
-    # DIRECT mode needs the WHOLE credential set, not just a key id.
-    #
-    # compose used to enforce this with ${APNS_TEAM_ID:?...}, which fires on empty as well as
-    # unset. That had to become :- so an unset value could reach app.py and be answered with a
-    # sentence instead of a compose interpolation error — but the guard that replaced it checked
-    # only APNS_KEY_ID, which is a proxy for "the DIRECT set is complete" and not the same
-    # question. A deployment with a key id and a blank team id therefore booted and signed every
-    # APNs JWT with `iss: ""`, and APNs answered 403 InvalidProviderToken on every push forever.
-    _missing = [n for n in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC") if not os.environ.get(n)]
-    if _missing == ["APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC"]:
-        raise SystemExit(
-            "No push backend configured. Leave CANOPY_URL unset to relay through the default "
-            f"push service ({DEFAULT_CANOPY_URL}), or set the APNS_* set to sign locally — see "
-            "docs/guides/self-hosting-push.md."
-        )
-    if _missing:
-        raise SystemExit(
-            "Signing locally needs the whole APNs credential set; missing: "
-            + ", ".join(_missing)
-            + ". A partial set boots and then fails every push with InvalidProviderToken, which is "
-            "indistinguishable from Apple being down."
-        )
-
-# Some relays gate enrolment behind an invite while they are young. Read here and passed to
-# enrol; without it a gated relay answers 403 and push stays off, so the failure is logged with
-# the variable to set rather than as a bare HTTP status.
+# Some relays gate enrolment behind an invite while they are young. Read here and passed to enrol;
+# without it a gated relay answers 403 and push stays off, so the failure is logged with the
+# variable to set rather than as a bare HTTP status.
 CANOPY_INVITE_CODE = os.environ.get("CANOPY_INVITE_CODE", "")
 
-APNS_KEY_ID = os.environ.get("APNS_KEY_ID", "")
-APNS_TEAM_ID = os.environ.get("APNS_TEAM_ID", "")
-APNS_TOPIC = os.environ.get("APNS_TOPIC", "com.mvks5.bambu.push-type.liveactivity")  # Live Activity topic
-# The bundle id is the topic for regular alert notifications (print done / error).
-APNS_BUNDLE_ID = os.environ.get("APNS_BUNDLE_ID", APNS_TOPIC.replace(".push-type.liveactivity", ""))
-# Dev/Xcode builds use the SANDBOX gateway; TestFlight/App Store use production. Flip via env.
-# Production, because the app ships via TestFlight and its Live-Activity tokens are
-# production-environment; pushing those at sandbox gets 400 BadDeviceToken and the registration
-# dropped — observed live, every card died silently. Export APNS_HOST for local Xcode builds.
-# This lived in docker-compose.yml as an override of a sandbox default here, which meant the two
-# files disagreed about the same question and only one of them was ever read.
-APNS_HOST = os.environ.get("APNS_HOST", "api.push.apple.com")
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
 # 30s: Live-Activity pushes draw from a per-device budget (even WITH the frequent-updates plist
 # key). Priority-10 every 4s exhausted it within minutes — iOS then silently stops applying updates
@@ -464,32 +414,6 @@ def _save() -> None:
 
 
 # ---- APNs ----
-_apns_jwt: tuple[str, float] | None = None  # (token, issued_at)
-
-
-def _apns_token() -> str:
-    global _apns_jwt
-    now = time.time()
-    if _apns_jwt and now - _apns_jwt[1] < 2400:  # refresh every ~40 min (APNs caps at 60)
-        return _apns_jwt[0]
-    key = Path(APNS_KEY_PATH).read_text()
-    tok = jwt.encode({"iss": APNS_TEAM_ID, "iat": int(now)}, key, algorithm="ES256", headers={"kid": APNS_KEY_ID})
-    _apns_jwt = (tok, now)
-    return tok
-
-
-# ---- the two backends ----
-#
-# Both return an APNs status code, so every caller's token hygiene (`code in (400, 410)`) keeps
-# working unchanged. The relay path is where that needs care: Canopy answers with its OWN HTTP
-# status as well as Apple's, and they answer different questions. A Canopy 400 means "I refused
-# this request"; an APNs 400 means "this token is dead". Returning the wrong one would delete a
-# healthy registration on a malformed body or a dropped connection, so the relay result is
-# translated here, once, and never leaks a Canopy status upward.
-
-_canopy: "canopy.CanopyClient | None" = None
-
-
 async def _relay_send(client: httpx.AsyncClient, push_token: str, aps: dict, priority: str,
                       push_type: str) -> int:
     if _canopy is None:
@@ -520,24 +444,13 @@ def _device_for_token(push_token: str) -> str:
 
 async def _apns_send(client: httpx.AsyncClient, push_token: str, aps: dict, priority: str = "10",
                      push_type: str = "liveactivity") -> int:
-    if RELAY_MODE:
-        return await _relay_send(client, push_token, aps, priority, push_type)
-    r = await client.post(
-        f"https://{APNS_HOST}/3/device/{push_token}",
-        headers={
-            "authorization": f"bearer {_apns_token()}",
-            # The topic is derived from the push type, never supplied by a caller: an alert goes
-            # to the bundle id and a Live Activity to its sub-topic, and getting it wrong is a
-            # silent no-card.
-            "apns-topic": APNS_TOPIC if push_type == "liveactivity" else APNS_BUNDLE_ID,
-            "apns-push-type": push_type,
-            # Priority 10 spends the device's Live-Activity budget; 5 is delivered opportunistically
-            # and conserves it. Routine drift goes at 5, real state changes at 10.
-            "apns-priority": priority,
-        },
-        json=aps if "aps" in aps else {"aps": aps},
-    )
-    return r.status_code
+    """Send one push. Every push goes through Canopy; there is no other path.
+
+    Kept as a named seam rather than inlined: the callers care about "send this and tell me what
+    happened", and _relay_send is where a Canopy outcome is translated into the HTTP-ish status
+    those callers already reason about.
+    """
+    return await _relay_send(client, push_token, aps, priority, push_type)
 
 
 def _needs_heartbeat(reg: dict, now: float) -> bool:
@@ -610,7 +523,7 @@ async def _push_end(client: httpx.AsyncClient, reg: dict, cs: dict) -> int:
     # anchors, so the token is never reopened to a first-come claim — it simply stops counting
     # against this tenant's cap. Without it, every completed card would linger, because a card that
     # ends is never pushed to again and so never earns the 410 that would free it.
-    if RELAY_MODE and _canopy is not None and _canopy.credentials is not None:
+    if _canopy is not None and _canopy.credentials is not None:
         try:
             await _canopy.release(reg["pushToken"])
         except Exception as e:  # noqa: BLE001 — a failed release must not break the end push
@@ -1134,10 +1047,6 @@ async def _forward_claim(claim: dict | None, push_token: str, device: str) -> No
     a claim we never delivered, the app would mark the registration accepted and stop retrying, and
     the card would sit unclaimed for the whole print with every component reporting success.
     """
-    if not RELAY_MODE:
-        # Nothing to bind: this deployment signs its own pushes, so the registration is as final as
-        # it can be. True means "as bound as this mode gets", not "a relay accepted it".
-        return True
     if not claim:
         # Relay mode with NO claim. The registration is stored and answered 200 because the card
         # itself is fine — but the token is NOT bound, and saying otherwise is how a transient
@@ -1234,8 +1143,6 @@ async def _ensure_enrolled() -> None:
     down with it.
     """
     global _canopy
-    if not RELAY_MODE:
-        return
     _canopy = canopy.CanopyClient(_canopy_transport)
 
     stored = {}
@@ -1279,12 +1186,9 @@ async def _ensure_enrolled() -> None:
 @app.on_event("startup")
 async def _startup() -> None:
     _load()
-    if RELAY_MODE:
-        await _ensure_enrolled()
-    else:
-        _apns_token()  # fail fast if the .p8 / key id is wrong
+    await _ensure_enrolled()
     asyncio.create_task(_poll_loop())
-    backend = f"relay {CANOPY_URL}" if RELAY_MODE else f"APNs {APNS_HOST}"
+    backend = f"relay {CANOPY_URL}"
     print(f"trellis up — {backend}, "
           f"{registry.card_count(_regs)} cards, {len(_device_tokens)} device(s)", flush=True)
 
@@ -1292,7 +1196,11 @@ async def _startup() -> None:
 @app.get("/health")
 async def health() -> dict:
     return {
-        "ok": True, "registrations": registry.card_count(_regs), "devices": len(_device_tokens), "apns_host": APNS_HOST,
+        "ok": True, "registrations": registry.card_count(_regs), "devices": len(_device_tokens),
+        # Which relay signs for this deployment. Was "apns_host", from the days when Trellis chose
+        # a gateway; it never signs anything now, so reporting an APNs hostname would describe a
+        # decision it does not make.
+        "relay": CANOPY_URL,
         # Per-client counts: a native build whose registration silently landed as "expo" — the exact
         # failure the discriminator exists to prevent, and one that looks like a healthy 200 from
         # every other angle — is visible here without touching the phone.
@@ -1344,8 +1252,6 @@ async def challenge(r: ChallengeReq, _: None = Depends(_require_key)) -> dict:
     is signed by the device, so a compromised companion can neither mint one nor alter the claim it
     ends up inside.
     """
-    if not RELAY_MODE:
-        raise HTTPException(status_code=409, detail="not in relay mode; no challenge is needed")
     if _canopy is None or _canopy.credentials is None:
         raise HTTPException(status_code=503, detail="not enrolled with the push relay yet")
     try:
