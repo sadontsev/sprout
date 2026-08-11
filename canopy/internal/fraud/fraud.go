@@ -292,29 +292,15 @@ func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 // A receipt is CMS SignedData whose encapsulated content is a set of typed attributes.
 //
-// Canopy does NOT verify the receipt's own signature chain here, and that is deliberate rather than
-// an omission: these bytes came back over TLS from Apple, in a response to a request authenticated
-// with the operator's own App Store Connect key. The signature would re-establish a provenance the
+// Parsed with the BER reader in ber.go rather than encoding/asn1. Apple emits these in BER with
+// indefinite lengths and a segmented eContent; the DER parser this shipped with failed on the first
+// byte pair of every real receipt. See ber.go.
+//
+// Canopy does NOT verify the receipt's own signature chain, and that is deliberate rather than an
+// omission: these bytes came back over TLS from Apple, in a response to a request authenticated
+// with the operator's own DeviceCheck key. The signature would re-establish a provenance the
 // transport already gives, and verifying it would mean carrying a CMS verifier and Apple's receipt
 // root for no additional property. The bytes are never trusted from any other source.
-type contentInfo struct {
-	ContentType asn1.ObjectIdentifier
-	Content     signedData `asn1:"explicit,tag:0"`
-}
-
-type signedData struct {
-	Version          int
-	DigestAlgorithms asn1.RawValue
-	EncapContentInfo encapContentInfo
-	Certificates     asn1.RawValue `asn1:"optional,tag:0"`
-	CRLs             asn1.RawValue `asn1:"optional,tag:1"`
-	SignerInfos      asn1.RawValue
-}
-
-type encapContentInfo struct {
-	EContentType asn1.ObjectIdentifier
-	EContent     []byte `asn1:"explicit,optional,tag:0"`
-}
 
 type receiptAttribute struct {
 	Type    int
@@ -326,28 +312,17 @@ type receiptAttribute struct {
 func Parse(receipt []byte) (Assessment, error) {
 	out := Assessment{Receipt: receipt}
 
-	var ci contentInfo
-	if _, err := asn1.Unmarshal(receipt, &ci); err != nil {
-		return out, fmt.Errorf("%w: %v", ErrMalformed, err)
-	}
-	payload := ci.Content.EncapContentInfo.EContent
-	if len(payload) == 0 {
-		return out, fmt.Errorf("%w: no encapsulated content", ErrMalformed)
+	payload, err := encapsulatedContent(receipt)
+	if err != nil {
+		return out, err
 	}
 
-	var set asn1.RawValue
-	if _, err := asn1.Unmarshal(payload, &set); err != nil {
-		return out, fmt.Errorf("%w: %v", ErrMalformed, err)
+	attrs, err := receiptAttributes(payload)
+	if err != nil {
+		return out, err
 	}
 
-	rest := set.Bytes
-	for len(rest) > 0 {
-		var attr receiptAttribute
-		var err error
-		rest, err = asn1.Unmarshal(rest, &attr)
-		if err != nil {
-			return out, fmt.Errorf("%w: attribute: %v", ErrMalformed, err)
-		}
+	for _, attr := range attrs {
 		switch attr.Type {
 		case fieldAppID:
 			out.AppID = text(attr.Value)
@@ -373,6 +348,113 @@ func Parse(receipt []byte) (Assessment, error) {
 		return out, fmt.Errorf("%w: no receipt type field", ErrMalformed)
 	}
 	return out, nil
+}
+
+// encapsulatedContent digs the payload out of the CMS wrapper:
+//
+//	ContentInfo ::= SEQUENCE { contentType OID, content [0] EXPLICIT SignedData }
+//	SignedData  ::= SEQUENCE { version, digestAlgorithms, encapContentInfo, ... }
+//	EncapsulatedContentInfo ::= SEQUENCE { eContentType OID, eContent [0] EXPLICIT OCTET STRING }
+//
+// Navigated positionally rather than by unmarshalling into structs, because the optional and
+// context-tagged members of SignedData vary between producers and a struct that did not match them
+// exactly would fail on a receipt that is perfectly valid.
+func encapsulatedContent(receipt []byte) ([]byte, error) {
+	contentInfo, _, err := berParse(receipt)
+	if err != nil {
+		return nil, fmt.Errorf("%w: content info: %v", ErrMalformed, err)
+	}
+	ciKids, err := berChildren(contentInfo.content)
+	if err != nil || len(ciKids) < 2 {
+		return nil, fmt.Errorf("%w: content info has no [0] content", ErrMalformed)
+	}
+	wrapper, ok := berFind(ciKids, 2, 0) // context class, tag 0
+	if !ok {
+		return nil, fmt.Errorf("%w: no explicit [0] wrapper", ErrMalformed)
+	}
+
+	signedDataKids, err := berChildren(wrapper.content)
+	if err != nil || len(signedDataKids) == 0 {
+		return nil, fmt.Errorf("%w: no SignedData", ErrMalformed)
+	}
+	sdKids, err := berChildren(signedDataKids[0].content)
+	if err != nil {
+		return nil, fmt.Errorf("%w: SignedData members: %v", ErrMalformed, err)
+	}
+
+	// encapContentInfo is the first SEQUENCE after version and digestAlgorithms.
+	for _, k := range sdKids {
+		if k.class != 0 || k.tag != tagSequence {
+			continue
+		}
+		eciKids, err := berChildren(k.content)
+		if err != nil {
+			continue
+		}
+		if eContent, ok := berFind(eciKids, 2, 0); ok {
+			// [0] EXPLICIT wraps the OCTET STRING, which may itself be constructed.
+			inner, err := berChildren(eContent.content)
+			if err != nil || len(inner) == 0 {
+				return nil, fmt.Errorf("%w: empty eContent", ErrMalformed)
+			}
+			return berOctets(inner[0])
+		}
+	}
+	return nil, fmt.Errorf("%w: no encapsulated content", ErrMalformed)
+}
+
+// receiptAttributes splits the payload into its typed fields.
+//
+//	Payload ::= SET OF SEQUENCE { type INTEGER, version INTEGER, value OCTET STRING }
+func receiptAttributes(payload []byte) ([]receiptAttribute, error) {
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("%w: no encapsulated content", ErrMalformed)
+	}
+	set, _, err := berParse(payload)
+	if err != nil {
+		return nil, fmt.Errorf("%w: payload: %v", ErrMalformed, err)
+	}
+	if set.class != 0 || (set.tag != tagSet && set.tag != tagSequence) {
+		return nil, fmt.Errorf("%w: payload is tag %d, want SET or SEQUENCE", ErrMalformed, set.tag)
+	}
+	kids, err := berChildren(set.content)
+	if err != nil {
+		return nil, fmt.Errorf("%w: attributes: %v", ErrMalformed, err)
+	}
+
+	var out []receiptAttribute
+	for _, k := range kids {
+		fields, err := berChildren(k.content)
+		if err != nil || len(fields) < 3 {
+			continue // not an attribute triple; Apple adds members and we ignore what we do not know
+		}
+		typ, err1 := berInt(fields[0])
+		ver, err2 := berInt(fields[1])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		value, err := berOctets(fields[2])
+		if err != nil {
+			return nil, fmt.Errorf("%w: attribute %d value: %v", ErrMalformed, typ, err)
+		}
+		out = append(out, receiptAttribute{Type: typ, Version: ver, Value: value})
+	}
+	return out, nil
+}
+
+// berInt reads a small non-negative INTEGER.
+func berInt(el berElement) (int, error) {
+	if el.class != 0 || el.tag != tagInteger {
+		return 0, fmt.Errorf("%w: tag %d is not INTEGER", errBER, el.tag)
+	}
+	if len(el.content) == 0 || len(el.content) > 4 {
+		return 0, fmt.Errorf("%w: integer of %d bytes", errBER, len(el.content))
+	}
+	n := 0
+	for _, c := range el.content {
+		n = n<<8 | int(c)
+	}
+	return n, nil
 }
 
 // text reads a string field. The attribute's value IS an OCTET STRING whose content is the UTF-8

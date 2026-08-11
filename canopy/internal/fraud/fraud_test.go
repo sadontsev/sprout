@@ -38,26 +38,78 @@ func buildReceipt(t *testing.T, attrs []receiptAttribute) []byte {
 		payload = append(payload, der...)
 	}
 	// SET OF, the way Apple encapsulates it.
-	set, err := asn1.Marshal(asn1.RawValue{Class: 0, Tag: 17, IsCompound: true, Bytes: payload})
-	if err != nil {
-		t.Fatalf("marshal set: %v", err)
-	}
+	set := asn1Marshal(t, 0x31, payload)
 
-	ci := contentInfo{
-		ContentType: asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 7, 2},
-		Content: signedData{
-			Version:          1,
-			DigestAlgorithms: asn1.RawValue{Class: 0, Tag: 17, IsCompound: true},
-			EncapContentInfo: encapContentInfo{
-				EContentType: asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 7, 1},
-				EContent:     set,
-			},
-			SignerInfos: asn1.RawValue{Class: 0, Tag: 17, IsCompound: true},
-		},
+	// Assembled by hand in the CMS shape rather than through a struct, so the fixture does not
+	// depend on the same declarations the parser uses. That coupling is how this package already
+	// shipped one bug where fixture and parser agreed with each other and both were wrong.
+	eContent := explicit(0, asn1Marshal(t, 0x04, set))   // [0] EXPLICIT OCTET STRING
+	eci := seq(oid(t, "1.2.840.113549.1.7.1"), eContent) // EncapsulatedContentInfo
+	signedData := seq(asn1Marshal(t, 0x02, []byte{1}),   // version
+		asn1Marshal(t, 0x31, nil), // digestAlgorithms SET
+		eci,
+		asn1Marshal(t, 0x31, nil)) // signerInfos SET
+	return seq(oid(t, "1.2.840.113549.1.7.2"), explicit(0, signedData))
+}
+
+// --- minimal DER writers, so the fixture shares no code with the parser ---
+
+func asn1Marshal(t *testing.T, tag byte, content []byte) []byte {
+	t.Helper()
+	out := []byte{tag}
+	switch n := len(content); {
+	case n < 0x80:
+		out = append(out, byte(n))
+	case n < 0x100:
+		out = append(out, 0x81, byte(n))
+	default:
+		out = append(out, 0x82, byte(n>>8), byte(n))
 	}
-	der, err := asn1.Marshal(ci)
+	return append(out, content...)
+}
+
+func seq(parts ...[]byte) []byte {
+	var body []byte
+	for _, p := range parts {
+		body = append(body, p...)
+	}
+	out := []byte{0x30}
+	switch n := len(body); {
+	case n < 0x80:
+		out = append(out, byte(n))
+	case n < 0x100:
+		out = append(out, 0x81, byte(n))
+	default:
+		out = append(out, 0x82, byte(n>>8), byte(n))
+	}
+	return append(out, body...)
+}
+
+func explicit(tag byte, inner []byte) []byte {
+	out := []byte{0xA0 | tag}
+	switch n := len(inner); {
+	case n < 0x80:
+		out = append(out, byte(n))
+	case n < 0x100:
+		out = append(out, 0x81, byte(n))
+	default:
+		out = append(out, 0x82, byte(n>>8), byte(n))
+	}
+	return append(out, inner...)
+}
+
+func oid(t *testing.T, dotted string) []byte {
+	t.Helper()
+	var o asn1.ObjectIdentifier
+	switch dotted {
+	case "1.2.840.113549.1.7.1":
+		o = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 7, 1}
+	case "1.2.840.113549.1.7.2":
+		o = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 7, 2}
+	}
+	der, err := asn1.Marshal(o)
 	if err != nil {
-		t.Fatalf("marshal contentInfo: %v", err)
+		t.Fatalf("oid: %v", err)
 	}
 	return der
 }
