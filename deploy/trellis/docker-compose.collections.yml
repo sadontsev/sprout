@@ -1,0 +1,44 @@
+# MakerWorld collections — an OVERLAY, not a replacement.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.collections.yml up -d --build
+#
+# Separate from the base file for one specific reason: this mount is an `external` volume, and an
+# external volume that does not exist makes compose refuse to start the container AT ALL. Living in
+# the base file, it turned a collections misconfiguration into no push — reported as
+# `external volume "…" not found`, which names a volume rather than the feature actually lost, and
+# reads as "Trellis is broken".
+#
+# Push never touches any of this. Leave the overlay off and everything else works.
+#
+# ── what collections additionally require ──────────────────────────────────────────────────────
+#
+#  1. Bambuddy running in Docker, so there is a volume to join. Find its real name with:
+#       docker inspect bambuddy --format '{{range .Mounts}}{{.Name}}{{end}}'
+#     and set BAMBUDDY_VOLUME in .env if it is not the default below.
+#
+#  2. Bambuddy SIGNED IN to Bambu Cloud. Every collections endpoint on api.bambulab.com is
+#     Bearer-gated, and that bearer is your whole Bambu account — so it is read from Bambuddy's
+#     database here, on the machine that already holds it, and never goes to a phone. Sign in at
+#     Bambuddy → Cloud Profiles. Without it Trellis answers with a sentence saying so rather than
+#     an empty list, because "you have no collections" and "your sign-in expired" look identical on
+#     that API and only one of them is worth telling you about.
+services:
+  trellis:
+    environment:
+      # Where the overlay mounts Bambuddy's database inside the container.
+      BAMBUDDY_DB: /bambuddy/bambuddy.db
+    volumes:
+      # READ-ONLY, deliberately: this service must never be able to write another app's database.
+      - bambuddy_data:/bambuddy:ro
+
+volumes:
+  # Bambuddy's own volume, joined from outside its compose project. The name is the one docker
+  # compose generated for it — `bambuddy_bambuddy_data`, project prefix and all — NOT the bare
+  # `bambuddy_data`, which also exists on some hosts as an empty leftover. Mounting the empty one
+  # fails silently: no database, so collections report "can't see Bambuddy's database" forever.
+  #
+  # `external: true` is deliberate: without it `docker compose down -v` would DELETE Bambuddy's
+  # database. This service is a guest in that volume.
+  bambuddy_data:
+    external: true
+    name: ${BAMBUDDY_VOLUME:-bambuddy_bambuddy_data}

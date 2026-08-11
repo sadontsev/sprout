@@ -19,13 +19,35 @@ The pushed ContentState must match `PrintActivityProps` in
 | | needs | independent of |
 |---|---|---|
 | **Push** — Live Activities, status banners | `BAMBUDDY_API_KEY`, and that is all | collections entirely |
-| **MakerWorld collections** | `BAMBUDDY_API_KEY` + Bambuddy's docker volume mounted read-only + the server signed in to Bambu Cloud | push entirely |
+| **MakerWorld collections** | `BAMBUDDY_API_KEY` + the `docker-compose.collections.yml` overlay + Bambuddy in Docker, **signed in to Bambu Cloud** | push entirely |
 
-One caveat that is not obvious from that table: the collections mount is declared `external` in
-`docker-compose.yml`, so if the named volume does not exist **compose refuses to start the container
-at all** — and the error names a volume, not a feature, so it reads as "Trellis is broken" when what
-you actually lost is push, which never touches that mount. If you do not run Bambuddy in Docker,
-comment out the mount and the `volumes:` block rather than guessing a name.
+Collections live in an overlay rather than the base file because their mount is an `external`
+volume, and an external volume that does not exist makes compose refuse to start the container **at
+all**. In the base file that turned a collections misconfiguration into no push, reported as
+`external volume "…" not found` — a volume name rather than the feature actually lost.
+
+```bash
+docker compose up -d --build                                              # push only
+docker compose -f docker-compose.yml -f docker-compose.collections.yml up -d --build   # + collections
+```
+
+**Collections need Bambuddy signed in to Bambu Cloud** (Bambuddy → Cloud Profiles). Every
+collections endpoint on `api.bambulab.com` is Bearer-gated and that bearer is your whole Bambu
+account, so it is read from Bambuddy's database on the server and never reaches a phone. Without the
+sign-in, Trellis answers with a sentence saying so — that API returns `200` with an empty list to an
+unauthenticated caller, so "you have none" and "your sign-in expired" are indistinguishable on the
+wire and only one of them is worth telling you about.
+
+## Reaching Trellis from the phone
+
+Trellis listens on **8911**, and the app must reach it to register push tokens. Push *delivery*
+does not involve the phone at all — but registering does, and it happens whenever a card starts or
+a token rotates. A LAN-only Trellis therefore works until a print begins while you are out, and
+that card then stays frozen for the whole print.
+
+Give it a public HTTPS hostname (`https://trellis.example.com` → `<server>:8911`), fronted the same
+way as Bambuddy. iOS blocks plain HTTP to a public hostname with no useful error; only IP literals
+and `.local` names are exempt, and both are LAN-only.
 
 ## Where the push goes
 

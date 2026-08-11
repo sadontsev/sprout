@@ -5,8 +5,15 @@ services:
     restart: unless-stopped
     # Host network so it reaches Bambuddy at localhost:8910 and exposes its own :8911 on the host.
     network_mode: host
+    # This file is PUSH ONLY, and needs one value: BAMBUDDY_API_KEY.
+    #
+    # MakerWorld collections are an overlay — docker-compose.collections.yml — because they need
+    # Bambuddy's docker volume, declared `external`, and an external volume that does not exist
+    # makes compose refuse to start the container AT ALL. As part of this file that turned a
+    # collections misconfiguration into "no push", reported as a volume name rather than as the
+    # feature that was actually lost.
+    #
     # Everything in .env reaches the container, so an optional setting needs no line here.
-    # .env.example groups them by what they are FOR: push, or MakerWorld collections.
     env_file:
       - .env
     environment:
@@ -19,28 +26,5 @@ services:
       # you to the wrong service.
       BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY:?set BAMBUDDY_API_KEY in .env — see .env.example}
     volumes:
-      # PUSH + everything: Trellis's own state — registrations, tenant credentials, edge-detection.
+      # Trellis's own state — registrations, tenant credentials, edge-detection.
       - ./data:/data
-      # MAKERWORLD COLLECTIONS ONLY. Read-only, deliberately: this service must never be able to
-      # write another app's database.
-      #
-      # ⚠️ COMMENT THIS LINE OUT (and the `volumes:` block at the bottom) IF YOU DO NOT RUN
-      # BAMBUDDY IN DOCKER, or your volume is named differently and you do not care about
-      # collections. The volume is declared `external`, so if it does not exist compose refuses to
-      # start the container AT ALL — and the error names a volume, not the feature, so it reads as
-      # "Trellis is broken" when what you actually lost is push, which does not need this mount.
-      - bambuddy_data:/bambuddy:ro
-
-# MAKERWORLD COLLECTIONS ONLY — delete this whole block along with the mount above if you do not
-# want them. `external: true` is deliberate: without it `docker compose down -v` would DELETE
-# Bambuddy's database, and this service is a guest in that volume.
-volumes:
-  # Bambuddy's own volume, joined from outside its compose project. The name is the one docker
-  # compose generated for it — `bambuddy_bambuddy_data`, project prefix and all — NOT the bare
-  # `bambuddy_data`, which also exists on this host and is an empty leftover. Mounting the empty one
-  # fails silently: no database, so collections report "can't see Bambuddy's database" forever.
-  # Verify with `docker volume ls | grep bambuddy` and
-  # `docker inspect bambuddy --format '{{range .Mounts}}{{.Name}}{{end}}'`.
-  bambuddy_data:
-    external: true
-    name: ${BAMBUDDY_VOLUME:-bambuddy_bambuddy_data}

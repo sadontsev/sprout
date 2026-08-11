@@ -91,8 +91,11 @@ and the topic is the bundle id, so another team's key cannot push to this app.
 
 ```bash
 cp -r deploy/trellis <deploy-dir>/trellis && cd <deploy-dir>/trellis
-cp .env.example .env            # BAMBUDDY_API_KEY is the only required value in relay mode
-docker compose up -d --build
+cp .env.example .env            # BAMBUDDY_API_KEY is the only required value
+docker compose up -d --build    # push only
+
+# …or with MakerWorld collections as well (needs Bambuddy in Docker, signed in to Bambu Cloud):
+docker compose -f docker-compose.yml -f docker-compose.collections.yml up -d --build
 curl -s localhost:8911/health
 ```
 
@@ -108,9 +111,44 @@ docker inspect bambuddy --format '{{range .Mounts}}{{.Name}}{{end}}'
 # set BAMBUDDY_VOLUME=<that name> in .env if yours differs
 ```
 
-Expose 8911 to the phone the same way you exposed Bambuddy.
+Expose 8911 to the phone — see **Reaching Trellis from the phone** below, which is the step most
+easily skipped and the one that silently costs you cards.
 
 ---
+
+## Reaching Trellis from the phone
+
+Trellis listens on **port 8911**. The app must be able to reach it, and that is a separate question
+from whether push works once set up:
+
+- **Push delivery** is Trellis → Canopy → APNs → phone. The phone is not involved and needs no
+  connectivity to your server.
+- **Registering** is the phone → Trellis: handing over each card's push token, reconciling which
+  cards still exist, and re-claiming tokens. That is what needs reachability, and it happens
+  whenever a card starts, a token rotates, or the app is opened.
+
+So a LAN-only Trellis works right up until a print starts while you are out — that card can never
+register, and it stays frozen at its opening content for the whole print. **Give Trellis a public
+HTTPS hostname**, the same way you exposed Bambuddy:
+
+```
+https://trellis.example.com  →  <your server>:8911
+```
+
+### It must be HTTPS if it is public
+
+iOS App Transport Security blocks plain HTTP, with two exemptions this app relies on:
+
+| what you point the app at | works? |
+|---|---|
+| `http://192.168.1.50:8911` | ✅ IP literals are exempt — LAN only |
+| `http://<your-server>:8911` | ✅ `.local` is exempt — LAN only |
+| `http://trellis.example.com` | ❌ blocked by ATS, silently |
+| `https://trellis.example.com` | ✅ |
+
+A public hostname over plain HTTP fails with no useful error on the phone, which is the worst of
+the four outcomes — so if you are putting Trellis on a domain, terminate TLS in front of it
+(Cloudflare Tunnel, Tailscale, a reverse proxy, whatever already fronts Bambuddy).
 
 ## What Trellis does
 

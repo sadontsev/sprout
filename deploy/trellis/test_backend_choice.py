@@ -184,17 +184,33 @@ class ConfigIsGroupedByWhatItIsFor(unittest.TestCase):
         here = _p.Path(__file__).parent
         self.example = (here / ".env.example").read_text()
         self.compose = (here / "docker-compose.yml").read_text()
+        self.overlay_path = here / "docker-compose.collections.yml"
 
     def test_the_example_says_what_each_feature_needs(self):
         self.assertIn("PUSH", self.example)
         self.assertIn("COLLECTIONS", self.example)
         self.assertIn("Either works without the other", self.example)
 
-    def test_the_collections_mount_warns_that_it_blocks_startup(self):
-        # The trap: the error names a volume, so it reads as "Trellis is broken" when what was
-        # actually lost is push, which never touches this mount.
-        self.assertIn("MAKERWORLD COLLECTIONS ONLY", self.compose)
-        self.assertIn("start the container AT ALL", self.compose)
+    def test_the_base_file_cannot_be_stopped_by_a_collections_problem(self):
+        # The trap this split exists to remove: the mount is an `external` volume, and an external
+        # volume that does not exist makes compose refuse to start the container AT ALL. In the
+        # base file that turned a collections misconfiguration into no push, reported as a volume
+        # name rather than as the feature actually lost. Verified by deploying the base file with
+        # no Bambuddy volume present: it starts and enrols.
+        # The DIRECTIVE, not the word: "external" also appears in the comment explaining why
+        # collections are an overlay, and matching prose would fail on an accurate explanation.
+        self.assertNotIn("external: true", self.compose)
+        self.assertNotIn("bambuddy_data:/bambuddy", self.compose)
+        self.assertIn("PUSH ONLY", self.compose)
+
+    def test_the_overlay_exists_and_explains_both_requirements(self):
+        self.assertTrue(self.overlay_path.exists(),
+                        "collections must remain possible, just not mandatory")
+        overlay = self.overlay_path.read_text()
+        self.assertIn("external: true", overlay)
+        self.assertIn("Bambu Cloud", overlay,
+                      "collections need Bambuddy signed in; without it the API answers 200 with an "
+                      "empty list, which is indistinguishable from having none")
 
     def test_the_only_required_value_is_marked_as_required_for_both(self):
         self.assertIn("required for BOTH", self.example)
