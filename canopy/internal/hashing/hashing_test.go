@@ -1,6 +1,9 @@
 package hashing
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDigestIsStableLowercaseHexSHA256(t *testing.T) {
 	// Known-answer: SHA-256("") — pins the algorithm and the encoding, so a
@@ -14,7 +17,13 @@ func TestDigestIsStableLowercaseHexSHA256(t *testing.T) {
 }
 
 func TestDigestIsDeterministicAndDistinguishing(t *testing.T) {
-	if Digest("token-A") != Digest("token-A") {
+	// The two equal inputs are built DIFFERENTLY on purpose. Written as
+	// `Digest("x") != Digest("x")` this is a tautology for a pure function — it cannot fail, and
+	// staticcheck says so (SA4000). The property that actually matters is that a value
+	// reconstructed later, from parts, digests the same as the one stored earlier; that is what
+	// matching a stored digest depends on, and it is not something a literal-vs-itself can show.
+	same := "token-" + strings.ToUpper("a")
+	if Digest(same) != Digest("token-A") {
 		t.Error("the same input must always digest the same, or a stored digest can never be matched again")
 	}
 	if Digest("token-A") == Digest("token-B") {

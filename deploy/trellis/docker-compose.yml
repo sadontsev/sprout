@@ -20,9 +20,17 @@ services:
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_TOPIC: ${APNS_TOPIC:-}
-      # RELAY mode: forward to Canopy, which holds the signing key. Setting this and the APNS_* set
-      # together is refused at startup.
+      # Which push relay to use. LEAVE THIS UNSET unless you are self-hosting Canopy: app.py then
+      # defaults to the relay run by the app's author, which is what makes the App Store build work
+      # out of the box with no Apple developer account of your own.
+      #
+      # Setting it, together with the APNS_* set, is refused at startup — that is ambiguous about
+      # who signs. To sign locally instead, set APNS_KEY_ID and leave this empty.
+      # See docs/guides/self-hosting-push.md.
       CANOPY_URL: ${CANOPY_URL:-}
+      # Some relays gate enrolment behind an invite while young. Without it a gated relay answers
+      # 403 and push simply stays off, so app.py logs the variable to set rather than a bare status.
+      CANOPY_INVITE_CODE: ${CANOPY_INVITE_CODE:-}
       # NOT set here on purpose: app.py derives it from APNS_TOPIC, and passing an empty value would
       # DEFEAT that default (os.environ.get returns "" rather than falling back), sending an empty
       # apns-topic on every alert banner. Add it to .env only if your bundle id is not APNS_TOPIC
