@@ -57,8 +57,19 @@ actor AttestClient {
         return plan
     }
 
+    /// Serialises DeviceCheck work. See SerialGate for why `actor` alone is not enough.
+    private let gate = SerialGate()
+
     /// Produces a proof over `clientData`, honouring the reserved plan.
+    ///
+    /// Serialised against every other in-flight proof: two claims built in the same instant — a
+    /// print card and a drying card registering together, which is routine — otherwise both sit
+    /// inside `generateAssertion` and Apple fails one.
     func proof(for clientData: Data) async throws -> ClaimBuilder.AttestProof {
+        try await gate.run { [self] in try await makeProof(for: clientData) }
+    }
+
+    private func makeProof(for clientData: Data) async throws -> ClaimBuilder.AttestProof {
         guard isSupported else { throw Failure.unsupported }
         let plan = heldPlan ?? planProof()
         heldPlan = nil
