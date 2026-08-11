@@ -12,5 +12,11 @@
 	<string>export</string>
 	<key>uploadSymbols</key>
 	<true/>
+	<!-- Export the build number exactly as archived. At its default of true, -exportArchive can
+	     query App Store Connect and silently bump CFBundleVersion past the highest uploaded build,
+	     so the shipped number stops matching CURRENT_PROJECT_VERSION. Bumping is a deliberate edit
+	     to project.yml, not something the exporter should guess. -->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
 </dict>
 </plist>
