@@ -7,6 +7,10 @@ struct Shell: View {
     @Environment(\.colorScheme) private var scheme
     @State private var model = AppModel()
     @State private var showSettings = false
+    /// The MakerWorld browse session. Owned here rather than by the Explore page, because the page
+    /// is mounted by a `fullScreenCover` and dying with it is exactly the bug (F2) — leaving and
+    /// re-entering must return to the results, the query and the scroll position you left behind.
+    @State private var explore = ExploreModel()
 
     var body: some View {
         ZStack {
@@ -43,6 +47,7 @@ struct Shell: View {
             .animation(Motion.standard(0.28), value: model.toast)
         }
         .environment(model)
+        .environment(explore)
     }
 
     private var main: some View {
@@ -71,7 +76,15 @@ struct OverlayHost: View {
     var body: some View {
         switch overlay {
         case .camera: CameraOverlay(model: model)
-        case .upload: UploadSheet(model: model)
+        case .upload:
+            // Explore is a PAGE, not a sheet — see ExploreView for what the sheet chrome was doing
+            // wrong. It still arrives through the overlay slot because that is how this app
+            // presents anything full-screen.
+            if let client = model.client {
+                ExploreView(model: model, client: client)
+            } else {
+                Color.clear.onAppear { model.overlay = nil }
+            }
         case .alerts: AlertsOverlay(model: model)
         case .wizard(let file): WizardView(model: model, file: file)
         case .stlViewer(let file): StlViewerOverlay(model: model, file: file)

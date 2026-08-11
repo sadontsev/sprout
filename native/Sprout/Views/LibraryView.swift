@@ -157,6 +157,10 @@ struct LibraryView: View {
     @Environment(\.palette) private var c
 
     @State private var source: LibrarySource = .library
+    /// Uploading survives this view: the task holds the client, not the view.
+    @State private var uploader = LibraryUploader()
+    @State private var picking = false
+    @Environment(ExploreModel.self) private var explore
     /// nil while the first load is in flight. An empty array is a genuinely empty library — the
     /// difference decides between a spinner, a retry banner and "No files yet".
     @State private var files: [LibraryFile]?
@@ -219,6 +223,26 @@ struct LibraryView: View {
         .refreshable { await refresh() }
         .overlay(alignment: .bottom) { if dlBusy { busyPill } }
         .task { await load() }
+        .fileImporter(isPresented: $picking, allowedContentTypes: UploadFileKind.all) { result in
+            switch result {
+            case .success(let url):
+                guard let client = model.client else { return }
+                uploader.upload(url, client: client, model: model) { Task { await load() } }
+            case .failure(let error):
+                // Cancelling the browser is reported as a failure; it is not one.
+                if (error as? CocoaError)?.code != .userCancelled {
+                    uploader.error = error.localizedDescription
+                }
+            }
+        }
+        .alert("Upload failed", isPresented: Binding(
+            get: { uploader.error != nil },
+            set: { if !$0 { uploader.error = nil } }
+        )) {
+            Button("OK", role: .cancel) { uploader.error = nil }
+        } message: {
+            Text(verbatim: uploader.error ?? "")
+        }
         // The SD listing loads the first time the segment is opened and then persists across
         // segment switches.
         .task(id: source) {
@@ -325,13 +349,44 @@ struct LibraryView: View {
             Spacer(minLength: 12)
             // Upload belongs to the library only — there is no way to push a file onto the SD card.
             if source == .library {
-                Tap { model.overlay = .upload } content: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(c.accent)
-                        .frame(width: 38, height: 38)
-                        .background(Circle().fill(c.accentDim))
+                // A native Menu, not a sheet. With Explore promoted to its own page, the "Add a
+                // file" sheet's entire content was a two-item list — a modal to choose between two
+                // things that can both be one tap (F10).
+                Menu {
+                    Button {
+                        uploader.error = nil
+                        picking = true
+                    } label: {
+                        Label("From Files", systemImage: "folder")
+                    }
+                    Button {
+                        explore.wantsFieldFocus = false
+                        model.overlay = .upload
+                    } label: {
+                        Label("From MakerWorld", systemImage: "globe")
+                    }
+                    Button {
+                        explore.wantsFieldFocus = true
+                        model.overlay = .upload
+                    } label: {
+                        Label("Paste a link", systemImage: "link")
+                    }
+                } label: {
+                    Group {
+                        if uploader.busy {
+                            Text(verbatim: "\(uploader.percent)%")
+                                .font(.mono(11, weight: .bold))
+                                .foregroundStyle(c.accent)
+                        } else {
+                            Image(systemName: "plus")
+                                .font(.system(size: 22, weight: .medium))
+                                .foregroundStyle(c.accent)
+                        }
+                    }
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(c.accentDim))
                 }
+                .accessibilityLabel(uploader.busy ? "Uploading, \(uploader.percent) percent" : "Add a file")
             }
         }
         .padding(.horizontal, 20)

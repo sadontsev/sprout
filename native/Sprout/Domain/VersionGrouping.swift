@@ -1,0 +1,242 @@
+import Foundation
+
+/// How a model's versions are grouped, counted and described.
+///
+/// Pure, because the hard part of this screen is not layout — it is **honesty about data that is
+/// mostly missing**, and every one of those judgements is worth pinning in a test.
+///
+/// The shape of the problem, measured on model 40146:
+///
+///  * a model publishes up to **88** versions;
+///  * **51 of those 88 carry no `detail` at all** — no time, no weight, no material, no slots,
+///    including the row MakerWorld itself pre-selects;
+///  * material, when present, is sometimes `Universal` rather than a real material.
+///
+/// So the three axes a user wants to sort and filter on are absent on ~58 % of rows. A screen that
+/// quietly sorted 88 rows by time would be inventing an order for most of them.
+enum VersionGrouping {
+
+    /// Where a version sits. Order matters: this is the order the sections appear in.
+    enum Group: Int, CaseIterable, Identifiable, Sendable {
+        case recommended, oneColour, multiColour, needsFilament, unlabelled
+
+        var id: Int { rawValue }
+
+        var title: String {
+            switch self {
+            case .recommended:   return "RECOMMENDED"
+            case .oneColour:     return "ONE COLOUR"
+            case .multiColour:   return "TWO OR MORE COLOURS"
+            case .needsFilament: return "NEEDS FILAMENT YOU DON'T HAVE"
+            case .unlabelled:    return "NO PUBLISHED SETTINGS"
+            }
+        }
+
+        /// The unlabelled group is collapsed by default and never participates in a sort.
+        var isUnlabelled: Bool { self == .unlabelled }
+    }
+
+    /// How the loaded versions may be ordered.
+    ///
+    /// **Rule 1 — an unlabelled version is never reordered by a sort it has no data for.** Those
+    /// rows keep MakerWorld's own order in a trailing group, always, whatever is selected here.
+    enum Sort: String, CaseIterable, Identifiable, Sendable {
+        case recommended, fastest, leastFilament
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .recommended:   return "Recommended"
+            case .fastest:       return "Fastest"
+            case .leastFilament: return "Least filament"
+            }
+        }
+    }
+
+    /// A version placed in a group, with whatever marks it earned.
+    struct Placed: Identifiable, Sendable {
+        var row: MWProfileRow
+        var group: Group
+        /// `FASTEST`, `LIGHTEST`, `PICK`, `ANY MATERIAL`. Superlatives survive grouping so the
+        /// extremes stay findable inside a section rather than only in a flat sorted list.
+        var marks: [String] = []
+        /// Set on `.needsFilament` rows: what to load to make this printable. Rule 6 — a version you
+        /// cannot print is shown, greyed, with the remedy, never hidden.
+        var remedy: String?
+
+        var id: Int { row.id }
+        /// Rule 1's other half: these rows carry no numbers, so nothing may claim to order them.
+        var isUnlabelled: Bool { row.detail == nil }
+    }
+
+    // MARK: Placement
+
+    /// Split rows into their groups.
+    ///
+    /// `printableMaterials` is what the AMS can currently supply, upper-cased. Empty means "we don't
+    /// know what's loaded" — and then **nothing** is marked unprintable, because an empty AMS
+    /// reading and a genuinely missing material are different facts and only one of them justifies
+    /// greying a row out.
+    static func place(_ rows: [MWProfileRow],
+                      defaultInstanceId: Int?,
+                      printableMaterials: Set<String>) -> [Placed] {
+        rows.map { row in
+            guard let detail = row.detail else {
+                return Placed(row: row, group: .unlabelled)
+            }
+            let materials = Set(detail.slots.compactMap { $0.type?.uppercased() }.filter { !$0.isEmpty })
+            let missing = printableMaterials.isEmpty
+                ? []
+                : materials.subtracting(printableMaterials).subtracting(["UNIVERSAL"]).sorted()
+
+            if !missing.isEmpty {
+                return Placed(row: row, group: .needsFilament,
+                              remedy: "load \(missing.joined(separator: " + ")) to print")
+            }
+            if row.id == defaultInstanceId {
+                return Placed(row: row, group: .recommended)
+            }
+            return Placed(row: row, group: detail.slotCount > 1 ? .multiColour : .oneColour)
+        }
+    }
+
+    /// Apply a sort, then re-mark the superlatives.
+    ///
+    /// The unlabelled rows are sliced off first and appended untouched — they cannot be compared on
+    /// a field they do not have, and sorting them by a default of zero would silently rank them
+    /// "fastest".
+    static func sorted(_ placed: [Placed], by sort: Sort) -> [Placed] {
+        let (labelled, unlabelled) = (placed.filter { !$0.isUnlabelled },
+                                      placed.filter(\.isUnlabelled))
+        let ordered: [Placed]
+        switch sort {
+        case .recommended:
+            ordered = labelled            // MakerWorld's order, with `recommended` already grouped first
+        case .fastest:
+            ordered = labelled.sorted { ($0.row.detail?.seconds ?? .infinity) < ($1.row.detail?.seconds ?? .infinity) }
+        case .leastFilament:
+            ordered = labelled.sorted { ($0.row.detail?.grams ?? .infinity) < ($1.row.detail?.grams ?? .infinity) }
+        }
+        return marked(ordered) + unlabelled
+    }
+
+    /// Attach `FASTEST` / `LIGHTEST` / `ANY MATERIAL` to the rows that earn them.
+    ///
+    /// Only ever computed over rows that publish the field in question, and only when there is more
+    /// than one such row — "fastest of one" is not information.
+    private static func marked(_ placed: [Placed]) -> [Placed] {
+        let times = placed.compactMap { $0.row.detail?.seconds }
+        let grams = placed.compactMap { $0.row.detail?.grams }
+        let fastest = times.count > 1 ? times.min() : nil
+        let lightest = grams.count > 1 ? grams.min() : nil
+
+        return placed.map { item in
+            var item = item
+            var marks: [String] = []
+            if item.group == .recommended { marks.append("PICK") }
+            if let fastest, item.row.detail?.seconds == fastest { marks.append("FASTEST") }
+            if let lightest, item.row.detail?.grams == lightest { marks.append("LIGHTEST") }
+            if let slots = item.row.detail?.slots,
+               !slots.isEmpty,
+               slots.allSatisfy({ ($0.type ?? "").uppercased() == "UNIVERSAL" }) {
+                marks.append("ANY MATERIAL")
+            }
+            item.marks = marks
+            return item
+        }
+    }
+
+    // MARK: Saying the gap out loud
+
+    /// The line under the title.
+    ///
+    /// **Rule 2 — say the gap out loud.** A bare "88 versions" implies 88 sortable, comparable rows
+    /// when most of them can be neither. This is the same class of claim as a sort chip implying
+    /// server-side ordering, and it gets the same treatment: state the number that is actually
+    /// filterable, and state how many are not.
+    static func countLine(matching: Int, total: Int, unlabelled: Int) -> String {
+        var parts: [String] = []
+        parts.append(matching == total ? "\(total) version\(total == 1 ? "" : "s")"
+                                       : "\(matching) of \(total) match")
+        if unlabelled > 0 { parts.append("\(unlabelled) publish no settings") }
+        return parts.joined(separator: "  ·  ")
+    }
+
+    /// What the collapsed group says about itself, so nobody has to open it to find out why it is
+    /// separate.
+    static let unlabelledExplanation =
+        "No time, weight or material, so they can't be filtered or compared. "
+        + "Listed in MakerWorld's order."
+
+    // MARK: Filtering
+
+    /// The filter the sheet applies.
+    struct Filter: Equatable, Sendable {
+        /// Upper-cased material names. Empty means no material filter.
+        var materials: Set<String> = []
+        /// **Rule 3 — a material filter must state what it does with unlabelled rows.** This is that
+        /// statement, made a setting rather than a silent policy.
+        var includeUnlabelled = true
+        var onlyWithPhotosOrNotes = false
+        var onlyPrintableNow = false
+        var maxSeconds: Int?
+        var maxGrams: Int?
+
+        var isActive: Bool {
+            !materials.isEmpty || onlyWithPhotosOrNotes || onlyPrintableNow
+                || maxSeconds != nil || maxGrams != nil || !includeUnlabelled
+        }
+
+        /// How many controls are on, for the toolbar badge.
+        var activeCount: Int {
+            var n = 0
+            if !materials.isEmpty { n += 1 }
+            if onlyWithPhotosOrNotes { n += 1 }
+            if onlyPrintableNow { n += 1 }
+            if maxSeconds != nil { n += 1 }
+            if maxGrams != nil { n += 1 }
+            if !includeUnlabelled { n += 1 }
+            return n
+        }
+    }
+
+    static func apply(_ filter: Filter, to placed: [Placed]) -> [Placed] {
+        placed.filter { item in
+            guard let detail = item.row.detail else {
+                // An unlabelled row cannot satisfy or fail a numeric test — it can only be kept or
+                // dropped wholesale, which is exactly what `includeUnlabelled` decides.
+                return filter.includeUnlabelled && !filter.onlyPrintableNow
+                    && !filter.onlyWithPhotosOrNotes && filter.maxSeconds == nil
+                    && filter.maxGrams == nil && filter.materials.isEmpty
+            }
+            if !filter.materials.isEmpty {
+                let types = Set(detail.slots.compactMap { $0.type?.uppercased() })
+                // **Rule 4 — `Universal` always passes a material filter.** It is not a material; it
+                // is the absence of a constraint, and excluding it would hide versions that print
+                // in anything.
+                let passes = types.contains("UNIVERSAL") || !types.isDisjoint(with: filter.materials)
+                if !passes { return false }
+            }
+            if filter.onlyWithPhotosOrNotes {
+                guard item.row.summary != nil || !item.row.pictures.isEmpty else { return false }
+            }
+            if filter.onlyPrintableNow, item.group == .needsFilament { return false }
+            if let cap = filter.maxSeconds, let s = detail.seconds, s > Double(cap) { return false }
+            if let cap = filter.maxGrams, let g = detail.grams, g > Double(cap) { return false }
+            return true
+        }
+    }
+
+    /// The materials worth offering, built from the versions actually present rather than a
+    /// hardcoded list — a filter for a material no version uses returns nothing and teaches nothing.
+    static func materialsPresent(_ rows: [MWProfileRow]) -> [String] {
+        var seen = Set<String>()
+        for row in rows {
+            for slot in row.detail?.slots ?? [] {
+                if let t = slot.type?.uppercased(), !t.isEmpty, t != "UNIVERSAL" { seen.insert(t) }
+            }
+        }
+        return seen.sorted()
+    }
+}
