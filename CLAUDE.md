@@ -33,7 +33,8 @@ DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
 DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
   xcodebuild -project native/Sprout.xcodeproj -scheme Sprout \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test     # ~760 tests, seconds
-./native/scripts-archive.sh        # archive + export an .ipa for TestFlight
+./native/scripts-archive.sh            # archive + export an .ipa, and stop
+./native/scripts-archive.sh --upload   # …then validate + upload to TestFlight
 ```
 
 - **`Sprout.xcodeproj` is generated and gitignored** — the same discipline `mobile/ios` follows. Hand-editing it in Xcode does not survive. All project config lives in `native/project.yml`.
