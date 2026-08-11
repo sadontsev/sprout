@@ -54,6 +54,45 @@ if [ "$upload" = 1 ]; then
   fi
 fi
 
+# Can this machine actually SIGN a distribution build? Checked here, before the archive, for the
+# same reason the --upload credentials are: discovering it afterwards means minutes of work to earn
+# an error that was knowable at second one.
+#
+# The specific trap: adding a capability to the App ID (App Attest, here) requires an Apple ID
+# signed into Xcode, because that is what -allowProvisioningUpdates uses to regenerate the profile.
+# Without one, the archive SUCCEEDS and the export fails with "No Accounts" followed by a profile
+# that "doesn't include the App Attest capability" — three errors that all describe the symptom and
+# none of which name the cause.
+#
+# A signed-in account is only needed when no distribution profile already carries the entitlement,
+# so this refuses only in the case that actually breaks.
+profiles=~/Library/Developer/Xcode/UserData/Provisioning\ Profiles
+have_profile=0
+if compgen -G "$profiles/*.mobileprovision" > /dev/null 2>&1; then
+  for p in "$profiles"/*.mobileprovision; do
+    plist=$(security cms -D -i "$p" 2>/dev/null) || continue
+    case "$plist" in
+      *appattest-environment*)
+        case "$plist" in *'<key>ProvisionedDevices</key>'*) ;; *) have_profile=1 ;; esac ;;
+    esac
+  done
+fi
+if [ "$have_profile" = 0 ]; then
+  accounts=$(defaults read com.apple.dt.Xcode DVTDeveloperAccountManagerAppleIDLists 2>/dev/null || echo "")
+  case "$accounts" in
+    *"@"*) ;;   # some Apple ID is present
+    *)
+      echo "No distribution profile carries the App Attest entitlement, and no Apple ID is signed" >&2
+      echo "into Xcode to create one." >&2
+      echo >&2
+      echo "  Xcode → Settings → Accounts → + → Apple ID" >&2
+      echo >&2
+      echo "Then re-run. Archiving without this succeeds and the EXPORT fails afterwards, which is" >&2
+      echo "several minutes spent to learn something knowable now." >&2
+      exit 1 ;;
+  esac
+fi
+
 xcodegen generate --spec project.yml
 
 xcodebuild -project Sprout.xcodeproj -scheme Sprout -configuration Release \
