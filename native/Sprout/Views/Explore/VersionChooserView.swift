@@ -21,6 +21,8 @@ struct VersionChooserView: View {
     @State private var filter = VersionGrouping.Filter()
     @State private var showFilter = false
     @State private var unlabelledExpanded = false
+    /// Which version the full-screen gallery opens on, as an index into `visible`.
+    @State private var galleryStart: Int?
 
     /// What the AMS can currently supply. Empty when nothing is loaded or the status has not
     /// arrived — and then no row is called unprintable, because "we don't know" and "you don't have
@@ -86,6 +88,14 @@ struct VersionChooserView: View {
                           ? "line.3.horizontal.decrease.circle.fill"
                           : "line.3.horizontal.decrease.circle")
                 }
+            }
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { galleryStart != nil }, set: { if !$0 { galleryStart = nil } }
+        )) {
+            NavigationStack {
+                VersionGallery(items: visible, client: client,
+                               startAt: galleryStart ?? 0, picked: $picked)
             }
         }
         .sheet(isPresented: $showFilter) {
@@ -155,67 +165,100 @@ struct VersionChooserView: View {
         // without saying why.
         let blocked = item.group == .needsFilament
 
-        return Tap { picked = item.row } content: {
-            HStack(alignment: .top, spacing: 11) {
-                versionThumb(item.row)
+        return VStack(alignment: .leading, spacing: 0) {
+            Tap { picked = item.row } content: {
+                HStack(alignment: .top, spacing: 11) {
+                    versionThumb(item.row)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(item.row.title)
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(c.t1)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                        ForEach(item.marks, id: \.self) { mark in
-                            Text(mark)
-                                .font(.mono(8.5, weight: .bold))
-                                .foregroundStyle(c.accent)
-                                .padding(.horizontal, 4).padding(.vertical, 2)
-                                .background(RoundedRectangle(cornerRadius: 4).fill(c.accentDim))
-                        }
-                    }
-
-                    if let detail = item.row.detail {
-                        HStack(spacing: 8) {
-                            Text(MakerWorld.metaLine(detail))
-                                .font(.mono(11, weight: .medium))
-                                .foregroundStyle(c.t3)
-                            ForEach(Array(detail.slots.prefix(4).enumerated()), id: \.offset) { _, s in
-                                Swatch(value: FilamentColor.norm(s.color), size: 9, radius: 5)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(item.row.title)
+                                .font(.system(size: 13.5, weight: .semibold))
+                                .foregroundStyle(c.t1)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            ForEach(item.marks, id: \.self) { mark in
+                                Text(mark)
+                                    .font(.mono(8.5, weight: .bold))
+                                    .foregroundStyle(c.accent)
+                                    .padding(.horizontal, 4).padding(.vertical, 2)
+                                    .background(RoundedRectangle(cornerRadius: 4).fill(c.accentDim))
                             }
                         }
-                        if let remedy = item.remedy {
-                            Text(verbatim: remedy)
-                                .font(.mono(11, weight: .semibold))
-                                .foregroundStyle(c.heating)
+
+                        if let detail = item.row.detail {
+                            HStack(spacing: 8) {
+                                Text(MakerWorld.metaLine(detail))
+                                    .font(.mono(11, weight: .medium))
+                                    .foregroundStyle(c.t3)
+                                ForEach(Array(detail.slots.prefix(4).enumerated()), id: \.offset) { _, sl in
+                                    Swatch(value: FilamentColor.norm(sl.color), size: 9, radius: 5)
+                                }
+                            }
+                            if let remedy = item.remedy {
+                                Text(verbatim: remedy)
+                                    .font(.mono(11, weight: .semibold))
+                                    .foregroundStyle(c.heating)
+                            }
+                        } else {
+                            // The absent state, said in words rather than rendered as "—".
+                            Text("No settings published")
+                                .font(.mono(11, weight: .medium))
+                                .foregroundStyle(c.t3)
                         }
-                    } else {
-                        // Rule 1 / the absent state, said in words rather than rendered as "—".
-                        Text("No settings published")
-                            .font(.mono(11, weight: .medium))
-                            .foregroundStyle(c.t3)
+
+                        if item.row.summary == nil && item.row.pictures.isEmpty {
+                            Text("No photos or notes published")
+                                .font(.system(size: 11))
+                                .foregroundStyle(c.t3.opacity(0.8))
+                        }
                     }
 
-                    if item.row.summary == nil && item.row.pictures.isEmpty {
-                        Text("No photos or notes published")
-                            .font(.system(size: 11))
-                            .foregroundStyle(c.t3.opacity(0.8))
+                    Spacer(minLength: 0)
+
+                    if selected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(c.accent)
                     }
                 }
-
-                Spacer(minLength: 0)
-
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(c.accent)
-                }
+                .opacity(blocked ? 0.55 : 1)
+                .contentShape(.rect)
             }
-            .opacity(blocked ? 0.55 : 1)
-            .contentShape(.rect)
+            .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+
+            // Depth two of three, and only for the row you have actually chosen — 88 rows each
+            // carrying a photo reel would be the grid's stutter all over again.
+            if selected {
+                VersionPhotoStrip(row: item.row, client: client) {
+                    galleryStart = visible.firstIndex { $0.id == item.id } ?? 0
+                }
+                .padding(.top, 10)
+                detailsLink(item)
+                    .padding(.top, 8)
+            }
         }
         .listRowBackground(selected ? c.accentDim : c.s1)
-        .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+    }
+
+    /// The chevron into the version's own page. Dimmed when there is nothing behind it but the
+    /// numbers already on the row — a live-looking control that opens an empty page is the bug this
+    /// codebase keeps shipping.
+    @ViewBuilder
+    private func detailsLink(_ item: VersionGrouping.Placed) -> some View {
+        let hasMore = item.row.summary != nil || !item.row.pictures.isEmpty
+        NavigationLink {
+            VersionDetailView(item: item, client: client, picked: $picked,
+                              onOpenGallery: { galleryStart = visible.firstIndex { $0.id == item.id } ?? 0 })
+        } label: {
+            HStack(spacing: 4) {
+                Text(hasMore ? "Details" : "Details — nothing more published")
+                    .font(.system(size: 12.5, weight: .semibold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(hasMore ? c.accent : c.t3)
+        }
     }
 
     private func versionThumb(_ row: MWProfileRow) -> some View {
