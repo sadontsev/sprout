@@ -210,6 +210,28 @@ class TheRequiredCredentialIsActuallyRequired(unittest.TestCase):
         self.assertIn('os.environ.get("BAMBUDDY_API_KEY", "").strip()', self.app)
         self.assertIn("BAMBUDDY_API_KEY is empty", self.app)
 
+    def test_compose_restates_no_default_that_app_py_already_has(self):
+        """A line in compose that duplicates the code's default is a second place to be wrong.
+
+        BAMBUDDY_URL, APNS_KEY_PATH, DATA_DIR and BAMBUDDY_DB were all byte-identical to the
+        os.environ.get fallback beside them, and APNS_HOST *contradicted* one — compose forced
+        production while app.py defaulted to sandbox, so the two files disagreed about the same
+        question and only one was ever read.
+        """
+        import re
+        defaults = dict(re.findall(
+            r'^(\w+) *= *(?:Path\()?os\.environ\.get\("(?:\w+)", *"([^"]+)"\)',
+            self.app, re.M))
+        for name, value in defaults.items():
+            self.assertNotIn(f"      {name}: {value}", self.compose,
+                             f"{name} restates app.py's own default; delete the compose line")
+
+    def test_the_apns_key_mount_does_not_invent_a_directory(self):
+        # Docker creates a MISSING bind source as a DIRECTORY. Defaulting the mount to a
+        # plausible-looking path made <secrets-dir>/apns_key.p8 a folder on every machine
+        # without a key there — which is every relay deployment.
+        self.assertIn("${APNS_KEY_FILE:-/dev/null}", self.compose)
+
     def test_optional_settings_are_not_listed_in_compose_at_all(self):
         # env_file passes everything in .env to the container, so an optional setting needs no line
         # here. Listing them cost a paragraph of explanation each and made the file read as though

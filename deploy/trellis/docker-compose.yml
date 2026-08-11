@@ -13,24 +13,21 @@ services:
     env_file:
       - .env
     environment:
-      # Fixed container paths, not configuration.
-      BAMBUDDY_URL: http://localhost:8910
-      APNS_KEY_PATH: /keys/apns_key.p8
-      DATA_DIR: /data
-      BAMBUDDY_DB: /bambuddy/bambuddy.db
-      # The one required value, restated here only so `:?` can stop the deploy. A bare
-      # ${BAMBUDDY_API_KEY} interpolates to the EMPTY STRING, which os.environ reports as present —
-      # Trellis then booted fine and every Bambuddy call answered 401, which reads as "Bambuddy is
-      # broken" and sends you to the wrong service.
+      # The ONLY line here, because every other setting either has the same default in app.py or
+      # belongs in .env. `:?` so an unset or empty key stops the deploy: written as a bare
+      # ${BAMBUDDY_API_KEY} it interpolated to the EMPTY STRING, which os.environ reports as
+      # present, so Trellis booted fine and every Bambuddy call answered 401 — which reads as
+      # "Bambuddy is broken" and sends you to the wrong service.
       BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY:?set BAMBUDDY_API_KEY in .env — see .env.example}
-      # Production APNs unless .env says otherwise. Only read when signing locally; TestFlight
-      # Live-Activity tokens are production-environment, and pushing them at sandbox gets 400
-      # BadDeviceToken with the registration dropped — observed live, every card died silently.
-      APNS_HOST: ${APNS_HOST:-api.push.apple.com}
     volumes:
-      # Your own APNs auth key. Override APNS_KEY_FILE in .env if you keep it elsewhere.
-      # Harmless in RELAY mode, where nothing reads it.
-      - ${APNS_KEY_FILE:-${HOME}/.config/sprout/apns_key.p8}:/keys/apns_key.p8:ro
+      # Your own APNs auth key, ONLY when signing locally. Set APNS_KEY_FILE in .env to point at it.
+      #
+      # Defaults to /dev/null rather than a plausible-looking path. Docker creates a MISSING bind
+      # source as a DIRECTORY, so the old default quietly made <secrets-dir>/apns_key.p8
+      # a folder on every machine that had no key there — which is every relay deployment, and was
+      # true even on the machine this was written on. /dev/null is a real file, so nothing is
+      # invented, and in relay mode nothing reads it anyway.
+      - ${APNS_KEY_FILE:-/dev/null}:/keys/apns_key.p8:ro
       - ./data:/data
       # READ-ONLY, deliberately: this service must never be able to write another app's database.
       # Comment this out (and BAMBUDDY_DB above) if you do not want the MakerWorld collection

@@ -121,7 +121,12 @@ APNS_TOPIC = os.environ.get("APNS_TOPIC", "com.mvks5.bambu.push-type.liveactivit
 # The bundle id is the topic for regular alert notifications (print done / error).
 APNS_BUNDLE_ID = os.environ.get("APNS_BUNDLE_ID", APNS_TOPIC.replace(".push-type.liveactivity", ""))
 # Dev/Xcode builds use the SANDBOX gateway; TestFlight/App Store use production. Flip via env.
-APNS_HOST = os.environ.get("APNS_HOST", "api.sandbox.push.apple.com")
+# Production, because the app ships via TestFlight and its Live-Activity tokens are
+# production-environment; pushing those at sandbox gets 400 BadDeviceToken and the registration
+# dropped — observed live, every card died silently. Export APNS_HOST for local Xcode builds.
+# This lived in docker-compose.yml as an override of a sandbox default here, which meant the two
+# files disagreed about the same question and only one of them was ever read.
+APNS_HOST = os.environ.get("APNS_HOST", "api.push.apple.com")
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
 # 30s: Live-Activity pushes draw from a per-device budget (even WITH the frequent-updates plist
 # key). Priority-10 every 4s exhausted it within minutes — iOS then silently stops applying updates
