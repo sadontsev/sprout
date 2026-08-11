@@ -85,6 +85,13 @@ final class LiveActivityController {
     /// App Attest, shared across claims so one key is attested and then asserted with.
     private let attestor = AttestClient()
 
+    /// When we last reported our cards to Trellis.
+    private var lastReconcile: Date?
+
+    /// How often to reconcile. The 4-second tick drives it, but the set of cards this device can see
+    /// changes only when one appears or disappears, so a round trip per tick would be waste.
+    private static let reconcileInterval: TimeInterval = 30
+
     /// Builds the claim a registration carries, or nil when the server signs locally and needs none.
     ///
     /// Returns nil rather than throwing on any failure: a claim that cannot be built must degrade to
@@ -325,6 +332,10 @@ final class LiveActivityController {
         // device token is handed over once, so a POST that failed is otherwise the end of it, and
         // the server is left with nothing to push a start to for the rest of the process.
         if isServerOwned, !pending.isEmpty { Task { [weak self] in await self?.flushPending() } }
+        // Reconcile even with no tokens held: "this device now sees no cards" is exactly the report
+        // that frees a ghost registration, and gating it on a non-empty set would withhold the one
+        // message that matters most.
+        Task { [weak self] in await self?.reconcile() }
 
         guard let status else { return }
         guard vm.kind != .offline, vm.kind != .connecting else { return }
@@ -517,6 +528,115 @@ final class LiveActivityController {
             Task { [weak self] in
                 await self?.unregister(printerId: printerId, token: token)
             }
+        }
+    }
+
+    // MARK: - Reconciliation
+
+    /// `POST /sync` — tell Trellis every card this device can actually see.
+    ///
+    /// APNs answering 200 does NOT mean a card exists. A card that dies on the phone — swiped away,
+    /// or terminated because a new build was installed over the running app — leaves Trellis pushing
+    /// into the void while its registry still claims the card is ours, and because it refuses to
+    /// start a card for a key it already holds, no replacement is ever created. The lock screen then
+    /// stays empty for the rest of the print. Observed exactly that way.
+    ///
+    /// `unregister` covers the one case the app witnesses (a dismissal it saw). This covers the ones
+    /// it cannot: an activity that vanished while the process was dead has no dismissal callback to
+    /// fire, so the only way the truth ever reaches Trellis is the app stating the full set.
+    ///
+    /// The reply carries two instructions back:
+    ///   * `end` — tokens Trellis has nothing to bind to. Ending them stops a card that can never
+    ///     update from sitting on the lock screen looking live.
+    ///   * `needs_claim` — tokens the relay cannot push to. Intersected against what this device
+    ///     actually holds before acting: read as a list of tokens to claim, it would be an
+    ///     attestation oracle, letting a compromised server name another user's token and have this
+    ///     device sign a valid claim for it.
+    struct SyncReport: Encodable, Equatable {
+        let tokens: [String]
+        let deviceId: String
+        /// Never omitted. A card adopted through /sync is pushed to with this client's payload
+        /// shape, and an expo-shaped start reaches a native widget as a push APNs accepts and the
+        /// phone shows no card for.
+        let client = "native"
+    }
+
+    struct SyncReply: Decodable, Equatable {
+        var end: [String] = []
+        var needsClaim: [String] = []
+
+        enum CodingKeys: String, CodingKey {
+            case end
+            case needsClaim = "needs_claim"
+        }
+
+        /// Written out rather than synthesised. A property default does NOT make a key optional to
+        /// Swift's generated decoder — it throws keyNotFound — so against a Trellis that omits
+        /// either field the whole reply would fail to decode and the ghost-card reconcile, the more
+        /// valuable half, would go down with the field it had never heard of.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            end = try c.decodeIfPresent([String].self, forKey: .end) ?? []
+            needsClaim = try c.decodeIfPresent([String].self, forKey: .needsClaim) ?? []
+        }
+
+        init(end: [String] = [], needsClaim: [String] = []) {
+            self.end = end
+            self.needsClaim = needsClaim
+        }
+    }
+
+    /// Reconcile with Trellis. Rate-limited: this is driven by the 4-second tick and costs a round
+    /// trip, while the state it reports changes only when a card appears or disappears.
+    private func reconcile() async {
+        guard isServerOwned else { return }
+        if let last = lastReconcile, Date().timeIntervalSince(last) < Self.reconcileInterval { return }
+        lastReconcile = Date()
+
+        let held = Set(tokens.values.filter { !$0.isEmpty })
+        guard let url = Self.endpoint(pushUrl, "/sync"),
+              let data = Self.encode(SyncReport(tokens: Array(held), deviceId: deviceID))
+        else { return }
+
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        req.httpBody = data
+
+        guard let (payload, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let reply = try? JSONDecoder().decode(SyncReply.self, from: payload)
+        else { return }
+
+        await endOrphans(reply.end, held: held)
+        reclaim(reply.needsClaim, held: held)
+    }
+
+    /// End cards Trellis has nothing to bind to. Intersected against held tokens for the same reason
+    /// the claim list is: the server names tokens, and only ours are ours to act on.
+    private func endOrphans(_ orphanTokens: [String], held: Set<String>) async {
+        let doomed = Set(orphanTokens).intersection(held)
+        guard !doomed.isEmpty else { return }
+        for activity in Activity<PrintActivityAttributes>.activities {
+            guard let token = tokens[activity.id], doomed.contains(token) else { continue }
+            NSLog("[sync] ending orphan card %@", String(token.prefix(8)))
+            endedByApp.insert(activity.id)
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+    }
+
+    /// Queue a re-claim for tokens the relay cannot push to.
+    ///
+    /// This is what makes an unbound card recover without a human. `needingReclaim` does the
+    /// intersection, and its own test explains why the naive reading is an oracle.
+    private func reclaim(_ serverSays: [String], held: Set<String>) {
+        for token in pending.needingReclaim(serverSays: serverSays, heldTokens: held) {
+            // Clearing the stamp lets the next tick retry immediately: the server has just told us
+            // this token is unusable, which is newer information than the backoff was protecting.
+            registered = registered.filter { !$0.hasSuffix("|\(token)") }
+            lastRegisterAttempt = lastRegisterAttempt.filter { !$0.key.hasSuffix("|\(token)") }
+            NSLog("[sync] relay cannot push to %@; will re-claim", String(token.prefix(8)))
         }
     }
 

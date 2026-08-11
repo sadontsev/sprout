@@ -211,3 +211,46 @@ final class PendingClaimsTests: XCTestCase {
         XCTAssertTrue(PendingClaims.decoded(Data("nonsense".utf8)).isEmpty)
     }
 }
+
+/// The reconcile reply, which is how an unbound or dead card recovers without a human.
+final class SyncReplyTests: XCTestCase {
+    private func decode(_ json: String) throws -> LiveActivityController.SyncReply {
+        try JSONDecoder().decode(LiveActivityController.SyncReply.self, from: Data(json.utf8))
+    }
+
+    func testTheSnakeCaseKeyIsRead() throws {
+        // Trellis sends needs_claim. Decoding it as needsClaim silently yields an empty list, and an
+        // empty list is indistinguishable from "nothing to do" — so the recovery path would look
+        // wired, run every 30 seconds, and never do anything.
+        let reply = try decode(#"{"end":[],"cards":["2"],"needs_claim":["tok-1"]}"#)
+
+        XCTAssertEqual(reply.needsClaim, ["tok-1"])
+    }
+
+    func testOrphansAreRead() throws {
+        let reply = try decode(#"{"end":["tok-gone"],"cards":[],"needs_claim":[]}"#)
+
+        XCTAssertEqual(reply.end, ["tok-gone"])
+    }
+
+    func testMissingFieldsDefaultToEmptyRatherThanFailing() throws {
+        // An older Trellis omits them. Failing to decode would take the ghost-card reconcile down
+        // with the fields it does not know about, which is the more valuable half.
+        let reply = try decode(#"{"cards":["2"]}"#)
+
+        XCTAssertTrue(reply.end.isEmpty)
+        XCTAssertTrue(reply.needsClaim.isEmpty)
+    }
+
+    func testTheReportNamesThisClientExplicitly() throws {
+        // A card adopted through /sync is pushed to with this client's payload shape. Omitting it
+        // adopts the card as expo, and an expo-shaped start reaches a native widget as a push APNs
+        // accepts and the phone shows no card for.
+        let report = LiveActivityController.SyncReport(tokens: ["a"], deviceId: "dev-1")
+        let json = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(report)) as? [String: Any]
+
+        XCTAssertEqual(json?["client"] as? String, "native")
+        XCTAssertEqual(json?["deviceId"] as? String, "dev-1")
+    }
+}
