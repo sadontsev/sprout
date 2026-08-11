@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 import makerworld as mw
 import canopy
+import outbox as ob
 import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, COOL_MAX_C, COOL_MIN_C, READY, clamp_threshold, cool_step
@@ -268,6 +269,10 @@ _suspended: dict[str, str] = {}
 # A trigger, never a source: the app must intersect this against the tokens it actually holds, or a
 # compromised server could name another user's token and have an honest phone sign a claim for it.
 _needs_claim: dict[str, str] = {}
+# _outbox: alert banners awaiting delivery. Live-Activity updates deliberately have no queue —
+# they carry state and the next tick resends it — but a banner carries an EVENT, and the edge that
+# produced it fires once. Without this a transient failure lost the notification permanently.
+_outbox = ob.Outbox()
 
 
 def _needs_claim_for(device: str) -> list[str]:
@@ -316,7 +321,7 @@ _cool_threshold_at = 0.0
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox
     try:
         data = json.loads(REG_FILE.read_text())
         # Permanent, not a one-shot migration: rolling back to the previous image
@@ -342,6 +347,7 @@ def _load() -> None:
         _p2s_devices = data.get("p2s_devices", {})
         _suspended = data.get("suspended", {})
         _needs_claim = data.get("needs_claim", {})
+        _outbox = ob.Outbox.from_json(data.get("outbox"))
     except (FileNotFoundError, json.JSONDecodeError):
         # NB: this unpack used to supply three values for five targets, so the very path that exists
         # to survive a missing/corrupt state file raised ValueError instead.
@@ -349,6 +355,7 @@ def _load() -> None:
         _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}, {}, {}
         _cool, _p2s_started, _p2s_clients = {}, {}, {}
         _p2s_devices, _suspended, _needs_claim = {}, {}, {}
+        _outbox = ob.Outbox()
 
 
 def _save() -> None:
@@ -366,6 +373,7 @@ def _save() -> None:
                                     "p2s_icons": _p2s_icons, "p2s_clients": _p2s_clients,
                                     "p2s_pending": _p2s_pending, "p2s_started": _p2s_started, "p2s_devices": _p2s_devices,
                           "suspended": _suspended, "needs_claim": _needs_claim,
+                          "outbox": _outbox.to_json(),
                                     "last_paused": _last_paused,
                                     "paused_at": _paused_at, "paused_reminded": _paused_reminded,
                           "cool": _cool})
@@ -570,8 +578,34 @@ async def _list_printers(client: httpx.AsyncClient) -> dict[int, str]:
 
 
 # ---- alert notifications (print done / error) ----
-async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool = True) -> None:
-    """Send an alert banner to every registered device.
+def _queue_alert(key: str, title: str, body: str, urgent: bool = True) -> None:
+    """Queue a banner for delivery.
+
+    Queued rather than sent inline because the edge that produced it advances regardless: if the
+    push failed, `_last_kind` has already moved on and nothing would ever re-fire. The key
+    deduplicates, so re-observing the same event while a send is pending cannot deliver twice.
+    """
+    if _outbox.add(key, title, body, urgent, now=time.time()):
+        _save()
+
+
+async def _drain_outbox(client: httpx.AsyncClient) -> None:
+    """Deliver whatever is due, rescheduling what fails."""
+    now = time.time()
+    dirty = False
+    for alert in _outbox.due(now):
+        ok = await _notify(client, alert.title, alert.body, alert.urgent)
+        if ok:
+            _outbox.succeeded(alert.key)
+        else:
+            _outbox.failed(alert.key, now)
+        dirty = True
+    if dirty:
+        _save()
+
+
+async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool = True) -> bool:
+    """Send an alert banner to every registered device. Returns whether it reached anyone.
 
     `interruption-level: time-sensitive` asks iOS to break through Focus modes and the Scheduled
     Summary — the difference between "the printer halted 40 minutes ago" and knowing now. It requires
@@ -581,6 +615,9 @@ async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool
     here."""
     aps = {"alert": {"title": title, "body": body}, "sound": "default",
            "interruption-level": "time-sensitive" if urgent else "active"}
+    if not _device_tokens:
+        return True  # nobody to tell; not a failure, and retrying would never help
+    delivered = False
     for tok in list(_device_tokens):
         try:
             # Through the same backend as everything else, so the relay's status translation and
@@ -590,8 +627,11 @@ async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool
             if code in (400, 410):
                 _device_tokens.remove(tok)
                 _save()
+            elif 200 <= code < 300:
+                delivered = True
         except httpx.HTTPError as e:
             print(f"[notify] error: {e}", flush=True)
+    return delivered
 
 
 def _pending_key(device: str = "") -> str | None:
@@ -718,6 +758,10 @@ async def _poll_loop() -> None:
 
 
 async def _tick(client: httpx.AsyncClient) -> None:
+    # Deliver queued banners first: an event that failed last tick is older than
+    # anything this one will produce.
+    await _drain_outbox(client)
+
     # Poll every printer with a Live-Activity card; also the whole fleet when a device token is
     # registered (so print-done/error alerts fire even with no card up).
     ids: set[int] = registry.printer_ids(_regs)
@@ -868,14 +912,14 @@ async def _tick(client: httpx.AsyncClient) -> None:
             if prev is not None and prev != kind:
                 model = fields.get("name") or "your print"
                 if kind == "complete":
-                    await _notify(client, f"✅ {name} — print finished", model)
+                    _queue_alert(f"{pid}:complete", f"✅ {name} — print finished", model)
                 elif kind == "error":
-                    await _notify(client, f"⚠️ {name} — needs attention", model)
+                    _queue_alert(f"{pid}:error", f"⚠️ {name} — needs attention", model)
                 elif kind == "idle" and prev == "live":
                     # A live print that goes IDLE ended WITHOUT completing — aborted by the printer,
                     # or cancelled. This was silent: only complete/error notified, so the one case
                     # you most want to hear about while away produced nothing at all.
-                    await _notify(client, f"⏹️ {name} — print stopped", f"{model} ended before finishing.")
+                    _queue_alert(f"{pid}:stopped", f"⏹️ {name} — print stopped", f"{model} ended before finishing.")
         # PAUSE is not a `kind` change (see _last_paused), so it needs its own edge. This is the
         # alert that matters most: an AI-detection halt (spaghetti/pile-up/first-layer) stops the
         # print and waits for a human — and those fire false positives.
@@ -889,7 +933,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 why = "The printer halted it — resume or stop it in the app."
                 if err:
                     why = f"Halted with error {err} — open the app to resume or stop."
-                await _notify(client, f"⏸️ {name} — print paused", f"{model}. {why}")
+                _queue_alert(f"{pid}:paused", f"⏸️ {name} — print paused", f"{model}. {why}")
             _last_paused[pid] = paused_now
             if paused_now:
                 _paused_at[pid] = time.time()
@@ -905,7 +949,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
             sent = _paused_reminded.get(pid, 0)
             if sent < len(PAUSE_REMINDERS_MIN) and mins >= PAUSE_REMINDERS_MIN[sent]:
                 model = fields.get("name") or "your print"
-                await _notify(client, f"⏸️ {name} — still paused ({int(mins)} min)", f"{model} is waiting on you.")
+                _queue_alert(f"{pid}:paused:{int(mins)}", f"⏸️ {name} — still paused ({int(mins)} min)", f"{model} is waiting on you.")
                 _paused_reminded[pid] = sent + 1
                 _save()
 
@@ -928,11 +972,11 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 # stay stuck at room temperature, and promising a pop invites someone to force it
                 # and tear the PEI coating off the steel.
                 if action == READY:
-                    await _notify(client, f"🧊 {name} — plate is cool",
-                                  f"Bed at {int(bed_now)}°C. Safe to flex the plate and lift {model} off.")
+                    _queue_alert(f"{pid}:cool", f"🧊 {name} — plate is cool",
+                         f"Bed at {int(bed_now)}°C. Safe to flex the plate and lift {model} off.")
                 else:
-                    await _notify(client, f"🧊 {name} — plate has stopped cooling",
-                                  f"Settled at {int(bed_now)}°C, as cool as it will get today. Go ahead and flex the plate.")
+                    _queue_alert(f"{pid}:cool", f"🧊 {name} — plate has stopped cooling",
+                         f"Settled at {int(bed_now)}°C, as cool as it will get today. Go ahead and flex the plate.")
                 print(f"[cool] printer {pid}: {action} at {int(bed_now)}C (threshold {threshold:g})", flush=True)
             _save()
 
@@ -951,7 +995,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 prev_dry = _last_dry.get(dkey)
                 if prev_dry is not None and prev_dry.get("t", 0) > 0 and cur <= 0 and prev_dry.get("t", 0) <= 15:
                     fil = prev_dry.get("fil") or "Filament"
-                    await _notify(client, f"💨 {name} — drying finished", f"{fil} is dry.")
+                    _queue_alert(f"{pid}:dry:{key}", f"💨 {name} — drying finished", f"{fil} is dry.")
                 if prev_dry is None or prev_dry.get("t") != cur:
                     _last_dry[dkey] = {"t": cur, "fil": (unit.get("dry_filament") or (prev_dry or {}).get("fil") or "")}
                     _save()
@@ -1048,15 +1092,25 @@ class DeviceReg(BaseModel):
     claim: dict | None = None  # see Register.claim
 
 
+_canopy_http: httpx.AsyncClient | None = None
+
+
 async def _canopy_transport(method: str, path: str, body: dict | None, bearer: str | None):
-    """httpx behind the Canopy client's injected transport."""
-    async with httpx.AsyncClient(timeout=10) as c:
-        headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
-        r = await c.request(method, f"{CANOPY_URL}{path}", json=body, headers=headers)
-        try:
-            return r.status_code, r.json()
-        except (json.JSONDecodeError, ValueError):
-            return r.status_code, None
+    """httpx behind the Canopy client's injected transport.
+
+    One client for the process, not one per call: a fresh AsyncClient means a fresh TLS handshake
+    for every push, and this path runs on every meaningful change of every card. Keeping it open
+    also lets HTTP/2 multiplex, which is what makes several cards updating in one tick cheap.
+    """
+    global _canopy_http
+    if _canopy_http is None:
+        _canopy_http = httpx.AsyncClient(timeout=10, http2=True)
+    headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
+    r = await _canopy_http.request(method, f"{CANOPY_URL}{path}", json=body, headers=headers)
+    try:
+        return r.status_code, r.json()
+    except (json.JSONDecodeError, ValueError):
+        return r.status_code, None
 
 
 async def _ensure_enrolled() -> None:
