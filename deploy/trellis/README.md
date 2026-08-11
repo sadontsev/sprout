@@ -16,15 +16,23 @@ The pushed ContentState must match `PrintActivityProps` in
 
 ## Two modes
 
-**RELAY** (`CANOPY_URL`) — no APNs key here at all. Pushes go to Canopy, which holds the signing
-key for App Store builds and decides whether this tenant may push to a token. Nothing
-Apple-specific lives on this box, so the owner can rotate the key without any self-hoster acting.
+**RELAY (the default)** — no APNs key here at all. Pushes go to Canopy, which holds the signing key
+and decides whether this tenant may push to a token. Nothing Apple-specific lives on this box, so
+the owner can rotate the key without any self-hoster acting.
+
+`CANOPY_URL` defaults to the relay run by the app's author (`DEFAULT_CANOPY_URL` in `app.py`), which
+is what makes an App Store install work with no Apple developer account. Set it only to point at
+your own — see [docs/guides/self-hosting-push.md](../../docs/guides/self-hosting-push.md), which
+leads with the constraint that your own Canopy also means your own *build*.
 
 **DIRECT** (the `APNS_*` set) — sign locally with your own `.p8`, for a build signed by your own
-Apple team.
+Apple team. Setting `APNS_KEY_ID` is what opts out of the relay, and **all** of `APNS_KEY_ID`,
+`APNS_TEAM_ID` and `APNS_TOPIC` are then required: a partial set used to boot and sign every JWT
+with an empty issuer, which APNs answers with `InvalidProviderToken` forever — indistinguishable
+from Apple being down.
 
-Exactly one must be configured. Both, or neither, exits at startup rather than failing at the
-first push, because "which key is expected to sign" has no sensible default.
+Configuring `CANOPY_URL` **and** the `APNS_*` set exits at startup rather than failing at the first
+push, because "which key is expected to sign" has no sensible default.
 
 In relay mode the service enrols itself on first boot and prints a **recovery code, once, to the
 log**. Save it somewhere that outlives the data volume: it is what lets a rebuilt server re-adopt
@@ -85,13 +93,48 @@ collections.
 | | |
 |---|---|
 | `GET /health` | `{ok, registrations, apns_host, cards_by_client, start_tokens_by_client}` — **unauthenticated** |
-| `POST /register` | `{printer_id, push_token, printer_name?, icon_uri?, kind?, ams_id?, client?}` — `kind` is `"print"` or `"dry"`; a drying card is one per AMS unit, so `ams_id` is required in practice for `"dry"` |
+| `POST /register` | `{printer_id, push_token, printer_name?, icon_uri?, kind?, ams_id?, client?, claim?}` — `kind` is `"print"` or `"dry"`; a drying card is one per AMS unit, so `ams_id` is required in practice for `"dry"`. Answers `{ok, bound}` — see below |
 | `POST /unregister?printer_id=…` | drops a registration |
 | `POST /register-start` | registers the token used for print-start pushes |
 | `POST /register-device` | `{device_token}` — the raw APNs token for ordinary alert banners |
-| `POST /sync` | `{tokens, icon_uri?}` — the app sends **every** Live-Activity push token it can currently see; answers `{end, cards}`. This is reconciliation, not a state push: a registration whose token is absent has had its card dismissed, so it is dropped |
+| `POST /sync` | `{tokens, device_id?, client?, icon_uri?}` — the app sends **every** Live-Activity push token it can currently see; answers `{end, cards, needs_claim}`. Reconciliation, not a state push: a registration whose token is absent no longer exists on that device, so it is dropped. `client` decides the payload shape a card adopted here is pushed with, and whether a replacement is granted |
 | `GET /makerworld/collections` | `{collections: [{id, title, count, cover, is_default}]}` |
 | `GET /makerworld/collections/{id}/designs?offset=&limit=` | `{total, hits}` — `hits` are MakerWorld's own shape, passed through |
+
+### `ok` is not `bound`
+
+`POST /register`, `/register-start` and `/register-device` all answer with both, and they answer
+different questions:
+
+```json
+{"ok": true, "bound": false}
+```
+
+`ok` — Trellis stored this. `bound` — the relay can actually push to this token.
+
+They diverge whenever the device's App Attest claim fails to build, which is routine and transient.
+Reading `ok` as "registration finished" is what once froze a live card at its opening content for a
+whole print while every component reported success: the app marked the pair done and never retried,
+Canopy answered `not_bound` to every push, and the poll loop logged `-> 0` on every tick forever.
+
+An absent `bound` field is read by the app as `true`, for a Trellis too old to answer.
+
+### Replacing a card that died vs one that was dismissed
+
+Push-to-start is armed **once per live session**, so a mid-print identity change cannot spawn a
+second card. The cost is that a card which *dies* mid-print — the app was reinstalled, which
+terminates running Live Activities — would never be replaced.
+
+`/sync` and `/unregister` resolve that, and they carry opposite instructions:
+
+- **`/unregister`** is a dismissal the app *witnessed*. The user swiped the card away; putting it
+  back is the opposite of what they asked for. No replacement.
+- **`/sync` reporting a card absent**, with no dismissal behind it, is a death. Trellis grants that
+  **one device** a single replacement, and push-to-start makes a fresh card.
+
+Only clients that report those two separately get the grant. The RN app's sole reconcile path is
+`/sync`, so from it a swipe and a death are indistinguishable — granting on that basis would put a
+deliberately dismissed card back within 45 seconds.
 
 ## MakerWorld collections
 

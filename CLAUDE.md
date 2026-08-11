@@ -17,6 +17,8 @@ Monorepo layout:
 - `mobile/` — the Expo app. Has its own `mobile/AGENTS.md`: **read the exact v56 docs at https://docs.expo.dev/versions/v56.0.0/ before writing Expo code** — SDK 56 APIs differ from older muscle memory.
 - `native/` — a **native SwiftUI reimplementation** of the same app, built to be compared against the RN one. Same bundle id, so the two ship as different TestFlight builds of one app record. See `docs/native-rewrite/00-overview.md`.
 - `deploy/` — docker-compose for the Bambuddy backend + Bambu Studio / OrcaSlicer sidecars (run on the home server `<your-server>`). See `deploy/README.md`.
+- `deploy/trellis/` — the push + MakerWorld service each USER runs next to their own Bambuddy (FastAPI). Formerly `la-push`; the rename is done, but old names survive in `docs/native-rewrite/`.
+- `canopy/` — the APNs relay the app AUTHOR hosts (Go). Holds the signing keys so users need no Apple account, verifies App Attest, and binds each push token to one tenant. See the section below.
 - `docs/phase0-results.md` — validated backend facts (URLs, auth, A1 preset names). Secrets are **not** here.
 - `docs/native-rewrite/` — the extracted behavioural specification of the RN app, one file per subsystem. It is the source of truth for the port and the reference for anything ambiguous in either app.
 
@@ -112,6 +114,45 @@ configuration for them — and precisely when collections must keep working.
 `ams_mapping` is **indexed by the 3MF's filament slot and valued by global tray id** — index 0 addresses slot 1. `Domain/AmsMapping.swift` owns the array and is the tested boundary; a plate whose lone filament is slot 3 needs `[-1, -1, tray]`, and `usedSlotCount == 1` is *not* the same question as "expressible as a one-element array".
 
 Ask `filament-requirements` **per plate** (`?plate_id=`) for the exact `(file, plate)` pair that will be enqueued — unfiltered it reports every slot in the file, and on a Sprout-sliced output the plate ids other than the one sliced return stale data. Slicing N filaments works today (`filament_presets` plural, **compacted** to used slots in ascending order — measured); the wizard's UI is still single-filament and refuses multi-material with a stated reason.
+
+## The push relay (`canopy/`)
+
+```bash
+cd canopy && go build ./... && go vet ./... && go test ./...   # ~199 tests, seconds
+./canopy/scripts-deploy.sh                                     # backs up, syncs, rebuilds, verifies
+```
+
+Go, SQLite, three dependencies **forever** (`modernc.org/sqlite`, `golang.org/x/time/rate`,
+`github.com/fxamacker/cbor/v2`) — this process holds the APNs signing keys for every install, so its
+supply chain is part of its threat model. `canopy/README.md` is the operator reference;
+`docs/superpowers/specs/2026-08-11-trellis-canopy-push-design.md` is the design.
+
+**Deploy with the script, never a hand-rolled rsync.** `--delete` into `<deploy-dir>/canopy` will remove
+`data/` (the bindings and attest keys) and `.env`, neither of which is in git. rsync anchors a
+leading-slash exclude to the TRANSFER ROOT, so it is `/data`, not `/canopy/data` — written the wrong
+way once, it deleted the live database, and recovery only worked because the container still held
+the deleted inodes open under `/proc/<pid>/fd`. A device cannot re-attest on demand, so losing that
+directory costs every install a round it has no way to know it needs.
+
+Invariants that are load-bearing, each learnt the expensive way:
+
+- **A binding may only carry the push types its kind owns** (`binding.Kind.Permits`). Canopy cannot
+  tell a device token from a push-to-start token by value — only the claimant's `binding_kind` says
+  which. Start tokens bind with no vouch because they cannot receive one, so without this gate an
+  attacker declares a victim's DEVICE token to be a `start` token, binds it unvouched, and pushes an
+  `alert` (topic = bare bundle id) onto the victim's lock screen. Reproduced end to end.
+- **Apple signs `SHA-256(nonce)`, not the nonce.** The assertion verifier and its fixture were both
+  wrong in the same direction and agreed perfectly; only real hardware found it. Fixtures that share
+  code with the parser cannot catch this class of bug — see `internal/appattest/README.md`.
+- **Receipts are BER, not DER.** `encoding/asn1` refuses indefinite lengths, which every real Apple
+  receipt uses, and the eContent is a segmented OCTET STRING. `internal/fraud/ber.go` handles exactly
+  that subset and should not grow.
+- **A new DeviceCheck key does not work for up to 24 hours.** Until Apple propagates it, tokens
+  signed by it are rejected *without being verified*, so a corrupted signature and a valid one fail
+  identically. `attestationData` answers a bare 401 with an empty body — even to a request with no
+  Authorization header — so use `validate_device_token` to tell propagation from misconfiguration.
+- **The captured attestation fixture is gitignored.** Apple's leaf certificate carries
+  `<TEAMID>.<bundle id>` in plaintext and this repo is public.
 
 ## Commands (run from `mobile/`)
 
