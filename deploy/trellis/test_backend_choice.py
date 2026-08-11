@@ -89,6 +89,42 @@ class BackendChoice(unittest.TestCase):
         self.assertTrue(url.startswith("https://"))
 
 
+class DirectModeNeedsTheWholeCredentialSet(unittest.TestCase):
+    """A key id alone is not a complete signing configuration.
+
+    compose enforced this with ${APNS_TEAM_ID:?...} until that had to become :- so an unset value
+    could reach app.py. The guard that replaced it checked only APNS_KEY_ID — a proxy for "the
+    DIRECT set is complete", not the same question — so a deployment with a key id and a blank team
+    id booted and signed every APNs JWT with an empty issuer, and APNs answered 403
+    InvalidProviderToken on every push forever.
+    """
+
+    REQUIRED = ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC")
+
+    def missing(self, env: dict):
+        return [n for n in self.REQUIRED if not env.get(n)]
+
+    def test_a_complete_set_is_accepted(self):
+        env = {"APNS_KEY_ID": "K", "APNS_TEAM_ID": "T", "APNS_TOPIC": "com.example.app"}
+        self.assertEqual(self.missing(env), [])
+
+    def test_a_blank_team_id_is_caught(self):
+        env = {"APNS_KEY_ID": "K", "APNS_TEAM_ID": "", "APNS_TOPIC": "com.example.app"}
+        self.assertEqual(self.missing(env), ["APNS_TEAM_ID"])
+
+    def test_an_absent_topic_is_caught(self):
+        env = {"APNS_KEY_ID": "K", "APNS_TEAM_ID": "T"}
+        self.assertEqual(self.missing(env), ["APNS_TOPIC"])
+
+    def test_the_module_actually_checks_all_three(self):
+        import pathlib as _p
+        source = (_p.Path(__file__).parent / "app.py").read_text()
+        for name in self.REQUIRED:
+            self.assertIn(f'"{name}"', source)
+        self.assertIn('_missing = [n for n in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC")', source,
+                      "the guard must name every variable a local signer needs")
+
+
 class SelfHostingGuideExists(unittest.TestCase):
     """The other half of the requirement: a default for most people, instructions for the rest."""
 

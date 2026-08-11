@@ -3,9 +3,15 @@ services:
     build: .
     container_name: canopy
     restart: unless-stopped
-    # Runs as the host user rather than the image's nonroot uid, so the bind-mounted data directory
-    # is writable without loosening its permissions. The image itself carries no shell and no libc;
-    # this only changes which uid the single binary runs under.
+    # Runs as the deploying user rather than the image's nonroot uid, so the bind-mounted data
+    # directory is writable without loosening its permissions. The image carries no shell and no
+    # libc; this only changes which uid the single binary runs under.
+    #
+    # 1000 is a GUESS, not a default that is right anywhere in particular. Set CANOPY_UID and
+    # CANOPY_GID in .env to `id -u` / `id -g` (scripts-deploy.sh does it for you). If they are
+    # wrong, or if ./data does not exist when the container first starts — Docker then creates it
+    # root-owned — the process cannot create the SQLite file, exits, and `restart: unless-stopped`
+    # loops it. See .env.example.
     user: "${CANOPY_UID:-1000}:${CANOPY_GID:-1000}"
     # Reachable from the host LAN so a tunnel can front it. This is the process holding the APNs
     # signing keys, so publishing it comes with a condition rather than on its own: set
@@ -49,10 +55,20 @@ services:
       CANOPY_DEVICECHECK_KEY_ID: ${CANOPY_DEVICECHECK_KEY_ID:-}
     volumes:
       - ${APNS_KEY_FILE:-${HOME}/.config/sprout/apns_key.p8}:/keys/apns_key.p8:ro
-      # Always mounted, read only when CANOPY_DEVICECHECK_KEY names it. A bind mount whose source does not
-      # exist is created by Docker as a DIRECTORY, so defaulting this to a real file is what keeps
-      # an unconfigured deployment from acquiring a junk path it will later trip over.
-      - ${DEVICECHECK_KEY_FILE:-${APNS_KEY_FILE:-${HOME}/.config/sprout/apns_key.p8}}:/keys/devicecheck_key.p8:ro
+      # Defaults to /dev/null, NOT to the APNs key.
+      #
+      # It defaulted to the APNs key so that an unconfigured deployment always had a real file to
+      # mount (a bind mount whose source is missing is created by Docker as a DIRECTORY). But then
+      # setting only CANOPY_DEVICECHECK_KEY_ID — which the comment above says is the switch — mounts
+      # the APNS key at this path, and Canopy signs DeviceCheck tokens with it. Both are PKCS8
+      # ECDSA P-256, so it parses, the startup check that exists to catch exactly this passes, and
+      # every sweep then fails Apple's 401 path forever while the deployment believes the metric is
+      # on. Key-id-is-set was standing in for "a DeviceCheck key is mounted".
+      #
+      # /dev/null is a real file, so Docker will not invent a directory, and it fails to parse as a
+      # key — so a half-configured deployment stops at startup with a message instead of running
+      # blind.
+      - ${DEVICECHECK_KEY_FILE:-/dev/null}:/keys/devicecheck_key.p8:ro
       - ${APPLE_ROOT_CA_FILE:-${HOME}/.config/sprout/apple-app-attest-root.pem}:/keys/apple-app-attest-root.pem:ro
       # Bindings and attest keys are durable state, not a cache: a device cannot re-attest on
       # demand, so losing this costs every install a re-attestation round it has no way to know it

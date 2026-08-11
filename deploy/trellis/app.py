@@ -76,6 +76,30 @@ APNS_KEY_PATH = os.environ.get("APNS_KEY_PATH", "/keys/apns_key.p8")
 # host. That is the point — the owner can rotate the signing key without any self-hoster acting.
 RELAY_MODE = bool(CANOPY_URL)
 
+if not RELAY_MODE:
+    # DIRECT mode needs the WHOLE credential set, not just a key id.
+    #
+    # compose used to enforce this with ${APNS_TEAM_ID:?...}, which fires on empty as well as
+    # unset. That had to become :- so an unset value could reach app.py and be answered with a
+    # sentence instead of a compose interpolation error — but the guard that replaced it checked
+    # only APNS_KEY_ID, which is a proxy for "the DIRECT set is complete" and not the same
+    # question. A deployment with a key id and a blank team id therefore booted and signed every
+    # APNs JWT with `iss: ""`, and APNs answered 403 InvalidProviderToken on every push forever.
+    _missing = [n for n in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC") if not os.environ.get(n)]
+    if _missing == ["APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC"]:
+        raise SystemExit(
+            "No push backend configured. Leave CANOPY_URL unset to relay through the default "
+            f"push service ({DEFAULT_CANOPY_URL}), or set the APNS_* set to sign locally — see "
+            "docs/guides/self-hosting-push.md."
+        )
+    if _missing:
+        raise SystemExit(
+            "Signing locally needs the whole APNs credential set; missing: "
+            + ", ".join(_missing)
+            + ". A partial set boots and then fails every push with InvalidProviderToken, which is "
+            "indistinguishable from Apple being down."
+        )
+
 # Some relays gate enrolment behind an invite while they are young. Read here and passed to
 # enrol; without it a gated relay answers 403 and push stays off, so the failure is logged with
 # the variable to set rather than as a bare HTTP status.
@@ -309,6 +333,27 @@ def _needs_claim_for(device: str) -> list[str]:
 # minutes and a fresh card was started — 199 of them for one print, with three left stacked on the
 # lock screen. Now a card is started once per identity, and only a NEW print re-arms it.
 _p2s_started: dict[str, str] = {}
+
+# _p2s_rearm: {"<key>|<device>" -> unix ts} — permission for ONE replacement card, for ONE device.
+#
+# Arming is otherwise once per live session, which is what stops a mid-print identity change from
+# spawning a second card. A card that DIES mid-print therefore used to be gone for the rest of the
+# print. The first fix cleared _p2s_started outright, but that key is global while every other
+# push-to-start decision is per device — so one phone's reconcile could stack a second card onto
+# another phone's lock screen, on top of a card that phone had never adopted.
+_p2s_rearm: dict[str, float] = {}
+
+
+def _has_rearm(key: str) -> bool:
+    """Whether any device holds a replacement grant for this card.
+
+    should_start answers "may a card be started for this print at all", which is once per live
+    session. A grant is the narrow exception, so the poll loop has to reach _remote_start even when
+    that answer is no — otherwise the grant is never consumed and the replacement never happens.
+    _remote_start still decides per device.
+    """
+    suffix_keys = (k for k in _p2s_rearm if k.rpartition("|")[0] == key)
+    return next(suffix_keys, None) is not None
 # _last_kind: printerId -> last-seen kind, for edge-triggered notifications. Persisted (in REG_FILE) so a
 # restart/crash mid-print doesn't lose the live->complete/error edge and silently drop the alert.
 _last_kind: dict[int, str] = {}
@@ -340,7 +385,7 @@ _cool_threshold_at = 0.0
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox, _p2s_rearm
     try:
         data = json.loads(REG_FILE.read_text())
         # Permanent, not a one-shot migration: rolling back to the previous image
@@ -363,6 +408,7 @@ def _load() -> None:
         _p2s_clients = data.get("p2s_clients", {})
         _p2s_pending = data.get("p2s_pending", {})
         _p2s_started = data.get("p2s_started", {})
+        _p2s_rearm = data.get("p2s_rearm", {})
         _p2s_devices = data.get("p2s_devices", {})
         _suspended = data.get("suspended", {})
         _needs_claim = data.get("needs_claim", {})
@@ -372,7 +418,7 @@ def _load() -> None:
         # to survive a missing/corrupt state file raised ValueError instead.
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
         _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}, {}, {}
-        _cool, _p2s_started, _p2s_clients = {}, {}, {}
+        _cool, _p2s_started, _p2s_clients, _p2s_rearm = {}, {}, {}, {}
         _p2s_devices, _suspended, _needs_claim = {}, {}, {}
         _outbox = ob.Outbox()
 
@@ -391,6 +437,7 @@ def _save() -> None:
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
                                     "p2s_icons": _p2s_icons, "p2s_clients": _p2s_clients,
                                     "p2s_pending": _p2s_pending, "p2s_started": _p2s_started, "p2s_devices": _p2s_devices,
+                                    "p2s_rearm": _p2s_rearm,
                           "suspended": _suspended, "needs_claim": _needs_claim,
                           "outbox": _outbox.to_json(),
                                     "last_paused": _last_paused,
@@ -695,6 +742,11 @@ async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: st
             continue
         if _pending_key(device) == key:
             continue  # this device already has an unresolved start for this card
+        # A grant is single-use and per device: it is consumed here whether or not the push lands,
+        # so a device cannot accumulate replacements.
+        rearmed = _p2s_rearm.pop(_pending_id(key, device), None) is not None
+        if _p2s_started.get(key) is not None and not rearmed:
+            continue  # already started once this live session, and this device was not re-armed
         tok_client = norm_client(_p2s_clients.get(tok))
         code = await _push_start(client, tok, {**cs, "iconUri": _p2s_icons.get(tok, cs.get("iconUri", ""))},
                                  printer_id=pid, ams_id=ams, la_client=tok_client)
@@ -885,7 +937,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
             # NB `key in _regs` answers "does ANYONE have a card", which is a nearby question and
             # not this one. _remote_start now decides per device, so a phone that has no card still
             # gets a start even when another phone in the house does.
-            if should_start(kind == "live", ident, _p2s_started.get(key), False):
+            if should_start(kind == "live", ident, _p2s_started.get(key), False) or _has_rearm(key):
                 await _remote_start(client, key, {"printerName": name, **fields}, f"print {pid} [{ident}]")
             nxt = next_started_for(kind == "live", ident, _p2s_started.get(key))
             if nxt != _p2s_started.get(key):
@@ -909,7 +961,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 live_dry_keys.add(dkey)
                 dident = dry_identity(a_id, units.get(a_id) or {})
                 # Per device, decided inside _remote_start — see the print gate above.
-                if should_start(True, dident, _p2s_started.get(dkey), False):
+                if should_start(True, dident, _p2s_started.get(dkey), False) or _has_rearm(dkey):
                     await _remote_start(client, dkey, {"printerName": name, **ds0}, f"dry {pid}:{a_id}")
                 _p2s_started[dkey] = dident
             # Forget cycles that ended, so the NEXT cycle on that unit starts a card again.
@@ -1320,23 +1372,30 @@ async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
 
     # 1. Forget THIS DEVICE's cards that no longer exist. Scoping is essential: a report from one
     # phone says nothing about what another phone can see.
+    reporting = norm_client(r.client)
     for key in registry.prune_device(_regs, device, seen):
-        # Re-arm push-to-start for this key. Arming is otherwise once per LIVE SESSION, which is
-        # what stops a mid-print identity change from spawning a second card — but it also meant a
-        # card that DIED mid-print was never replaced, and the lock screen stayed empty for the rest
-        # of the print. Observed today: installing a new build terminated the running activity and
-        # the print had no card at all until the registry was cleared by hand.
+        # Grant ONE replacement, for THIS DEVICE only. Arming is otherwise once per live session,
+        # which is what stops a mid-print identity change from spawning a second card — but it also
+        # meant a card that DIED mid-print was never replaced and the lock screen stayed empty for
+        # the rest of the print. Observed: installing a new build terminated the running activity
+        # and the print had no card until the registry was cleared by hand.
         #
-        # Re-armed HERE and deliberately not in /unregister, because the two carry opposite
-        # instructions. /unregister is the app reporting a dismissal it WITNESSED — the user swiped
-        # the card away, and putting it straight back is the opposite of what they asked for. This
-        # path is the app reporting that a card is gone with no dismissal behind it, which is a
-        # death, not a decision.
+        # Two things this must NOT become:
         #
-        # Safe against duplicates: _remote_start still checks has_card per device, and should_start
-        # still requires no card to exist.
-        _p2s_started.pop(key, None)
-        print(f"[sync] card {key} is gone from {device} — dropped and re-armed, free to restart",
+        #  * global. _p2s_started is keyed by registry key alone while every other push-to-start
+        #    decision is per device, so clearing it outright let one phone's reconcile stack a
+        #    second card onto another phone's lock screen — on top of a card that phone had never
+        #    adopted and could not update.
+        #  * a response to a DISMISSAL. Only a client that reports witnessed dismissals separately
+        #    (via /unregister) can distinguish "this card died" from "the user swiped it away", and
+        #    the RN app does not: its sole reconcile path is this endpoint, so a swiped card would
+        #    come back within 45 seconds, which is the opposite of what the user asked for.
+        if reporting != NATIVE:
+            print(f"[sync] card {key} is gone from {device} — dropped; no re-arm for a "
+                  f"{reporting} client, which cannot tell a dismissal from a death", flush=True)
+            continue
+        _p2s_rearm[_pending_id(key, device)] = time.time()
+        print(f"[sync] card {key} is gone from {device} — dropped and re-armed for that device",
               flush=True)
 
     # 2. Claim / disown the tokens we were handed.

@@ -73,35 +73,50 @@ actor AttestClient {
         guard isSupported else { throw Failure.unsupported }
         let plan = heldPlan ?? planProof()
         heldPlan = nil
-        if plan == .assertion, let keyID = cachedKeyID {
-            let assertion = try await service.generateAssertion(keyID, clientDataHash: Data(SHA256.hash(data: clientData)))
-            return ClaimBuilder.AttestProof(
-                keyID: keyID, attestation: nil, assertion: assertion.base64URLEncodedString()
-            )
-        }
-        if plan == .assertion {
-            // Planned an assertion but the key vanished under us. Fail rather than silently
-            // attesting: the challenge in flight is an assertion challenge and the relay would
-            // reject the mismatch anyway, less informatively.
-            throw Failure.service("planned an assertion but no key is cached")
-        }
-
         let hash = Data(SHA256Digest.of(clientData))
 
-        if let keyID = cachedKeyID {
+        if plan == .assertion {
+            guard let keyID = cachedKeyID else {
+                // Planned an assertion but the key vanished under us. Fail rather than silently
+                // attesting: the challenge in flight is an assertion challenge and the relay would
+                // reject the mismatch anyway, less informatively.
+                throw Failure.service("planned an assertion but no key is cached")
+            }
             do {
                 let assertion = try await service.generateAssertion(keyID, clientDataHash: hash)
                 return ClaimBuilder.AttestProof(
                     keyID: keyID, attestation: nil, assertion: assertion.base64URLEncodedString()
                 )
             } catch {
-                // The key is gone or Apple rejected it; the relay would answer reattest_required
-                // anyway. Start over rather than looping on a key that can no longer assert.
+                // THE RECOVERY THAT WAS UNREACHABLE. A do/catch further down handled this, but it
+                // sat below an early `throw` on the assertion plan, so once any key was cached —
+                // i.e. always, after the first success — it could never run.
+                //
+                // The case that matters: the phone is restored from a backup or a device-to-device
+                // transfer. UserDefaults comes back and so does the cached key id; the Secure
+                // Enclave key does not. Every assertion then throws DCError.invalidKey, buildClaim
+                // logs and returns nil, the registration goes out unclaimed, and — with nothing
+                // clearing the key — the install can never produce a valid proof again. It was
+                // permanent, and silent apart from one NSLog.
                 cachedKeyID = nil
+                unattestedKeyID = nil
+                throw Failure.service("assertion failed; discarded the key so the next claim attests: "
+                                      + String(describing: error))
             }
         }
 
-        let keyID = try await service.generateKey()
+        // Reuse a key that was generated but never accepted, rather than minting another. Apple's
+        // guidance is to retry attestation with the SAME key, and a fresh key per retry degrades
+        // the device's risk metric — the signal the relay's fraud assessment reads.
+        // Written out rather than with `??`: the right-hand side is async, and an autoclosure
+        // cannot carry an await.
+        let keyID: String
+        if let held = unattestedKeyID {
+            keyID = held
+        } else {
+            keyID = try await service.generateKey()
+        }
+        unattestedKeyID = keyID
         do {
             let attestation = try await service.attestKey(keyID, clientDataHash: hash)
             // Deliberately NOT cached here. Apple accepting the attestation says nothing about
@@ -114,16 +129,22 @@ actor AttestClient {
                 keyID: keyID, attestation: attestation.base64URLEncodedString(), assertion: nil
             )
         } catch let error as NSError where error.code == DCError.serverUnavailable.rawValue {
-            // Apple's guidance: retry attestation with the SAME key and client-data hash rather
-            // than generating another. A fresh key per retry degrades the device's risk metric,
-            // which is the signal the relay's fraud assessment eventually reads. The caller's retry
-            // reuses this key because it is only cached on success — so hold it here.
-            cachedKeyID = keyID
+            // Transient. The key is held in `unattestedKeyID` — NOT in `cachedKeyID`, which was the
+            // bug: writing it there made planProof() see a cached key and plan an ASSERTION on the
+            // next attempt, for a key Apple had never attested. DeviceCheck rejects that with
+            // invalidKey, and with the assertion path having had no catch, nothing ever cleared it.
+            // One transient Apple outage during the very first claim left the install permanently
+            // unable to produce any proof.
             throw Failure.service("attestation service unavailable; retry with the same key")
         } catch {
             throw Failure.service(String(describing: error))
         }
     }
+
+    /// A key generated but not yet attested-and-accepted. Distinct from `cachedKeyID`, which means
+    /// "the relay holds the public half and assertions will verify" — the two look alike and answer
+    /// different questions, and conflating them is what made a transient failure permanent.
+    private var unattestedKeyID: String?
 
     /// A key that has attested with Apple but has not yet been accepted by the relay.
     private var pendingKeyID: String?
@@ -134,6 +155,7 @@ actor AttestClient {
         if let pendingKeyID {
             cachedKeyID = pendingKeyID
             self.pendingKeyID = nil
+            unattestedKeyID = nil
         }
     }
 
@@ -143,6 +165,7 @@ actor AttestClient {
     func reattest() {
         cachedKeyID = nil
         pendingKeyID = nil
+        unattestedKeyID = nil
     }
 }
 
