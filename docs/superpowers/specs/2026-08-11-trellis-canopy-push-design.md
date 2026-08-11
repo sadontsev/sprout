@@ -960,9 +960,25 @@ attestation tests need real-device artefacts, so the harness comes first.
 
 ## 14. Out of scope / future hardening
 
-- **Apple's fraud-assessment metric** — the receipt is stored at attestation time (§6) precisely
-  so this can be enabled later without re-attesting every install. It is the mechanism that
-  bounds §4's stated residual risk (a hooked app on a jailbroken device).
+- ~~**Apple's fraud-assessment metric**~~ — **built** (`canopy/internal/fraud`). The receipt was
+  stored at attestation time (§6) precisely so this could be enabled later without re-attesting
+  every install, and that is what happened: it reads history rather than starting a clock. An
+  hourly sweep redeems each stored receipt against the host matching the environment **that key**
+  attested in, records Apple's attested-key count, and alerts above `SuspiciousKeyCount` (25 —
+  generous, because an honest household reaches several over a year through reinstalls and
+  restores, and the shape being looked for is one handset minting identities). This is the
+  mechanism that bounds §4's stated residual risk (a hooked app on a jailbroken device).
+
+  Two distinctions the implementation refuses to collapse, both instances of the recurring bug:
+  *no metric is not zero keys* (an `ATTEST` receipt carries none, so `risk_metric` is NULL rather
+  than 0 — a 0 would read as "known clean" forever), and *the redemption host follows the key's
+  attestation environment*, not Canopy's own and not any binding's APNs environment.
+
+  **Still needs an App Store Connect API key** (`CANOPY_ASC_KEY`, `CANOPY_ASC_KEY_ID`,
+  `CANOPY_ASC_ISSUER_ID`) — a different credential from the APNs signing key: that one authorises
+  sending a push, this one authorises reading Apple's per-device risk data. Unset, the sweep never
+  runs and every other check is unaffected; the metric refines a bound that already holds, so its
+  absence must degrade the signal and never the service.
 - **Rotating a pairing key without deleting the binding.** v1's reset path is
   `DELETE /v1/bindings` from the bound tenant, which is simple and user-initiated. A future
   in-place rotation would be a claim signed by *both* the old and the new pairing key; it needs
