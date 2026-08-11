@@ -181,3 +181,88 @@ class MultiDeviceRegistry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class RegistrationReportsWhetherItBound(unittest.TestCase):
+    """The bug that froze a live card for a whole print.
+
+    A registration whose claim could not be built on the phone is still STORED — the card is real
+    and Trellis answers 200 — but the token is not bound at the relay and cannot be pushed to. The
+    app used to read that 200 as "registration finished", mark the pair done, and never retry, so a
+    transient App Attest failure became a permanently frozen Live Activity with every component
+    reporting success.
+
+    So the response has to answer the second question separately.
+    """
+
+    def setUp(self):
+        la.app.dependency_overrides[la._require_key] = lambda: None
+        self.client = TestClient(la.app)
+        la._regs = {}
+        la._needs_claim = {}
+        la._p2s_tokens = []
+        la._p2s_icons = {}
+        la._p2s_clients = {}
+        la._p2s_devices = {}
+        la._p2s_pending = {}
+        la._device_tokens = []
+        la._suspended = {}
+        la._save = lambda: None
+        self._relay = la.RELAY_MODE
+
+    def tearDown(self):
+        la.RELAY_MODE = self._relay
+        la.app.dependency_overrides.clear()
+
+    def _register(self, token="tok-1", claim=None):
+        return self.client.post("/register", json={
+            "printer_id": 1, "push_token": token, "printer_name": "P",
+            "kind": "print", "device_id": "phoneA", "client": "native",
+            **({"claim": claim} if claim else {}),
+        })
+
+    def test_a_relay_registration_without_a_claim_is_not_bound(self):
+        la.RELAY_MODE = True
+        r = self._register()
+
+        self.assertEqual(r.status_code, 200, "the card itself is fine and must still be stored")
+        self.assertIs(r.json()["bound"], False,
+                      "an unclaimed token cannot be pushed to; saying otherwise freezes the card")
+
+    def test_an_unbound_registration_is_remembered_as_needing_a_claim(self):
+        # Clearing needs_claim here threw away the only record that this token still needs
+        # claiming, so nothing downstream could ever tell the device to retry.
+        la.RELAY_MODE = True
+        self._register(token="tok-unbound")
+
+        self.assertIn("tok-unbound", la._needs_claim)
+
+    def test_the_card_is_still_stored_when_it_could_not_be_bound(self):
+        la.RELAY_MODE = True
+        self._register(token="tok-1")
+
+        self.assertTrue(registry.has_card(la._regs, "1", "phoneA"),
+                        "refusing to store the card would lose the print's name and icon too")
+
+    def test_direct_mode_reports_bound_because_there_is_nothing_to_bind(self):
+        # This deployment signs its own pushes. Reporting False here would make the app retry a
+        # registration forever against a server that never had a binding to make.
+        la.RELAY_MODE = False
+        r = self._register()
+
+        self.assertIs(r.json()["bound"], True)
+
+    def test_start_and_device_registrations_answer_the_same_question(self):
+        la.RELAY_MODE = True
+        start = self.client.post("/register-start", json={
+            "push_token": "start-1", "icon_uri": "", "device_id": "phoneA", "client": "native",
+        })
+        device = self.client.post("/register-device", json={
+            "device_token": "dev-1", "device_id": "phoneA",
+        })
+
+        self.assertIs(start.json()["bound"], False)
+        self.assertIs(device.json()["bound"], False)
+        self.assertIn("start-1", la._needs_claim)
+        self.assertIn("dev-1", la._needs_claim)

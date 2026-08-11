@@ -443,7 +443,7 @@ final class LiveActivityController {
                     let result = await self.postWithReason("/register-start", body: StartRegistration(
                         pushToken: token, iconUri: "", deviceId: self.deviceID, claim: claim
                     ))
-                    if result.ok {
+                    if result.ok && result.bound {
                         self.pending.remove(token: token)
                         await self.attestor.confirmAttested()
                     } else {
@@ -611,7 +611,7 @@ final class LiveActivityController {
                 let result = await postWithReason("/register-start", body: StartRegistration(
                     pushToken: intent.token, iconUri: "", deviceId: deviceID, claim: claim
                 ))
-                if result.ok {
+                if result.ok && result.bound {
                     pending.remove(token: intent.token)
                     await attestor.confirmAttested()
                 } else { await handle(refusal: result.reason) }
@@ -621,7 +621,7 @@ final class LiveActivityController {
                 let result = await postWithReason("/register-device", body: DeviceRegistration(
                     deviceToken: intent.token, deviceId: deviceID, claim: claim
                 ))
-                if result.ok {
+                if result.ok && result.bound {
                     pending.remove(token: intent.token)
                     await attestor.confirmAttested()
                 } else { await handle(refusal: result.reason) }
@@ -688,11 +688,18 @@ final class LiveActivityController {
         )
         pending.add(token: token, kind: .activity)
         let result = await postWithReason("/register", body: body)
-        if result.ok {
+        // Finalised ONLY when the relay can actually push to this token. Trellis answers 200 for a
+        // registration it stored but could not bind — which is the normal outcome when App Attest
+        // hiccups — and treating that as done leaves the card frozen at its opening content with
+        // every component reporting success.
+        if result.ok && result.bound {
             registered.insert(pair)
             pending.remove(token: token)
             await attestor.confirmAttested()
         } else {
+            if result.ok {
+                NSLog("[claim] %@ registered but NOT bound; will retry", String(token.prefix(8)))
+            }
             await handle(refusal: result.reason)
         }
     }
@@ -725,8 +732,18 @@ final class LiveActivityController {
     /// answering `reattest_required` means it holds no attested key for us, and the only thing that
     /// resolves it is attesting afresh. Treating that as a plain failure would retry an assertion
     /// against a key the relay has never seen, forever.
-    private func postWithReason(_ path: String, body: some Encodable) async -> (ok: Bool, reason: String?) {
-        guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else { return (false, nil) }
+    /// Posts a registration and reports both questions separately.
+    ///
+    /// `ok` is "did Trellis store this?" and `bound` is "can the relay actually push to this token?"
+    /// They are NOT the same question, and answering the second with the first is what froze a card
+    /// for an entire print: a claim that failed to build on the phone still produced a 200, the app
+    /// marked the registration final, and nothing retried for the life of the process.
+    ///
+    /// An absent `bound` field means a Trellis old enough not to answer the question. It is read as
+    /// true, because the alternative — retrying forever against a server that signs locally and has
+    /// nothing to bind — is a worse failure than the one being fixed.
+    private func postWithReason(_ path: String, body: some Encodable) async -> (ok: Bool, bound: Bool, reason: String?) {
+        guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else { return (false, false, nil) }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -734,11 +751,12 @@ final class LiveActivityController {
         req.httpBody = data
 
         guard let (payload, response) = try? await URLSession.shared.data(for: req),
-              let http = response as? HTTPURLResponse else { return (false, nil) }
-        if (200..<300).contains(http.statusCode) { return (true, nil) }
-
-        let detail = (try? JSONSerialization.jsonObject(with: payload) as? [String: Any])?["detail"] as? String
-        return (false, detail)
+              let http = response as? HTTPURLResponse else { return (false, false, nil) }
+        let json = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any]
+        if (200..<300).contains(http.statusCode) {
+            return (true, json?["bound"] as? Bool ?? true, nil)
+        }
+        return (false, false, json?["detail"] as? String)
     }
 
     /// Acts on a refusal that the app itself can resolve.

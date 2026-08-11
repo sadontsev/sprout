@@ -1049,8 +1049,18 @@ async def _forward_claim(claim: dict | None, push_token: str, device: str) -> No
     a claim we never delivered, the app would mark the registration accepted and stop retrying, and
     the card would sit unclaimed for the whole print with every component reporting success.
     """
-    if not RELAY_MODE or not claim:
-        return
+    if not RELAY_MODE:
+        # Nothing to bind: this deployment signs its own pushes, so the registration is as final as
+        # it can be. True means "as bound as this mode gets", not "a relay accepted it".
+        return True
+    if not claim:
+        # Relay mode with NO claim. The registration is stored and answered 200 because the card
+        # itself is fine — but the token is NOT bound, and saying otherwise is how a transient
+        # App Attest failure on the phone became a card frozen for a whole print: the app marked
+        # the registration final on the 200 and never tried again.
+        print(f"[canopy] {push_token[:8]}… registered WITHOUT a claim ({device}); "
+              f"it cannot be pushed to until the device claims it", flush=True)
+        return False
     if _canopy is None or _canopy.credentials is None:
         raise HTTPException(status_code=503, detail="not enrolled with the push relay yet")
 
@@ -1058,7 +1068,7 @@ async def _forward_claim(claim: dict | None, push_token: str, device: str) -> No
     if res.ok:
         _needs_claim.pop(push_token, None)
         _suspended.pop(push_token, None)
-        return
+        return True
     if not res.definitive:
         raise HTTPException(status_code=502, detail="could not reach the push relay; retry")
     # Logged, because a refused claim is otherwise invisible from both ends: the phone sees a 403
@@ -1209,7 +1219,7 @@ class StartReg(BaseModel):
 
 @app.post("/register-start")
 async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
-    await _forward_claim(r.claim, r.push_token, r.device_id or registry.LEGACY_DEVICE)
+    bound = await _forward_claim(r.claim, r.push_token, r.device_id or registry.LEGACY_DEVICE)
     if r.push_token:
         if r.push_token not in _p2s_tokens:
             _p2s_tokens.append(r.push_token)
@@ -1222,8 +1232,10 @@ async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
         _p2s_clients[r.push_token] = norm_client(r.client)
         if r.device_id:
             _p2s_devices[r.push_token] = r.device_id
+        if not bound:
+            _needs_claim[r.push_token] = r.device_id or registry.LEGACY_DEVICE
         _save()
-    return {"ok": True}
+    return {"ok": True, "bound": bound}
 
 
 class ChallengeReq(BaseModel):
@@ -1312,12 +1324,15 @@ async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
 
 @app.post("/register-device")
 async def register_device(r: DeviceReg, _: None = Depends(_require_key)) -> dict:
-    await _forward_claim(r.claim, r.device_token, r.device_id or registry.LEGACY_DEVICE)
+    bound = await _forward_claim(r.claim, r.device_token, r.device_id or registry.LEGACY_DEVICE)
     if r.device_token not in _device_tokens:
         _device_tokens.append(r.device_token)
         _save()
         print(f"[device] registered {r.device_token[:8]}… ({len(_device_tokens)} total)", flush=True)
-    return {"ok": True}
+    if not bound:
+        _needs_claim[r.device_token] = r.device_id or registry.LEGACY_DEVICE
+        _save()
+    return {"ok": True, "bound": bound}
 
 
 @app.post("/register")
@@ -1326,7 +1341,7 @@ async def register(r: Register, _: None = Depends(_require_key)) -> dict:
         f"dry:{r.printer_id}:{r.ams_id}" if r.ams_id is not None else f"dry:{r.printer_id}"
     )
     device = r.device_id or registry.LEGACY_DEVICE
-    await _forward_claim(r.claim, r.push_token, device)
+    bound = await _forward_claim(r.claim, r.push_token, device)
     # upsert, not assign: another phone may already hold a card under this key, and clobbering it
     # freezes that phone's card for the rest of the print.
     registry.upsert(_regs, key, {
@@ -1336,13 +1351,20 @@ async def register(r: Register, _: None = Depends(_require_key)) -> dict:
         "lastPush": 0, "lastState": None,
     })
     _suspended.pop(r.push_token, None)  # a fresh registration clears any push suspension
-    _needs_claim.pop(r.push_token, None)
+    if bound:
+        _needs_claim.pop(r.push_token, None)
+    else:
+        # Remember it. Clearing this on an unclaimed registration threw away the one record that
+        # this token still needs claiming, so nothing downstream could tell the device to retry.
+        _needs_claim[r.push_token] = device
     if r.kind != "dry":
         _p2s_pending.pop(_pending_id(str(r.printer_id), device), None)  # reachable again
     _save()
     print(f"[register] {r.kind} printer {r.printer_id} ({r.printer_name}) [{norm_client(r.client)}] "
-          f"token {r.push_token[:8]}…", flush=True)
-    return {"ok": True}
+          f"token {r.push_token[:8]}… bound={bound}", flush=True)
+    # `bound` is the whole point of this response. `ok` says the CARD was stored, which is true even
+    # when the token cannot be pushed to; the app must not treat that as a finished registration.
+    return {"ok": True, "bound": bound}
 
 
 @app.post("/unregister")
