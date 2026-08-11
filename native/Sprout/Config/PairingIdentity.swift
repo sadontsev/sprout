@@ -11,7 +11,7 @@ import Security
 ///
 /// This is the *durable* anchor. An App Attest key dies with every reinstall; this one survives in
 /// the Keychain, which is what lets a reinstalled app prove it is the same install.
-struct PairingIdentity: Equatable {
+struct PairingIdentity: Equatable, Sendable {
     /// Base64url X9.63 uncompressed point — the form Canopy digests and stores.
     var publicKey: String
     /// Which phone. Minted here rather than by the server so it exists before any registration of

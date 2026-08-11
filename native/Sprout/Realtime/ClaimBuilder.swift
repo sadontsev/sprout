@@ -5,7 +5,7 @@ import Foundation
 /// Kept separate from the networking so the assembly — which is where a mistake fails every claim —
 /// is testable without a device, an attestation service, or a server. The two proofs arrive as
 /// injected closures for the same reason.
-struct ClaimBuilder {
+struct ClaimBuilder: Sendable {
     /// What Canopy's `binding_kind` calls a token. Not Trellis's `kind`, which is `print`/`dry`:
     /// both travel in the same request body and mean different things, so they never share a name.
     enum BindingKind: String {
@@ -16,9 +16,9 @@ struct ClaimBuilder {
 
     /// Produces an App Attest proof over the client-data hash. Returns the key id and either an
     /// attestation (first use of a key) or an assertion (every later claim).
-    typealias AttestProvider = (_ clientData: Data) async throws -> AttestProof
+    typealias AttestProvider = @Sendable (_ clientData: Data) async throws -> AttestProof
 
-    struct AttestProof: Equatable {
+    struct AttestProof: Equatable, Sendable {
         var keyID: String
         /// Exactly one of these is set. Canopy refuses a claim carrying both or neither, because
         /// "which proof am I checking" has no sensible default.
@@ -27,7 +27,7 @@ struct ClaimBuilder {
     }
 
     /// The body posted alongside a registration.
-    struct Claim: Encodable, Equatable {
+    struct Claim: Encodable, Equatable, Sendable {
         let token: String
         let clientData: String
         let challenge: String
@@ -45,7 +45,7 @@ struct ClaimBuilder {
     var identity: PairingIdentity
     var environment: APNSEnvironment
     /// Signs the client data with the pairing key.
-    var sign: (Data) throws -> String
+    var sign: @Sendable (Data) throws -> String
     var attest: AttestProvider
 
     /// Builds a claim for one token.

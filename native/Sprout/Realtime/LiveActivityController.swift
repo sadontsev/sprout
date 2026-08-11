@@ -82,6 +82,49 @@ final class LiveActivityController {
     /// one Bambuddy key, so without this one phone's reconcile deregisters the other's cards.
     private var deviceID: String { identity?.deviceID ?? "" }
 
+    /// App Attest, shared across claims so one key is attested and then asserted with.
+    private let attestor = AttestClient()
+
+    /// Builds the claim a registration carries, or nil when the server signs locally and needs none.
+    ///
+    /// Returns nil rather than throwing on any failure: a claim that cannot be built must degrade to
+    /// the pre-relay behaviour, not take the registration down with it. A relay-mode server refuses
+    /// an unclaimed registration itself, which is where that decision belongs.
+    private func buildClaim(token: String, kind: ClaimBuilder.BindingKind, vouchNonce: String?) async -> ClaimBuilder.Claim? {
+        guard let identity, attestor.isSupported else { return nil }
+        guard let challenge = await fetchChallenge(attesting: vouchNonce == nil) else { return nil }
+
+        let builder = ClaimBuilder(
+            identity: identity,
+            environment: APNSEnvironment.current,
+            sign: { try PairingStore.sign($0) },
+            attest: { [attestor] data in try await attestor.proof(for: data) }
+        )
+        return try? await builder.build(token: token, kind: kind, challenge: challenge, vouchNonce: vouchNonce)
+    }
+
+    /// Fetches a single-use challenge from the relay, through Trellis.
+    ///
+    /// The purpose has to match what the proof will be, because the relay checks it: an attestation
+    /// challenge lives fifteen minutes to honour Apple's retry guidance, an assertion challenge two,
+    /// and letting one satisfy the other would stretch the assertion replay window sevenfold.
+    private func fetchChallenge(attesting: Bool) async -> String? {
+        guard let url = Self.endpoint(pushUrl, "/challenge") else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["purpose": "assertion"])
+
+        guard
+            let (data, response) = try? await URLSession.shared.data(for: req),
+            let http = response as? HTTPURLResponse, http.statusCode == 201,
+            let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let challenge = body["challenge"] as? String
+        else { return nil }
+        return challenge
+    }
+
     // MARK: - Content mapping
     //
     // These are pure functions over value types, so they are `nonisolated`: they carry no instance
@@ -365,8 +408,9 @@ final class LiveActivityController {
                     self.pending.add(token: token, kind: .start)
                     // `icon_uri` is empty until the brand glyph is written to the App Group (a known
                     // gap); Trellis treats an empty value as "keep what you have" for start tokens.
+                    let claim = await self.buildClaim(token: token, kind: .start, vouchNonce: nil)
                     let ok = await self.post("/register-start", body: StartRegistration(
-                        pushToken: token, iconUri: "", deviceId: self.deviceID
+                        pushToken: token, iconUri: "", deviceId: self.deviceID, claim: claim
                     ))
                     if ok { self.pending.remove(token: token) }
                 }
@@ -532,9 +576,10 @@ final class LiveActivityController {
         if let last = lastRegisterAttempt[pair], Date().timeIntervalSince(last) < Self.registerRetry { return }
         lastRegisterAttempt[pair] = Date()
 
+        let claim = await buildClaim(token: token, kind: .activity, vouchNonce: nil)
         let body = Self.cardRegistration(
             attributes: activity.attributes, state: activity.content.state,
-            token: token, deviceId: deviceID
+            token: token, deviceId: deviceID, claim: claim
         )
         pending.add(token: token, kind: .activity)
         if await post("/register", body: body) {

@@ -1,12 +1,28 @@
 import XCTest
 @testable import Sprout
 
+/// Collects the bytes handed to each proof, across concurrency domains.
+private final class ByteRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Data] = []
+
+    func append(_ data: Data) {
+        lock.lock(); defer { lock.unlock() }
+        storage.append(data)
+    }
+
+    var captured: [Data] {
+        lock.lock(); defer { lock.unlock() }
+        return storage
+    }
+}
+
 final class ClaimBuilderTests: XCTestCase {
     private let identity = PairingIdentity(publicKey: "pub-1", deviceID: "dev-1")
 
     private func builder(
         proof: ClaimBuilder.AttestProof = .init(keyID: "attest-1", attestation: nil, assertion: "assert-bytes"),
-        capture: ((Data) -> Void)? = nil
+        capture: (@Sendable (Data) -> Void)? = nil
     ) -> ClaimBuilder {
         ClaimBuilder(
             identity: identity,
@@ -40,9 +56,10 @@ final class ClaimBuilderTests: XCTestCase {
         // The hinge of the whole design. Canopy hashes the bytes it receives and verifies both
         // proofs against that hash — so if the app signed one encoding and transmitted another,
         // every claim would fail as attestation_invalid, indistinguishable from an attack.
-        var signedBytes: [Data] = []
-        let claim = try await builder(capture: { signedBytes.append($0) })
+        let recorder = ByteRecorder()
+        let claim = try await builder(capture: { recorder.append($0) })
             .build(token: "tok-1", kind: .device, challenge: "chal-1", vouchNonce: "nonce-1")
+        let signedBytes = recorder.captured
 
         let transmitted = try XCTUnwrap(Data(base64URLEncoded: claim.clientData))
 
