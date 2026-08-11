@@ -232,12 +232,37 @@ enum MakerWorldSearch {
         guard let html, !html.isEmpty else { return nil }
 
         var out = ""
-        var linkBuffer: String?         // set while inside <a>, collecting its text
-        var linkHref: String?
         var listStack: [(ordered: Bool, counter: Int)] = []
 
+        /// Nested inline spans being collected. Emphasis has to be buffered rather than streamed,
+        /// because its delimiters cannot touch whitespace — see `closeEmphasis`.
+        enum Frame { case link(href: String?), emphasis(marker: String) }
+        var frames: [(frame: Frame, text: String)] = []
+        var linkHref: String?
+
         func emit(_ s: String) {
-            if linkBuffer != nil { linkBuffer! += s } else { out += s }
+            if frames.isEmpty { out += s } else { frames[frames.count - 1].text += s }
+        }
+
+        /// Emit `**bold**` with any surrounding whitespace moved OUTSIDE the delimiters.
+        ///
+        /// This is the bug that shipped visibly: MakerWorld's spans routinely carry a trailing space
+        /// (`<strong>Seed Sower : </strong>`), and `**Seed Sower : **` is not emphasis in Markdown —
+        /// a delimiter adjacent to whitespace is left as literal text, so the asterisks appeared on
+        /// screen. Moving the space out makes it `**Seed Sower :** `, which parses.
+        ///
+        /// A span that holds only whitespace emits nothing at all, delimiters included. Those exist
+        /// (`<i> </i>` between words) and used to produce a stray `* *`.
+        func closeEmphasis(_ marker: String, _ text: String) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                // Keep the whitespace it stood for, drop the empty emphasis.
+                emit(text.isEmpty ? "" : " ")
+                return
+            }
+            let leading = text.prefix { $0.isWhitespace }
+            let trailing = text.reversed().prefix { $0.isWhitespace }.reversed()
+            emit(String(leading) + marker + trimmed + marker + String(trailing))
         }
 
         var i = html.startIndex
@@ -261,10 +286,17 @@ enum MakerWorldSearch {
             let name = body.prefix { !$0.isWhitespace && $0 != "/" }.lowercased()
 
             switch name {
-            case "strong", "b":
-                emit("**")
-            case "em", "i":
-                emit("*")
+            case "strong", "b", "em", "i":
+                let marker = (name == "strong" || name == "b") ? "**" : "*"
+                if isEnd {
+                    // Tolerate mismatched tags: close only if this is genuinely what is open.
+                    if case .emphasis(let open)? = frames.last?.frame, open == marker {
+                        let text = frames.removeLast().text
+                        closeEmphasis(marker, text)
+                    }
+                } else {
+                    frames.append((.emphasis(marker: marker), ""))
+                }
             case "br":
                 emit("\n")
             case "p", "div", "figure", "figcaption":
@@ -290,22 +322,23 @@ enum MakerWorldSearch {
                         let item = listStack[listStack.count - 1]
                         emit(item.ordered ? "\n\(item.counter). " : "\n• ")
                     }
-                } else {
-                    emit("\n")
                 }
+                // `</li>` deliberately emits nothing: the next `<li>` (or the closing list tag)
+                // supplies the break. Emitting one here too double-spaced every list.
             case "a":
                 if isEnd {
-                    let text = linkBuffer ?? ""
-                    linkBuffer = nil
-                    if let href = linkHref, !text.isEmpty {
-                        out += "[\(text)](\(href))"
-                    } else {
-                        out += text
+                    if case .link(let href)? = frames.last?.frame {
+                        let text = frames.removeLast().text
+                        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let href, !clean.isEmpty {
+                            emit("[\(clean)](\(href))")
+                        } else {
+                            emit(text)
+                        }
                     }
                     linkHref = nil
                 } else {
-                    linkHref = safeHref(body)
-                    linkBuffer = ""
+                    frames.append((.link(href: safeHref(body)), ""))
                 }
             case "img":
                 // Dropped rather than rendered. A remote image cannot be inlined in a `Text`, and the
@@ -318,6 +351,18 @@ enum MakerWorldSearch {
                 break
             }
         }
+
+        // Unclosed inline tags are malformed input MakerWorld does send. Flush their text so the
+        // words survive; the formatting they asked for does not, which is the right trade.
+        while let frame = frames.popLast() {
+            if frames.isEmpty { out += frame.text } else { frames[frames.count - 1].text += frame.text }
+        }
+
+        // Collapse runs of spaces to one, which is what HTML itself does with whitespace — and what
+        // stops `Available in <strong> 6-cell </strong>` producing "Available in  **6-cell**", where
+        // the text's own trailing space and the span's leading one both survive. Newlines are left
+        // alone: they carry the block structure this converter just built.
+        out = out.replacingOccurrences(of: "[ \t]+", with: " ", options: .regularExpression)
 
         // Collapse the runs of blank lines the block tags leave behind.
         let lines = out.components(separatedBy: "\n").map {
