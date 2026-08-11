@@ -73,7 +73,7 @@ docker compose up -d --build
 | `CANOPY_TEAM_ID` | your 10-character team id |
 | `CANOPY_APNS_KEY_ID` | the key id of your `.p8` |
 | `CANOPY_APPLE_ROOT_CA` | path to Apple's App Attest root certificate |
-| `CANOPY_INVITE_CODE` | optional; gates enrolment. Set it if the relay is publicly reachable |
+| `CANOPY_INVITE_CODE` | optional; gates enrolment of NEW tenants. Leave empty for a relay meant to serve app users — a recovery code bypasses it either way |
 | `CANOPY_ALLOW_DEVELOPMENT_ATTEST` | `1` while you install builds from Xcode; turn **off** once only TestFlight and App Store builds talk to it |
 
 Then point Trellis at it:

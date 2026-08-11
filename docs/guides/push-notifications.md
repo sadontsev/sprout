@@ -47,8 +47,9 @@ tenant on first start, and stores the credentials in `data/tenant.json`.
 **Save the recovery code it prints once, at enrolment.** It is the only way to recover your tenant
 if that file is lost; it is deliberately never served from an endpoint.
 
-If the relay is gated by an invite, enrolment answers 403 and Trellis logs the variable to set
-(`CANOPY_INVITE_CODE`). Push stays off until enrolment succeeds; nothing else is affected.
+The author's relay takes no invite: deploy Trellis and it enrols itself. If you point `CANOPY_URL`
+at some other relay that *is* gated, enrolment answers 403 and Trellis logs the variable to set
+(`CANOPY_INVITE_CODE`); push stays off until it succeeds, and nothing else is affected.
 
 ### How a token becomes pushable
 

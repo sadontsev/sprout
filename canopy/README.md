@@ -50,10 +50,26 @@ together. A legacy universal key may be pointed at both paths.
 
 ### Enrolment
 
-Open by default. A Trellis enrols itself on first start and receives a tenant id,
-a bearer, and a recovery code that only it ever sees. Set `CANOPY_INVITE_CODE`
-before putting the relay on a public address, or you will accumulate tenants
-nobody asked for; `CANOPY_MAX_TENANTS` is the second valve.
+Open by default, and for a relay serving an App Store build that is the point:
+a stranger installs the app, deploys their own Trellis, and it enrols itself
+with nothing to ask you for. It receives a tenant id, a bearer, and a recovery
+code only it ever sees.
+
+Open enrolment is not open access. A tenant that has just enrolled can do
+nothing: pushing needs a binding, a binding needs an App Attest claim from a
+genuine build on real hardware, and `Kind.Permits` limits what a binding may
+send. Verified against the live relay — a freshly enrolled stranger pushing at
+another tenant's token gets `403 not_owner`, for a Live Activity update and for
+an alert banner alike.
+
+What open enrolment does expose is the tenant table. `CANOPY_MAX_TENANTS`
+(default 10000) bounds it and enrolment is rate-limited to 2/min per IP, so
+filling it from one address takes days — but it is the resource to watch, and
+the one reason to set `CANOPY_INVITE_CODE` on a relay that is not meant to
+serve the public.
+
+An invite gates NEW tenants only. A recovery code skips it, so a user who lost
+their data volume gets back in without asking you for anything.
 
 ### Looking at state
 
