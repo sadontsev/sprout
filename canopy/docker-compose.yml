@@ -3,6 +3,10 @@ services:
     build: .
     container_name: canopy
     restart: unless-stopped
+    # Runs as the host user rather than the image's nonroot uid, so the bind-mounted data directory
+    # is writable without loosening its permissions. The image itself carries no shell and no libc;
+    # this only changes which uid the single binary runs under.
+    user: "${CANOPY_UID:-1000}:${CANOPY_GID:-1000}"
     # Bound to loopback deliberately. Right now the only tenant is Trellis on this same host, and
     # this is the one process holding the APNs signing keys — there is no reason for it to be
     # reachable from anywhere else yet. Publishing it (cloudflared / Tailscale ingress) is the step
