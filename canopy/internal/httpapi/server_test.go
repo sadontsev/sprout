@@ -20,6 +20,7 @@ import (
 	"github.com/mvks5/canopy/internal/apns"
 	"github.com/mvks5/canopy/internal/binding"
 	"github.com/mvks5/canopy/internal/challenge"
+	"github.com/mvks5/canopy/internal/keystore"
 	"github.com/mvks5/canopy/internal/pairing"
 	"github.com/mvks5/canopy/internal/store"
 	"github.com/mvks5/canopy/internal/tenant"
@@ -30,19 +31,32 @@ var t0 = time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 
 // allowAttest stands in for the real App Attest verifier, which needs fixtures
 // captured from a physical device.
-type allowAttest struct{ fail bool }
+//
+// `err` lets a test choose WHICH failure the verifier reports. It used to return only nil or
+// errNoVerifier, which meant keystore.ErrReattestRequired could never occur in any test — and
+// deleting the handler branch that translates it left the suite green. That branch is the
+// difference between an install recovering by itself and one asserting forever against a key the
+// relay has never seen.
+type allowAttest struct {
+	fail bool
+	err  error
+}
 
-func (a allowAttest) VerifyAttestation([]byte, string, []byte, time.Time) error {
+func (a allowAttest) result() error {
+	if a.err != nil {
+		return a.err
+	}
 	if a.fail {
 		return errNoVerifier
 	}
 	return nil
 }
+
+func (a allowAttest) VerifyAttestation([]byte, string, []byte, time.Time) error {
+	return a.result()
+}
 func (a allowAttest) VerifyAssertion([]byte, string, []byte, time.Time) error {
-	if a.fail {
-		return errNoVerifier
-	}
-	return nil
+	return a.result()
 }
 
 type harness struct {
@@ -600,5 +614,78 @@ func TestEachKindCarriesOnlyItsOwnPushTypes(t *testing.T) {
 		if got := c.kind.Permits(c.pushType); got != c.permitted {
 			t.Errorf("%s.Permits(%q) = %v, want %v", c.kind, c.pushType, got, c.permitted)
 		}
+	}
+}
+
+// TestAForeignPushDoesNotSpendTheOwnersRateBudget covers a starvation path.
+//
+// The per-token bucket is keyed by token, not by tenant. Charged before the ownership check, any
+// enrolled tenant holding a leaked copy of a victim's token could drain it with requests that all
+// returned 403 — six a minute starves the real owner into 429, freezing their card, and because
+// the lease is only renewed by a delivered push the binding stops being refreshed as well. The
+// victim sees only their own requests failing.
+func TestAForeignPushDoesNotSpendTheOwnersRateBudget(t *testing.T) {
+	h := newHarness(t)
+	bindStart(t, h, "tok-A")
+
+	other, err := h.server.Tenants.Enroll("", "", t0)
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	push := map[string]any{"token": "tok-A", "push_type": "liveactivity", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
+
+	// Spend well past the per-token budget from the wrong tenant.
+	for i := 0; i < 20; i++ {
+		resp, body := h.do("POST", "/v1/push", push, other.Bearer())
+		if resp.StatusCode != http.StatusForbidden || body["error"] != "not_owner" {
+			t.Fatalf("attempt %d: status %d body %v, want 403 not_owner", i, resp.StatusCode, body)
+		}
+	}
+
+	// The owner must still be able to push.
+	resp, body := h.do("POST", "/v1/push", push, h.creds.Bearer())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("owner push: status %d body %v, want 200 — a refused request must cost the refuser",
+			resp.StatusCode, body)
+	}
+}
+
+// TestReattestRequiredReachesTheClientVerbatim covers the branch that lets an install recover.
+//
+// keystore returns ErrReattestRequired when Canopy holds no public key for the key id a claim
+// asserts with — the honest cause is a Canopy restore predating the key, not an attack. The handler
+// must say so by name: Trellis forwards the reason verbatim and the app acts only on the exact
+// string "reattest_required", discarding its key so the next claim carries a fresh attestation.
+//
+// Collapsed to the generic "attestation_invalid", the app retries an assertion against a key the
+// relay has never seen, forever. The branch existed with no test at all: deleting it left the suite
+// green, because the verifier stub could only ever produce one kind of error.
+func TestReattestRequiredReachesTheClientVerbatim(t *testing.T) {
+	h := newHarness(t)
+	h.server.Attest = allowAttest{err: keystore.ErrReattestRequired}
+
+	c := h.claimFor("tok-A", "tok-A", "start", "", h.challenge("assertion"))
+	resp, body := h.do("POST", "/v1/claims", c, h.creds.Bearer())
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d body %v, want 403", resp.StatusCode, body)
+	}
+	if body["error"] != "reattest_required" {
+		t.Fatalf("error = %v, want reattest_required; the app matches on that exact string and "+
+			"anything else leaves it asserting against a key the relay does not have", body["error"])
+	}
+}
+
+func TestAGenuinelyInvalidAttestationIsStillReportedAsSuch(t *testing.T) {
+	// The other side of the same branch: a real verification failure must NOT be softened into an
+	// invitation to re-attest, which would let a forged proof ask for a fresh start.
+	h := newHarness(t)
+	h.server.Attest = allowAttest{fail: true}
+
+	c := h.claimFor("tok-A", "tok-A", "start", "", h.challenge("assertion"))
+	resp, body := h.do("POST", "/v1/claims", c, h.creds.Bearer())
+
+	if resp.StatusCode != http.StatusForbidden || body["error"] == "reattest_required" {
+		t.Fatalf("status %d body %v, want 403 with a non-reattest reason", resp.StatusCode, body)
 	}
 }

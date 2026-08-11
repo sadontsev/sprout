@@ -428,11 +428,6 @@ func (s *Server) push(w http.ResponseWriter, r *http.Request, tenantID string) {
 	now := s.Now()
 	tokenHash := hashing.Digest(body.Token)
 
-	if !s.PushPerToken.Allow(tokenHash, now) {
-		writeErr(w, http.StatusTooManyRequests, "rate_limited")
-		return
-	}
-
 	row, err := s.Store.GetBinding(tokenHash)
 	if err != nil {
 		s.Log.Error("get binding", "err", err)
@@ -464,6 +459,16 @@ func (s *Server) push(w http.ResponseWriter, r *http.Request, tenantID string) {
 	// banner to the victim's phone. Reproduced end to end before this existed.
 	if !row.Kind.Permits(body.PushType) {
 		writeErr(w, http.StatusForbidden, "push_type_not_permitted")
+		return
+	}
+
+	// Rate-limited only AFTER ownership is established. The bucket is keyed by token, so charging
+	// it before the ownership check let any enrolled tenant drain a victim's budget with requests
+	// that all came back 403: six a minute is enough to starve the real owner into 429 and freeze
+	// their card, invisibly to them, and because the lease is only renewed by a delivered push the
+	// binding stops being refreshed too. A refused request must cost the refuser, not the owner.
+	if !s.PushPerToken.Allow(tokenHash, now) {
+		writeErr(w, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
 
