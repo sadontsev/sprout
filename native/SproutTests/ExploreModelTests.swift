@@ -303,4 +303,110 @@ final class ExploreModelTests: XCTestCase {
         XCTAssertEqual(m.cachedResolve(40146)?.modelId, 40146)
         XCTAssertNil(m.cachedResolve(999), "a different model is a different answer")
     }
+    // MARK: Leaving a mode
+
+    /// The dead end this fixes, reported from the device: search "spool", tap "My collections", and
+    /// the results are gone with the chip stuck on and the query still in the field.
+    func testLeavingCollectionsRestoresTheSearchYouWereLookingAt() async throws {
+        let fake = FakeSearch()
+        let m = ExploreModel(searchClient: fake)
+        let collections = CollectionsClient(baseUrl: nil, apiKey: "")
+
+        m.search("spool")
+        await settle()
+        await fake.finish("search:spool", hits: [1, 2, 3], total: 3)
+        await waitUntil({ m.hits.count == 3 }, "the search never landed")
+
+        m.openCollections(collections)
+        await settle()
+        XCTAssertTrue(m.showingCollections)
+        XCTAssertTrue(m.canExitMode, "a mode you can enter must be one you can leave")
+
+        m.exitMode()
+        XCTAssertFalse(m.showingCollections)
+        XCTAssertEqual(m.activeQuery, "spool")
+        XCTAssertEqual(m.hits.map(\.id), [1, 2, 3], "restored, not refetched")
+        let calls = await fake.callCount()
+        XCTAssertEqual(calls, 1, "leaving a mode must not cost a round trip")
+    }
+
+    func testLeavingACategoryRestoresThePreviousSearch() async throws {
+        let fake = FakeSearch()
+        let m = ExploreModel(searchClient: fake)
+        m.search("spool")
+        await settle()
+        await fake.finish("search:spool", hits: [7], total: 1)
+        await waitUntil({ m.hits.count == 1 })
+
+        m.browse(MWNav(key: "Trending", name: "Trending"))
+        await settle()
+        await fake.finish("browse:Trending", hits: [9], total: 1)
+        await waitUntil({ m.hits.map(\.id) == [9] })
+
+        m.exitMode()
+        XCTAssertNil(m.activeNav)
+        XCTAssertEqual(m.activeQuery, "spool")
+        XCTAssertEqual(m.hits.map(\.id), [7])
+    }
+
+    /// Entering a mode from the cold screen leaves nothing to restore, so exiting goes back to cold
+    /// rather than to an empty grid that reads as "your search found nothing".
+    func testLeavingAModeEnteredFromColdReturnsToCold() async throws {
+        let fake = FakeSearch()
+        let m = ExploreModel(searchClient: fake)
+        m.browse(MWNav(key: "Trending", name: "Trending"))
+        await settle()
+        await fake.finish("browse:Trending", hits: [1, 2], total: 2)
+        await waitUntil({ m.hits.count == 2 })
+
+        m.exitMode()
+        XCTAssertTrue(m.isCold)
+        XCTAssertTrue(m.hits.isEmpty)
+        XCTAssertFalse(m.canExitMode, "nothing is on, so nothing offers to turn off")
+    }
+
+    /// Searching is itself a way out, and it must not leave a stale snapshot that a later chip tap
+    /// would restore over the top of newer results.
+    func testSearchingClearsWhatThereWasToGoBackTo() async throws {
+        let fake = FakeSearch()
+        let m = ExploreModel(searchClient: fake)
+        m.search("first")
+        await settle()
+        await fake.finish("search:first", hits: [1], total: 1)
+        await waitUntil({ m.hits.count == 1 })
+
+        m.openCollections(CollectionsClient(baseUrl: nil, apiKey: ""))
+        await settle()
+        m.search("second")
+        await settle()
+        await fake.finish("search:second", hits: [2], total: 1)
+        await waitUntil({ m.hits.map(\.id) == [2] })
+
+        m.exitMode()
+        XCTAssertEqual(m.activeQuery, "second", "the newer search must survive")
+        XCTAssertEqual(m.hits.map(\.id), [2])
+    }
+
+    /// A folder is a mode too — opening one and leaving must not strand you inside it.
+    func testLeavingAnOpenFolderAlsoReturnsToTheSearch() async throws {
+        let fake = FakeSearch()
+        let m = ExploreModel(searchClient: fake)
+        let collections = CollectionsClient(baseUrl: nil, apiKey: "")
+        m.search("spool")
+        await settle()
+        await fake.finish("search:spool", hits: [5], total: 1)
+        await waitUntil({ m.hits.count == 1 })
+
+        m.openCollections(collections)
+        await settle()
+        m.openCollection(MakerWorldCollection(id: 3, title: "Prints", count: 2), client: collections)
+        await settle()
+        XCTAssertTrue(m.canExitMode)
+
+        m.exitMode()
+        XCTAssertNil(m.activeCollection)
+        XCTAssertEqual(m.activeQuery, "spool")
+        XCTAssertEqual(m.hits.map(\.id), [5])
+    }
+
 }

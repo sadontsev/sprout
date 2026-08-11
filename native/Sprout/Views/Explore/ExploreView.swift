@@ -199,14 +199,18 @@ private struct ExploreRoot: View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
                 if collectionsClient.isAvailable {
-                    chip("My collections", symbol: "bookmark",
-                         on: explore.showingCollections || explore.activeCollection != nil) {
-                        explore.openCollections(collectionsClient)
+                    let on = explore.showingCollections || explore.activeCollection != nil
+                    // Tapping the selected chip turns it OFF and restores what was underneath.
+                    // Without this the chip is a one-way door: it looks selected, the query is still
+                    // in the field, and there is no way back to the results it replaced.
+                    chip("My collections", symbol: "bookmark", on: on) {
+                        if on { explore.exitMode() } else { explore.openCollections(collectionsClient) }
                     }
                 }
                 ForEach(explore.navs) { nav in
-                    chip(nav.name ?? nav.key, on: explore.activeNav == nav.key) {
-                        explore.browse(nav)
+                    let on = explore.activeNav == nav.key
+                    chip(nav.name ?? nav.key, on: on) {
+                        if on { explore.exitMode() } else { explore.browse(nav) }
                     }
                 }
             }
@@ -224,6 +228,13 @@ private struct ExploreRoot: View {
                     Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
                 }
                 Text(title).font(.system(size: 13, weight: .semibold))
+                // Says the chip is a toggle rather than a destination, so "how do I get out of
+                // this" has a visible answer instead of being a thing you have to guess.
+                if on {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .opacity(0.75)
+                }
             }
             .foregroundStyle(on ? c.accent : c.t2)
             .padding(.horizontal, 13)
@@ -233,6 +244,7 @@ private struct ExploreRoot: View {
             .contentShape(.rect)
         }
         .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
+        .accessibilityHint(on ? "Turns this off and returns to your results" : "")
     }
 
     // MARK: Body
