@@ -64,7 +64,25 @@ struct MWNav: Decodable, Identifiable, Hashable, Sendable {
 /// The User-Agent identifies this app honestly. Bambu Lab has been actively hostile to third parties
 /// impersonating its own clients, and impersonation would be wrong regardless — never spoof Bambu
 /// Studio or Handy headers to unblock something.
-struct MakerWorldSearchClient: Sendable {
+/// What `ExploreModel` needs from MakerWorld's search. A protocol only so the browse session's
+/// orchestration — cancel-and-replace, the write barrier, paging — can be tested without a network,
+/// which is where its actual bugs live. The app has exactly one conformance.
+protocol MakerWorldSearching: Sendable {
+    func search(_ keyword: String, offset: Int, limit: Int) async throws -> MWSearchPage
+    func browse(navKey: String, offset: Int, limit: Int) async throws -> MWSearchPage
+    func navs() async throws -> [MWNav]
+}
+
+extension MakerWorldSearching {
+    func search(_ keyword: String, offset: Int = 0) async throws -> MWSearchPage {
+        try await search(keyword, offset: offset, limit: 20)
+    }
+    func browse(navKey: String, offset: Int = 0) async throws -> MWSearchPage {
+        try await browse(navKey: navKey, offset: offset, limit: 20)
+    }
+}
+
+struct MakerWorldSearchClient: MakerWorldSearching, Sendable {
     private static let base = "https://api.bambulab.com/v1/search-service"
     private static let userAgent = "Sprout/1.0 (+https://github.com/mvks5/bambu-app; personal 3D printer client)"
 
