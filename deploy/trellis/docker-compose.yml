@@ -13,9 +13,16 @@ services:
       # deploying this signed their pushes with THEIR .p8 while claiming the original owner's key id
       # and team, and APNs answered 403 InvalidProviderToken / 400 TopicDisallowed. `:?` fails the
       # deploy loudly instead of at the first push.
-      APNS_KEY_ID: ${APNS_KEY_ID:?set APNS_KEY_ID in .env}
-      APNS_TEAM_ID: ${APNS_TEAM_ID:?set APNS_TEAM_ID in .env}
-      APNS_TOPIC: ${APNS_TOPIC:?set APNS_TOPIC in .env}
+      # DIRECT mode: this deployment signs with its own APNs key. Optional rather than fail-hard,
+      # because RELAY mode holds no key at all and must not be forced to invent these — app.py
+      # enforces "exactly one backend" at startup, which is where that check belongs. Compose
+      # refusing to interpolate would stop the container before that message could ever be printed.
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_TOPIC: ${APNS_TOPIC:-}
+      # RELAY mode: forward to Canopy, which holds the signing key. Setting this and the APNS_* set
+      # together is refused at startup.
+      CANOPY_URL: ${CANOPY_URL:-}
       # NOT set here on purpose: app.py derives it from APNS_TOPIC, and passing an empty value would
       # DEFEAT that default (os.environ.get returns "" rather than falling back), sending an empty
       # apns-topic on every alert banner. Add it to .env only if your bundle id is not APNS_TOPIC
@@ -33,6 +40,7 @@ services:
       BAMBUDDY_DB: /bambuddy/bambuddy.db
     volumes:
       # Your own APNs auth key. Override APNS_KEY_FILE in .env if you keep it elsewhere.
+      # Harmless in RELAY mode, where nothing reads it.
       - ${APNS_KEY_FILE:-${HOME}/.config/bambu-phase0/apns_key.p8}:/keys/apns_key.p8:ro
       - ./data:/data
       # READ-ONLY, deliberately: this service must never be able to write another app's database.
