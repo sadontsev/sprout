@@ -1208,6 +1208,29 @@ async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
     return {"ok": True}
 
 
+class ChallengeReq(BaseModel):
+    purpose: str = "assertion"  # "attestation" on first use of a key, "assertion" after
+
+
+@app.post("/challenge")
+async def challenge(r: ChallengeReq, _: None = Depends(_require_key)) -> dict:
+    """Relay a Canopy challenge to the phone.
+
+    The phone never talks to Canopy directly, so this is how it obtains the single-use nonce it must
+    sign over. Trellis only passes it along: the nonce is opaque here, and the claim that spends it
+    is signed by the device, so a compromised companion can neither mint one nor alter the claim it
+    ends up inside.
+    """
+    if not RELAY_MODE:
+        raise HTTPException(status_code=409, detail="not in relay mode; no challenge is needed")
+    if _canopy is None or _canopy.credentials is None:
+        raise HTTPException(status_code=503, detail="not enrolled with the push relay yet")
+    try:
+        return {"challenge": await _canopy.challenge(r.purpose)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"could not reach the push relay: {e}") from e
+
+
 class Sync(BaseModel):
     tokens: list[str] = []  # EVERY live activity the app can currently see
     icon_uri: str = ""

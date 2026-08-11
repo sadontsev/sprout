@@ -12,7 +12,7 @@ import Foundation
 ///
 /// That is the shape this codebase keeps rediscovering — a predicate answering a nearby question.
 /// "Was this compiled for Debug?" is not "which gateway will accept this token?".
-enum APNSEnvironment: String {
+enum APNSEnvironment: String, Sendable {
     case sandbox
     case production
 
