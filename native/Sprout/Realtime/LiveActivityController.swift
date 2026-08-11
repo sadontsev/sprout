@@ -103,9 +103,10 @@ final class LiveActivityController {
             NSLog("[claim] App Attest unsupported on this device; registration will go out unclaimed")
             return nil
         }
-        // The purpose must match the proof this claim will actually carry, and only the
-        // attestor knows whether it still needs to attest.
-        guard let challenge = await fetchChallenge(attesting: !attestor.hasAttestedKey) else {
+        // Reserve the proof kind first: the challenge must be requested for the purpose the claim
+        // will actually answer with, and the relay checks they agree.
+        let plan = await attestor.planProof()
+        guard let challenge = await fetchChallenge(attesting: plan == .attestation) else {
             NSLog("[claim] could not obtain a challenge; registration will go out unclaimed")
             return nil
         }

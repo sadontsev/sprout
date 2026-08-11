@@ -36,9 +36,44 @@ actor AttestClient {
         set { UserDefaults.standard.set(newValue, forKey: keyIDDefaultsKey) }
     }
 
-    /// Produces a proof over `clientData`: an attestation on first use of a key, an assertion after.
+    /// Which proof the next claim will carry.
+    ///
+    /// Decided and *held* in one actor-isolated step, because the challenge must be requested for
+    /// the matching purpose and the relay checks that they agree. Deciding separately loses a race
+    /// that happens routinely: two registrations build claims at once, one confirms the attest key
+    /// mid-flight, and the other has already asked for an attestation challenge it will now answer
+    /// with an assertion. The relay rejects that as challenge_invalid — correctly.
+    enum Plan: String {
+        case attestation
+        case assertion
+    }
+
+    private var heldPlan: Plan?
+
+    /// Reserves the proof kind for the claim about to be built.
+    func planProof() -> Plan {
+        let plan: Plan = cachedKeyID == nil ? .attestation : .assertion
+        heldPlan = plan
+        return plan
+    }
+
+    /// Produces a proof over `clientData`, honouring the reserved plan.
     func proof(for clientData: Data) async throws -> ClaimBuilder.AttestProof {
         guard isSupported else { throw Failure.unsupported }
+        let plan = heldPlan ?? planProof()
+        heldPlan = nil
+        if plan == .assertion, let keyID = cachedKeyID {
+            let assertion = try await service.generateAssertion(keyID, clientDataHash: Data(SHA256.hash(data: clientData)))
+            return ClaimBuilder.AttestProof(
+                keyID: keyID, attestation: nil, assertion: assertion.base64URLEncodedString()
+            )
+        }
+        if plan == .assertion {
+            // Planned an assertion but the key vanished under us. Fail rather than silently
+            // attesting: the challenge in flight is an assertion challenge and the relay would
+            // reject the mismatch anyway, less informatively.
+            throw Failure.service("planned an assertion but no key is cached")
+        }
 
         let hash = Data(SHA256Digest.of(clientData))
 
