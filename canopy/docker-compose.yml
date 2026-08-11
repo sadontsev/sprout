@@ -8,9 +8,9 @@ services:
     # reachable from anywhere else yet. Publishing it (cloudflared / Tailscale ingress) is the step
     # that comes with the first self-hoster, not before.
     ports:
-      - "127.0.0.1:8913:8913"
+      - "127.0.0.1:8914:8914"
     environment:
-      CANOPY_ADDR: "0.0.0.0:8913"
+      CANOPY_ADDR: "0.0.0.0:8914"
       CANOPY_DB: /data/canopy.db
       CANOPY_BUNDLE_ID: ${CANOPY_BUNDLE_ID:?set CANOPY_BUNDLE_ID in .env}
       CANOPY_TEAM_ID: ${CANOPY_TEAM_ID:?set CANOPY_TEAM_ID in .env}

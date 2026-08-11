@@ -13,6 +13,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/canopy 
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/canopy /canopy
-# 8910 bambuddy, 8911 trellis, 8912 stl-texturize, 8913 here.
-EXPOSE 8913
+# 8910 bambuddy, 8911 trellis, 8912 stl-texturize, 8914 here (8913 was taken).
+EXPOSE 8914
 ENTRYPOINT ["/canopy"]
