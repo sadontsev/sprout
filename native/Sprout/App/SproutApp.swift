@@ -7,6 +7,11 @@ struct SproutApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .task {
+                    #if DEBUG
+                    AttestCapture.runIfRequested()
+                    #endif
+                }
         }
     }
 }
