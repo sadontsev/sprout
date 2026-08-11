@@ -230,7 +230,16 @@ func (v *Verifier) VerifyAssertion(obj []byte, pub *ecdsa.PublicKey, storedCount
 	h.Write(clientDataHash[:])
 	nonce := h.Sum(nil)
 
-	if !ecdsa.VerifyASN1(pub, nonce, as.Signature) {
+	// The nonce is the MESSAGE, not the digest. Apple's wording — "verify that the assertion's
+	// signature is valid for nonce" — reads either way, and the wrong reading cost a debugging
+	// round on real hardware: `generateAssertion` signs through the message-based algorithm, which
+	// hashes its input, so the value actually signed is SHA-256(nonce).
+	//
+	// This is the one thing self-made fixtures could never have caught. The generator signed the
+	// nonce as a digest and the verifier checked it the same way, so both were wrong in the same
+	// direction and agreed perfectly.
+	digest := sha256.Sum256(nonce)
+	if !ecdsa.VerifyASN1(pub, digest[:], as.Signature) {
 		return 0, ErrSignature
 	}
 

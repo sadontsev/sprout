@@ -23,6 +23,14 @@ actor AttestClient {
     /// failure this codebase keeps rediscovering, where a limitation is discovered by silence.
     nonisolated var isSupported: Bool { DCAppAttestService.shared.isSupported }
 
+    /// Whether a key has already been attested, so the caller can request a challenge for the right
+    /// purpose. The relay checks that the purpose matches the proof: an attestation challenge lives
+    /// fifteen minutes to honour Apple's retry guidance and an assertion challenge two, and letting
+    /// one satisfy the other would stretch the assertion replay window sevenfold.
+    nonisolated var hasAttestedKey: Bool {
+        UserDefaults.standard.string(forKey: "bambu.attestKeyID") != nil
+    }
+
     private var cachedKeyID: String? {
         get { UserDefaults.standard.string(forKey: keyIDDefaultsKey) }
         set { UserDefaults.standard.set(newValue, forKey: keyIDDefaultsKey) }
@@ -50,7 +58,12 @@ actor AttestClient {
         let keyID = try await service.generateKey()
         do {
             let attestation = try await service.attestKey(keyID, clientDataHash: hash)
-            cachedKeyID = keyID
+            // Deliberately NOT cached here. Apple accepting the attestation says nothing about
+            // whether the relay recorded it, and caching on Apple's word alone produces a loop the
+            // app cannot escape: it asserts with a key the relay has never seen, is told to
+            // re-attest, attests, caches optimistically again, and asserts again. The key is
+            // confirmed only once a registration carrying it is accepted.
+            pendingKeyID = keyID
             return ClaimBuilder.AttestProof(
                 keyID: keyID, attestation: attestation.base64URLEncodedString(), assertion: nil
             )
@@ -66,11 +79,24 @@ actor AttestClient {
         }
     }
 
+    /// A key that has attested with Apple but has not yet been accepted by the relay.
+    private var pendingKeyID: String?
+
+    /// Promote the pending key: the relay accepted a registration carrying its attestation, so it
+    /// now holds the public half and later assertions will verify.
+    func confirmAttested() {
+        if let pendingKeyID {
+            cachedKeyID = pendingKeyID
+            self.pendingKeyID = nil
+        }
+    }
+
     /// Discards the current key so the next claim attests afresh. The answer to the relay's
     /// `reattest_required`, which means it holds no public key for us — a restore that predates
     /// this install, not an attack.
     func reattest() {
         cachedKeyID = nil
+        pendingKeyID = nil
     }
 }
 

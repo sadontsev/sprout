@@ -76,18 +76,17 @@ import UIKit
 /// `didReceiveRemoteNotification` — which is the path a vouch takes when the phone is locked in a
 /// pocket, and the reason the pairing credentials had to move to `AfterFirstUnlock`.
 final class PushAppDelegate: NSObject, UIApplicationDelegate {
-    static let shared = PushAppDelegate()
-
-    /// Called with the raw APNs device token, hex-encoded.
-    var onDeviceToken: ((String) -> Void)?
-    /// Called with a vouch nonce from a silent push.
-    var onVouchNonce: ((String) -> Void)?
+    // Static, not instance, storage. `@UIApplicationDelegateAdaptor` constructs its OWN instance —
+    // setting callbacks on a `shared` singleton leaves them on an object UIKit never calls, and the
+    // symptom is simply that no device token ever arrives, with nothing logged anywhere.
+    nonisolated(unsafe) static var onDeviceToken: ((String) -> Void)?
+    nonisolated(unsafe) static var onVouchNonce: ((String) -> Void)?
 
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
-        onDeviceToken?(deviceToken.map { String(format: "%02x", $0) }.joined())
+        Self.onDeviceToken?(deviceToken.map { String(format: "%02x", $0) }.joined())
     }
 
     func application(
@@ -105,7 +104,7 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
         guard let nonce = PushRegistrar.vouchNonce(in: userInfo) else { return .noData }
-        onVouchNonce?(nonce)
+        Self.onVouchNonce?(nonce)
         return .newData
     }
 }

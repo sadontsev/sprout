@@ -24,6 +24,7 @@ import (
 	"github.com/mvks5/canopy/internal/challenge"
 	"github.com/mvks5/canopy/internal/claims"
 	"github.com/mvks5/canopy/internal/hashing"
+	"github.com/mvks5/canopy/internal/keystore"
 	"github.com/mvks5/canopy/internal/pairing"
 	"github.com/mvks5/canopy/internal/store"
 	"github.com/mvks5/canopy/internal/tenant"
@@ -322,15 +323,41 @@ func (s *Server) claims(w http.ResponseWriter, r *http.Request, tenantID string)
 
 	pairingOK := pairing.Verify(body.PairingPublicKey, clientData, body.PairingSignature)
 
+	// The verification error is logged rather than collapsed to a boolean. Every failure here
+	// surfaces to the client as one opaque "attestation_invalid" — deliberately, since telling a
+	// caller which check it tripped is a gift to whoever is probing — but an operator with no way
+	// to see the cause cannot tell a genuine attack from their own misconfiguration.
 	attestOK := true
 	if body.Attestation != "" {
 		raw, decErr := decodeB64(body.Attestation)
-		attestOK = decErr == nil &&
-			s.Attest.VerifyAttestation(raw, body.AttestKeyID, clientData, now) == nil
+		if decErr != nil {
+			s.Log.Warn("attestation not decodable", "tenant", tenantID, "err", decErr)
+			attestOK = false
+		} else if err := s.Attest.VerifyAttestation(raw, body.AttestKeyID, clientData, now); err != nil {
+			s.Log.Warn("attestation rejected", "tenant", tenantID, "key", body.AttestKeyID, "err", err)
+			attestOK = false
+		}
 	} else {
 		raw, decErr := decodeB64(body.Assertion)
-		attestOK = decErr == nil &&
-			s.Attest.VerifyAssertion(raw, body.AttestKeyID, clientData, now) == nil
+		if decErr != nil {
+			s.Log.Warn("assertion not decodable", "tenant", tenantID, "err", decErr)
+			attestOK = false
+		} else if err := s.Attest.VerifyAssertion(raw, body.AttestKeyID, clientData, now); err != nil {
+			s.Log.Warn("assertion rejected", "tenant", tenantID, "key", body.AttestKeyID, "err", err)
+			// "I have never seen this key" is a different answer from "this proof is bad", and the
+			// client can only act on the first: it must attest afresh. Collapsing them leaves an
+			// install asserting against a key we do not hold, forever — which is what a restore
+			// from backup produces, and it is not an attack.
+			if errors.Is(err, keystore.ErrReattestRequired) {
+				writeErr(w, http.StatusForbidden, "reattest_required")
+				return
+			}
+			attestOK = false
+		}
+	}
+
+	if !pairingOK {
+		s.Log.Warn("pairing signature rejected", "tenant", tenantID)
 	}
 
 	vouchOK := false

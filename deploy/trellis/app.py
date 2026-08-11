@@ -1061,6 +1061,24 @@ async def _forward_claim(claim: dict | None, push_token: str, device: str) -> No
         return
     if not res.definitive:
         raise HTTPException(status_code=502, detail="could not reach the push relay; retry")
+    # Logged, because a refused claim is otherwise invisible from both ends: the phone sees a 403
+    # with no context and the relay's own logs do not say which device it belonged to.
+    print(f"[canopy] claim refused for {push_token[:8]}… ({device}): {res.reason}", flush=True)
+
+    if res.reason == "vouch_required":
+        # The relay wants this token to prove it is reachable before binding it, and only IT
+        # can send that push -- it holds the signing key. So ask, and let the silent push carry
+        # the nonce to the device, which re-registers with the nonce inside its signed claim.
+        # The nonce deliberately never passes through here: a value this box could mint would
+        # prove nothing about who receives pushes on the token.
+        try:
+            await _canopy.vouch(push_token, "production")
+            print(f"[canopy] vouch requested for {push_token[:8]}…", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[canopy] vouch request failed: {e}", flush=True)
+    # The reason travels verbatim: the phone resolves reattest_required itself, and collapsing it
+    # to a generic failure would leave it retrying an assertion against a key the relay has never
+    # seen, indefinitely.
     raise HTTPException(status_code=403, detail=res.reason or "claim refused")
 
 
