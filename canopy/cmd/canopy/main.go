@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/mvks5/canopy/internal/apns"
 	"github.com/mvks5/canopy/internal/appattest"
 	"github.com/mvks5/canopy/internal/challenge"
+	"github.com/mvks5/canopy/internal/fraud"
 	"github.com/mvks5/canopy/internal/httpapi"
 	"github.com/mvks5/canopy/internal/keystore"
 	"github.com/mvks5/canopy/internal/store"
@@ -89,6 +91,26 @@ func main() {
 
 	go sweep(st, log)
 
+	// The fraud metric is optional. An operator with no App Store Connect key runs Canopy exactly
+	// as before: every other check still holds, and only the hooked-device signal is missing.
+	fraudClient, err := fraudClientFrom(cfg)
+	switch {
+	case errors.Is(err, fraud.ErrNotConfigured):
+		log.Info("fraud assessment disabled; set CANOPY_ASC_KEY_ID, CANOPY_ASC_ISSUER_ID and CANOPY_ASC_KEY to enable")
+	case err != nil:
+		// Configured but unusable. Stopping is right: an operator who supplied a key meant to have
+		// this running, and a warning in a log they are not reading is how it stays off for months.
+		log.Error("app store connect key", "err", err)
+		os.Exit(1)
+	default:
+		go fraudSweep(&fraud.Sweeper{
+			Keys:   attestKeys{st},
+			Client: fraudClient,
+			Log:    log,
+			AppID:  cfg.TeamID + "." + cfg.BundleID,
+		}, log)
+	}
+
 	log.Info("canopy listening",
 		"addr", cfg.Addr,
 		"bundle", cfg.BundleID,
@@ -121,6 +143,62 @@ func sweep(st *store.Store, log *slog.Logger) {
 	}
 }
 
+// fraudSweep redeems attestation receipts on a slow cadence.
+//
+// Slow on purpose: Apple states a not-before on every receipt and throttles anything earlier, so a
+// tight loop would produce 429s instead of answers. Hourly means a newly attested key is assessed
+// within the hour and a steady state costs one round trip per key per day.
+func fraudSweep(s *fraud.Sweeper, log *slog.Logger) {
+	for {
+		res, err := s.Run(context.Background(), time.Now())
+		if err != nil {
+			log.Error("fraud sweep", "err", err)
+		} else if res.Considered > 0 {
+			log.Info("fraud sweep",
+				"considered", res.Considered, "redeemed", res.Redeemed,
+				"deferred", res.Deferred, "suspicious", res.Suspicious)
+		}
+		time.Sleep(time.Hour)
+	}
+}
+
+// attestKeys adapts the store to what the sweep needs. The sweep is written against an interface so
+// its rules — which keys, how often, what each outcome means — are tested without SQLite.
+type attestKeys struct{ st *store.Store }
+
+func (a attestKeys) AttestKeysDueForRedemption(now time.Time, limit int) ([]fraud.KeyRecord, error) {
+	rows, err := a.st.AttestKeysDueForRedemption(now, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]fraud.KeyRecord, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, fraud.KeyRecord{KeyID: r.KeyID, Environment: r.Environment, Receipt: r.Receipt})
+	}
+	return out, nil
+}
+
+func (a attestKeys) PutAttestRisk(keyID string, metric int, hasMetric bool, receipt []byte, notBefore, now time.Time) error {
+	return a.st.PutAttestRisk(keyID, metric, hasMetric, receipt, notBefore, now)
+}
+
+func (a attestKeys) DeferAttestRedemption(keyID string, until, now time.Time) error {
+	return a.st.DeferAttestRedemption(keyID, until, now)
+}
+
+func fraudClientFrom(cfg config) (*fraud.Client, error) {
+	if cfg.ASCKeyPath == "" || cfg.ASCKeyID == "" || cfg.ASCIssuerID == "" {
+		return nil, fraud.ErrNotConfigured
+	}
+	pemBytes, err := os.ReadFile(cfg.ASCKeyPath)
+	if err != nil {
+		return nil, err
+	}
+	// Host stays empty: each receipt goes to the host matching the environment its own key attested
+	// in, which is the only correct choice when one Canopy serves both TestFlight and development.
+	return fraud.NewClient("", cfg.ASCKeyID, cfg.ASCIssuerID, pemBytes)
+}
+
 type config struct {
 	Addr                   string
 	DBPath                 string
@@ -134,6 +212,12 @@ type config struct {
 	InviteCode             string
 	MaxTenants             int
 	AllowDevelopmentAttest bool
+	// App Store Connect, for the fraud-assessment metric. A different credential from either APNs
+	// signing key: those authorise sending a push, this one authorises reading Apple's per-device
+	// risk data. All three optional together — absent means the metric is off.
+	ASCKeyPath  string
+	ASCKeyID    string
+	ASCIssuerID string
 }
 
 func loadConfig() (config, error) {
@@ -149,6 +233,9 @@ func loadConfig() (config, error) {
 		AppleRootPath:          os.Getenv("CANOPY_APPLE_ROOT_CA"),
 		InviteCode:             os.Getenv("CANOPY_INVITE_CODE"),
 		AllowDevelopmentAttest: os.Getenv("CANOPY_ALLOW_DEVELOPMENT_ATTEST") == "1",
+		ASCKeyPath:             os.Getenv("CANOPY_ASC_KEY"),
+		ASCKeyID:               os.Getenv("CANOPY_ASC_KEY_ID"),
+		ASCIssuerID:            os.Getenv("CANOPY_ASC_ISSUER_ID"),
 	}
 
 	required := map[string]string{
