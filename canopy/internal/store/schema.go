@@ -77,3 +77,22 @@ CREATE TABLE IF NOT EXISTS challenges (
     created_at INTEGER NOT NULL
 );
 `
+
+// migrations are additive column adds applied after the schema, each idempotent
+// because SQLite has no ADD COLUMN IF NOT EXISTS and a duplicate is the normal
+// case on every start after the first.
+//
+// A CREATE TABLE IF NOT EXISTS never revisits a table that already exists, so a
+// column added to the schema above alone would reach a fresh database and skip
+// every deployment that already has rows — which is precisely the one that has
+// the history worth reading.
+var migrations = []string{
+	// The fraud-assessment metric, kept beside the receipt it is read from.
+	// risk_metric is NULLABLE on purpose: an unredeemed key has no answer, and a
+	// NOT NULL DEFAULT 0 would record every device as clean rather than unknown.
+	`ALTER TABLE attest_keys ADD COLUMN risk_metric INTEGER`,
+	`ALTER TABLE attest_keys ADD COLUMN risk_checked_at INTEGER`,
+	// When Apple will next accept a redemption of this receipt. Redeeming sooner
+	// answers 429 and burns the attempt without producing a metric.
+	`ALTER TABLE attest_keys ADD COLUMN risk_not_before INTEGER`,
+}

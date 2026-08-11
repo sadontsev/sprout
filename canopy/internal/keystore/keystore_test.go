@@ -125,7 +125,13 @@ func buildAssertion(t *testing.T, key *ecdsa.PrivateKey, counter uint32) []byte 
 	h := sha256.New()
 	h.Write(authData)
 	h.Write(cdh[:])
-	sig, _ := ecdsa.SignASN1(rand.Reader, key, h.Sum(nil))
+	// Signed over SHA-256(nonce), the way generateAssertion does it: the nonce is the MESSAGE, and
+	// the message-based signing algorithm hashes its input. This builder kept signing the nonce
+	// directly after internal/appattest was corrected, so every assertion here failed to verify —
+	// the same wrong reading of Apple's wording, in the one place the appattest fix did not reach.
+	nonce := h.Sum(nil)
+	digest := sha256.Sum256(nonce)
+	sig, _ := ecdsa.SignASN1(rand.Reader, key, digest[:])
 
 	obj, _ := cbor.Marshal(map[string]any{"signature": sig, "authenticatorData": authData})
 	return obj

@@ -31,8 +31,24 @@ services:
       # Leave it off once only TestFlight and App Store builds talk to this.
       CANOPY_ALLOW_DEVELOPMENT_ATTEST: ${CANOPY_ALLOW_DEVELOPMENT_ATTEST:-1}
       CANOPY_INVITE_CODE: ${CANOPY_INVITE_CODE:-}
+      # Apple's fraud-assessment metric: how many App Attest keys one device has minted. Optional,
+      # and all three go together — unset means the sweep never runs and every other check is
+      # unaffected. This is an APP STORE CONNECT key, NOT the APNs key above: that one authorises
+      # sending a push, this one authorises reading Apple's per-device risk data. Supplying the
+      # wrong .p8 here fails at startup rather than silently assessing nothing.
+      #
+      # The path is set only when a key id is, so an unconfigured deployment passes an empty path
+      # and the sweep stays off. Pointing it at the always-present mount below instead would make
+      # Canopy try to parse whatever is there and exit at startup.
+      CANOPY_ASC_KEY: ${CANOPY_ASC_KEY_ID:+/keys/asc_key.p8}
+      CANOPY_ASC_KEY_ID: ${CANOPY_ASC_KEY_ID:-}
+      CANOPY_ASC_ISSUER_ID: ${CANOPY_ASC_ISSUER_ID:-}
     volumes:
       - ${APNS_KEY_FILE:-${HOME}/.config/bambu-phase0/apns_key.p8}:/keys/apns_key.p8:ro
+      # Always mounted, read only when CANOPY_ASC_KEY names it. A bind mount whose source does not
+      # exist is created by Docker as a DIRECTORY, so defaulting this to a real file is what keeps
+      # an unconfigured deployment from acquiring a junk path it will later trip over.
+      - ${ASC_KEY_FILE:-${APNS_KEY_FILE:-${HOME}/.config/bambu-phase0/apns_key.p8}}:/keys/asc_key.p8:ro
       - ${APPLE_ROOT_CA_FILE:-${HOME}/.config/bambu-phase0/apple-app-attest-root.pem}:/keys/apple-app-attest-root.pem:ro
       # Bindings and attest keys are durable state, not a cache: a device cannot re-attest on
       # demand, so losing this costs every install a re-attestation round it has no way to know it
