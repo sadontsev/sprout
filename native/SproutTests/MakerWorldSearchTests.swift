@@ -320,7 +320,7 @@ final class MakerWorldSearchTests: XCTestCase {
     func testEmphasisAndHeadingsSurvive() {
         XCTAssertEqual(md("<p>A <strong>bold</strong> claim</p>"), "A **bold** claim")
         XCTAssertEqual(md("<p>An <i>aside</i></p>"), "An *aside*")
-        XCTAssertEqual(md("<h2>Title</h2><p>Body</p>"), "**Title**\nBody",
+        XCTAssertEqual(md("<h2>Title</h2><p>Body</p>"), "**Title**\n\nBody",
                        "a heading becomes bold on its own line — inline markdown cannot render #")
     }
 
@@ -368,7 +368,9 @@ final class MakerWorldSearchTests: XCTestCase {
     }
 
     func testBlankRunsCollapseAndEmptyMarkupIsNil() {
-        XCTAssertEqual(md("<p>One</p><p></p><p>Two</p>"), "One\nTwo")
+        // Paragraphs keep ONE blank line between them — that is how the source reads and how it
+        // should render. Runs of empty markup collapse to that, they do not accumulate.
+        XCTAssertEqual(md("<p>One</p><p></p><p>Two</p>"), "One\n\nTwo")
         XCTAssertNil(md("<p></p><br><figure></figure>"))
         XCTAssertNil(MakerWorldSearch.markdown(fromHTML: nil))
         XCTAssertNil(MakerWorldSearch.markdown(fromHTML: ""))
@@ -376,8 +378,38 @@ final class MakerWorldSearchTests: XCTestCase {
 
     /// Malformed input is a thing MakerWorld sends, not a thing to crash on.
     func testAnUnclosedTagIsSurvivable() {
-        XCTAssertEqual(md("<p>Good text</p><p>trailing"), "Good text\ntrailing")
+        XCTAssertEqual(md("<p>Good text</p><p>trailing"), "Good text\n\ntrailing")
         XCTAssertNotNil(md("<p>text</p><strong"))
+    }
+
+    /// Shipped visibly and caught on screen: `**1. ****Seed Starter Tray 9 Cells **` with literal
+    /// asterisks in the middle of the description.
+    ///
+    /// Markdown emphasis delimiters may not touch whitespace — `**text **` is not emphasis, it is
+    /// the characters `**`. MakerWorld's spans routinely carry a trailing space, so the whitespace
+    /// has to move outside the delimiters.
+    func testEmphasisWithSurroundingSpaceStillParses() {
+        XCTAssertEqual(md("<p><strong>Seed Sower : </strong>Offers three sizes</p>"),
+                       "**Seed Sower :** Offers three sizes")
+        XCTAssertEqual(md("<p>Available in <strong> 6-cell </strong>versions</p>"),
+                       "Available in **6-cell** versions")
+    }
+
+    /// `<i> </i>` between words is real MakerWorld output. It used to emit a stray `* *`.
+    func testAWhitespaceOnlySpanEmitsNoDelimiters() {
+        XCTAssertEqual(md("<p>an<i> </i>Asanoha pattern</p>"), "an Asanoha pattern")
+        XCTAssertEqual(md("<p>a<strong></strong>b"), "ab")
+    }
+
+    /// A bold list item must not stack its delimiters against the bullet.
+    func testABoldListItemKeepsItsNumberOutsideTheEmphasis() {
+        XCTAssertEqual(md("<ol><li><strong>Tray 9 Cells </strong></li></ol>"), "1. **Tray 9 Cells**")
+    }
+
+    /// Malformed nesting is input, not a crash — the words survive even when the formatting cannot.
+    func testUnclosedEmphasisStillYieldsItsText() {
+        XCTAssertEqual(md("<p>start <strong>bold text"), "start bold text")
+        XCTAssertEqual(md("<p><em>a<strong>b</strong>"), "a**b**")
     }
 
     /// The real shape, from model 1400373.
@@ -385,7 +417,8 @@ final class MakerWorldSearchTests: XCTestCase {
         let html = "<h2>Self-Watering Seed Starter</h2><p><strong>Designed for minimalist growers.</strong></p>"
                  + "<p>This <strong>modular kit</strong> features a base.<br><br>It also has an<i> </i>Asanoha pattern.</p>"
         let out = md(html)
-        XCTAssertEqual(out, "**Self-Watering Seed Starter**\n**Designed for minimalist growers.**\n"
-                          + "This **modular kit** features a base.\nIt also has an* *Asanoha pattern.")
+        // `<i> </i>` between words contributes a space, not an empty emphasis.
+        XCTAssertEqual(out, "**Self-Watering Seed Starter**\n\n**Designed for minimalist growers.**\n\n"
+                          + "This **modular kit** features a base.\n\nIt also has an Asanoha pattern.")
     }
 }
