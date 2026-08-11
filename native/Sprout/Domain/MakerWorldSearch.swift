@@ -125,17 +125,26 @@ enum MakerWorldSearch {
 
         var id: String { rawValue }
 
+        /// **Not "Relevance".** That label claims the endpoint ranked these, and it did not: a search
+        /// for "spool" returns 2, 4, 3, 17, 5, 46 downloads in that order out of 10 000 results, and
+        /// identical calls seconds apart come back in different orders. Naming it after the machine
+        /// that produced it is the only honest option — the website's ranked results come from a
+        /// different, Cloudflare-gated route this app cannot reach.
         var label: String {
             switch self {
-            case .relevance: return "Relevance"
+            case .relevance: return "MakerWorld's order"
             case .downloads: return "Most downloaded"
-            case .likes: return "Most liked"
-            case .newest: return "Newest"
+            case .likes:     return "Most liked"
+            case .newest:    return "Newest"
             }
         }
 
-        /// Whether this ordering is MakerWorld's own. Only `.relevance` is; the rest are local.
+        /// Whether this is the server's own order rather than a local reordering.
         var isServerOrder: Bool { self == .relevance }
+
+        /// Sorting an arbitrary 20 of 10 000 by downloads gives "the most downloaded of a random
+        /// 20", which is not what anyone means by it. These sorts deepen the pool first.
+        var wantsDeeperPool: Bool { self != .relevance }
     }
 
     /// Reorder loaded hits. `.relevance` is identity — MakerWorld's own order, untouched.

@@ -248,6 +248,15 @@ final class MakerWorldSearchTests: XCTestCase {
         let hits = [hit(3, dl: 1), hit(1, dl: 99), hit(2, dl: 50)]
         XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .relevance).map(\.id), [3, 1, 2])
         XCTAssertTrue(MakerWorldSearch.Sort.relevance.isServerOrder)
+        // Not "Relevance": a search for "spool" returns 2, 4, 3, 17, 5, 46 downloads in that order
+        // out of 10 000, so nothing was ranked. The label names the machine, not a quality.
+        XCTAssertEqual(MakerWorldSearch.Sort.relevance.label, "MakerWorld's order")
+        XCTAssertFalse(MakerWorldSearch.Sort.relevance.wantsDeeperPool,
+                       "the server's own order needs no local pool")
+        for local in MakerWorldSearch.Sort.allCases where local != .relevance {
+            XCTAssertTrue(local.wantsDeeperPool,
+                          "\(local) orders locally, so it must gather a real sample first")
+        }
         for other in MakerWorldSearch.Sort.allCases where other != .relevance {
             XCTAssertFalse(other.isServerOrder, "\(other) is a local reordering and must say so")
         }

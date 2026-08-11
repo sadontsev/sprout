@@ -227,6 +227,33 @@ final class ExploreModel {
         }
     }
 
+    /// How many hits to gather before a local sort is worth trusting.
+    ///
+    /// Client-side sorting can only order what has been loaded. With 20 of 10 000 that is "the most
+    /// downloaded of an arbitrary 20" — true, useless, and easily mistaken for "the most downloaded
+    /// on MakerWorld". Pulling a few more pages first makes the answer mean something; the UI still
+    /// states the scope, because even 100 of 10 000 is a sample.
+    static let poolForLocalSort = 100
+
+    /// Pull pages until the pool is deep enough to sort, or there are no more.
+    ///
+    /// Bounded twice — by the target and by `hasMore` — because an unbounded loop against an
+    /// undocumented endpoint is the fastest way to earn a rate limit.
+    func deepenPool(_ client: CollectionsClient) {
+        guard sort.wantsDeeperPool, hasMore, hits.count < Self.poolForLocalSort else { return }
+        Task { @MainActor in
+            var guardRail = 0
+            while sort.wantsDeeperPool, hasMore, hits.count < Self.poolForLocalSort, guardRail < 8 {
+                guardRail += 1
+                let before = hits.count
+                loadMore(client)
+                // Wait for the page this started, rather than spinning.
+                while loadingMore { await Task.yield() }
+                if hits.count == before { break }   // no progress: stop rather than loop
+            }
+        }
+    }
+
     // MARK: Resolve
 
     /// A resolve already in hand for this model, if any. The detail page shows it on the first frame

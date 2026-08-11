@@ -33,6 +33,22 @@ struct ExploreView: View {
                 .navigationTitle("MakerWorld")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    // Restored: the sort control was lost when Explore moved off the old sheet, so
+                    // the grid sorted but nothing could ask it to.
+                    ToolbarItem(placement: .topBarLeading) {
+                        if !explore.hits.isEmpty {
+                            Menu {
+                                Picker("Order", selection: $explore.sort) {
+                                    ForEach(MakerWorldSearch.Sort.allCases) { Text($0.label).tag($0) }
+                                }
+                            } label: {
+                                Image(systemName: explore.sort.isServerOrder
+                                      ? "arrow.up.arrow.down"
+                                      : "arrow.up.arrow.down.circle.fill")
+                            }
+                            .accessibilityLabel("Order results. Currently \(explore.sort.label).")
+                        }
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Done") { model.overlay = nil }
                     }
@@ -237,12 +253,33 @@ private struct ExploreRoot: View {
             // A skeleton of the real shape, so filling in reads as completion rather than a jump cut.
             ExploreSkeletonGrid()
         } else if !explore.hits.isEmpty {
-            grid
+            VStack(spacing: 0) {
+                if !explore.sort.isServerOrder { scopeNote }
+                grid
+            }
+            .onChange(of: explore.sort) { _, _ in explore.deepenPool(collectionsClient) }
         } else if explore.isCold {
             ExploreShelves(client: client, collectionsClient: collectionsClient)
         } else if !explore.loading {
             ContentUnavailableView.search
         }
+    }
+
+    /// What the local sort actually ordered. Says it out loud whenever the loaded set is a sample
+    /// of something larger — "Most downloaded" over 20 of 10 000 is not what the words imply.
+    private var scopeNote: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10, weight: .semibold))
+            Text(verbatim: explore.hasMore
+                 ? "\(explore.sort.label) — within the \(explore.hits.count) loaded of \(explore.hitTotal ?? explore.hits.count). MakerWorld's search can't sort."
+                 : "\(explore.sort.label) — all \(explore.hits.count) results.")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundStyle(c.t3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
     }
 
     private var grid: some View {
