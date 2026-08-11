@@ -352,3 +352,60 @@ class SyncReconcilesGhostCards(unittest.TestCase):
         }).json()
 
         self.assertEqual(body["needs_claim"], ["mine"])
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class ADeadCardIsReplacedButADismissedOneIsNot(unittest.TestCase):
+    """The distinction that decides whether a card comes back.
+
+    Arming push-to-start is once per live session, so a mid-print identity change cannot spawn a
+    second card. The cost was that a card which DIED mid-print was never replaced — the lock screen
+    stayed empty for the rest of the print, which is exactly what happened when installing a new
+    build terminated a running activity.
+
+    /sync and /unregister carry opposite instructions and must not be collapsed:
+      * /unregister is a dismissal the app WITNESSED. The user swiped it away; putting it back is
+        the opposite of what they asked for.
+      * /sync reporting a card absent, with no dismissal behind it, is a death.
+    """
+
+    def setUp(self):
+        la.app.dependency_overrides[la._require_key] = lambda: None
+        self.client = TestClient(la.app)
+        la._regs = {}
+        la._needs_claim = {}
+        la._p2s_pending = {}
+        la._p2s_started = {"2": "a133"}
+        la._save = lambda: None
+
+    def tearDown(self):
+        la.app.dependency_overrides.clear()
+
+    def register(self):
+        self.client.post("/register", json={
+            "printer_id": 2, "push_token": "tok", "printer_name": "H2C",
+            "device_id": "phoneA", "client": "native",
+        })
+
+    def test_a_card_that_died_re_arms_push_to_start(self):
+        self.register()
+        self.client.post("/sync", json={"tokens": [], "device_id": "phoneA", "client": "native"})
+
+        self.assertNotIn("2", la._p2s_started,
+                         "without re-arming, the print runs to completion with no card at all")
+
+    def test_a_dismissal_does_not_re_arm(self):
+        self.register()
+        self.client.post("/unregister", params={
+            "printer_id": 2, "push_token": "tok", "device_id": "phoneA",
+        })
+
+        self.assertEqual(la._p2s_started.get("2"), "a133",
+                         "the user swiped this away; bringing it straight back ignores them")
+
+    def test_re_arming_does_not_disturb_another_printers_card(self):
+        self.register()
+        la._p2s_started["9"] = "other"
+        self.client.post("/sync", json={"tokens": [], "device_id": "phoneA", "client": "native"})
+
+        self.assertEqual(la._p2s_started.get("9"), "other")

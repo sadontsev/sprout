@@ -1295,7 +1295,23 @@ async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
     # 1. Forget THIS DEVICE's cards that no longer exist. Scoping is essential: a report from one
     # phone says nothing about what another phone can see.
     for key in registry.prune_device(_regs, device, seen):
-        print(f"[sync] card {key} is gone from {device} — dropped, free to restart", flush=True)
+        # Re-arm push-to-start for this key. Arming is otherwise once per LIVE SESSION, which is
+        # what stops a mid-print identity change from spawning a second card — but it also meant a
+        # card that DIED mid-print was never replaced, and the lock screen stayed empty for the rest
+        # of the print. Observed today: installing a new build terminated the running activity and
+        # the print had no card at all until the registry was cleared by hand.
+        #
+        # Re-armed HERE and deliberately not in /unregister, because the two carry opposite
+        # instructions. /unregister is the app reporting a dismissal it WITNESSED — the user swiped
+        # the card away, and putting it straight back is the opposite of what they asked for. This
+        # path is the app reporting that a card is gone with no dismissal behind it, which is a
+        # death, not a decision.
+        #
+        # Safe against duplicates: _remote_start still checks has_card per device, and should_start
+        # still requires no card to exist.
+        _p2s_started.pop(key, None)
+        print(f"[sync] card {key} is gone from {device} — dropped and re-armed, free to restart",
+              flush=True)
 
     # 2. Claim / disown the tokens we were handed.
     known = registry.all_tokens(_regs)
