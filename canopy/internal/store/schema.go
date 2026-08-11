@@ -41,4 +41,26 @@ CREATE TABLE IF NOT EXISTS vouches (
 
 CREATE INDEX IF NOT EXISTS vouches_token_created
     ON vouches (token_hash, created_at);
+
+CREATE TABLE IF NOT EXISTS tenants (
+    id            TEXT PRIMARY KEY,
+    secret_hash   TEXT NOT NULL,
+    recovery_hash TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    last_seen     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS tenants_recovery ON tenants (recovery_hash);
+
+-- A challenge is bound to the tenant it was issued to and to the purpose it was
+-- issued for. Storing those columns and never reading them left a claim
+-- replayable under a different tenant, which is worse than a verbatim replay
+-- because every accepting rule re-points the tenant.
+CREATE TABLE IF NOT EXISTS challenges (
+    nonce_hash TEXT PRIMARY KEY,
+    tenant     TEXT NOT NULL,
+    purpose    TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
 `

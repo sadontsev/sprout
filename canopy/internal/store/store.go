@@ -159,3 +159,81 @@ func (s *Store) PurgeExpiredVouches(now time.Time) error {
 	_, err := s.db.Exec(`DELETE FROM vouches WHERE expires_at <= ?`, now.UnixMilli())
 	return err
 }
+
+// --- tenants ---
+
+// PutTenant creates a tenant.
+func (s *Store) PutTenant(id, secretHash, recoveryHash string, now time.Time) error {
+	const q = `INSERT INTO tenants (id, secret_hash, recovery_hash, created_at, last_seen)
+	           VALUES (?,?,?,?,?)`
+	_, err := s.db.Exec(q, id, secretHash, recoveryHash, now.UnixMilli(), now.UnixMilli())
+	return err
+}
+
+// TenantSecretHash returns the stored secret digest for id, or "" if unknown.
+func (s *Store) TenantSecretHash(id string) (string, error) {
+	var h string
+	err := s.db.QueryRow(`SELECT secret_hash FROM tenants WHERE id = ?`, id).Scan(&h)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return h, err
+}
+
+// TenantByRecovery returns the tenant id whose recovery digest matches, or "".
+func (s *Store) TenantByRecovery(recoveryHash string) (string, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM tenants WHERE recovery_hash = ?`, recoveryHash).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// RotateTenantSecret replaces a tenant's secret and recovery digests, keeping
+// its identity. This is what makes a rebuilt server recover its bindings: the
+// tenant is the same party, holding a new credential.
+func (s *Store) RotateTenantSecret(id, secretHash, recoveryHash string, now time.Time) error {
+	const q = `UPDATE tenants SET secret_hash = ?, recovery_hash = ?, last_seen = ? WHERE id = ?`
+	_, err := s.db.Exec(q, secretHash, recoveryHash, now.UnixMilli(), id)
+	return err
+}
+
+// CountTenants returns the total number of enrolled tenants.
+func (s *Store) CountTenants() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM tenants`).Scan(&n)
+	return n, err
+}
+
+// --- challenges ---
+
+// PutChallenge records an issued challenge.
+func (s *Store) PutChallenge(nonceHash, tenant, purpose string, expiresAt, now time.Time) error {
+	const q = `INSERT OR REPLACE INTO challenges (nonce_hash, tenant, purpose, expires_at, created_at)
+	           VALUES (?,?,?,?,?)`
+	_, err := s.db.Exec(q, nonceHash, tenant, purpose, expiresAt.UnixMilli(), now.UnixMilli())
+	return err
+}
+
+// ConsumeChallenge deletes and reports the challenge matching all of nonce,
+// tenant and purpose. Checking all three is the point: the tenant column stops
+// a captured claim being replayed under a different tenant, and the purpose
+// column stops a 15-minute attestation challenge extending the assertion replay
+// window.
+func (s *Store) ConsumeChallenge(nonceHash, tenant, purpose string, now time.Time) (bool, error) {
+	const q = `DELETE FROM challenges
+	            WHERE nonce_hash = ? AND tenant = ? AND purpose = ? AND expires_at > ?`
+	res, err := s.db.Exec(q, nonceHash, tenant, purpose, now.UnixMilli())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// PurgeExpiredChallenges removes challenges past their expiry.
+func (s *Store) PurgeExpiredChallenges(now time.Time) error {
+	_, err := s.db.Exec(`DELETE FROM challenges WHERE expires_at <= ?`, now.UnixMilli())
+	return err
+}
