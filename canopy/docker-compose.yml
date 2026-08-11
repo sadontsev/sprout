@@ -1,0 +1,35 @@
+services:
+  canopy:
+    build: .
+    container_name: canopy
+    restart: unless-stopped
+    # Bound to loopback deliberately. Right now the only tenant is Trellis on this same host, and
+    # this is the one process holding the APNs signing keys — there is no reason for it to be
+    # reachable from anywhere else yet. Publishing it (cloudflared / Tailscale ingress) is the step
+    # that comes with the first self-hoster, not before.
+    ports:
+      - "127.0.0.1:8913:8913"
+    environment:
+      CANOPY_ADDR: "0.0.0.0:8913"
+      CANOPY_DB: /data/canopy.db
+      CANOPY_BUNDLE_ID: ${CANOPY_BUNDLE_ID:?set CANOPY_BUNDLE_ID in .env}
+      CANOPY_TEAM_ID: ${CANOPY_TEAM_ID:?set CANOPY_TEAM_ID in .env}
+      # One key per environment. A legacy universal key may be pointed at both paths; an
+      # environment-scoped key only works for its own gateway, and the BadDeviceToken retry against
+      # the other one will answer InvalidProviderToken rather than converging.
+      CANOPY_APNS_KEY_SANDBOX: /keys/apns_key.p8
+      CANOPY_APNS_KEY_ID_SANDBOX: ${CANOPY_APNS_KEY_ID:?set CANOPY_APNS_KEY_ID in .env}
+      CANOPY_APNS_KEY_PRODUCTION: /keys/apns_key.p8
+      CANOPY_APNS_KEY_ID_PRODUCTION: ${CANOPY_APNS_KEY_ID:?set CANOPY_APNS_KEY_ID in .env}
+      CANOPY_APPLE_ROOT_CA: /keys/apple-app-attest-root.pem
+      # Permits Apple's DEVELOPMENT App Attest environment, which a locally-installed build uses.
+      # Leave it off once only TestFlight and App Store builds talk to this.
+      CANOPY_ALLOW_DEVELOPMENT_ATTEST: ${CANOPY_ALLOW_DEVELOPMENT_ATTEST:-1}
+      CANOPY_INVITE_CODE: ${CANOPY_INVITE_CODE:-}
+    volumes:
+      - ${APNS_KEY_FILE:-${HOME}/.config/sprout/apns_key.p8}:/keys/apns_key.p8:ro
+      - ${APPLE_ROOT_CA_FILE:-${HOME}/.config/sprout/apple-app-attest-root.pem}:/keys/apple-app-attest-root.pem:ro
+      # Bindings and attest keys are durable state, not a cache: a device cannot re-attest on
+      # demand, so losing this costs every install a re-attestation round it has no way to know it
+      # needs. Back it up.
+      - ./data:/data
