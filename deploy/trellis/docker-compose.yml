@@ -5,55 +5,28 @@ services:
     restart: unless-stopped
     # Host network so it reaches Bambuddy at localhost:8910 and exposes its own :8911 on the host.
     network_mode: host
+    # Everything in .env reaches the container, so an optional setting needs no line here.
+    # .env.example is the reference for what may go in it — self-hosting the push path, MakerWorld
+    # collections, and so on. Listing those here meant this file grew a paragraph of explanation
+    # per variable and read as though six Apple credentials were mandatory. They are not; the
+    # normal deployment sets exactly one thing.
+    env_file:
+      - .env
     environment:
+      # Fixed container paths, not configuration.
       BAMBUDDY_URL: http://localhost:8910
-
-      # ── the ONE required value ──────────────────────────────────────────────────────────────
-      # `:?` so an unset or empty key stops the deploy. Written as a bare ${BAMBUDDY_API_KEY} it
-      # became the EMPTY STRING, which is set as far as os.environ is concerned — so Trellis booted
-      # happily and every Bambuddy call answered 401. That reads as "Bambuddy is broken" and sends
-      # you to look at the wrong service.
-      BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY:?set BAMBUDDY_API_KEY in .env — see .env.example}
-
-      # ── everything below is OPTIONAL: only for self-hosting the push path ───────────────────
-      #
-      # With all of it unset, Trellis relays through the push service run by the app's author. No
-      # Apple developer account, no APNs key, no push certificate. That is the normal deployment.
-      # docs/guides/self-hosting-push.md covers the alternatives and when they are worth it.
-      #
-      # All `:-` rather than `:?` on purpose: a relay-mode deployment holds no Apple credentials at
-      # all and must not be made to invent them. app.py enforces "exactly one push backend, and a
-      # complete one" at startup, which is where that check belongs — compose refusing to
-      # interpolate would kill the container before the message explaining why could be printed.
-
-      # Self-hosting your own relay: point at your Canopy instead of the author's.
-      CANOPY_URL: ${CANOPY_URL:-}
-      # Some relays gate enrolment while young. Without it a gated relay answers 403 and push simply
-      # stays off, so app.py logs this variable by name rather than a bare status.
-      CANOPY_INVITE_CODE: ${CANOPY_INVITE_CODE:-}
-
-      # Signing locally instead, with no relay. Setting APNS_KEY_ID is what opts out of the relay,
-      # and all three are then required together — app.py refuses a partial set, which used to boot
-      # and sign every JWT with an empty issuer (403 InvalidProviderToken on every push, forever).
-      APNS_KEY_ID: ${APNS_KEY_ID:-}
-      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
-      APNS_TOPIC: ${APNS_TOPIC:-}
       APNS_KEY_PATH: /keys/apns_key.p8
-      # NOT set here on purpose: app.py derives it from APNS_TOPIC, and passing an empty value would
-      # DEFEAT that default (os.environ.get returns "" rather than falling back), sending an empty
-      # apns-topic on every alert banner. Add it to .env only if your bundle id is not APNS_TOPIC
-      # minus ".push-type.liveactivity".
-      # SANDBOX for local Xcode/dev builds; switch to api.push.apple.com for TestFlight/App Store.
-      # Production APNs by default — the app ships via TestFlight, whose Live-Activity tokens are
-      # PRODUCTION-environment; pushing them to sandbox gets 400 BadDeviceToken and the registration
-      # dropped (observed live: every card died silently). Export APNS_HOST for sandbox dev builds.
-      APNS_HOST: ${APNS_HOST:-api.push.apple.com}
       DATA_DIR: /data
-      # Bambuddy's SQLite, for the MakerWorld collection endpoints only. Every collection endpoint on
-      # api.bambulab.com is Bearer-gated, that bearer is the whole Bambu account, and it must not
-      # reach the phone — so it is read here, on the machine that already has it. Re-read per request
-      # so a token Bambuddy refreshes is picked up at once.
       BAMBUDDY_DB: /bambuddy/bambuddy.db
+      # The one required value, restated here only so `:?` can stop the deploy. A bare
+      # ${BAMBUDDY_API_KEY} interpolates to the EMPTY STRING, which os.environ reports as present —
+      # Trellis then booted fine and every Bambuddy call answered 401, which reads as "Bambuddy is
+      # broken" and sends you to the wrong service.
+      BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY:?set BAMBUDDY_API_KEY in .env — see .env.example}
+      # Production APNs unless .env says otherwise. Only read when signing locally; TestFlight
+      # Live-Activity tokens are production-environment, and pushing them at sandbox gets 400
+      # BadDeviceToken with the registration dropped — observed live, every card died silently.
+      APNS_HOST: ${APNS_HOST:-api.push.apple.com}
     volumes:
       # Your own APNs auth key. Override APNS_KEY_FILE in .env if you keep it elsewhere.
       # Harmless in RELAY mode, where nothing reads it.

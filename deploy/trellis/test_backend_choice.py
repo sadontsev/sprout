@@ -210,11 +210,22 @@ class TheRequiredCredentialIsActuallyRequired(unittest.TestCase):
         self.assertIn('os.environ.get("BAMBUDDY_API_KEY", "").strip()', self.app)
         self.assertIn("BAMBUDDY_API_KEY is empty", self.app)
 
-    def test_the_push_variables_stay_optional(self):
-        # A relay deployment holds no Apple credentials and must not be made to invent them.
+    def test_optional_settings_are_not_listed_in_compose_at_all(self):
+        # env_file passes everything in .env to the container, so an optional setting needs no line
+        # here. Listing them cost a paragraph of explanation each and made the file read as though
+        # six Apple credentials were mandatory — the compose file had become the documentation.
+        # .env.example is the reference; this file is the wiring.
+        self.assertIn("env_file:", self.compose)
         for name in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC", "CANOPY_URL", "CANOPY_INVITE_CODE"):
-            self.assertIn(f"{name}: ${{{name}:-}}", self.compose,
-                          f"{name} must be optional; app.py owns the completeness check")
+            self.assertNotIn(f"{name}:", self.compose,
+                             f"{name} is optional and reaches the container via env_file; a line "
+                             f"here only invites another paragraph explaining it")
+
+    def test_they_are_documented_where_someone_configuring_would_look(self):
+        import pathlib as _p
+        example = (_p.Path(__file__).parent / ".env.example").read_text()
+        for name in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC", "CANOPY_URL", "CANOPY_INVITE_CODE"):
+            self.assertIn(name, example, "dropping it from compose must not lose it entirely")
 
     def test_no_stale_claim_that_the_apns_values_are_fail_hard(self):
         # The comment that made this file look credential-heavy described a `:?` that had already
