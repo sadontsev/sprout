@@ -118,3 +118,44 @@ func (s *Store) LiveCount(tenant string, now time.Time) (int, error) {
 	err := s.db.QueryRow(q, tenant, now.UnixMilli()).Scan(&n)
 	return n, err
 }
+
+// PutVouch records an outstanding vouch. The nonce is stored as a digest: like
+// every other secret Canopy must recognise, it is never held in the clear.
+func (s *Store) PutVouch(tokenHash, nonceHash, tenant string, expiresAt, now time.Time) error {
+	const q = `INSERT OR REPLACE INTO vouches
+	               (token_hash, nonce_hash, tenant, expires_at, created_at)
+	           VALUES (?,?,?,?,?)`
+	_, err := s.db.Exec(q, tokenHash, nonceHash, tenant, expiresAt.UnixMilli(), now.UnixMilli())
+	return err
+}
+
+// ConsumeVouch reports whether an unexpired vouch exists for exactly this token,
+// nonce and tenant, and deletes it. Single use is the point: a nonce that could
+// be replayed would prove reachability once and authorise binding forever.
+func (s *Store) ConsumeVouch(tokenHash, nonceHash, tenant string, now time.Time) (bool, error) {
+	const q = `DELETE FROM vouches
+	            WHERE token_hash = ? AND nonce_hash = ? AND tenant = ? AND expires_at > ?`
+	res, err := s.db.Exec(q, tokenHash, nonceHash, tenant, now.UnixMilli())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// CountVouchesSince counts vouches minted for a token across every tenant. The
+// cap built on it is deliberately global: a per-tenant limit alone is defeated
+// by enrolling more tenants, and what that would buy an attacker is waking a
+// known victim's app at will.
+func (s *Store) CountVouchesSince(tokenHash string, since time.Time) (int, error) {
+	const q = `SELECT COUNT(*) FROM vouches WHERE token_hash = ? AND created_at >= ?`
+	var n int
+	err := s.db.QueryRow(q, tokenHash, since.UnixMilli()).Scan(&n)
+	return n, err
+}
+
+// PurgeExpiredVouches removes vouches past their expiry.
+func (s *Store) PurgeExpiredVouches(now time.Time) error {
+	_, err := s.db.Exec(`DELETE FROM vouches WHERE expires_at <= ?`, now.UnixMilli())
+	return err
+}
