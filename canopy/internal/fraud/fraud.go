@@ -222,10 +222,24 @@ func (c *Client) Redeem(ctx context.Context, receipt []byte, environment string,
 	case http.StatusTooManyRequests:
 		return Assessment{}, ErrThrottled
 	case http.StatusUnauthorized, http.StatusForbidden:
-		// Apple sends an EMPTY body here, so there is nothing to quote and nothing that names the
-		// cause. In practice it is a key that lacks the DeviceCheck service — the endpoint checks
-		// the token before it looks at the receipt, which is why every receipt fails identically.
-		return Assessment{}, fmt.Errorf("%w (status %d): check the key has the DeviceCheck service enabled",
+		// Apple sends an EMPTY body here — this endpoint answers a bare 401 even to a request with
+		// no Authorization header at all — so the message below is the only diagnosis anyone gets.
+		//
+		// The two causes, in the order they actually occur:
+		//
+		//  1. A NEWLY CREATED key. Apple takes up to 24 hours (commonly several) to propagate a new
+		//     DeviceCheck key, and until it has, every token signed by it is rejected without ever
+		//     being verified — a deliberately corrupted signature and a valid one are refused
+		//     identically. This is indistinguishable from a wrong key by inspection, and it needs
+		//     no action beyond waiting; the sweep leaves the keys due and retries hourly.
+		//  2. A key without the DeviceCheck service ticked in Certificates, Identifiers & Profiles.
+		//
+		// If you need to tell those apart, sign a token with the same key and send it to
+		// api.development.devicecheck.apple.com/v1/validate_device_token: that endpoint returns a
+		// readable message where this one returns nothing.
+		return Assessment{}, fmt.Errorf(
+			"%w (status %d): if the key is new, Apple can take up to 24h to propagate it; "+
+				"otherwise check it has the DeviceCheck service enabled",
 			ErrUnauthorized, resp.StatusCode)
 	default:
 		return Assessment{}, fmt.Errorf("%w: status %d: %s", ErrRedeem, resp.StatusCode,
