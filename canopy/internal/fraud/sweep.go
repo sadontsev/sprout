@@ -94,8 +94,8 @@ func (s *Sweeper) Run(ctx context.Context, now time.Time) (Result, error) {
 			// Stop the pass, say so once, and leave every key DUE — deferring them would turn a
 			// misconfigured key into a day of silence in which nothing looks wrong.
 			s.log().Error("fraud: Apple rejected the DeviceCheck token, so no receipt could be "+
-				"assessed; check the key has the DeviceCheck service enabled in Certificates, "+
-				"Identifiers & Profiles", "key_id", k.KeyID, "err", err)
+				"assessed; a newly created key can take up to 24h to propagate, otherwise check "+
+				"it has the DeviceCheck service enabled", "key_id", k.KeyID, "err", err)
 			return res, err
 		}
 		if ok {

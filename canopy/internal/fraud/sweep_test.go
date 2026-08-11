@@ -504,7 +504,16 @@ func TestTheUnauthorizedErrorNamesTheLikelyCause(t *testing.T) {
 
 	c, _ := NewClient(srv.URL, "K", "TEAMID1234", testKeyPEM(t))
 	_, err := c.Redeem(context.Background(), []byte("r"), "production", testNow)
-	if err == nil || !strings.Contains(err.Error(), "DeviceCheck service") {
-		t.Fatalf("err = %v; it must name the DeviceCheck service, since Apple names nothing", err)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	// Both causes must be named. Propagation is listed first because it is the one that occurs on
+	// the day someone sets this up, looks identical to a wrong key from the outside, and needs no
+	// action at all — an operator told only to check the service will go and re-tick a box that
+	// was already ticked.
+	for _, want := range []string{"24h", "DeviceCheck service"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v; missing %q, and Apple's own body is empty", err, want)
+		}
 	}
 }

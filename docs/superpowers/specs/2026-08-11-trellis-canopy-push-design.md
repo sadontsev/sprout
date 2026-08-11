@@ -988,6 +988,16 @@ attestation tests need real-device artefacts, so the harness comes first.
   `AuthKey_*.p8` meant App Store Connect. Three of the four wire details were wrong and every one
   of them fails as a bare 401 or 400. The tests now assert the DeviceCheck shape explicitly.
 
+  **A newly created DeviceCheck key does not work for up to 24 hours.** Apple propagates it
+  asynchronously, and until it has, every token signed by that key is refused *without being
+  verified* — a deliberately corrupted signature and a valid one are rejected identically, so the
+  failure is indistinguishable from a wrong key by inspection. `attestationData` makes this worse
+  by answering a bare 401 with an **empty body**, to a request with no `Authorization` header at
+  all as readily as to a real one. To tell propagation from misconfiguration, sign a token with the
+  same key and send it to `api.development.devicecheck.apple.com/v1/validate_device_token`, which
+  returns a readable message. No action is needed either way: the sweep leaves the keys due and
+  retries hourly, so it starts working by itself.
+
   Unset, the sweep never runs and every other check is unaffected; the metric refines a bound that
   already holds, so its absence must degrade the signal and never the service.
 - **Rotating a pairing key without deleting the binding.** v1's reset path is
