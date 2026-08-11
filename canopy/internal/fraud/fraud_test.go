@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -61,12 +62,25 @@ func buildReceipt(t *testing.T, attrs []receiptAttribute) []byte {
 	return der
 }
 
+// strAttr builds a field the way Apple does: the attribute's value is an OCTET STRING whose content
+// is the UTF-8 bytes DIRECTLY. The first version of these fixtures DER-wrapped them, which made the
+// parser's tolerance path look like the main one and would have hidden a real mismatch.
 func strAttr(typ int, s string) receiptAttribute {
+	return receiptAttribute{Type: typ, Version: 1, Value: []byte(s)}
+}
+
+// numAttr builds the risk metric the way Apple does: a DECIMAL STRING, not a DER integer.
+func numAttr(typ, n int) receiptAttribute {
+	return receiptAttribute{Type: typ, Version: 1, Value: []byte(strconv.Itoa(n))}
+}
+
+// derStrAttr and derIntAttr build the nested-DER shapes the parser tolerates but does not expect.
+func derStrAttr(typ int, s string) receiptAttribute {
 	der, _ := asn1.Marshal(s)
 	return receiptAttribute{Type: typ, Version: 1, Value: der}
 }
 
-func intAttr(typ, n int) receiptAttribute {
+func derIntAttr(typ, n int) receiptAttribute {
 	der, _ := asn1.Marshal(n)
 	return receiptAttribute{Type: typ, Version: 1, Value: der}
 }
@@ -81,7 +95,7 @@ func redeemedReceipt(t *testing.T, keys int) []byte {
 		strAttr(fieldAppID, "TEAMID1234.com.mvks5.bambu"),
 		strAttr(fieldReceiptType, TypeReceipt),
 		strAttr(fieldCreation, "2026-08-11T09:00:00Z"),
-		intAttr(fieldRiskMetric, keys),
+		numAttr(fieldRiskMetric, keys),
 		strAttr(fieldNotBefore, "2026-08-12T09:00:00Z"),
 		strAttr(fieldExpiration, "2026-11-09T09:00:00Z"),
 	})
@@ -157,9 +171,10 @@ func TestTheMetricIsFoundByFieldCodeNotByLabel(t *testing.T) {
 	}
 }
 
-func TestAnAsciiDecimalMetricIsAlsoAccepted(t *testing.T) {
-	// Apple's own tooling has shown these values both as DER integers and as ASCII. Accepting both
-	// costs nothing; guessing wrong costs a silent zero.
+func TestTheMetricIsADecimalStringNotADerInteger(t *testing.T) {
+	// Apple's documented encoding, and the one every working implementation reads. Parsing it as a
+	// DER integer first happened to work only because a decimal string is not valid DER — a
+	// coincidence, not a design, and one that would break on the first field that is both.
 	receipt := buildReceipt(t, []receiptAttribute{
 		strAttr(fieldReceiptType, TypeReceipt),
 		rawAttr(fieldRiskMetric, []byte("17")),
@@ -171,6 +186,26 @@ func TestAnAsciiDecimalMetricIsAlsoAccepted(t *testing.T) {
 	}
 	if !got.HasKeys || got.Keys != 17 {
 		t.Errorf("Keys = %d (has %v), want 17", got.Keys, got.HasKeys)
+	}
+}
+
+func TestNestedDerValuesAreStillTolerated(t *testing.T) {
+	// Tolerance, not the expected shape: if Apple ever nests these, the parser keeps working rather
+	// than reporting every device clean.
+	receipt := buildReceipt(t, []receiptAttribute{
+		derStrAttr(fieldReceiptType, TypeReceipt),
+		derIntAttr(fieldRiskMetric, 9),
+	})
+
+	got, err := Parse(receipt)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got.Type != TypeReceipt {
+		t.Errorf("Type = %q, want %q", got.Type, TypeReceipt)
+	}
+	if !got.HasKeys || got.Keys != 9 {
+		t.Errorf("Keys = %d (has %v), want 9", got.Keys, got.HasKeys)
 	}
 }
 
@@ -212,7 +247,7 @@ func TestUnknownFieldsAreIgnored(t *testing.T) {
 	// change that has nothing to do with Canopy.
 	receipt := buildReceipt(t, []receiptAttribute{
 		strAttr(fieldReceiptType, TypeReceipt),
-		intAttr(fieldRiskMetric, 2),
+		numAttr(fieldRiskMetric, 2),
 		strAttr(999, "something new"),
 	})
 
@@ -282,9 +317,9 @@ func testKeyPEM(t *testing.T) []byte {
 
 func TestAnUnconfiguredDeploymentIsNotAnError(t *testing.T) {
 	for name, args := range map[string][3]string{
-		"no key id":    {"", "issuer", "pem"},
-		"no issuer":    {"kid", "", "pem"},
-		"no key bytes": {"kid", "issuer", ""},
+		"no key id":    {"", "TEAMID1234", "pem"},
+		"no team id":   {"kid", "", "pem"},
+		"no key bytes": {"kid", "TEAMID1234", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := NewClient("", args[0], args[1], []byte(args[2]))
@@ -323,7 +358,7 @@ func TestRedeemSendsTheReceiptBase64AndReturnsTheRefreshedOne(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewClient(srv.URL, "KEYID", "ISSUER", testKeyPEM(t))
+	c, err := NewClient(srv.URL, "KEYID", "TEAMID1234", testKeyPEM(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,8 +370,8 @@ func TestRedeemSendsTheReceiptBase64AndReturnsTheRefreshedOne(t *testing.T) {
 	if gotBody != base64.StdEncoding.EncodeToString([]byte("stored-receipt")) {
 		t.Errorf("body = %q; Apple expects the base64 receipt as the whole body", gotBody)
 	}
-	if gotType != "text/plain" {
-		t.Errorf("Content-Type = %q, want text/plain", gotType)
+	if gotType != "application/octet-stream" {
+		t.Errorf("Content-Type = %q, want application/octet-stream — text/plain answers 400", gotType)
 	}
 	if !strings.HasPrefix(gotAuth, "Bearer ") {
 		t.Errorf("Authorization = %q", gotAuth)
@@ -354,7 +389,7 @@ func TestTheBearerTokenIsAWellFormedES256JWT(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, _ := NewClient(srv.URL, "KEYID", "ISSUER", testKeyPEM(t))
+	c, _ := NewClient(srv.URL, "KEYID", "TEAMID1234", testKeyPEM(t))
 	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	if _, err := c.Redeem(context.Background(), []byte("r"), "production", now); err != nil {
 		t.Fatal(err)
@@ -371,16 +406,23 @@ func TestTheBearerTokenIsAWellFormedES256JWT(t *testing.T) {
 		t.Errorf("header = %v", header)
 	}
 
+	// The DeviceCheck token shape, NOT App Store Connect's. `iss` is the 10-character TEAM ID and
+	// there is no audience; sending App Store Connect's issuer UUID + aud answers 401 with no
+	// indication which field was wrong. This was built the wrong way first, from the assumption
+	// that a .p8 named AuthKey_*.p8 meant App Store Connect.
 	var claims map[string]any
 	decode(t, parts[1], &claims)
-	if claims["iss"] != "ISSUER" {
-		t.Errorf("iss = %v", claims["iss"])
+	if claims["iss"] != "TEAMID1234" {
+		t.Errorf("iss = %v, want the team id", claims["iss"])
 	}
-	if claims["aud"] != "appstoreconnect-v1" {
-		t.Errorf("aud = %v, want appstoreconnect-v1", claims["aud"])
+	if _, ok := claims["aud"]; ok {
+		t.Errorf("aud must be absent for DeviceCheck, got %v", claims["aud"])
 	}
 	if claims["iat"].(float64) != float64(now.Unix()) {
 		t.Errorf("iat = %v, want %d", claims["iat"], now.Unix())
+	}
+	if claims["exp"].(float64) <= claims["iat"].(float64) {
+		t.Error("exp must be after iat")
 	}
 
 	// JOSE wants R||S, fixed width — 64 bytes for P-256. An ASN.1 signature here is the failure

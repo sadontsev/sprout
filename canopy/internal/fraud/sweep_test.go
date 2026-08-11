@@ -75,7 +75,7 @@ func sweeperFor(t *testing.T, keys Keys, url string) *Sweeper {
 var testNow = time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 
 func TestAnUnconfiguredSweepDoesNothingAndSucceeds(t *testing.T) {
-	// The supported way to run Canopy without an App Store Connect key. It must not error, must not
+	// The supported way to run Canopy without a DeviceCheck key. It must not error, must not
 	// touch the store, and must not stop the process — the metric refines a bound that already
 	// holds, so its absence degrades the signal and nothing else.
 	keys := newFakeKeys(KeyRecord{KeyID: "k1"})
@@ -349,7 +349,7 @@ func TestAMissingNotBeforeFallsBackRatherThanRetryingImmediately(t *testing.T) {
 	// Without a fallback the key is due again on the very next pass, which guarantees a 429.
 	receipt := buildReceipt(t, []receiptAttribute{
 		strAttr(fieldReceiptType, TypeReceipt),
-		intAttr(fieldRiskMetric, 3),
+		numAttr(fieldRiskMetric, 3),
 	})
 	srv := appleServing(t, receipt)
 	defer srv.Close()
@@ -367,7 +367,7 @@ func TestAMissingNotBeforeFallsBackRatherThanRetryingImmediately(t *testing.T) {
 func TestAPastNotBeforeIsAlsoPushedForward(t *testing.T) {
 	receipt := buildReceipt(t, []receiptAttribute{
 		strAttr(fieldReceiptType, TypeReceipt),
-		intAttr(fieldRiskMetric, 3),
+		numAttr(fieldRiskMetric, 3),
 		strAttr(fieldNotBefore, "2020-01-01T00:00:00Z"),
 	})
 	srv := appleServing(t, receipt)

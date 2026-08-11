@@ -33,7 +33,7 @@ const (
 	FailureBackoff  = 24 * time.Hour
 	ThrottleBackoff = 6 * time.Hour
 	// DefaultBatch bounds one pass. Redemption is one round trip per key against a credential the
-	// operator shares with everything else that uses App Store Connect.
+	// operator shares with everything else that uses this DeviceCheck key.
 	DefaultBatch = 50
 )
 
@@ -68,7 +68,7 @@ func (s *Sweeper) Run(ctx context.Context, now time.Time) (Result, error) {
 	var res Result
 	if s.Client == nil {
 		// Not configured. Not an error, and deliberately not logged at error level: this is the
-		// state of every deployment that has not supplied an App Store Connect key, which is a
+		// state of every deployment that has not supplied a DeviceCheck key, which is a
 		// supported way to run Canopy.
 		return res, nil
 	}

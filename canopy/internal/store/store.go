@@ -355,7 +355,7 @@ func (s *Store) BumpAttestCounter(keyID string, counter uint32, now time.Time) e
 // drains oldest-first rather than starving whichever key sorts last by id.
 //
 // limit bounds one pass: redemption is a network round trip per key, and the
-// operator's App Store Connect key is shared with everything else that uses it.
+// operator's DeviceCheck key is shared with everything else that uses it.
 func (s *Store) AttestKeysDueForRedemption(now time.Time, limit int) ([]AttestKey, error) {
 	const q = `SELECT key_id, public_key, counter, attest_environment, receipt
 	             FROM attest_keys
