@@ -50,9 +50,26 @@ private actor FakeSearch: MakerWorldSearching {
 @MainActor
 final class ExploreModelTests: XCTestCase {
 
-    /// Let the model's detached fetch Task reach its next suspension point.
+    /// Wait until a condition holds, rather than yielding a fixed number of times and hoping.
+    ///
+    /// A fixed spin was flaky: `startFetch` hands off to a detached Task, and on a loaded machine
+    /// twelve yields is sometimes not enough for it to reach its first suspension point. A test that
+    /// passes on an idle laptop and fails during a simulator boot is worse than no test — it teaches
+    /// you to ignore red.
+    private func waitUntil(_ condition: () -> Bool,
+                           _ message: String = "condition never held",
+                           file: StaticString = #filePath, line: UInt = #line) async {
+        for _ in 0..<2000 {
+            if condition() { return }
+            await Task.yield()
+        }
+        XCTFail(message, file: file, line: line)
+    }
+
+    /// Let whatever was just started reach its first suspension point. Used where there is no
+    /// condition to wait on yet — the assertion that follows is the real check.
     private func settle() async {
-        for _ in 0..<12 { await Task.yield() }
+        for _ in 0..<200 { await Task.yield() }
     }
 
     // MARK: Derived state
@@ -83,8 +100,9 @@ final class ExploreModelTests: XCTestCase {
         let m = ExploreModel(searchClient: fake)
 
         m.search("benchy")
-        await settle()
-        let inFlight = await fake.isParked("search:benchy")
+        await waitUntil({ m.loading }, "the search never started")
+        var inFlight = false
+        for _ in 0..<2000 where !inFlight { inFlight = await fake.isParked("search:benchy"); await Task.yield() }
         XCTAssertTrue(inFlight, "the search should be in flight")
 
         m.browse(MWNav(key: "Trending", name: "Trending"))
@@ -109,7 +127,7 @@ final class ExploreModelTests: XCTestCase {
         // The first request lands LATE, after the second already owns the grid.
         await fake.finish("search:first", hits: [111])
         await fake.finish("search:second", hits: [222])
-        await settle()
+        await waitUntil({ !m.hits.isEmpty }, "neither response ever landed")
 
         XCTAssertEqual(m.hits.map(\.id), [222], "the stale response must not land")
         XCTAssertEqual(m.activeQuery, "second")
@@ -135,7 +153,7 @@ final class ExploreModelTests: XCTestCase {
         m.search("benchy")
         await settle()
         await fake.fail("search:benchy", SproutError("MakerWorld refused the request."))
-        await settle()
+        await waitUntil({ m.searchError != nil }, "the failure never surfaced")
         XCTAssertEqual(m.searchError, "MakerWorld refused the request.")
     }
 
@@ -149,7 +167,7 @@ final class ExploreModelTests: XCTestCase {
         m.search("first")
         await settle()
         await fake.finish("search:first", hits: [1, 2, 3])
-        await settle()
+        await waitUntil({ m.hits.count == 3 }, "the first page never landed")
         XCTAssertEqual(m.hits.count, 3)
 
         m.search("second")
@@ -158,7 +176,7 @@ final class ExploreModelTests: XCTestCase {
         XCTAssertTrue(m.loading)
 
         await fake.finish("search:second", hits: [9])
-        await settle()
+        await waitUntil({ m.hits.map(\.id) == [9] }, "the replacement never landed")
         XCTAssertEqual(m.hits.map(\.id), [9])
         XCTAssertFalse(m.loading)
     }
@@ -171,7 +189,7 @@ final class ExploreModelTests: XCTestCase {
         m.search("first")
         await settle()
         await fake.finish("search:first", hits: [1, 2])
-        await settle()
+        await waitUntil({ m.hits.count == 2 }, "the search never landed")
 
         m.openCollections(CollectionsClient(baseUrl: nil, apiKey: ""))
         await settle()
@@ -187,8 +205,7 @@ final class ExploreModelTests: XCTestCase {
         let m = ExploreModel(searchClient: fake)
         m.sort = .downloads
         m.search("benchy")
-        await settle()
-        XCTAssertEqual(m.sort, .relevance)
+        XCTAssertEqual(m.sort, .relevance, "the reset is synchronous — it must not wait on the network")
     }
 
     func testOrderedHitsAppliesTheSort() {
@@ -209,17 +226,20 @@ final class ExploreModelTests: XCTestCase {
         m.search("benchy")
         await settle()
         await fake.finish("search:benchy", hits: [1, 2], total: 10)
-        await settle()
+        await waitUntil({ m.hits.count == 2 }, "the first page never landed")
 
         m.loadMore(CollectionsClient(baseUrl: nil, apiKey: ""))
-        await settle()
-        let searchCalls = await fake.calls
+        await waitUntil({ m.loadingMore }, "the next page never started")
+        var searchCalls = await fake.calls
+        for _ in 0..<2000 where searchCalls.filter({ $0.kind == "search" }).count < 2 {
+            await Task.yield(); searchCalls = await fake.calls
+        }
         let offsets = searchCalls.filter { $0.kind == "search" }.map(\.offset)
         XCTAssertEqual(offsets, [0, 2], "the next page starts where the loaded ones end")
 
         // Page two repeats id 2 — the endpoint's ordering is unstable, so this genuinely happens.
         await fake.finish("search:benchy", hits: [2, 3], total: 10)
-        await settle()
+        await waitUntil({ m.hits.count == 3 }, "the second page never merged")
         XCTAssertEqual(m.hits.map(\.id), [1, 2, 3], "a repeated id must not become a duplicate row")
     }
 
@@ -229,7 +249,7 @@ final class ExploreModelTests: XCTestCase {
         m.search("benchy")
         await settle()
         await fake.finish("search:benchy", hits: [1, 2], total: 2)
-        await settle()
+        await waitUntil({ m.hits.count == 2 }, "the page never landed")
         let before = await fake.callCount()
         m.loadMore(CollectionsClient(baseUrl: nil, apiKey: ""))
         await settle()
@@ -245,15 +265,15 @@ final class ExploreModelTests: XCTestCase {
         m.search("benchy")
         await settle()
         await fake.finish("search:benchy", hits: [1, 2], total: 10)
-        await settle()
+        await waitUntil({ m.hits.count == 2 }, "the first page never landed")
 
         m.loadMore(CollectionsClient(baseUrl: nil, apiKey: ""))
-        await settle()
+        await waitUntil({ m.loadingMore }, "the next page never started")
         m.browse(MWNav(key: "Trending", name: "Trending"))
-        await settle()
+        await waitUntil({ m.activeNav == "Trending" })
         await fake.finish("search:benchy", hits: [3, 4], total: 10)
         await fake.finish("browse:Trending", hits: [77], total: 1)
-        await settle()
+        await waitUntil({ m.hits.map(\.id) == [77] }, "the category never landed")
 
         XCTAssertEqual(m.hits.map(\.id), [77], "the stale page must not join the new category")
     }
