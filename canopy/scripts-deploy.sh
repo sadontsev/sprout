@@ -18,6 +18,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 remote() { ssh "$HOST" "$@"; }
 
+echo "==> ensuring the data directory exists and is owned by the deploying user"
+# Docker creates a MISSING bind source as root, and the container (which runs as the deploying
+# user) then cannot create its SQLite file: it exits and restart:unless-stopped loops it. Creating
+# it here, before compose ever sees it, is what keeps a first deploy from crash-looping.
+remote "mkdir -p \$HOME/docker/canopy/data
+  cd \$HOME/docker/canopy
+  grep -q '^CANOPY_UID=' .env 2>/dev/null || printf 'CANOPY_UID=%s\nCANOPY_GID=%s\n' \$(id -u) \$(id -g) >> .env"
+
 echo "==> backing up live state on $HOST first"
 remote "set -e
   cd \$HOME/docker/canopy

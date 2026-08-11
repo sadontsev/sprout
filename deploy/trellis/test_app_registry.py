@@ -375,6 +375,7 @@ class ADeadCardIsReplacedButADismissedOneIsNot(unittest.TestCase):
         la._regs = {}
         la._needs_claim = {}
         la._p2s_pending = {}
+        la._p2s_rearm = {}
         la._p2s_started = {"2": "a133"}
         la._save = lambda: None
 
@@ -391,8 +392,12 @@ class ADeadCardIsReplacedButADismissedOneIsNot(unittest.TestCase):
         self.register()
         self.client.post("/sync", json={"tokens": [], "device_id": "phoneA", "client": "native"})
 
-        self.assertNotIn("2", la._p2s_started,
-                         "without re-arming, the print runs to completion with no card at all")
+        # A grant for THIS device, not a clear of the global session marker: that marker is the one
+        # piece of push-to-start state not scoped per device, and clearing it re-armed every phone.
+        self.assertIn(la._pending_id("2", "phoneA"), la._p2s_rearm,
+                      "without a replacement grant the print runs to completion with no card")
+        self.assertEqual(la._p2s_started.get("2"), "a133",
+                         "the session marker must survive; it is global")
 
     def test_a_dismissal_does_not_re_arm(self):
         self.register()
@@ -400,8 +405,9 @@ class ADeadCardIsReplacedButADismissedOneIsNot(unittest.TestCase):
             "printer_id": 2, "push_token": "tok", "device_id": "phoneA",
         })
 
-        self.assertEqual(la._p2s_started.get("2"), "a133",
+        self.assertEqual(la._p2s_rearm, {},
                          "the user swiped this away; bringing it straight back ignores them")
+        self.assertEqual(la._p2s_started.get("2"), "a133")
 
     def test_re_arming_does_not_disturb_another_printers_card(self):
         self.register()
@@ -409,3 +415,81 @@ class ADeadCardIsReplacedButADismissedOneIsNot(unittest.TestCase):
         self.client.post("/sync", json={"tokens": [], "device_id": "phoneA", "client": "native"})
 
         self.assertEqual(la._p2s_started.get("9"), "other")
+        self.assertNotIn(la._pending_id("9", "phoneA"), la._p2s_rearm)
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class ReArmIsPerDeviceAndOnlyForClientsThatReportDismissals(unittest.TestCase):
+    """Two ways the replacement grant must not over-reach.
+
+    Arming push-to-start is once per live session, so a card that dies mid-print is otherwise never
+    replaced. Granting a replacement is right — but the first version cleared the global
+    `_p2s_started`, and that key is the ONLY push-to-start state not scoped per device.
+    """
+
+    def setUp(self):
+        la.app.dependency_overrides[la._require_key] = lambda: None
+        self.client = TestClient(la.app)
+        la._regs = {}
+        la._needs_claim = {}
+        la._p2s_pending = {}
+        la._p2s_rearm = {}
+        la._p2s_started = {"2": "a133"}
+        la._save = lambda: None
+
+    def tearDown(self):
+        la.app.dependency_overrides.clear()
+
+    def register(self, device="phoneA", token="tok"):
+        self.client.post("/register", json={
+            "printer_id": 2, "push_token": token, "printer_name": "H2C",
+            "device_id": device, "client": "native",
+        })
+
+    def sync(self, device="phoneA", client="native", tokens=None):
+        return self.client.post("/sync", json={
+            "tokens": tokens or [], "device_id": device, "client": client,
+        })
+
+    def test_a_native_report_grants_a_replacement_for_that_device_only(self):
+        self.register(device="phoneA")
+        self.sync(device="phoneA")
+
+        self.assertIn(la._pending_id("2", "phoneA"), la._p2s_rearm)
+        self.assertNotIn(la._pending_id("2", "phoneB"), la._p2s_rearm)
+
+    def test_the_global_session_marker_is_left_alone(self):
+        # Clearing it re-armed EVERY device, stacking a second card onto a phone that still had one
+        # it had never adopted.
+        self.register(device="phoneA")
+        self.sync(device="phoneA")
+
+        self.assertEqual(la._p2s_started.get("2"), "a133")
+
+    def test_an_expo_report_does_not_grant_a_replacement(self):
+        # The RN app's only reconcile path is /sync, so a swipe and a death look identical from it.
+        # Granting on that basis puts a card the user deliberately dismissed straight back within
+        # 45 seconds.
+        self.register(device="phoneA")
+        self.sync(device="phoneA", client="expo")
+
+        self.assertEqual(la._p2s_rearm, {})
+
+    def test_an_unmarked_client_is_treated_as_expo(self):
+        self.register(device="phoneA")
+        self.sync(device="phoneA", client="")
+
+        self.assertEqual(la._p2s_rearm, {})
+
+    def test_a_grant_makes_the_poll_loop_reach_remote_start(self):
+        # should_start says no for the rest of the live session, so without this the grant would sit
+        # unconsumed and no replacement would ever be made.
+        self.assertFalse(la._has_rearm("2"))
+        la._p2s_rearm[la._pending_id("2", "phoneA")] = 1.0
+        self.assertTrue(la._has_rearm("2"))
+
+    def test_a_grant_for_another_card_does_not_unblock_this_one(self):
+        la._p2s_rearm[la._pending_id("dry:2:128", "phoneA")] = 1.0
+
+        self.assertFalse(la._has_rearm("2"), "keys must not match on a prefix")
+        self.assertTrue(la._has_rearm("dry:2:128"))
