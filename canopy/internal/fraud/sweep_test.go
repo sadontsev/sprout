@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -438,5 +439,72 @@ func TestAStoreWriteFailureDoesNotCountAsRedeemed(t *testing.T) {
 	}
 	if res.Redeemed != 0 {
 		t.Error("an assessment that was not persisted must not be reported as redeemed")
+	}
+}
+
+func TestAnUnauthorizedTokenStopsThePassAndDefersNothing(t *testing.T) {
+	// The real failure this was built wrong for. Apple checks the token BEFORE it reads the
+	// receipt, so a key without the DeviceCheck service ticked answers 401 for every receipt
+	// identically. Charging that to the receipts — deferring each for a day — turns a
+	// two-minute configuration fix into a day of silence in which nothing looks wrong, and the
+	// operator's next sweep reports "considered 0" as if all were healthy.
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	keys := newFakeKeys(
+		KeyRecord{KeyID: "a", Receipt: []byte("r")},
+		KeyRecord{KeyID: "b", Receipt: []byte("r")},
+		KeyRecord{KeyID: "c", Receipt: []byte("r")},
+	)
+	_, err := sweeperFor(t, keys, srv.URL).Run(context.Background(), testNow)
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("err = %v, want ErrUnauthorized surfaced to the caller", err)
+	}
+	if len(keys.defers) != 0 {
+		t.Errorf("deferred %v; an auth failure is not the receipts' fault and must leave them due",
+			keys.defers)
+	}
+	if len(keys.risks) != 0 {
+		t.Error("nothing was assessed, so nothing may be recorded")
+	}
+	if hits != 1 {
+		t.Errorf("made %d requests; the pass must stop at the first 401 rather than replaying the "+
+			"same rejection for every remaining key", hits)
+	}
+}
+
+func TestAForbiddenIsTreatedTheSameAsUnauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	keys := newFakeKeys(KeyRecord{KeyID: "a", Receipt: []byte("r")})
+	_, err := sweeperFor(t, keys, srv.URL).Run(context.Background(), testNow)
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("err = %v, want ErrUnauthorized", err)
+	}
+	if len(keys.defers) != 0 {
+		t.Errorf("deferred %v, want none", keys.defers)
+	}
+}
+
+func TestTheUnauthorizedErrorNamesTheLikelyCause(t *testing.T) {
+	// Apple returns an EMPTY body on 401, so the message is the only diagnosis anyone gets.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "K", "TEAMID1234", testKeyPEM(t))
+	_, err := c.Redeem(context.Background(), []byte("r"), "production", testNow)
+	if err == nil || !strings.Contains(err.Error(), "DeviceCheck service") {
+		t.Fatalf("err = %v; it must name the DeviceCheck service, since Apple names nothing", err)
 	}
 }
