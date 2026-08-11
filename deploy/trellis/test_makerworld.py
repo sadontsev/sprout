@@ -13,7 +13,6 @@ the owner reads.
 """
 from __future__ import annotations
 
-import json as json_module
 import sqlite3
 import unittest
 from pathlib import Path
