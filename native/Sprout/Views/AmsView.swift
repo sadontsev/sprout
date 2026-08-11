@@ -25,6 +25,10 @@ struct AmsView: View {
     @State private var maintBusy: Int?
     @State private var notice: HwNotice?
     @State private var lanAlert = false
+    /// Which segment is showing. On the view rather than AppModel for now — AppModel is open in a
+    /// parallel session, and the dashboard's maintenance chip deep-link (which is the reason the
+    /// handoff wanted it app-wide) also lives in a file that session is editing.
+    @State private var segment: HardwareTriage.Segment = .filament
 
     private var vm: DashVM { model.vm }
     private var status: PrinterStatus? { model.status?.status }
@@ -33,28 +37,131 @@ struct AmsView: View {
     private var locked: LockedActions { LockedActions(mode: model.lanMode, explaining: $lanAlert) }
 
     var body: some View {
-        HwPage(title: "Hardware") {
-            HwSectionHead(
-                label: "FILAMENT",
-                right: vm.amsUnits.count > 1 ? "\(vm.amsUnits.count) units" : amsLabel,
-                first: true
-            )
-            unitChips
-            dryerCards
-            slotCards
-            NozzlesSection(status: status, dash: vm)
-            MaintenanceSection(
-                state: maint,
-                busyId: maintBusy,
-                onRetry: { Task { await reloadMaintenance() } },
-                onMarkDone: markDone
-            )
+        VStack(spacing: 0) {
+            header
+            segmentContent
         }
-        .refreshable { await reload() }
+        .background(c.bg)
         .task(id: model.printerId) { await reload() }
         .lockedActionAlert($lanAlert)
         .hwNotice($notice)
     }
+
+    // MARK: Chrome
+
+    /// Title, the triage card, and the picker — all pinned, so an overdue service item is legible
+    /// from any segment (F8). It used to sit at the bottom of a 2 500 pt scroll.
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Hardware")
+                .font(.system(size: 30, weight: .bold))
+                .kerning(-0.8)
+                .foregroundStyle(c.t1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let headline = HardwareTriage.headline(triage) {
+                Tap { segment = triage.first?.segment ?? segment } content: {
+                    HStack(spacing: 11) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 15))
+                            .foregroundStyle(c.heating)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(headline)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(c.t1)
+                            Text(verbatim: HardwareTriage.detail(triage))
+                                .font(.mono(11.5, weight: .medium))
+                                .foregroundStyle(c.t2)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(c.t3)
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.heatingDim))
+                    .contentShape(.rect)
+                }
+                .accessibilityLabel("\(headline). \(HardwareTriage.detail(triage)). Tap to go there.")
+            }
+
+            Picker("Section", selection: $segment) {
+                ForEach(HardwareTriage.Segment.allCases) { seg in
+                    // The dot repeats the triage signal quietly, so the picker itself carries it.
+                    Text(flagged.contains(seg) ? "\(seg.label) •" : seg.label).tag(seg)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
+    }
+
+    /// Each segment is its own ScrollView, so each keeps its own position rather than sharing one
+    ///2 500 pt scroll.
+    @ViewBuilder
+    private var segmentContent: some View {
+        switch segment {
+        case .filament:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    unitChips
+                    dryerCards
+                    slotCards
+                }
+                .padding(.bottom, 32)
+            }
+            .refreshable { await reload() }
+
+        case .nozzles:
+            ScrollView {
+                // Today this renders an empty VStack when there are no toolheads, so the section
+                // silently disappears and the tab looks broken. Say what would be here instead.
+                if toolheads.isEmpty {
+                    ContentUnavailableView("Nothing to swap",
+                                           systemImage: "circle.hexagongrid",
+                                           description: Text("Multi-nozzle toolheads list every docked "
+                                                             + "nozzle here, with the engaged one highlighted."))
+                        .padding(.top, 40)
+                } else {
+                    NozzlesSection(status: status, dash: vm)
+                        .padding(.bottom, 32)
+                }
+            }
+            // Nozzles are live socket state — there is nothing to refetch, it just re-renders.
+
+        case .service:
+            ScrollView {
+                MaintenanceSection(
+                    state: maint,
+                    busyId: maintBusy,
+                    onRetry: { Task { await reloadMaintenance() } },
+                    onMarkDone: markDone
+                )
+                .padding(.bottom, 32)
+            }
+            .refreshable { await reloadMaintenance() }
+        }
+    }
+
+    // MARK: Triage
+
+    private var triage: [HardwareTriage.Item] {
+        HardwareTriage.items(
+            maintenance: { if case .loaded(let m) = maint { return m.maintenanceItems } else { return [] } }(),
+            humidities: vm.amsUnits.map { (label: $0.label, rh: $0.humidity) },
+            nozzlesKnown: !toolheads.isEmpty
+        )
+    }
+
+    private var flagged: Set<HardwareTriage.Segment> { HardwareTriage.flagged(triage) }
+
+    /// The same presenter the section itself uses, so "is the segment empty" and "does the section
+    /// render anything" cannot answer differently.
+    private var toolheads: [ToolheadVM] { NozzlePresenter.toolheads(status, dash: vm) }
 
     // MARK: Filament header
 
@@ -620,9 +727,21 @@ private struct DryerCard: View {
                         Text(unitLabel.map { "Filament drying · \($0)" } ?? "Filament drying")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(c.t1)
-                        Text(open ? "This AMS dries up to \(d.maxTemp)°C." : "Dry damp spools right in the AMS.")
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(c.t3)
+                        // A REASON when there is one, not a bare invitation to dry. "38 % is above
+                        // the 30 % you'd want" tells you whether to bother; "Dry damp spools right
+                        // in the AMS" is a feature description that never changes.
+                        if let rh = d.humidityPct, Double(rh) >= HardwareTriage.dampRH, !open {
+                            Text(verbatim: HardwareTriage.dryingReason(rh: Double(rh),
+                                                                       maxDryTemp: d.maxTemp))
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(c.heating)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.leading)
+                        } else {
+                            Text(open ? "This AMS dries up to \(d.maxTemp)°C." : "Dry damp spools right in the AMS.")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(c.t3)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: open ? "chevron.up" : "chevron.down")
