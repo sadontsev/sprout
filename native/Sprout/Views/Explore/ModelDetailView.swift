@@ -107,22 +107,27 @@ struct ModelDetailView: View {
                 }
             }
 
-            if let summary = design?.summary,
-               MakerWorldSearch.markdown(fromHTML: summary) != nil {
-                // The uploader's description of the MODEL — what the object IS, as opposed to how one
-                // profile slices it. Rendered with its formatting: these are real HTML documents with
-                // headings, emphasis and numbered steps, and flattening them loses most of the
-                // meaning.
+            if let blurb = MakerWorldSearch.description(original: design?.summary,
+                                                        translated: design?.summaryTranslated) {
+                // The uploader's description of the MODEL — what the object IS, as opposed to how
+                // one profile slices it. Translated when MakerWorld has one, with its formatting.
                 VStack(alignment: .leading, spacing: 6) {
-                    RichDescription(html: summary,
+                    RichDescription(description: blurb,
                                     lineLimit: descriptionExpanded ? nil : 6)
-                    // Only offered when there is more to see — a "More" that reveals nothing is the
-                    // same lie as a control for a capability the build lacks.
-                    if (MakerWorldSearch.plainText(summary)?.count ?? 0) > 280 {
+                    // Offered only when there is genuinely more, and measured on the RENDERED text
+                    // rather than the HTML — a short blurb wrapped in figures and spans is long as
+                    // markup and short as prose, and a "More" that reveals nothing is the same lie
+                    // as a control for a capability the build lacks.
+                    if (MakerWorldSearch.markdown(fromHTML: blurb.html)?.count ?? 0) > 260 {
                         Tap { withAnimation(Motion.standard(0.2)) { descriptionExpanded.toggle() } } content: {
-                            Text(descriptionExpanded ? "Less" : "More")
-                                .font(.system(size: 12.5, weight: .semibold))
-                                .foregroundStyle(c.accent)
+                            HStack(spacing: 4) {
+                                Text(descriptionExpanded ? "Show less" : "Read more")
+                                Image(systemName: descriptionExpanded ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(c.accent)
+                            .contentShape(.rect)
                         }
                     }
                 }

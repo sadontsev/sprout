@@ -100,10 +100,10 @@ struct VersionDetailView: View {
                 .font(.mono(10.5, weight: .bold))
                 .foregroundStyle(c.t3)
 
-            if let summary = row.summaryHTML {
-                // The uploader's own words, with their formatting. Never paraphrased — it is their
-                // description of their own work.
-                RichDescription(html: summary)
+            if let blurb = row.description {
+                // The uploader's own words, with their formatting, translated when MakerWorld has
+                // one. Never paraphrased — it is their description of their own work.
+                RichDescription(description: blurb)
             } else {
                 // The sentence that makes an empty page read as finished rather than failed.
                 Text("Most versions of a popular model are uploaded without a word of explanation. "

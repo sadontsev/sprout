@@ -543,8 +543,10 @@ struct MWInstance: Codable, Identifiable, Hashable, Sendable {
     var isDefault: Bool?            // false on every record of every model probed — see MakerWorld.preselect
     var appCanPrint: Bool?
     var instanceFilaments: [MWFilament]?
-    /// The profile's own blurb, as HTML — see `MakerWorldSearch.plainText`.
+    /// The profile's own blurb, as HTML — see `MakerWorldSearch.markdown(fromHTML:)`.
     var summary: String?
+    /// MakerWorld's translation of it. Empty string when absent, like the design's.
+    var summaryTranslated: String?
     /// Extra photos the uploader attached to this profile, beyond `cover`.
     var pictures: [Picture]?
     var extention: Extention?
@@ -559,7 +561,7 @@ struct MWInstance: Codable, Identifiable, Hashable, Sendable {
          needAms: Bool? = nil, prediction: LooseNumber? = nil, weight: LooseNumber? = nil,
          materialCnt: Int? = nil, materialColorCnt: Int? = nil, isDefault: Bool? = nil,
          appCanPrint: Bool? = nil, instanceFilaments: [MWFilament]? = nil, summary: String? = nil,
-         pictures: [Picture]? = nil, extention: Extention? = nil) {
+         summaryTranslated: String? = nil, pictures: [Picture]? = nil, extention: Extention? = nil) {
         self.id = id
         self.profileId = profileId
         self.title = title
@@ -573,6 +575,7 @@ struct MWInstance: Codable, Identifiable, Hashable, Sendable {
         self.appCanPrint = appCanPrint
         self.instanceFilaments = instanceFilaments
         self.summary = summary
+        self.summaryTranslated = summaryTranslated
         self.pictures = pictures
         self.extention = extention
     }
@@ -613,6 +616,12 @@ struct MWDesign: Codable, Identifiable, Hashable, Sendable {
     var title: String?
     var coverUrl: String?
     var summary: String?
+    /// MakerWorld's own translation of `summary`.
+    ///
+    /// **An EMPTY STRING when there is no translation, not null** — measured. Treating "" as a
+    /// present value shows an empty description; treating a missing key as "no translation" is the
+    /// same mistake in the other direction. See `MakerWorldSearch.description`.
+    var summaryTranslated: String?
     var downloadCount: Int?
     var likeCount: Int?
     var tags: [String]?

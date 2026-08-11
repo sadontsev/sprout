@@ -209,6 +209,37 @@ enum MakerWorldSearch {
         return joined.isEmpty ? nil : joined
     }
 
+    // MARK: Which language to show
+
+    /// A description and whether it is MakerWorld's translation rather than the author's own words.
+    struct Description: Equatable, Hashable, Sendable {
+        var html: String
+        /// True when this is `summaryTranslated`. The UI says so — a translation presented as the
+        /// author's own writing is a small lie, and machine translation is worth knowing about when
+        /// the text contains print settings you are about to rely on.
+        var isTranslated: Bool
+    }
+
+    /// Prefer MakerWorld's translation, fall back to the original.
+    ///
+    /// **`summaryTranslated` is an EMPTY STRING when there is no translation, not null** — measured
+    /// on live data, where an untranslated model returns `"summaryTranslated": ""` alongside a full
+    /// `summary`. Checking only for `nil` therefore selects the empty one and renders a blank
+    /// description; that is precisely the "a present-but-empty value is not a value" trap this API
+    /// has already sprung once, with `total: 0` meaning "not authenticated".
+    ///
+    /// Emptiness is judged after markup is stripped, because `<p></p>` and `<figure></figure>` are
+    /// present-but-empty in exactly the same way.
+    static func description(original: String?, translated: String?) -> Description? {
+        if let translated, markdown(fromHTML: translated) != nil {
+            return Description(html: translated, isTranslated: true)
+        }
+        if let original, markdown(fromHTML: original) != nil {
+            return Description(html: original, isTranslated: false)
+        }
+        return nil
+    }
+
     // MARK: Rich descriptions
 
     /// A MakerWorld description as **Markdown**, so its formatting survives.
@@ -236,12 +267,27 @@ enum MakerWorldSearch {
 
         /// Nested inline spans being collected. Emphasis has to be buffered rather than streamed,
         /// because its delimiters cannot touch whitespace — see `closeEmphasis`.
-        enum Frame { case link(href: String?), emphasis(marker: String) }
+        enum Frame {
+            case link(href: String?)
+            case emphasis(marker: String)
+            /// Collected and thrown away — MakerWorld's boost widget renders its own title, which is
+            /// a button label rather than anything the uploader wrote.
+            case discard
+        }
         var frames: [(frame: Frame, text: String)] = []
         var linkHref: String?
 
         func emit(_ s: String) {
             if frames.isEmpty { out += s } else { frames[frames.count - 1].text += s }
+        }
+
+        /// True when a marker is already open somewhere up the stack.
+        ///
+        /// Markdown cannot nest `**` inside `**`, and MakerWorld nests constantly — an `<h2>`
+        /// containing a `<strong>` produced `****Compatible with H2D****`, which renders as literal
+        /// asterisks. A nested duplicate contributes its text and no delimiters.
+        func alreadyOpen(_ marker: String) -> Bool {
+            frames.contains { if case .emphasis(let m) = $0.frame { return m == marker } else { return false } }
         }
 
         /// Emit `**bold**` with any surrounding whitespace moved OUTSIDE the delimiters.
@@ -254,6 +300,7 @@ enum MakerWorldSearch {
         /// A span that holds only whitespace emits nothing at all, delimiters included. Those exist
         /// (`<i> </i>` between words) and used to produce a stray `* *`.
         func closeEmphasis(_ marker: String, _ text: String) {
+            guard !marker.isEmpty else { emit(text); return }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 // Keep the whitespace it stood for, drop the empty emphasis.
@@ -286,25 +333,27 @@ enum MakerWorldSearch {
             let name = body.prefix { !$0.isWhitespace && $0 != "/" }.lowercased()
 
             switch name {
-            case "strong", "b", "em", "i":
-                let marker = (name == "strong" || name == "b") ? "**" : "*"
+            case "strong", "b", "em", "i", "h1", "h2", "h3", "h4", "h5", "h6":
+                let heading = name.count == 2 && name.hasPrefix("h")
+                // A heading is bold on its own line: inline-only Markdown does not render `#`, and a
+                // literal hash on screen looks like a typo.
+                let marker = (heading || name == "strong" || name == "b") ? "**" : "*"
                 if isEnd {
-                    // Tolerate mismatched tags: close only if this is genuinely what is open.
-                    if case .emphasis(let open)? = frames.last?.frame, open == marker {
+                    // Tolerate mismatched tags: close only what is genuinely open.
+                    if case .emphasis(let open)? = frames.last?.frame {
                         let text = frames.removeLast().text
-                        closeEmphasis(marker, text)
+                        closeEmphasis(open, text)
+                        if heading { emit("\n\n") }
                     }
                 } else {
-                    frames.append((.emphasis(marker: marker), ""))
+                    if heading { emit("\n") }
+                    // Empty marker when the same one is already open: text only, no delimiters.
+                    frames.append((.emphasis(marker: alreadyOpen(marker) ? "" : marker), ""))
                 }
             case "br":
                 emit("\n")
-            case "p", "div", "figure", "figcaption":
+            case "p", "div", "figure", "figcaption", "boostme", "boostcontent":
                 if isEnd { emit("\n\n") }
-            case "h1", "h2", "h3", "h4", "h5", "h6":
-                // Bold on its own line: inline-only Markdown parsing does not render `#`, and a
-                // literal hash on screen would look like a typo.
-                emit(isEnd ? "**\n\n" : "\n**")
             case "ul", "ol":
                 if isEnd {
                     listStack.removeLast(listStack.isEmpty ? 0 : 1)
@@ -340,6 +389,21 @@ enum MakerWorldSearch {
                 } else {
                     frames.append((.link(href: safeHref(body)), ""))
                 }
+            case "boosttitle":
+                // MakerWorld's "boost me" widget renders its own title ("Boost Me" / "为我助力").
+                // That is a UI label, not something the uploader wrote about their model, so it is
+                // collected and thrown away. `boostcontent` IS their words and is kept.
+                if isEnd {
+                    if case .discard? = frames.last?.frame { frames.removeLast(); emit("\n") }
+                } else {
+                    frames.append((.discard, ""))
+                }
+            case "oembed":
+                // An embedded video. It cannot play inside a Text, but dropping it silently loses
+                // content the uploader added — so it becomes a link, which is what it is.
+                if !isEnd, let href = safeHref(body) ?? safeUrlAttribute(body) {
+                    emit("\n[Video](\(href))\n")
+                }
             case "img":
                 // Dropped rather than rendered. A remote image cannot be inlined in a `Text`, and the
                 // gallery already shows this model's photos — a broken image marker in the middle of
@@ -355,6 +419,7 @@ enum MakerWorldSearch {
         // Unclosed inline tags are malformed input MakerWorld does send. Flush their text so the
         // words survive; the formatting they asked for does not, which is the right trade.
         while let frame = frames.popLast() {
+            if case .discard = frame.frame { continue }
             if frames.isEmpty { out += frame.text } else { frames[frames.count - 1].text += frame.text }
         }
 
@@ -376,6 +441,12 @@ enum MakerWorldSearch {
         while collapsed.last?.isEmpty == true { collapsed.removeLast() }
         let text = collapsed.joined(separator: "\n")
         return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+
+    /// `<oembed url="…">` names its target with `url`, not `href`.
+    private static func safeUrlAttribute(_ tagBody: String) -> String? {
+        guard let m = tagBody.firstMatch(of: /url\s*=\s*["']([^"']+)["']/) else { return nil }
+        return safeHref("href=\"\(m.1)\"")
     }
 
     /// Only `http(s)` links are emitted.

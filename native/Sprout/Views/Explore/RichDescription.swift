@@ -7,14 +7,32 @@ import SwiftUI
 /// from the call site — the converter emits no fonts and no colours, which is the point of going via
 /// Markdown rather than `NSAttributedString(html:)`.
 struct RichDescription: View {
-    let html: String?
+    let description: MakerWorldSearch.Description?
     var font: Font = .system(size: 13.5)
     var lineLimit: Int?
 
     @Environment(\.palette) private var c
 
+    private var html: String? { description?.html }
+
     var body: some View {
         if let text = attributed {
+            VStack(alignment: .leading, spacing: 7) {
+            if description?.isTranslated == true {
+                // Says whose words these are. A machine translation presented as the author's own
+                // writing is a small lie, and it matters here: these descriptions carry print
+                // settings and compatibility claims someone is about to act on.
+                HStack(spacing: 5) {
+                    Image(systemName: "character.bubble")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Translated by MakerWorld")
+                        .font(.system(size: 10.5, weight: .semibold))
+                }
+                .foregroundStyle(c.t3)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(c.s2))
+            }
             Text(text)
                 .font(font)
                 .foregroundStyle(c.t2)
@@ -24,6 +42,7 @@ struct RichDescription: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.leading)
                 .textSelection(.enabled)        // these carry dimensions and settings worth copying
+            }
         }
     }
 

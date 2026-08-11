@@ -313,6 +313,69 @@ final class MakerWorldSearchTests: XCTestCase {
         XCTAssertNil(MakerWorldSearch.plainText("<p>   </p><br/>"))
     }
 
+    // MARK: Which language is shown
+
+    /// **`summaryTranslated` is an EMPTY STRING when there is no translation, not null** — measured
+    /// on live data. A plain `nil` check selects the empty one and renders a blank description,
+    /// which is the same present-but-empty trap this API sprang with `total: 0` meaning "not
+    /// authenticated".
+    func testAnEmptyTranslationFallsBackToTheOriginal() {
+        let d = MakerWorldSearch.description(original: "<p>原文</p>", translated: "")
+        XCTAssertEqual(d?.html, "<p>原文</p>")
+        XCTAssertEqual(d?.isTranslated, false)
+    }
+
+    func testTheTranslationIsPreferredWhenThereIsOne() {
+        let d = MakerWorldSearch.description(original: "<p>本配件兼容 H2D</p>",
+                                             translated: "<p>Compatible with H2D</p>")
+        XCTAssertEqual(d?.html, "<p>Compatible with H2D</p>")
+        XCTAssertEqual(d?.isTranslated, true, "the UI says whose words these are")
+    }
+
+    /// Emptiness is judged after the markup is stripped: `<p></p>` and a lone `<figure>` are
+    /// present-but-empty in exactly the same way as "".
+    func testATranslationOfNothingButMarkupIsNotATranslation() {
+        let d = MakerWorldSearch.description(original: "<p>原文</p>", translated: "<p></p><figure></figure>")
+        XCTAssertEqual(d?.html, "<p>原文</p>")
+        XCTAssertEqual(d?.isTranslated, false)
+    }
+
+    func testNoDescriptionAtAllIsNil() {
+        XCTAssertNil(MakerWorldSearch.description(original: nil, translated: nil))
+        XCTAssertNil(MakerWorldSearch.description(original: "", translated: ""))
+        XCTAssertNil(MakerWorldSearch.description(original: "<p> </p>", translated: nil))
+    }
+
+    /// The boost widget is MakerWorld's donation UI. Its TITLE is a button label ("Boost Me"), which
+    /// is not something the uploader wrote about their model; its CONTENT is their actual sentence.
+    func testTheBoostWidgetsLabelIsDroppedButItsMessageIsKept() {
+        let html = "<boostme><boosttitle>Boost Me</boosttitle>"
+                 + "<boostcontent>New to modeling, thanks for your support~</boostcontent></boostme>"
+                 + "<p>September 1, 2025</p>"
+        XCTAssertEqual(MakerWorldSearch.markdown(fromHTML: html),
+                       "New to modeling, thanks for your support~\n\nSeptember 1, 2025")
+    }
+
+    /// An embedded video cannot play inside a Text, but dropping it silently loses content the
+    /// uploader added.
+    func testAnEmbeddedVideoBecomesALink() {
+        let out = MakerWorldSearch.markdown(
+            fromHTML: "<figure class=\"media\"><oembed url=\"https://www.bilibili.com/video/BV1f\"></oembed></figure>")
+        XCTAssertEqual(out, "[Video](https://www.bilibili.com/video/BV1f)")
+    }
+
+    /// The real Chinese description from the user's report, reduced to what the screen shows.
+    func testARealTranslatedDescription() {
+        let translated = "<boostme><boosttitle>Boost Me</boosttitle><boostcontent>New to modeling~</boostcontent></boostme>"
+            + "<p>September 1, 2025</p>"
+            + "<h2><span style=\"color: #E14747\"><strong><u>Compatible with H2D and H2S</u></strong></span></h2>"
+            + "<p>&nbsp;</p><p>Use 3x20 screws</p>"
+        let d = MakerWorldSearch.description(original: "<p>中文</p>", translated: translated)
+        XCTAssertEqual(d?.isTranslated, true)
+        XCTAssertEqual(MakerWorldSearch.markdown(fromHTML: d!.html),
+                       "New to modeling~\n\nSeptember 1, 2025\n\n**Compatible with H2D and H2S**\n\nUse 3x20 screws")
+    }
+
     // MARK: Rich descriptions
 
     private func md(_ html: String) -> String? { MakerWorldSearch.markdown(fromHTML: html) }
@@ -359,8 +422,9 @@ final class MakerWorldSearchTests: XCTestCase {
 
     func testImagesAndUnknownTagsDoNotLeakMarkup() {
         XCTAssertEqual(md("<p>Before<img src=\"https://e.com/a.png\">After</p>"), "BeforeAfter")
-        // MakerWorld ships custom elements; their contents are kept and the tags dropped.
-        XCTAssertEqual(md("<boostme><boosttitle>Kept</boosttitle></boostme>"), "Kept")
+        // MakerWorld ships custom elements; their contents are kept and the tags dropped. (The one
+        // exception is `boosttitle`, which is a UI label — see the boost-widget test.)
+        XCTAssertEqual(md("<lac-info><lac-badge>Kept</lac-badge></lac-info>"), "Kept")
     }
 
     func testEntitiesAreDecodedBeforeEscaping() {

@@ -140,9 +140,10 @@ struct MWProfileRow: Identifiable, Hashable, Sendable {
     /// and the length used to decide whether a More control is worth showing. Rendering uses
     /// `summaryHTML`, so formatting survives on screen without markup leaking into predicates.
     var summary: String?
-    /// The same blurb as MakerWorld sent it, for `RichDescription`. Kept beside the plain form
-    /// rather than replacing it — one is for reading, the other for deciding.
-    var summaryHTML: String?
+    /// The blurb to render — MakerWorld's translation when it has one, else the author's own — and
+    /// which of the two it is. Kept beside the plain form rather than replacing it: one is for
+    /// reading, the other for deciding.
+    var description: MakerWorldSearch.Description?
     /// Extra photos attached to this profile, beyond `coverUrl`. Usually empty.
     var pictures: [String] = []
 }
@@ -384,8 +385,11 @@ enum MakerWorld {
                 coverUrl: hit.cover,
                 detail: hit.profileId.flatMap { byProfile[$0] }.flatMap(detail),
                 summary: blurb(hit.profileId.flatMap { byProfile[$0] }?.summary, title: title(hit)),
-                summaryHTML: blurb(hit.profileId.flatMap { byProfile[$0] }?.summary, title: title(hit)) == nil
-                    ? nil : hit.profileId.flatMap { byProfile[$0] }?.summary,
+                description: blurb(hit.profileId.flatMap { byProfile[$0] }?.summary, title: title(hit)) == nil
+                    ? nil
+                    : MakerWorldSearch.description(
+                        original: hit.profileId.flatMap { byProfile[$0] }?.summary,
+                        translated: hit.profileId.flatMap { byProfile[$0] }?.summaryTranslated),
                 pictures: extraPictures(hit.profileId.flatMap { byProfile[$0] }, shownCover: hit.cover)
             )
         }
@@ -402,7 +406,9 @@ enum MakerWorld {
             rows.append(MWProfileRow(id: r.id, profileId: r.profileId, title: title(r),
                                      coverUrl: r.cover, detail: detail(r),
                                      summary: blurb(r.summary, title: title(r)),
-                                     summaryHTML: blurb(r.summary, title: title(r)) == nil ? nil : r.summary,
+                                     description: blurb(r.summary, title: title(r)) == nil ? nil
+                                        : MakerWorldSearch.description(original: r.summary,
+                                                                       translated: r.summaryTranslated),
                                      pictures: extraPictures(r, shownCover: r.cover)))
         }
         return rows
