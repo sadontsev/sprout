@@ -11,9 +11,15 @@
 // key since the first claim, and Apple issues them only at attestation — so switching this on later
 // reads history rather than starting a clock.
 //
-// Redemption authenticates with an **App Store Connect** API key, a different credential from
-// either APNs signing key. A deployment without one does not run this at all: the metric refines a
-// bound that already holds, so its absence must degrade the signal, never the service.
+// Redemption authenticates with a key from Certificates, Identifiers & Profiles that has the
+// **DeviceCheck** service enabled — NOT an App Store Connect API key, and not the APNs key, though
+// all three arrive as `AuthKey_<id>.p8` and are indistinguishable on disk. The JWT differs too: it
+// is issued by the TEAM ID with no audience, where an App Store Connect token carries an issuer
+// UUID and `aud: appstoreconnect-v1`. Signing with the wrong one answers 401 with no hint which of
+// the three it was.
+//
+// A deployment without such a key does not run this at all: the metric refines a bound that already
+// holds, so its absence must degrade the signal, never the service.
 package fraud
 
 import (
@@ -34,6 +40,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Redemption hosts. A receipt minted in the development attestation environment can only be
@@ -45,9 +52,9 @@ const (
 )
 
 var (
-	// ErrNotConfigured means no App Store Connect key is present. It is a deployment choice, not a
+	// ErrNotConfigured means no DeviceCheck key is present. It is a deployment choice, not a
 	// failure, and callers must not log it as one.
-	ErrNotConfigured = errors.New("fraud: no App Store Connect key configured")
+	ErrNotConfigured = errors.New("fraud: no DeviceCheck key configured")
 	// ErrRedeem wraps every transport- and status-level failure of redemption.
 	ErrRedeem = errors.New("fraud: could not redeem the receipt")
 	// ErrThrottled is Apple refusing because the receipt was redeemed too recently. Distinct
@@ -117,38 +124,40 @@ type Client struct {
 	// Host pins every redemption to one URL. Empty — the normal deployment — means each receipt
 	// goes to the host matching the environment its key attested in, which is the only correct
 	// choice when one Canopy serves both TestFlight and development installs.
-	Host     string
-	KeyID    string
-	IssuerID string
-	key      *ecdsa.PrivateKey
+	Host  string
+	KeyID string
+	// TeamID is the 10-character team identifier, and it is the JWT's `iss`. An App Store Connect
+	// issuer UUID here fails as 401.
+	TeamID string
+	key    *ecdsa.PrivateKey
 }
 
-// NewClient parses an App Store Connect .p8 key. It returns ErrNotConfigured — not an error worth
-// stopping for — when the deployment has supplied nothing.
+// NewClient parses a DeviceCheck .p8 key. It returns ErrNotConfigured — not an error worth stopping
+// for — when the deployment has supplied nothing.
 //
 // host is normally empty; see Client.Host.
-func NewClient(host, keyID, issuerID string, keyPEM []byte) (*Client, error) {
-	if keyID == "" || issuerID == "" || len(keyPEM) == 0 {
+func NewClient(host, keyID, teamID string, keyPEM []byte) (*Client, error) {
+	if keyID == "" || teamID == "" || len(keyPEM) == 0 {
 		return nil, ErrNotConfigured
 	}
 	block, _ := pem.Decode(keyPEM)
 	if block == nil {
-		return nil, errors.New("fraud: App Store Connect key is not PEM")
+		return nil, errors.New("fraud: DeviceCheck key is not PEM")
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("fraud: parsing App Store Connect key: %w", err)
+		return nil, fmt.Errorf("fraud: parsing DeviceCheck key: %w", err)
 	}
 	key, ok := parsed.(*ecdsa.PrivateKey)
 	if !ok {
-		return nil, fmt.Errorf("fraud: App Store Connect key is %T, want ECDSA", parsed)
+		return nil, fmt.Errorf("fraud: DeviceCheck key is %T, want ECDSA", parsed)
 	}
 	return &Client{
-		HTTP:     &http.Client{Timeout: 20 * time.Second},
-		Host:     host,
-		KeyID:    keyID,
-		IssuerID: issuerID,
-		key:      key,
+		HTTP:   &http.Client{Timeout: 20 * time.Second},
+		Host:   host,
+		KeyID:  keyID,
+		TeamID: teamID,
+		key:    key,
 	}, nil
 }
 
@@ -194,7 +203,8 @@ func (c *Client) Redeem(ctx context.Context, receipt []byte, environment string,
 		return Assessment{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "text/plain")
+	// Apple's documented content type for this endpoint. text/plain answers 400.
+	req.Header.Set("Content-Type", "application/octet-stream")
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -219,17 +229,20 @@ func (c *Client) Redeem(ctx context.Context, receipt []byte, environment string,
 	return Parse(refreshed)
 }
 
-// token mints the ES256 JWT App Store Connect expects.
+// token mints the ES256 JWT the DeviceCheck endpoints expect.
+//
+// `iss` is the TEAM ID and there is no `aud`. This is not the App Store Connect token shape — that
+// one carries an issuer UUID and `aud: appstoreconnect-v1`, and sending it here answers 401 without
+// saying which field was wrong.
 func (c *Client) token(now time.Time) (string, error) {
 	header, err := json.Marshal(map[string]string{"alg": "ES256", "kid": c.KeyID, "typ": "JWT"})
 	if err != nil {
 		return "", err
 	}
 	claims, err := json.Marshal(map[string]any{
-		"iss": c.IssuerID,
+		"iss": c.TeamID,
 		"iat": now.Unix(),
 		"exp": now.Add(10 * time.Minute).Unix(),
-		"aud": "appstoreconnect-v1",
 	})
 	if err != nil {
 		return "", err
@@ -338,10 +351,13 @@ func Parse(receipt []byte) (Assessment, error) {
 	return out, nil
 }
 
-// text reads a string field, which Apple encodes as an ASN.1 string inside the attribute's OCTET
-// STRING. Some fields are the bare bytes instead; both are accepted because the distinction is not
-// worth a wrong answer.
+// text reads a string field. The attribute's value IS an OCTET STRING whose content is the UTF-8
+// bytes directly, so the raw content is the answer; the DER attempt afterwards is tolerance for a
+// nested string, not the expected shape.
 func text(raw []byte) string {
+	if s := strings.TrimSpace(string(raw)); isPrintable(s) {
+		return s
+	}
 	var s string
 	if _, err := asn1.Unmarshal(raw, &s); err == nil {
 		return s
@@ -349,14 +365,30 @@ func text(raw []byte) string {
 	return strings.TrimSpace(string(raw))
 }
 
-// number reads the risk metric, which is documented as an integer field. Both the DER INTEGER and
-// the ASCII-decimal encodings are accepted, and anything else is an error rather than a zero.
+func isPrintable(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// number reads the risk metric. Apple encodes it as a DECIMAL STRING, not a DER integer — the
+// integer attempt afterwards is tolerance only. Anything unreadable is an error rather than a zero,
+// because a zero here reads as "this device is clean".
 func number(raw []byte) (int, error) {
+	if n, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+		return n, nil
+	}
 	var n int
 	if _, err := asn1.Unmarshal(raw, &n); err == nil {
 		return n, nil
 	}
-	return strconv.Atoi(strings.TrimSpace(text(raw)))
+	return 0, fmt.Errorf("neither a decimal string nor a DER integer (%d bytes)", len(raw))
 }
 
 // timestamp reads an RFC 3339 date field. A zero time means "not stated", which every caller

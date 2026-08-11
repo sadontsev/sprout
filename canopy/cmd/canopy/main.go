@@ -91,16 +91,16 @@ func main() {
 
 	go sweep(st, log)
 
-	// The fraud metric is optional. An operator with no App Store Connect key runs Canopy exactly
+	// The fraud metric is optional. An operator with no DeviceCheck key runs Canopy exactly
 	// as before: every other check still holds, and only the hooked-device signal is missing.
 	fraudClient, err := fraudClientFrom(cfg)
 	switch {
 	case errors.Is(err, fraud.ErrNotConfigured):
-		log.Info("fraud assessment disabled; set CANOPY_ASC_KEY_ID, CANOPY_ASC_ISSUER_ID and CANOPY_ASC_KEY to enable")
+		log.Info("fraud assessment disabled; set CANOPY_DEVICECHECK_KEY and CANOPY_DEVICECHECK_KEY_ID to enable")
 	case err != nil:
 		// Configured but unusable. Stopping is right: an operator who supplied a key meant to have
 		// this running, and a warning in a log they are not reading is how it stays off for months.
-		log.Error("app store connect key", "err", err)
+		log.Error("devicecheck key", "err", err)
 		os.Exit(1)
 	default:
 		go fraudSweep(&fraud.Sweeper{
@@ -187,16 +187,17 @@ func (a attestKeys) DeferAttestRedemption(keyID string, until, now time.Time) er
 }
 
 func fraudClientFrom(cfg config) (*fraud.Client, error) {
-	if cfg.ASCKeyPath == "" || cfg.ASCKeyID == "" || cfg.ASCIssuerID == "" {
+	if cfg.DeviceCheckKeyPath == "" || cfg.DeviceCheckKeyID == "" {
 		return nil, fraud.ErrNotConfigured
 	}
-	pemBytes, err := os.ReadFile(cfg.ASCKeyPath)
+	pemBytes, err := os.ReadFile(cfg.DeviceCheckKeyPath)
 	if err != nil {
 		return nil, err
 	}
 	// Host stays empty: each receipt goes to the host matching the environment its own key attested
 	// in, which is the only correct choice when one Canopy serves both TestFlight and development.
-	return fraud.NewClient("", cfg.ASCKeyID, cfg.ASCIssuerID, pemBytes)
+	// TeamID is the JWT issuer — the same team id everything else here already uses.
+	return fraud.NewClient("", cfg.DeviceCheckKeyID, cfg.TeamID, pemBytes)
 }
 
 type config struct {
@@ -212,12 +213,16 @@ type config struct {
 	InviteCode             string
 	MaxTenants             int
 	AllowDevelopmentAttest bool
-	// App Store Connect, for the fraud-assessment metric. A different credential from either APNs
-	// signing key: those authorise sending a push, this one authorises reading Apple's per-device
-	// risk data. All three optional together — absent means the metric is off.
-	ASCKeyPath  string
-	ASCKeyID    string
-	ASCIssuerID string
+	// The DeviceCheck key, for the fraud-assessment metric. A different credential from the APNs
+	// signing key — that one authorises sending a push, this one authorises reading Apple's
+	// per-device risk data — but it comes from the same place in the portal and arrives with the
+	// same AuthKey_<id>.p8 filename, so the two are easy to swap by accident. Both optional
+	// together; absent means the metric is off.
+	//
+	// There is no issuer field: this JWT is issued by TeamID, which is already required above. An
+	// App Store Connect issuer UUID belongs to a different API and fails here as 401.
+	DeviceCheckKeyPath string
+	DeviceCheckKeyID   string
 }
 
 func loadConfig() (config, error) {
@@ -233,9 +238,8 @@ func loadConfig() (config, error) {
 		AppleRootPath:          os.Getenv("CANOPY_APPLE_ROOT_CA"),
 		InviteCode:             os.Getenv("CANOPY_INVITE_CODE"),
 		AllowDevelopmentAttest: os.Getenv("CANOPY_ALLOW_DEVELOPMENT_ATTEST") == "1",
-		ASCKeyPath:             os.Getenv("CANOPY_ASC_KEY"),
-		ASCKeyID:               os.Getenv("CANOPY_ASC_KEY_ID"),
-		ASCIssuerID:            os.Getenv("CANOPY_ASC_ISSUER_ID"),
+		DeviceCheckKeyPath:     os.Getenv("CANOPY_DEVICECHECK_KEY"),
+		DeviceCheckKeyID:       os.Getenv("CANOPY_DEVICECHECK_KEY_ID"),
 	}
 
 	required := map[string]string{

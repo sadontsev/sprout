@@ -974,11 +974,22 @@ attestation tests need real-device artefacts, so the harness comes first.
   than 0 — a 0 would read as "known clean" forever), and *the redemption host follows the key's
   attestation environment*, not Canopy's own and not any binding's APNs environment.
 
-  **Still needs an App Store Connect API key** (`CANOPY_ASC_KEY`, `CANOPY_ASC_KEY_ID`,
-  `CANOPY_ASC_ISSUER_ID`) — a different credential from the APNs signing key: that one authorises
-  sending a push, this one authorises reading Apple's per-device risk data. Unset, the sweep never
-  runs and every other check is unaffected; the metric refines a bound that already holds, so its
-  absence must degrade the signal and never the service.
+  **Still needs a DeviceCheck key** (`CANOPY_DEVICECHECK_KEY`, `CANOPY_DEVICECHECK_KEY_ID`) — a key
+  from *Certificates, Identifiers & Profiles → Keys* with the **DeviceCheck** service ticked. It is
+  a different credential from the APNs signing key (that one authorises sending a push, this one
+  authorises reading Apple's per-device risk data) and it is **not** an App Store Connect API key,
+  though all three download as `AuthKey_<id>.p8` and are indistinguishable on disk. There is no
+  issuer id: this JWT is issued by the **team id** with **no `aud`**, where an App Store Connect
+  token carries an issuer UUID and `aud: appstoreconnect-v1`; the wrong one answers 401 without
+  saying which field was at fault. Content type is `application/octet-stream`, body is the
+  base64 receipt, and the risk metric is a **decimal string**, not a DER integer.
+
+  This was built the App Store Connect way first, on the assumption that a `.p8` named
+  `AuthKey_*.p8` meant App Store Connect. Three of the four wire details were wrong and every one
+  of them fails as a bare 401 or 400. The tests now assert the DeviceCheck shape explicitly.
+
+  Unset, the sweep never runs and every other check is unaffected; the metric refines a bound that
+  already holds, so its absence must degrade the signal and never the service.
 - **Rotating a pairing key without deleting the binding.** v1's reset path is
   `DELETE /v1/bindings` from the bound tenant, which is simple and user-initiated. A future
   in-place rotation would be a claim signed by *both* the old and the new pairing key; it needs
