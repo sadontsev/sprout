@@ -134,6 +134,21 @@ final class AppModel {
 
         liveActivity = LiveActivityController(config: cfg)
 
+        // Remote notifications: the device token feeds the alert banners this app has never been
+        // able to receive, and it is the only token kind Apple delivers a silent push to — which
+        // makes it the only one the relay can vouch. Wired here rather than at launch because it
+        // needs the configured server to register against.
+        PushAppDelegate.onDeviceToken = { [weak self] token in
+            Task { @MainActor in self?.liveActivity?.registerDeviceToken(token) }
+        }
+        PushAppDelegate.onVouchNonce = { [weak self] nonce in
+            Task { @MainActor in
+                guard let controller = self?.liveActivity else { return }
+                for token in controller.deviceTokens { controller.vouchNonceArrived(nonce, for: token) }
+            }
+        }
+        Task { await PushRegistrar().start() }
+
         startFleetRefresh()
         startCameraTokenRefresh()
         startDerivedRefresh()

@@ -214,7 +214,12 @@ func buildAssertion(t *testing.T, key *ecdsa.PrivateKey, clientData []byte, appI
 	h.Write(clientDataHash[:])
 	nonce := h.Sum(nil)
 
-	sig, err := ecdsa.SignASN1(rand.Reader, key, nonce)
+	// Signed the way Apple signs it: over SHA-256(nonce), because generateAssertion uses the
+	// message-based algorithm which hashes its input. The fixture originally signed the nonce
+	// directly and the verifier checked it that way, so the pair agreed while both were wrong —
+	// which is exactly the blind spot a self-generated fixture has, and only a real device found.
+	digest := sha256.Sum256(nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, digest[:])
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}

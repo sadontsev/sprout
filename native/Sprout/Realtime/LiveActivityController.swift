@@ -91,8 +91,24 @@ final class LiveActivityController {
     /// the pre-relay behaviour, not take the registration down with it. A relay-mode server refuses
     /// an unclaimed registration itself, which is where that decision belongs.
     private func buildClaim(token: String, kind: ClaimBuilder.BindingKind, vouchNonce: String?) async -> ClaimBuilder.Claim? {
-        guard let identity, attestor.isSupported else { return nil }
-        guard let challenge = await fetchChallenge(attesting: vouchNonce == nil) else { return nil }
+        // Every failure here is logged. A claim that silently comes back nil produces a
+        // registration the relay accepts and then refuses to push to — the exact shape of failure
+        // this project keeps rediscovering, where every component reports success and the card
+        // never updates.
+        guard let identity else {
+            NSLog("[claim] no pairing identity; registration will go out unclaimed")
+            return nil
+        }
+        guard attestor.isSupported else {
+            NSLog("[claim] App Attest unsupported on this device; registration will go out unclaimed")
+            return nil
+        }
+        // The purpose must match the proof this claim will actually carry, and only the
+        // attestor knows whether it still needs to attest.
+        guard let challenge = await fetchChallenge(attesting: !attestor.hasAttestedKey) else {
+            NSLog("[claim] could not obtain a challenge; registration will go out unclaimed")
+            return nil
+        }
 
         let builder = ClaimBuilder(
             identity: identity,
@@ -100,7 +116,12 @@ final class LiveActivityController {
             sign: { try PairingStore.sign($0) },
             attest: { [attestor] data in try await attestor.proof(for: data) }
         )
-        return try? await builder.build(token: token, kind: kind, challenge: challenge, vouchNonce: vouchNonce)
+        do {
+            return try await builder.build(token: token, kind: kind, challenge: challenge, vouchNonce: vouchNonce)
+        } catch {
+            NSLog("[claim] build failed for %@ token: %@", kind.rawValue, String(describing: error))
+            return nil
+        }
     }
 
     /// Fetches a single-use challenge from the relay, through Trellis.
@@ -114,11 +135,16 @@ final class LiveActivityController {
         req.httpMethod = "POST"
         req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["purpose": "assertion"])
+        req.httpBody = try? JSONSerialization.data(
+            withJSONObject: ["purpose": attesting ? "attestation" : "assertion"]
+        )
 
         guard
             let (data, response) = try? await URLSession.shared.data(for: req),
-            let http = response as? HTTPURLResponse, http.statusCode == 201,
+            // Any 2xx. Trellis is a proxy here and answers with ITS status, not the relay's —
+            // checking for the relay's 201 meant every challenge fetch failed against a Trellis
+            // that had done its job perfectly, and the registration then went out unclaimed.
+            let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
             let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let challenge = body["challenge"] as? String
         else { return nil }
@@ -294,6 +320,10 @@ final class LiveActivityController {
         // a slow Trellis must not stall it. `lastRegisterAttempt` is stamped BEFORE the request, so an
         // overlapping flush cannot double-POST.
         if isServerOwned, !tokens.isEmpty { Task { [weak self] in await self?.flushRegistrations() } }
+        // The queue covers the registrations that have no stream to re-emit them: a start or
+        // device token is handed over once, so a POST that failed is otherwise the end of it, and
+        // the server is left with nothing to push a start to for the rest of the process.
+        if isServerOwned, !pending.isEmpty { Task { [weak self] in await self?.flushPending() } }
 
         guard let status else { return }
         guard vm.kind != .offline, vm.kind != .connecting else { return }
@@ -409,10 +439,15 @@ final class LiveActivityController {
                     // `icon_uri` is empty until the brand glyph is written to the App Group (a known
                     // gap); Trellis treats an empty value as "keep what you have" for start tokens.
                     let claim = await self.buildClaim(token: token, kind: .start, vouchNonce: nil)
-                    let ok = await self.post("/register-start", body: StartRegistration(
+                    let result = await self.postWithReason("/register-start", body: StartRegistration(
                         pushToken: token, iconUri: "", deviceId: self.deviceID, claim: claim
                     ))
-                    if ok { self.pending.remove(token: token) }
+                    if result.ok {
+                        self.pending.remove(token: token)
+                        await self.attestor.confirmAttested()
+                    } else {
+                        await self.handle(refusal: result.reason)
+                    }
                 }
             }
         }
@@ -559,6 +594,75 @@ final class LiveActivityController {
         )
     }
 
+    /// Re-attempt the queued start and device registrations.
+    ///
+    /// Rate-limited by the same 30-second per-token backoff as card registrations: this runs on a
+    /// 4-second tick, and each attempt costs a challenge and a Secure Enclave signature.
+    private func flushPending() async {
+        for intent in pending.intents {
+            if let last = lastRegisterAttempt[intent.token],
+               Date().timeIntervalSince(last) < Self.registerRetry { continue }
+            lastRegisterAttempt[intent.token] = Date()
+
+            switch intent.kind {
+            case ClaimBuilder.BindingKind.start.rawValue:
+                let claim = await buildClaim(token: intent.token, kind: .start, vouchNonce: intent.vouchNonce)
+                let result = await postWithReason("/register-start", body: StartRegistration(
+                    pushToken: intent.token, iconUri: "", deviceId: deviceID, claim: claim
+                ))
+                if result.ok {
+                    pending.remove(token: intent.token)
+                    await attestor.confirmAttested()
+                } else { await handle(refusal: result.reason) }
+
+            case ClaimBuilder.BindingKind.device.rawValue:
+                let claim = await buildClaim(token: intent.token, kind: .device, vouchNonce: intent.vouchNonce)
+                let result = await postWithReason("/register-device", body: DeviceRegistration(
+                    deviceToken: intent.token, deviceId: deviceID, claim: claim
+                ))
+                if result.ok {
+                    pending.remove(token: intent.token)
+                    await attestor.confirmAttested()
+                } else { await handle(refusal: result.reason) }
+
+            default:
+                // Card tokens have their own stream and their own flush; nothing to do here.
+                continue
+            }
+        }
+    }
+
+    /// `POST /register-device` — the raw APNs device token, for alert banners.
+    ///
+    /// Also the only token kind Apple will deliver a silent push to, which makes it the only one
+    /// that can be vouched: the relay pushes a nonce to it and the device echoes it back.
+    struct DeviceRegistration: Encodable, Equatable {
+        let deviceToken: String
+        var deviceId: String = ""
+        var claim: ClaimBuilder.Claim? = nil
+    }
+
+    /// Queue a device token for registration, and re-claim it when a vouch nonce arrives.
+    func registerDeviceToken(_ token: String) {
+        pending.add(token: token, kind: .device)
+        Task { [weak self] in await self?.flushPending() }
+    }
+
+    /// The device tokens this install holds. A vouch nonce names no token — it arrives in a push
+    /// addressed to one — so it is matched against what this device actually has, never against a
+    /// list the server supplied.
+    var deviceTokens: [String] {
+        pending.intents.filter { $0.kind == ClaimBuilder.BindingKind.device.rawValue }.map(\.token)
+    }
+
+    /// A vouch nonce arrived by silent push: attach it and let the next flush spend it. The nonce
+    /// is single-use and short-lived, so the retry has to be prompt rather than wait for a rotation.
+    func vouchNonceArrived(_ nonce: String, for token: String) {
+        pending.attach(nonce: nonce, to: token)
+        lastRegisterAttempt[token] = nil  // do not make a fresh proof wait out the backoff
+        Task { [weak self] in await self?.flushPending() }
+    }
+
     /// Re-attempt registrations that have not been accepted yet. A card whose token never reached
     /// Trellis is a card frozen at the content it was created with — the "stuck at 0 %" symptom — and
     /// the token stream will not re-emit just because a POST failed.
@@ -582,9 +686,13 @@ final class LiveActivityController {
             token: token, deviceId: deviceID, claim: claim
         )
         pending.add(token: token, kind: .activity)
-        if await post("/register", body: body) {
+        let result = await postWithReason("/register", body: body)
+        if result.ok {
             registered.insert(pair)
             pending.remove(token: token)
+            await attestor.confirmAttested()
+        } else {
+            await handle(refusal: result.reason)
         }
     }
 
@@ -612,6 +720,35 @@ final class LiveActivityController {
     ///
     /// The status code is checked rather than discarded: this app spent a release posting to a route
     /// that did not exist, and a swallowed 404/422 looks exactly like success from in here.
+    /// POST and surface the server's refusal reason, which some callers must act on: the relay
+    /// answering `reattest_required` means it holds no attested key for us, and the only thing that
+    /// resolves it is attesting afresh. Treating that as a plain failure would retry an assertion
+    /// against a key the relay has never seen, forever.
+    private func postWithReason(_ path: String, body: some Encodable) async -> (ok: Bool, reason: String?) {
+        guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else { return (false, nil) }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        req.httpBody = data
+
+        guard let (payload, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse else { return (false, nil) }
+        if (200..<300).contains(http.statusCode) { return (true, nil) }
+
+        let detail = (try? JSONSerialization.jsonObject(with: payload) as? [String: Any])?["detail"] as? String
+        return (false, detail)
+    }
+
+    /// Acts on a refusal that the app itself can resolve.
+    private func handle(refusal reason: String?) async {
+        guard reason == "reattest_required" else { return }
+        // The relay holds no public key for ours — a restore that predates this install, not an
+        // attack. Discard the key so the next claim carries a fresh attestation.
+        NSLog("[claim] relay asked for re-attestation; discarding the local key")
+        await attestor.reattest()
+    }
+
     @discardableResult
     private func post(_ path: String, body: some Encodable) async -> Bool {
         guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else { return false }
