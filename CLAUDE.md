@@ -231,9 +231,22 @@ never have to discover a limitation by hitting an error.
 
 ## Testing
 
-**`native/`** has its own suite — ~760 XCTest cases over `Sprout/Domain/` and the API decoders, run
-with the `xcodebuild … test` line in the native section above. **`deploy/trellis/`** uses stdlib
-`unittest` (no pytest, deliberately, so it runs inside the container): `python3 -m unittest discover
-deploy/trellis`.
+**`native/`** has its own suite — ~910 XCTest cases over `Sprout/Domain/` and the API decoders, run
+with the `xcodebuild … test` line in the native section above. **`canopy/`** is `go test ./...`
+(~196 cases).
+
+**`deploy/trellis/`** uses stdlib `unittest` (no pytest, deliberately, so it runs inside the
+container) — but run it with **`./deploy/trellis/scripts-test.sh`**, not `python3 -m unittest
+discover deploy/trellis`. 13 of the 183 tests import the service's own `fastapi`/`httpx`, so the
+bare command SKIPS twelve and ERRORS on one wherever those are not installed, which reads as a
+passing suite to anyone not counting the skips. The twelve it skips are the only coverage `app.py`
+has. They are also **not in the container image** (the Dockerfile copies only the service modules),
+so running inside the container does not reach them either. The script makes a venv and runs
+everything.
+
+Both dependency guards key on **`ImportError` alone**, and the `import app` / `import makerworld`
+lines sit *outside* the `try`. An earlier `except Exception:` around both turned "app.py is broken"
+into twelve silent skips and a green run — a guard answering "did anything go wrong?" when the
+question was "are the dependencies installed?". Same shape as the table below; keep them apart.
 
 Everything below is about **`mobile/`**. `jest-expo`. Tests cover **pure logic** only — `present.ts` view-model, `bambuddyClient` URL/token builders, settings key sanitization, and the config-plugin transforms (`plugins/__tests__/`). Native modules (`expo-widgets`, `@expo/ui`, `react-native-webview`) are not imported by tests. `npx tsc --noEmit` is the main correctness gate before every build.
