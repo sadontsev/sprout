@@ -14,6 +14,30 @@ struct SettingsView: View {
     @State private var adminUsername = ""
     @State private var adminPassword = ""
     @State private var pushUrl = ""
+
+    /// What the field will fall back to if left empty, or nil when nothing can be derived.
+    private var derivedFromBase: String? {
+        var probe = AppConfig(baseUrl: baseUrl, apiKey: apiKey)
+        probe.pushUrl = nil
+        return ConfigRules.laPushUrl(probe)
+    }
+
+    private var derivedPushHint: String {
+        derivedFromBase ?? "https://trellis.example.com"
+    }
+
+    /// One sentence saying where registrations will actually go, and what it costs if that is
+    /// unreachable — the failure is otherwise a card that simply never updates.
+    private var pushResolutionNote: String {
+        if !pushUrl.trimmingCharacters(in: .whitespaces).isEmpty {
+            return "Cards register here. Trellis runs beside Bambuddy on port \(ConfigRules.trellisPort)."
+        }
+        if let derived = derivedFromBase {
+            return "Leave empty to use \(derived) — derived from the server address."
+        }
+        return "No Trellis address could be derived from the server address. Enter it to get "
+             + "lock-screen updates and MakerWorld collections."
+    }
     @State private var serverPush = true
     @State private var texturizeUrl = ""
     @State private var texturize = true
@@ -166,7 +190,19 @@ struct SettingsView: View {
                     toggleRow("Live Activity via server", isOn: $serverPush,
                               hint: "On lets your server keep the lock-screen card current in the background. Off keeps it local: it updates only while the app is running.")
                     if serverPush {
-                        field("Push server URL", text: $pushUrl, placeholder: "derived from the server host", keyboard: .URL)
+                        // Named for what it is. "Push server" read as the service that delivers the
+                        // push — which is Canopy, which the app never talks to and which would
+                        // reject it. This is Trellis: your own box, beside Bambuddy.
+                        field("Trellis URL", text: $pushUrl,
+                              placeholder: derivedPushHint, keyboard: .URL)
+                        // The resolved value, not a promise that one exists. The placeholder used
+                        // to read "derived from the server host" while derivation returned nil for
+                        // every address that was not a `bambuddy.` hostname — so push and the
+                        // Collections tab were both off, and the field said it had it covered.
+                        Text(pushResolutionNote)
+                            .font(.system(size: 11))
+                            .foregroundStyle(c.t3)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     // The setting is kept so it survives a switch back to the RN build, but this

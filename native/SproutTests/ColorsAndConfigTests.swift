@@ -178,8 +178,17 @@ final class ConfigRulesTests: XCTestCase {
         )
     }
 
-    func testNoDerivationWithoutTheSubdomain() {
-        XCTAssertNil(ConfigRules.resolvePushUrl(config(baseUrl: "https://example.com")))
+    /// Was `testNoDerivationWithoutTheSubdomain`, and it pinned the bug rather than a requirement.
+    ///
+    /// Deriving nothing here meant no push AND no Collections tab for every deployment that did not
+    /// use one person's `bambuddy.` DNS convention — an IP, a `.local` name, a plain hostname —
+    /// while the settings field claimed the value was "derived from the server host". Both services
+    /// normally share a box, so the host with Trellis's port is the right answer.
+    func testDerivesTheTrellisPortWithoutTheSubdomain() {
+        XCTAssertEqual(
+            ConfigRules.resolvePushUrl(config(baseUrl: "https://example.com")),
+            "https://example.com:8911"
+        )
     }
 
     /// A malformed entry must silently disable push rather than POSTing a token somewhere unexpected.
@@ -195,5 +204,72 @@ final class ConfigRulesTests: XCTestCase {
 
         c.texturize = true
         XCTAssertEqual(ConfigRules.resolveTexturizeUrl(c), "https://texturize.example.com")
+    }
+}
+
+/// Where the app looks for Trellis when it has not been told.
+///
+/// The old rule swapped a `bambuddy.` subdomain for `lapush.` and returned nil for anything else —
+/// one person's DNS convention. nil means no push AND no Collections tab, under a settings field
+/// whose placeholder said the value was "derived from the server host". These are the addresses
+/// people actually enter.
+final class TrellisDerivationTests: XCTestCase {
+    private func cfg(_ baseUrl: String, pushUrl: String? = nil) -> AppConfig {
+        var c = AppConfig(baseUrl: baseUrl, apiKey: "k")
+        c.pushUrl = pushUrl
+        return c
+    }
+
+    func testALanAddressDerivesTheTrellisPort() {
+        // Both services on one box is the overwhelmingly common deployment, and every one of these
+        // returned nil before.
+        XCTAssertEqual(ConfigRules.laPushUrl(cfg("http://192.168.1.50:8910")), "http://192.168.1.50:8911")
+        XCTAssertEqual(ConfigRules.laPushUrl(cfg("http://<your-server>:8910")), "http://<your-server>:8911")
+        XCTAssertEqual(ConfigRules.laPushUrl(cfg("https://printer.example.com")), "https://printer.example.com:8911")
+    }
+
+    func testABambuddySubdomainStillSwapsInstead() {
+        // A tunnelled deployment has no port to swap: its companion is at lapush.example.com, not
+        // bambuddy.example.com:8911. This rule must stay ahead of the port swap.
+        XCTAssertEqual(ConfigRules.laPushUrl(cfg("https://bambuddy.example.com")), "https://lapush.example.com")
+    }
+
+    func testAnExplicitValueBeatsBothRules() {
+        XCTAssertEqual(
+            ConfigRules.laPushUrl(cfg("http://192.168.1.50:8910", pushUrl: "https://trellis.example.com/")),
+            "https://trellis.example.com"
+        )
+    }
+
+    func testAPathIsPreserved() {
+        // A reverse proxy at https://host/bambuddy. Rebuilding through URLComponents would drop or
+        // re-encode this, which is why the port swap is written by hand.
+        XCTAssertEqual(
+            ConfigRules.laPushUrl(cfg("https://host.example.com:8910/bambuddy")),
+            "https://host.example.com:8911/bambuddy"
+        )
+    }
+
+    func testAnIPv6LiteralIsNotMistakenForAPort() {
+        // The colons inside brackets are address, not port. Splitting on the last colon without
+        // this check would produce http://[2001:db8::1:8911 — unparseable, and the failure would
+        // look like Trellis being down.
+        XCTAssertEqual(
+            ConfigRules.laPushUrl(cfg("http://[2001:db8::1]:8910")),
+            "http://[2001:db8::1]:8911"
+        )
+        XCTAssertEqual(
+            ConfigRules.laPushUrl(cfg("http://[2001:db8::1]")),
+            "http://[2001:db8::1]:8911"
+        )
+    }
+
+    func testGarbageStillDerivesNothing() {
+        XCTAssertNil(ConfigRules.laPushUrl(cfg("not a url")))
+        XCTAssertNil(ConfigRules.laPushUrl(cfg("ftp://host.example.com")))
+    }
+
+    func testTheDerivedPortIsTrellisOwn() {
+        XCTAssertEqual(ConfigRules.trellisPort, 8911, "Bambuddy is 8910; a shared box puts Trellis at 8911")
     }
 }

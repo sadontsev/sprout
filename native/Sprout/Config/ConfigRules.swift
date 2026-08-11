@@ -66,8 +66,23 @@ enum ConfigRules {
     /// toggle off is exactly what they should do — and it is exactly when collections should keep
     /// working.
     ///
-    /// Prefer an explicit `pushUrl`; else derive it from a `bambuddy.*` host by swapping the
-    /// subdomain to `lapush.`.
+    /// The port Trellis listens on. Bambuddy is 8910 and the two normally share a box.
+    static let trellisPort = 8911
+
+    /// Prefer an explicit `pushUrl`; else derive.
+    ///
+    /// Derivation used to be a single rule — swap a `bambuddy.` subdomain for `lapush.` — which is
+    /// one person's DNS convention and returns nil for everything else:
+    ///
+    ///     http://192.168.1.50:8910      -> nil
+    ///     http://<your-server>:8910  -> nil
+    ///     https://printer.example.com   -> nil
+    ///
+    /// nil means no push AND no Collections tab, under a settings placeholder promising the value
+    /// was "derived from the server host". So the common case — both services on one box — is now
+    /// the primary rule: same host, Trellis's port. The subdomain swap stays ahead of it, because a
+    /// deployment fronting `bambuddy.example.com` through a tunnel has no port to swap and its
+    /// companion is at `lapush.example.com`, not `bambuddy.example.com:8911`.
     static func laPushUrl(_ cfg: AppConfig) -> String? {
         if let explicit = cfg.pushUrl?.trimmingCharacters(in: .whitespaces), !explicit.isEmpty {
             return httpUrl(trimTrailingSlashes(explicit))
@@ -75,7 +90,35 @@ enum ConfigRules {
         if cfg.baseUrl.contains("bambuddy.") {
             return httpUrl(trimTrailingSlashes(cfg.baseUrl.replacingOccurrences(of: "bambuddy.", with: "lapush.")))
         }
-        return nil
+        guard let swapped = swapPort(trimTrailingSlashes(cfg.baseUrl), to: trellisPort) else {
+            return nil
+        }
+        return httpUrl(swapped)
+    }
+
+    /// Replaces the port in a URL, or appends one when there is none.
+    ///
+    /// Hand-written rather than via URLComponents because a base URL may carry a path (a reverse
+    /// proxy at `https://host/bambuddy`), and rebuilding through URLComponents would silently drop
+    /// or re-encode it. This keeps everything after the authority untouched.
+    static func swapPort(_ url: String, to port: Int) -> String? {
+        guard let schemeEnd = url.range(of: "://") else { return nil }
+        let afterScheme = url[schemeEnd.upperBound...]
+        // The authority ends at the first / ? or #.
+        let authorityEnd = afterScheme.firstIndex(where: { $0 == "/" || $0 == "?" || $0 == "#" })
+            ?? afterScheme.endIndex
+        var authority = String(afterScheme[..<authorityEnd])
+        let rest = String(afterScheme[authorityEnd...])
+        if authority.isEmpty { return nil }
+
+        // An IPv6 literal is bracketed, and its colons are not port separators.
+        if let closing = authority.lastIndex(of: "]") {
+            let after = authority.index(after: closing)
+            authority = String(authority[..<after])
+        } else if let colon = authority.lastIndex(of: ":") {
+            authority = String(authority[..<colon])
+        }
+        return "\(url[..<schemeEnd.lowerBound])://\(authority):\(port)\(rest)"
     }
 
     /// Same shape for the stl-texturize sidecar. The shell health-probes the resolved URL before
