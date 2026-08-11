@@ -65,11 +65,22 @@ final class LiveActivityController {
 
     var isServerOwned: Bool { pushUrl != nil }
 
+    /// This device's durable identity. Loaded once: it is what owns every push binding this phone
+    /// holds, so a failure to load must not silently regenerate it.
+    private let identity: PairingIdentity?
+    /// Registrations still owed to the server, across all three token kinds.
+    private var pending = PendingClaims()
+
     init(config: AppConfig) {
         pushUrl = ConfigRules.resolvePushUrl(config)
         apiKey = config.apiKey
+        identity = try? PairingStore.loadOrCreate()
         startObserving()
     }
+
+    /// The device id sent with every registration, so Trellis can tell two phones apart. They share
+    /// one Bambuddy key, so without this one phone's reconcile deregisters the other's cards.
+    private var deviceID: String { identity?.deviceID ?? "" }
 
     // MARK: - Content mapping
     //
@@ -347,9 +358,17 @@ final class LiveActivityController {
             Task { [weak self] in
                 for await tokenData in Activity<PrintActivityAttributes>.pushToStartTokenUpdates {
                     guard let self else { return }
+                    let token = Self.hex(tokenData)
+                    // Queued as well as sent. This stream only re-emits when the token rotates, so
+                    // a POST that failed here used to be the end of it: the server then had nothing
+                    // to push a start to and the lock screen stayed empty for the whole print.
+                    self.pending.add(token: token, kind: .start)
                     // `icon_uri` is empty until the brand glyph is written to the App Group (a known
                     // gap); Trellis treats an empty value as "keep what you have" for start tokens.
-                    await self.post("/register-start", body: StartRegistration(pushToken: Self.hex(tokenData), iconUri: ""))
+                    let ok = await self.post("/register-start", body: StartRegistration(
+                        pushToken: token, iconUri: "", deviceId: self.deviceID
+                    ))
+                    if ok { self.pending.remove(token: token) }
                 }
             }
         }
@@ -378,7 +397,9 @@ final class LiveActivityController {
                 guard let self else { return }
                 // Only `.dismissed` means the card has actually left the screen. `.ended` still leaves
                 // it visible under `.default`, and acting on it would drop the card early.
-                if case .dismissed = state { self.cardVanished(activityId: id, key: k) }
+                if case .dismissed = state {
+                    self.cardVanished(activityId: id, key: k, printerId: activity.attributes.printerId)
+                }
             }
         }
 
@@ -393,7 +414,10 @@ final class LiveActivityController {
         }
     }
 
-    private func cardVanished(activityId: String, key k: String) {
+    private func cardVanished(activityId: String, key k: String, printerId: Int) {
+        // Captured before the bookkeeping clears it: the server needs the token to scope the drop
+        // to this device, and by the end of this function we no longer have it.
+        let vanishedToken = tokens[activityId]
         observed.remove(activityId)
         tokens[activityId] = nil
         registered = registered.filter { !$0.hasPrefix("\(activityId)|") }
@@ -403,6 +427,35 @@ final class LiveActivityController {
         dismissed.insert(k)
         lastContent[k] = nil
         lastUpdate[k] = nil
+
+        // Tell the server, or it keeps a registration for a card that no longer exists: APNs
+        // answers 200 to a push into the void, and because the server refuses to start a card for a
+        // key it already holds, no replacement is ever created. That deadlock is how the lock
+        // screen ends up empty mid-print. The RN app reconciles via /sync; this one never did.
+        if isServerOwned, let token = vanishedToken, !token.isEmpty {
+            pending.remove(token: token)
+            Task { [weak self] in
+                await self?.unregister(printerId: printerId, token: token)
+            }
+        }
+    }
+
+    /// `POST /unregister` — token-scoped, so one phone dropping its card leaves the other's alone.
+    private func unregister(printerId: Int, token: String) async {
+        guard let base = pushUrl else { return }
+        var trimmed = base
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard var components = URLComponents(string: trimmed + "/unregister") else { return }
+        components.queryItems = [
+            URLQueryItem(name: "printer_id", value: String(printerId)),
+            URLQueryItem(name: "push_token", value: token),
+            URLQueryItem(name: "device_id", value: deviceID),
+        ]
+        guard let url = components.url else { return }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        _ = try? await URLSession.shared.data(for: req)
     }
 
     // MARK: - Trellis registration
@@ -479,8 +532,15 @@ final class LiveActivityController {
         if let last = lastRegisterAttempt[pair], Date().timeIntervalSince(last) < Self.registerRetry { return }
         lastRegisterAttempt[pair] = Date()
 
-        let body = Self.cardRegistration(attributes: activity.attributes, state: activity.content.state, token: token)
-        if await post("/register", body: body) { registered.insert(pair) }
+        let body = Self.cardRegistration(
+            attributes: activity.attributes, state: activity.content.state,
+            token: token, deviceId: deviceID
+        )
+        pending.add(token: token, kind: .activity)
+        if await post("/register", body: body) {
+            registered.insert(pair)
+            pending.remove(token: token)
+        }
     }
 
     /// Trellis endpoint for `path`, or nil when push is off. Trailing slashes are stripped because
