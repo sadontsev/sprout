@@ -209,6 +209,213 @@ enum MakerWorldSearch {
         return joined.isEmpty ? nil : joined
     }
 
+    // MARK: Rich descriptions
+
+    /// A MakerWorld description as **Markdown**, so its formatting survives.
+    ///
+    /// These are real HTML documents — the measured tag set on one model is `h2`, `p`, `strong`,
+    /// `i`, `br`, `ol`, `li`, `img`, `figure`, `span`, plus custom `boost*` elements. Flattening all
+    /// of that to plain text (which is what shipped first) throws away the headings, the emphasis
+    /// and the numbered steps that carry most of the meaning: "**6-cell and 9-cell trays**" and
+    /// "6-cell and 9-cell trays" are not the same sentence.
+    ///
+    /// Markdown rather than `NSAttributedString(html:)` on purpose. That initialiser is WebKit-backed,
+    /// must run on the main thread, is slow enough to stutter a scroll, and imports its own fonts and
+    /// colours which then fight the app's palette. This is a pure string transform: testable, fast,
+    /// and it inherits whatever styling the view applies.
+    ///
+    /// **Text is escaped, markup is not.** Everything between tags is uploader-supplied, so its
+    /// Markdown metacharacters are escaped before emitting — otherwise a description reading
+    /// `2 * 3 * 4` silently becomes italic, and `[see here]` becomes a broken link. Only the markup
+    /// this function generates is meant to be parsed.
+    static func markdown(fromHTML html: String?) -> String? {
+        guard let html, !html.isEmpty else { return nil }
+
+        var out = ""
+        var listStack: [(ordered: Bool, counter: Int)] = []
+
+        /// Nested inline spans being collected. Emphasis has to be buffered rather than streamed,
+        /// because its delimiters cannot touch whitespace — see `closeEmphasis`.
+        enum Frame { case link(href: String?), emphasis(marker: String) }
+        var frames: [(frame: Frame, text: String)] = []
+        var linkHref: String?
+
+        func emit(_ s: String) {
+            if frames.isEmpty { out += s } else { frames[frames.count - 1].text += s }
+        }
+
+        /// Emit `**bold**` with any surrounding whitespace moved OUTSIDE the delimiters.
+        ///
+        /// This is the bug that shipped visibly: MakerWorld's spans routinely carry a trailing space
+        /// (`<strong>Seed Sower : </strong>`), and `**Seed Sower : **` is not emphasis in Markdown —
+        /// a delimiter adjacent to whitespace is left as literal text, so the asterisks appeared on
+        /// screen. Moving the space out makes it `**Seed Sower :** `, which parses.
+        ///
+        /// A span that holds only whitespace emits nothing at all, delimiters included. Those exist
+        /// (`<i> </i>` between words) and used to produce a stray `* *`.
+        func closeEmphasis(_ marker: String, _ text: String) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                // Keep the whitespace it stood for, drop the empty emphasis.
+                emit(text.isEmpty ? "" : " ")
+                return
+            }
+            let leading = text.prefix { $0.isWhitespace }
+            let trailing = text.reversed().prefix { $0.isWhitespace }.reversed()
+            emit(String(leading) + marker + trimmed + marker + String(trailing))
+        }
+
+        var i = html.startIndex
+        while i < html.endIndex {
+            guard let open = html[i...].firstIndex(of: "<") else {
+                emit(escapeMarkdown(decodeEntities(String(html[i...]))))
+                break
+            }
+            if open > i {
+                emit(escapeMarkdown(decodeEntities(String(html[i..<open]))))
+            }
+            guard let close = html[open...].firstIndex(of: ">") else {
+                // An unclosed tag at the end is malformed input, not a crash: drop the remainder.
+                break
+            }
+            let raw = String(html[html.index(after: open)..<close])
+            i = html.index(after: close)
+
+            let isEnd = raw.hasPrefix("/")
+            let body = isEnd ? String(raw.dropFirst()) : raw
+            let name = body.prefix { !$0.isWhitespace && $0 != "/" }.lowercased()
+
+            switch name {
+            case "strong", "b", "em", "i":
+                let marker = (name == "strong" || name == "b") ? "**" : "*"
+                if isEnd {
+                    // Tolerate mismatched tags: close only if this is genuinely what is open.
+                    if case .emphasis(let open)? = frames.last?.frame, open == marker {
+                        let text = frames.removeLast().text
+                        closeEmphasis(marker, text)
+                    }
+                } else {
+                    frames.append((.emphasis(marker: marker), ""))
+                }
+            case "br":
+                emit("\n")
+            case "p", "div", "figure", "figcaption":
+                if isEnd { emit("\n\n") }
+            case "h1", "h2", "h3", "h4", "h5", "h6":
+                // Bold on its own line: inline-only Markdown parsing does not render `#`, and a
+                // literal hash on screen would look like a typo.
+                emit(isEnd ? "**\n\n" : "\n**")
+            case "ul", "ol":
+                if isEnd {
+                    listStack.removeLast(listStack.isEmpty ? 0 : 1)
+                    emit("\n")
+                } else {
+                    listStack.append((ordered: name == "ol", counter: 0))
+                    emit("\n")
+                }
+            case "li":
+                if !isEnd {
+                    if listStack.isEmpty {
+                        emit("\n• ")
+                    } else {
+                        listStack[listStack.count - 1].counter += 1
+                        let item = listStack[listStack.count - 1]
+                        emit(item.ordered ? "\n\(item.counter). " : "\n• ")
+                    }
+                }
+                // `</li>` deliberately emits nothing: the next `<li>` (or the closing list tag)
+                // supplies the break. Emitting one here too double-spaced every list.
+            case "a":
+                if isEnd {
+                    if case .link(let href)? = frames.last?.frame {
+                        let text = frames.removeLast().text
+                        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let href, !clean.isEmpty {
+                            emit("[\(clean)](\(href))")
+                        } else {
+                            emit(text)
+                        }
+                    }
+                    linkHref = nil
+                } else {
+                    frames.append((.link(href: safeHref(body)), ""))
+                }
+            case "img":
+                // Dropped rather than rendered. A remote image cannot be inlined in a `Text`, and the
+                // gallery already shows this model's photos — a broken image marker in the middle of
+                // the prose would be worse than its absence.
+                break
+            default:
+                // Unknown and custom elements (MakerWorld ships `boostme`, `boosttitle`, …) keep
+                // their contents and lose their tag.
+                break
+            }
+        }
+
+        // Unclosed inline tags are malformed input MakerWorld does send. Flush their text so the
+        // words survive; the formatting they asked for does not, which is the right trade.
+        while let frame = frames.popLast() {
+            if frames.isEmpty { out += frame.text } else { frames[frames.count - 1].text += frame.text }
+        }
+
+        // Collapse runs of spaces to one, which is what HTML itself does with whitespace — and what
+        // stops `Available in <strong> 6-cell </strong>` producing "Available in  **6-cell**", where
+        // the text's own trailing space and the span's leading one both survive. Newlines are left
+        // alone: they carry the block structure this converter just built.
+        out = out.replacingOccurrences(of: "[ \t]+", with: " ", options: .regularExpression)
+
+        // Collapse the runs of blank lines the block tags leave behind.
+        let lines = out.components(separatedBy: "\n").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        var collapsed: [String] = []
+        for line in lines {
+            if line.isEmpty, collapsed.last?.isEmpty ?? true { continue }
+            collapsed.append(line)
+        }
+        while collapsed.last?.isEmpty == true { collapsed.removeLast() }
+        let text = collapsed.joined(separator: "\n")
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+
+    /// Only `http(s)` links are emitted.
+    ///
+    /// A description is uploader-supplied, so `javascript:` and `data:` hrefs are exactly the kind of
+    /// thing that should never reach a tappable link. Anything else keeps its text and loses its URL.
+    private static func safeHref(_ tagBody: String) -> String? {
+        guard let m = tagBody.firstMatch(of: /href\s*=\s*["']([^"']+)["']/) else { return nil }
+        let href = decodeEntities(String(m.1)).trimmingCharacters(in: .whitespaces)
+        guard let url = URL(string: href), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return nil }
+        // Parentheses would terminate the Markdown link target early.
+        return href.contains("(") || href.contains(")") ? nil : href
+    }
+
+    /// Escape the characters that would otherwise be read as Markdown in uploader text.
+    private static func escapeMarkdown(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        for ch in s {
+            if ch == "\\" || ch == "*" || ch == "_" || ch == "[" || ch == "]" || ch == "`" {
+                out.append("\\")
+            }
+            out.append(ch)
+        }
+        return out
+    }
+
+    private static func decodeEntities(_ s: String) -> String {
+        var text = s
+        for (entity, char) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""),
+                              ("&#39;", "'"), ("&apos;", "'"), ("&nbsp;", " "), ("&ndash;", "–"),
+                              ("&mdash;", "—"), ("&hellip;", "…"), ("&rsquo;", "’"), ("&lsquo;", "‘"),
+                              ("&ldquo;", "“"), ("&rdquo;", "”")] {
+            text = text.replacingOccurrences(of: entity, with: char)
+        }
+        return text
+    }
+
     // MARK: Paging
 
     /// Whether another page exists, given what has been loaded so far.

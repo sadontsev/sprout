@@ -2,3 +2,12 @@
 *.db
 *.db-wal
 *.db-shm
+
+# A captured attestation is a REAL device artifact: Apple's leaf certificate carries
+# <TEAMID>.<bundle id> in plaintext, so committing it publishes the developer account behind the
+# app. This repo is public and commits nothing identifying. The test skips when it is absent;
+# see internal/appattest/README.md to capture your own.
+internal/appattest/testdata/attestation.bin
+internal/appattest/testdata/attestation.keyid
+internal/appattest/testdata/attestation.clientdata
+internal/appattest/testdata/attestation.appid

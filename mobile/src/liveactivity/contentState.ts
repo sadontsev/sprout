@@ -7,7 +7,7 @@ import type { PrinterStatus } from '@/api/types';
 import type { DashVM } from '@/dashboard/present';
 import { c } from '@/theme';
 
-/** Flat, JSON-serializable ContentState the activity renders. Mirrors what la-push pushes (app.py). */
+/** Flat, JSON-serializable ContentState the activity renders. Mirrors what Trellis pushes (app.py). */
 export type PrintActivityProps = {
   printerName: string; // "A1" | "H2C" — which machine this card is for (one activity per printer)
   name: string; // subtask/file name
@@ -44,11 +44,11 @@ export type LiveActivityExtras = { modelUri?: string | null; queueCount?: number
 /**
  * FIXED palette for Live Activity content — deliberately NOT the app theme's `c.*`.
  *
- * A card lives on the lock screen, which has no relationship to the in-app theme, and la-push (which
+ * A card lives on the lock screen, which has no relationship to the in-app theme, and Trellis (which
  * owns cards in server mode) has no idea what theme the phone is on: it always sends these values.
  * Reading `vm.stateColor` meant a light-mode app produced #23B24A while an identical card pushed from
  * the server produced #30D158 — the same print rendering in two different greens depending on which
- * side created the card. These values are the single source of truth and MUST equal la-push's COLORS.
+ * side created the card. These values are the single source of truth and MUST equal Trellis's COLORS.
  */
 export const LA_COLORS = {
   running: '#30D158',
@@ -66,7 +66,7 @@ export function laTint(vm: DashVM): string {
   if (vm.kind === 'idle' || vm.kind === 'offline' || vm.kind === 'connecting') return LA_COLORS.idle;
   if (vm.kind === 'complete') return LA_COLORS.running;
   // Live: heating / a named sub-stage is amber, steady printing is green — mirrors present.ts and
-  // la-push's classify() by comparing against the THEMED token rather than a hardcoded hex.
+  // Trellis's classify() by comparing against the THEMED token rather than a hardcoded hex.
   return vm.stateColor === c.heating ? LA_COLORS.heating : LA_COLORS.running;
 }
 
@@ -164,7 +164,7 @@ export function toDryContentState(status: PrinterStatus, nowMs: number, iconUri 
     dry: true,
     stateLabel: 'Drying',
     name: [unitLabel, target > 0 ? `${fil} @ ${target}°` : fil].filter(Boolean).join(' · '),
-    tint: '#FFB86C', // drying amber — fixed, matches la-push's dry_state
+    tint: '#FFB86C', // drying amber — fixed, matches Trellis's dry_state
     symbol: 'humidity.fill',
     finished: false,
     progress: 0,

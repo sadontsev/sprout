@@ -313,4 +313,112 @@ final class MakerWorldSearchTests: XCTestCase {
         XCTAssertNil(MakerWorldSearch.plainText("<p>   </p><br/>"))
     }
 
+    // MARK: Rich descriptions
+
+    private func md(_ html: String) -> String? { MakerWorldSearch.markdown(fromHTML: html) }
+
+    func testEmphasisAndHeadingsSurvive() {
+        XCTAssertEqual(md("<p>A <strong>bold</strong> claim</p>"), "A **bold** claim")
+        XCTAssertEqual(md("<p>An <i>aside</i></p>"), "An *aside*")
+        XCTAssertEqual(md("<h2>Title</h2><p>Body</p>"), "**Title**\n\nBody",
+                       "a heading becomes bold on its own line — inline markdown cannot render #")
+    }
+
+    func testListsBecomeReadableLines() {
+        XCTAssertEqual(md("<ul><li>one</li><li>two</li></ul>"), "• one\n• two")
+        XCTAssertEqual(md("<ol><li>first</li><li>second</li></ol>"), "1. first\n2. second",
+                       "an ordered list must count, or the steps lose their order")
+    }
+
+    /// The bug this prevents: uploader text is not markup. A description reading `2 * 3 * 4` would
+    /// otherwise render "3" in italics, and `[see notes]` would become a broken link.
+    func testUploaderTextIsEscapedSoItCannotBecomeMarkup() {
+        XCTAssertEqual(md("<p>2 * 3 * 4</p>"), "2 \\* 3 \\* 4")
+        XCTAssertEqual(md("<p>[see notes]</p>"), "\\[see notes\\]")
+        XCTAssertEqual(md("<p>snake_case_name</p>"), "snake\\_case\\_name")
+    }
+
+    func testLinksKeepTheirTextAndTarget() {
+        XCTAssertEqual(md("<p>See <a href=\"https://example.com/x\">the guide</a></p>"),
+                       "See [the guide](https://example.com/x)")
+    }
+
+    /// A description is uploader-supplied, so a `javascript:` href must never become a tappable link.
+    /// The words survive; the URL does not.
+    func testOnlyHttpLinksAreEmitted() {
+        XCTAssertEqual(md("<a href=\"javascript:alert(1)\">tap</a>"), "tap")
+        XCTAssertEqual(md("<a href=\"data:text/html,x\">tap</a>"), "tap")
+        XCTAssertEqual(md("<a href=\"/relative/path\">tap</a>"), "tap")
+    }
+
+    /// Parentheses would close the markdown link target early and spill the rest of the URL into the
+    /// visible text.
+    func testALinkWithParenthesesKeepsItsTextAndDropsTheTarget() {
+        XCTAssertEqual(md("<a href=\"https://e.com/a(b)\">tap</a>"), "tap")
+    }
+
+    func testImagesAndUnknownTagsDoNotLeakMarkup() {
+        XCTAssertEqual(md("<p>Before<img src=\"https://e.com/a.png\">After</p>"), "BeforeAfter")
+        // MakerWorld ships custom elements; their contents are kept and the tags dropped.
+        XCTAssertEqual(md("<boostme><boosttitle>Kept</boosttitle></boostme>"), "Kept")
+    }
+
+    func testEntitiesAreDecodedBeforeEscaping() {
+        XCTAssertEqual(md("<p>Bambu &amp; friends &ndash; done</p>"), "Bambu & friends – done")
+    }
+
+    func testBlankRunsCollapseAndEmptyMarkupIsNil() {
+        // Paragraphs keep ONE blank line between them — that is how the source reads and how it
+        // should render. Runs of empty markup collapse to that, they do not accumulate.
+        XCTAssertEqual(md("<p>One</p><p></p><p>Two</p>"), "One\n\nTwo")
+        XCTAssertNil(md("<p></p><br><figure></figure>"))
+        XCTAssertNil(MakerWorldSearch.markdown(fromHTML: nil))
+        XCTAssertNil(MakerWorldSearch.markdown(fromHTML: ""))
+    }
+
+    /// Malformed input is a thing MakerWorld sends, not a thing to crash on.
+    func testAnUnclosedTagIsSurvivable() {
+        XCTAssertEqual(md("<p>Good text</p><p>trailing"), "Good text\n\ntrailing")
+        XCTAssertNotNil(md("<p>text</p><strong"))
+    }
+
+    /// Shipped visibly and caught on screen: `**1. ****Seed Starter Tray 9 Cells **` with literal
+    /// asterisks in the middle of the description.
+    ///
+    /// Markdown emphasis delimiters may not touch whitespace — `**text **` is not emphasis, it is
+    /// the characters `**`. MakerWorld's spans routinely carry a trailing space, so the whitespace
+    /// has to move outside the delimiters.
+    func testEmphasisWithSurroundingSpaceStillParses() {
+        XCTAssertEqual(md("<p><strong>Seed Sower : </strong>Offers three sizes</p>"),
+                       "**Seed Sower :** Offers three sizes")
+        XCTAssertEqual(md("<p>Available in <strong> 6-cell </strong>versions</p>"),
+                       "Available in **6-cell** versions")
+    }
+
+    /// `<i> </i>` between words is real MakerWorld output. It used to emit a stray `* *`.
+    func testAWhitespaceOnlySpanEmitsNoDelimiters() {
+        XCTAssertEqual(md("<p>an<i> </i>Asanoha pattern</p>"), "an Asanoha pattern")
+        XCTAssertEqual(md("<p>a<strong></strong>b"), "ab")
+    }
+
+    /// A bold list item must not stack its delimiters against the bullet.
+    func testABoldListItemKeepsItsNumberOutsideTheEmphasis() {
+        XCTAssertEqual(md("<ol><li><strong>Tray 9 Cells </strong></li></ol>"), "1. **Tray 9 Cells**")
+    }
+
+    /// Malformed nesting is input, not a crash — the words survive even when the formatting cannot.
+    func testUnclosedEmphasisStillYieldsItsText() {
+        XCTAssertEqual(md("<p>start <strong>bold text"), "start bold text")
+        XCTAssertEqual(md("<p><em>a<strong>b</strong>"), "a**b**")
+    }
+
+    /// The real shape, from model 1400373.
+    func testARealMakerWorldDescription() {
+        let html = "<h2>Self-Watering Seed Starter</h2><p><strong>Designed for minimalist growers.</strong></p>"
+                 + "<p>This <strong>modular kit</strong> features a base.<br><br>It also has an<i> </i>Asanoha pattern.</p>"
+        let out = md(html)
+        // `<i> </i>` between words contributes a space, not an empty emphasis.
+        XCTAssertEqual(out, "**Self-Watering Seed Starter**\n\n**Designed for minimalist growers.**\n\n"
+                          + "This **modular kit** features a base.\n\nIt also has an Asanoha pattern.")
+    }
 }

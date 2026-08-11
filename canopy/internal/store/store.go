@@ -5,6 +5,8 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mvks5/canopy/internal/binding"
@@ -24,6 +26,15 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
+	}
+	for _, m := range migrations {
+		// "duplicate column name" is the expected answer on every start after the
+		// one that applied it. Any other error is real and must stop the process,
+		// so this matches on the message rather than swallowing all failures.
+		if _, err := db.Exec(m); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migration %q: %w", m, err)
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -236,4 +247,211 @@ func (s *Store) ConsumeChallenge(nonceHash, tenant, purpose string, now time.Tim
 func (s *Store) PurgeExpiredChallenges(now time.Time) error {
 	_, err := s.db.Exec(`DELETE FROM challenges WHERE expires_at <= ?`, now.UnixMilli())
 	return err
+}
+
+// ReleaseBinding marks the row released, but only for the tenant that holds it.
+// Release is not deletion: the row keeps its anchors and its retention horizon,
+// so a released token is never reopened to a first-come claim.
+func (s *Store) ReleaseBinding(tokenHash, tenant string, now time.Time) (bool, error) {
+	const q = `UPDATE bindings SET released_at = ? WHERE token_hash = ? AND tenant = ?`
+	res, err := s.db.Exec(q, now.UnixMilli(), tokenHash, tenant)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DeleteBinding removes the row, returning the token to UNSEEN. Only the tenant
+// that holds it may do this: it is the most security-sensitive transition in the
+// design, which is why it is an explicit, authenticated, user-initiated action
+// rather than something a rule infers.
+func (s *Store) DeleteBinding(tokenHash, tenant string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM bindings WHERE token_hash = ? AND tenant = ?`, tokenHash, tenant)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DropBinding removes the row regardless of tenant. Used when APNs reports the
+// token is dead, where there is no tenant to consult.
+func (s *Store) DropBinding(tokenHash string) error {
+	_, err := s.db.Exec(`DELETE FROM bindings WHERE token_hash = ?`, tokenHash)
+	return err
+}
+
+// MarkDelivered records a successful push: it stamps the delivery clock and
+// renews the lease, which is what keeps an actively-used token from ever
+// drifting toward dormancy.
+func (s *Store) MarkDelivered(tokenHash string, now, leaseExpiry time.Time) error {
+	const q = `UPDATE bindings SET last_delivery_at = ?, lease_expiry = ? WHERE token_hash = ?`
+	_, err := s.db.Exec(q, now.UnixMilli(), leaseExpiry.UnixMilli(), tokenHash)
+	return err
+}
+
+// SetAPNSEnvironment persists a gateway self-correction. It is deliberately not
+// something a claim can do: the phone derives the environment from an
+// entitlement and would keep supplying the same wrong value, silently reverting
+// the correction.
+func (s *Store) SetAPNSEnvironment(tokenHash, env string) error {
+	_, err := s.db.Exec(`UPDATE bindings SET apns_environment = ? WHERE token_hash = ?`, env, tokenHash)
+	return err
+}
+
+// --- attest keys ---
+
+// AttestKey is a device's App Attest key as Canopy knows it.
+type AttestKey struct {
+	KeyID       string
+	PublicKey   string // base64url X9.63 uncompressed point
+	Counter     uint32
+	Environment string
+	Receipt     []byte
+}
+
+// PutAttestKey records a newly attested key. The receipt is captured here
+// because Apple only issues one at attestation time, and it is the input to the
+// fraud-assessment metric that eventually bounds the hooked-device residual.
+func (s *Store) PutAttestKey(k AttestKey, now time.Time) error {
+	const q = `INSERT INTO attest_keys
+	               (key_id, public_key, counter, attest_environment, receipt, first_seen, last_seen)
+	           VALUES (?,?,?,?,?,?,?)
+	           ON CONFLICT(key_id) DO UPDATE SET last_seen = excluded.last_seen`
+	_, err := s.db.Exec(q, k.KeyID, k.PublicKey, k.Counter, k.Environment, k.Receipt,
+		now.UnixMilli(), now.UnixMilli())
+	return err
+}
+
+// GetAttestKey returns the stored key, or (nil, nil) if Canopy has never seen
+// it — which is what tells a caller to answer reattest_required rather than
+// treating the claim as hostile.
+func (s *Store) GetAttestKey(keyID string) (*AttestKey, error) {
+	const q = `SELECT key_id, public_key, counter, attest_environment, receipt
+	             FROM attest_keys WHERE key_id = ?`
+	var k AttestKey
+	err := s.db.QueryRow(q, keyID).Scan(&k.KeyID, &k.PublicKey, &k.Counter, &k.Environment, &k.Receipt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &k, nil
+}
+
+// BumpAttestCounter persists the counter an assertion advanced to.
+func (s *Store) BumpAttestCounter(keyID string, counter uint32, now time.Time) error {
+	const q = `UPDATE attest_keys SET counter = ?, last_seen = ? WHERE key_id = ?`
+	_, err := s.db.Exec(q, counter, now.UnixMilli(), keyID)
+	return err
+}
+
+// AttestKeysDueForRedemption returns keys whose receipt Apple will accept now.
+//
+// A key is due when it has a receipt and either has never been redeemed or has
+// passed the not-before Apple stated. Ordering by that instant means a backlog
+// drains oldest-first rather than starving whichever key sorts last by id.
+//
+// limit bounds one pass: redemption is a network round trip per key, and the
+// operator's DeviceCheck key is shared with everything else that uses it.
+func (s *Store) AttestKeysDueForRedemption(now time.Time, limit int) ([]AttestKey, error) {
+	const q = `SELECT key_id, public_key, counter, attest_environment, receipt
+	             FROM attest_keys
+	            WHERE receipt IS NOT NULL AND LENGTH(receipt) > 0
+	              AND (risk_not_before IS NULL OR risk_not_before <= ?)
+	         ORDER BY COALESCE(risk_not_before, 0) ASC, key_id ASC
+	            LIMIT ?`
+	rows, err := s.db.Query(q, now.UnixMilli(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []AttestKey
+	for rows.Next() {
+		var k AttestKey
+		if err := rows.Scan(&k.KeyID, &k.PublicKey, &k.Counter, &k.Environment, &k.Receipt); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// AttestRisk is one key's fraud assessment as Canopy recorded it.
+type AttestRisk struct {
+	Metric    int
+	HasMetric bool
+	CheckedAt time.Time
+	NotBefore time.Time
+}
+
+// PutAttestRisk records an assessment and the refreshed receipt that produced it.
+//
+// The receipt is replaced because Apple supersedes it on every redemption: keeping
+// the original would make the second redemption fail and every one after it.
+// metric is written only when present — an ATTEST receipt yields none, and writing
+// a zero would turn "not yet known" into "known to be clean".
+func (s *Store) PutAttestRisk(keyID string, metricValue int, hasMetric bool, receipt []byte, notBeforeAt, now time.Time) error {
+	var metric any
+	if hasMetric {
+		metric = metricValue
+	}
+	var notBefore any
+	if !notBeforeAt.IsZero() {
+		notBefore = notBeforeAt.UnixMilli()
+	}
+	const q = `UPDATE attest_keys
+	              SET risk_metric = COALESCE(?, risk_metric),
+	                  risk_checked_at = ?,
+	                  risk_not_before = ?,
+	                  receipt = ?
+	            WHERE key_id = ?`
+	_, err := s.db.Exec(q, metric, now.UnixMilli(), notBefore, receipt, keyID)
+	return err
+}
+
+// DeferAttestRedemption pushes a key's next attempt out without recording a
+// metric. Used when Apple throttles or the call fails: without it a permanently
+// failing key is retried on every sweep forever, and its failures crowd out the
+// keys that would answer.
+func (s *Store) DeferAttestRedemption(keyID string, until, now time.Time) error {
+	const q = `UPDATE attest_keys SET risk_checked_at = ?, risk_not_before = ? WHERE key_id = ?`
+	_, err := s.db.Exec(q, now.UnixMilli(), until.UnixMilli(), keyID)
+	return err
+}
+
+// GetAttestRisk reads back a recorded assessment.
+func (s *Store) GetAttestRisk(keyID string) (*AttestRisk, error) {
+	const q = `SELECT risk_metric, risk_checked_at, risk_not_before FROM attest_keys WHERE key_id = ?`
+	var metric, checked, notBefore sql.NullInt64
+	err := s.db.QueryRow(q, keyID).Scan(&metric, &checked, &notBefore)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r := &AttestRisk{Metric: int(metric.Int64), HasMetric: metric.Valid}
+	if checked.Valid {
+		r.CheckedAt = time.UnixMilli(checked.Int64).UTC()
+	}
+	if notBefore.Valid {
+		r.NotBefore = time.UnixMilli(notBefore.Int64).UTC()
+	}
+	return r, nil
+}
+
+// CountAttestKeyTenants reports how many distinct tenants hold live bindings
+// under one attest key. One key legitimately covers several tokens for one
+// device across a household rebuild; the same key spread across many tenants is
+// the signature of a hooked device walking one key between victims.
+func (s *Store) CountAttestKeyTenants(keyID string, now time.Time) (int, error) {
+	const q = `SELECT COUNT(DISTINCT tenant) FROM bindings
+	            WHERE attest_key_id = ? AND released_at IS NULL AND lease_expiry > ?`
+	var n int
+	err := s.db.QueryRow(q, keyID, now.UnixMilli()).Scan(&n)
+	return n, err
 }

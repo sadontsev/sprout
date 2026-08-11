@@ -1,5 +1,5 @@
 """
-la-push — keeps Sprout's iOS Live Activities updating when the app is closed.
+Trellis — keeps Sprout's iOS Live Activities updating when the app is closed.
 
 The app (foreground) starts one Live Activity per printer and registers each card's APNs push token
 with this service. This service polls Bambuddy for each registered printer's status and pushes the
@@ -30,16 +30,83 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 import makerworld as mw
+import canopy
+import outbox as ob
+import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
-from cooldown import COOL_DEFAULT_C, COOL_MAX_C, COOL_MIN_C, READY, clamp_threshold, cool_step
-from p2s import dry_identity, next_started_for, print_identity, prune, should_start
+from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
+from p2s import dry_identity, next_started_for, print_identity, should_start
 
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
 BAMBUDDY_API_KEY = os.environ["BAMBUDDY_API_KEY"]
+
+# The push relay run by the app's author, and the default for anyone installing the App Store
+# build. It is a public hostname, not a secret: it holds only APNs signing keys and per-device
+# bindings, and every endpoint on it requires either a tenant bearer or a claim signed by App
+# Attest. Publishing it is what lets a fresh install work without the owner handing anything over.
+#
+# Overridable so a self-hoster can point at their own — see docs/guides/self-hosting-push.md, which
+# also explains why running your own Canopy means running your own BUILD of the app: APNs keys are
+# team-scoped and the topic is the bundle id, so another team's key cannot push to this app.
+DEFAULT_CANOPY_URL = "https://canopy.sadontsev.com"
+
+# Push backend. DIRECT signs with this deployment's own APNs key; RELAY forwards to Canopy, which
+# holds the key for App Store builds.
+#
+# The default is RELAY at DEFAULT_CANOPY_URL, because the overwhelmingly common deployment is
+# somebody running the App Store build who has no Apple developer account at all. Requiring them to
+# discover and set a URL to get any push at all would make the default experience "nothing works",
+# with nothing on screen saying why.
+#
+# Setting APNS_KEY_ID opts out: it says this deployment intends to sign for itself. Configuring
+# BOTH explicitly is still fatal — that is ambiguous about who signs, and guessing would fail at
+# the first push rather than at startup.
+_explicit_canopy = os.environ.get("CANOPY_URL", "").rstrip("/")
+_signs_locally = bool(os.environ.get("APNS_KEY_ID"))
+if _explicit_canopy and _signs_locally:
+    raise SystemExit(
+        "Both CANOPY_URL and APNS_KEY_ID are set. Exactly one push backend must be configured: "
+        "CANOPY_URL to relay through Canopy, or the APNS_* set to sign locally. Configuring both "
+        "leaves it ambiguous which key is expected to sign."
+    )
+CANOPY_URL = _explicit_canopy or ("" if _signs_locally else DEFAULT_CANOPY_URL)
 APNS_KEY_PATH = os.environ.get("APNS_KEY_PATH", "/keys/apns_key.p8")
-APNS_KEY_ID = os.environ["APNS_KEY_ID"]
-APNS_TEAM_ID = os.environ["APNS_TEAM_ID"]
+# In RELAY mode nothing Apple-specific lives here: no key, no key id, no team id, no topic, no
+# host. That is the point — the owner can rotate the signing key without any self-hoster acting.
+RELAY_MODE = bool(CANOPY_URL)
+
+if not RELAY_MODE:
+    # DIRECT mode needs the WHOLE credential set, not just a key id.
+    #
+    # compose used to enforce this with ${APNS_TEAM_ID:?...}, which fires on empty as well as
+    # unset. That had to become :- so an unset value could reach app.py and be answered with a
+    # sentence instead of a compose interpolation error — but the guard that replaced it checked
+    # only APNS_KEY_ID, which is a proxy for "the DIRECT set is complete" and not the same
+    # question. A deployment with a key id and a blank team id therefore booted and signed every
+    # APNs JWT with `iss: ""`, and APNs answered 403 InvalidProviderToken on every push forever.
+    _missing = [n for n in ("APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC") if not os.environ.get(n)]
+    if _missing == ["APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC"]:
+        raise SystemExit(
+            "No push backend configured. Leave CANOPY_URL unset to relay through the default "
+            f"push service ({DEFAULT_CANOPY_URL}), or set the APNS_* set to sign locally — see "
+            "docs/guides/self-hosting-push.md."
+        )
+    if _missing:
+        raise SystemExit(
+            "Signing locally needs the whole APNs credential set; missing: "
+            + ", ".join(_missing)
+            + ". A partial set boots and then fails every push with InvalidProviderToken, which is "
+            "indistinguishable from Apple being down."
+        )
+
+# Some relays gate enrolment behind an invite while they are young. Read here and passed to
+# enrol; without it a gated relay answers 403 and push stays off, so the failure is logged with
+# the variable to set rather than as a bare HTTP status.
+CANOPY_INVITE_CODE = os.environ.get("CANOPY_INVITE_CODE", "")
+
+APNS_KEY_ID = os.environ.get("APNS_KEY_ID", "")
+APNS_TEAM_ID = os.environ.get("APNS_TEAM_ID", "")
 APNS_TOPIC = os.environ.get("APNS_TOPIC", "com.mvks5.bambu.push-type.liveactivity")  # Live Activity topic
 # The bundle id is the topic for regular alert notifications (print done / error).
 APNS_BUNDLE_ID = os.environ.get("APNS_BUNDLE_ID", APNS_TOPIC.replace(".push-type.liveactivity", ""))
@@ -53,6 +120,9 @@ POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
 MIN_UPDATE_S = float(os.environ.get("MIN_UPDATE_S", "30"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 REG_FILE = DATA_DIR / "registrations.json"
+# Canopy tenant credential. Lives beside the registrations rather than in the environment
+# because it is issued at runtime, and is what a rebuild needs to re-adopt its bindings.
+TENANT_FILE = DATA_DIR / "tenant.json"
 
 # ---- state → content-state (mirrors present.ts + toContentState) ----
 COLORS = {"running": "#30D158", "heating": "#FF9F0A", "paused": "#0A84FF", "error": "#FF453A", "idle": "#8E9398"}
@@ -174,9 +244,20 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
 
 
 # ---- state ----
-# _regs: str(printerId) -> Live-Activity card {printerId, pushToken, printerName, iconUri, client,
-# lastPush, lastState}. `client` is EXPO/NATIVE and decides the push shape; absent = EXPO (see clients.py).
-_regs: dict[str, dict] = {}
+# _regs: card key -> LIST of Live-Activity cards, ONE PER DEVICE. Each element is
+# {printerId, pushToken, deviceId, printerName, iconUri, client, lastPush, lastState}.
+#
+# The list is the point: two phones in one household each hold their own card for the same printer.
+# `lastPush`, `lastState`, `client` and `iconUri` are PER ELEMENT and must never be hoisted to the
+# key — a shared lastPush makes one device's push start another's MIN_UPDATE_S throttle, and a
+# shared lastState makes meaningful_change compare against content the other device never received,
+# freezing its card while APNs keeps answering 200. `client` may legitimately differ between
+# elements (RN on one phone, native on another); absent = EXPO (see clients.py).
+#
+# An empty list is never stored: `key in _regs` means "a card exists here", and an empty list is
+# truthy in that test, which would silently disable push-to-start for that printer forever. All of
+# that discipline lives in registry.py, which is pure and tested — this module is not.
+_regs: registry.Registry = {}
 # _device_tokens: raw APNs device tokens for regular alert notifications (print done / error).
 _device_tokens: list[str] = []
 # _p2s_tokens: ActivityKit push-to-start tokens (one per device) — start cards with the app closed.
@@ -191,6 +272,9 @@ _p2s_icons: dict[str, str] = {}
 # bundle id, but the other build's token lingers here until APNs 400/410s it, and each must be pushed
 # in its own shape meanwhile. Absent = EXPO (tokens registered before this field existed).
 _p2s_clients: dict[str, str] = {}
+# _p2s_devices: p2s token -> device id. A start is per device: a phone with no card must still get
+# one even when another phone in the house has one.
+_p2s_devices: dict[str, str] = {}
 # _p2s_pending: {registry key -> unix ts} for remote starts awaiting their update token.
 #
 # A remotely-started card is UNREACHABLE until the app hands us its token — we can neither update nor
@@ -201,8 +285,46 @@ _p2s_clients: dict[str, str] = {}
 #      print card. Serialising starts makes the binding unambiguous by construction.
 #   2. Entries expire (P2S_PENDING_TTL). The stale card then has no owner and no pending claim, so the
 #      app's reconcile sees an unknown token, /adopt answers known:false, and the app ends it.
+# Keyed by (registry key, device) rather than by key alone. The global rule existed because a card
+# is identifiable only by its push token, so two simultaneous pending starts could not be told
+# apart; scoping by device preserves that — at most one unresolved start PER DEVICE — while letting
+# two phones each adopt their own card.
 _p2s_pending: dict[str, float] = {}
 P2S_PENDING_TTL = 600.0
+
+# How long silence may last before a card is lying. NOT derived from MIN_UPDATE_S: that is a floor
+# on how OFTEN we may push, gating a change detector, and a paused print or a drying cycle sitting
+# at target produces no meaningful change for a long time while everything is perfectly healthy.
+# Deriving one from the other would mark healthy cards stale within a minute.
+STALE_AFTER_S = 900.0
+
+
+def _pending_id(key: str, device: str) -> str:
+    return f"{key}|{device}"
+
+
+# _suspended: push token -> why. Set when Canopy says another tenant holds the token (our authority
+# was taken), cleared only by a successful re-registration. Deliberately NOT set on "nobody holds
+# it": that is routine after a release or an expiry and means re-claim, and treating it as a
+# suspension would suspend every token on this box at once after a Canopy restore.
+_suspended: dict[str, str] = {}
+# _needs_claim: push tokens Canopy reports unbound. Returned to the owning device so it re-claims.
+# A trigger, never a source: the app must intersect this against the tokens it actually holds, or a
+# compromised server could name another user's token and have an honest phone sign a claim for it.
+_needs_claim: dict[str, str] = {}
+# _outbox: alert banners awaiting delivery. Live-Activity updates deliberately have no queue —
+# they carry state and the next tick resends it — but a banner carries an EVENT, and the edge that
+# produced it fires once. Without this a transient failure lost the notification permanently.
+_outbox = ob.Outbox()
+
+
+def _needs_claim_for(device: str) -> list[str]:
+    """Tokens this device should re-claim. Scoped, so one phone is never handed another's."""
+    out = []
+    for token, owner in _needs_claim.items():
+        if owner == device:
+            out.append(token)
+    return out
 # _p2s_started: registry key -> the print/cycle identity we last push-to-started a card for.
 #
 # This is what makes duplication impossible. The TTL above only governs which pending token /sync
@@ -211,6 +333,27 @@ P2S_PENDING_TTL = 600.0
 # minutes and a fresh card was started — 199 of them for one print, with three left stacked on the
 # lock screen. Now a card is started once per identity, and only a NEW print re-arms it.
 _p2s_started: dict[str, str] = {}
+
+# _p2s_rearm: {"<key>|<device>" -> unix ts} — permission for ONE replacement card, for ONE device.
+#
+# Arming is otherwise once per live session, which is what stops a mid-print identity change from
+# spawning a second card. A card that DIES mid-print therefore used to be gone for the rest of the
+# print. The first fix cleared _p2s_started outright, but that key is global while every other
+# push-to-start decision is per device — so one phone's reconcile could stack a second card onto
+# another phone's lock screen, on top of a card that phone had never adopted.
+_p2s_rearm: dict[str, float] = {}
+
+
+def _has_rearm(key: str) -> bool:
+    """Whether any device holds a replacement grant for this card.
+
+    should_start answers "may a card be started for this print at all", which is once per live
+    session. A grant is the narrow exception, so the poll loop has to reach _remote_start even when
+    that answer is no — otherwise the grant is never consumed and the replacement never happens.
+    _remote_start still decides per device.
+    """
+    suffix_keys = (k for k in _p2s_rearm if k.rpartition("|")[0] == key)
+    return next(suffix_keys, None) is not None
 # _last_kind: printerId -> last-seen kind, for edge-triggered notifications. Persisted (in REG_FILE) so a
 # restart/crash mid-print doesn't lose the live->complete/error edge and silently drop the alert.
 _last_kind: dict[int, str] = {}
@@ -242,10 +385,13 @@ _cool_threshold_at = 0.0
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox, _p2s_rearm
     try:
         data = json.loads(REG_FILE.read_text())
-        _regs = data.get("regs", {})
+        # Permanent, not a one-shot migration: rolling back to the previous image
+        # rewrites this file in the single-card shape, and a re-upgrade must survive
+        # that round trip.
+        _regs = registry.coerce(data.get("regs"))
         _device_tokens = data.get("devices", [])
         # JSON object keys are strings; _last_kind is keyed by int printer id, so coerce back.
         _last_kind = {int(k): v for k, v in data.get("last_kind", {}).items()}
@@ -262,23 +408,44 @@ def _load() -> None:
         _p2s_clients = data.get("p2s_clients", {})
         _p2s_pending = data.get("p2s_pending", {})
         _p2s_started = data.get("p2s_started", {})
+        _p2s_rearm = data.get("p2s_rearm", {})
+        _p2s_devices = data.get("p2s_devices", {})
+        _suspended = data.get("suspended", {})
+        _needs_claim = data.get("needs_claim", {})
+        _outbox = ob.Outbox.from_json(data.get("outbox"))
     except (FileNotFoundError, json.JSONDecodeError):
         # NB: this unpack used to supply three values for five targets, so the very path that exists
         # to survive a missing/corrupt state file raised ValueError instead.
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
         _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}, {}, {}
-        _cool, _p2s_started, _p2s_clients = {}, {}, {}
+        _cool, _p2s_started, _p2s_clients, _p2s_rearm = {}, {}, {}, {}
+        _p2s_devices, _suspended, _needs_claim = {}, {}, {}
+        _outbox = ob.Outbox()
 
 
 def _save() -> None:
+    """Persist state atomically.
+
+    A partial write lands in the JSONDecodeError branch of _load, which resets EVERYTHING —
+    registrations, the kind edges the banners depend on, the cooldown trackers. The recovery path
+    for a truncated file is total data loss, so writing through a temp file and renaming is a
+    correctness matter rather than a nicety, and it matters more now that one key can hold several
+    registrations and so is rewritten more often.
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    REG_FILE.write_text(json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind,
+    payload = json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind,
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
                                     "p2s_icons": _p2s_icons, "p2s_clients": _p2s_clients,
-                                    "p2s_pending": _p2s_pending, "p2s_started": _p2s_started,
+                                    "p2s_pending": _p2s_pending, "p2s_started": _p2s_started, "p2s_devices": _p2s_devices,
+                                    "p2s_rearm": _p2s_rearm,
+                          "suspended": _suspended, "needs_claim": _needs_claim,
+                          "outbox": _outbox.to_json(),
                                     "last_paused": _last_paused,
                                     "paused_at": _paused_at, "paused_reminded": _paused_reminded,
-                                    "cool": _cool}))
+                          "cool": _cool})
+    tmp = REG_FILE.with_suffix(".tmp")
+    tmp.write_text(payload)
+    os.replace(tmp, REG_FILE)
 
 
 # ---- APNs ----
@@ -296,20 +463,80 @@ def _apns_token() -> str:
     return tok
 
 
-async def _apns_send(client: httpx.AsyncClient, push_token: str, aps: dict, priority: str = "10") -> int:
+# ---- the two backends ----
+#
+# Both return an APNs status code, so every caller's token hygiene (`code in (400, 410)`) keeps
+# working unchanged. The relay path is where that needs care: Canopy answers with its OWN HTTP
+# status as well as Apple's, and they answer different questions. A Canopy 400 means "I refused
+# this request"; an APNs 400 means "this token is dead". Returning the wrong one would delete a
+# healthy registration on a malformed body or a dropped connection, so the relay result is
+# translated here, once, and never leaks a Canopy status upward.
+
+_canopy: "canopy.CanopyClient | None" = None
+
+
+async def _relay_send(client: httpx.AsyncClient, push_token: str, aps: dict, priority: str,
+                      push_type: str) -> int:
+    if _canopy is None:
+        return 0  # not enrolled yet; the caller treats 0 as "not delivered, change nothing"
+    res = await _canopy.push(push_token, push_type, int(priority), {"aps": aps} if "aps" not in aps else aps)
+    if res.token_is_dead:
+        return 410
+    if res.outcome is canopy.Outcome.DELIVERED:
+        return res.apns_status or 0
+    if res.outcome is canopy.Outcome.NOT_OWNER:
+        # Another tenant holds this token: our authority was taken. Suspend it, and do NOT return
+        # a 4xx that the caller would read as a dead token.
+        _suspended[push_token] = "not_owner"
+        return 0
+    if res.outcome is canopy.Outcome.NOT_BOUND:
+        # Routine after a release or an expiry. Ask the device to re-claim; changing nothing else.
+        _needs_claim[push_token] = _device_for_token(push_token)
+        return 0
+    return 0  # transport, rate limit, refusal — retry later, touch no registration
+
+
+def _device_for_token(push_token: str) -> str:
+    found = registry.find_by_token(_regs, push_token)
+    if found:
+        return registry.device_of(found[1])
+    return _p2s_devices.get(push_token, registry.LEGACY_DEVICE)
+
+
+async def _apns_send(client: httpx.AsyncClient, push_token: str, aps: dict, priority: str = "10",
+                     push_type: str = "liveactivity") -> int:
+    if RELAY_MODE:
+        return await _relay_send(client, push_token, aps, priority, push_type)
     r = await client.post(
         f"https://{APNS_HOST}/3/device/{push_token}",
         headers={
             "authorization": f"bearer {_apns_token()}",
-            "apns-topic": APNS_TOPIC,
-            "apns-push-type": "liveactivity",
+            # The topic is derived from the push type, never supplied by a caller: an alert goes
+            # to the bundle id and a Live Activity to its sub-topic, and getting it wrong is a
+            # silent no-card.
+            "apns-topic": APNS_TOPIC if push_type == "liveactivity" else APNS_BUNDLE_ID,
+            "apns-push-type": push_type,
             # Priority 10 spends the device's Live-Activity budget; 5 is delivered opportunistically
             # and conserves it. Routine drift goes at 5, real state changes at 10.
             "apns-priority": priority,
         },
-        json={"aps": aps},
+        json=aps if "aps" in aps else {"aps": aps},
     )
     return r.status_code
+
+
+def _needs_heartbeat(reg: dict, now: float) -> bool:
+    """Whether this card is close enough to its stale date to need a keep-alive push.
+
+    A card only receives a push when something meaningful changes, so a paused print or a drying
+    cycle at target can go quiet for a long time while the pipeline is perfectly healthy. Without a
+    heartbeat the stale date would elapse and iOS would dim a card that is telling the truth.
+    Priority stays 5 — this is opportunistic by nature and must not spend the device's budget.
+    """
+    last = reg.get("lastPush", 0)
+    if not last:
+        return False
+    return now - last >= STALE_AFTER_S / 2
 
 
 def _urgent(last: dict | None, cs: dict) -> bool:
@@ -326,7 +553,14 @@ def _urgent(last: dict | None, cs: dict) -> bool:
 
 
 async def _push_update(client: httpx.AsyncClient, reg: dict, cs: dict, priority: str = "5") -> int:
-    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "update", "content-state": envelope(cs, client_of(reg))}, priority)
+    # stale-date makes a card whose feed died go visibly stale instead of lying: without it a
+    # Canopy or Bambuddy outage looks exactly like a slow print, with the ETA counting past zero.
+    # The heartbeat in _tick renews it while the pipeline is healthy.
+    now = int(time.time())
+    return await _apns_send(client, reg["pushToken"], {
+        "timestamp": now, "event": "update", "stale-date": now + int(STALE_AFTER_S),
+        "content-state": envelope(cs, client_of(reg)),
+    }, priority)
 
 
 async def _push_start(client: httpx.AsyncClient, push_token: str, cs: dict, printer_id: int,
@@ -344,6 +578,7 @@ async def _push_start(client: httpx.AsyncClient, push_token: str, cs: dict, prin
     attrs_type, attrs = start_attributes(la_client, printer_id, ams_id)
     return await _apns_send(client, push_token, {
         "timestamp": int(time.time()), "event": "start",
+        "stale-date": int(time.time()) + int(STALE_AFTER_S),
         "attributes-type": attrs_type, "attributes": attrs,
         "content-state": envelope(cs, la_client),
         "alert": {"title": f"{title} — {cs.get('stateLabel', 'Started')}", "body": body},
@@ -351,7 +586,21 @@ async def _push_start(client: httpx.AsyncClient, push_token: str, cs: dict, prin
 
 
 async def _push_end(client: httpx.AsyncClient, reg: dict, cs: dict) -> int:
-    return await _apns_send(client, reg["pushToken"], {"timestamp": int(time.time()), "event": "end", "content-state": envelope(cs, client_of(reg)), "dismissal-date": int(time.time()) + 1800})
+    code = await _apns_send(client, reg["pushToken"], {
+        "timestamp": int(time.time()), "event": "end",
+        "content-state": envelope(cs, client_of(reg)),
+        "dismissal-date": int(time.time()) + 1800,
+    })
+    # Tell the relay we are done with this token. Release rather than delete: the binding keeps its
+    # anchors, so the token is never reopened to a first-come claim — it simply stops counting
+    # against this tenant's cap. Without it, every completed card would linger, because a card that
+    # ends is never pushed to again and so never earns the 410 that would free it.
+    if RELAY_MODE and _canopy is not None and _canopy.credentials is not None:
+        try:
+            await _canopy.release(reg["pushToken"])
+        except Exception as e:  # noqa: BLE001 — a failed release must not break the end push
+            print(f"[canopy] release failed: {e}", flush=True)
+    return code
 
 
 # ---- Bambuddy ----
@@ -395,8 +644,34 @@ async def _list_printers(client: httpx.AsyncClient) -> dict[int, str]:
 
 
 # ---- alert notifications (print done / error) ----
-async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool = True) -> None:
-    """Send an alert banner to every registered device.
+def _queue_alert(key: str, title: str, body: str, urgent: bool = True) -> None:
+    """Queue a banner for delivery.
+
+    Queued rather than sent inline because the edge that produced it advances regardless: if the
+    push failed, `_last_kind` has already moved on and nothing would ever re-fire. The key
+    deduplicates, so re-observing the same event while a send is pending cannot deliver twice.
+    """
+    if _outbox.add(key, title, body, urgent, now=time.time()):
+        _save()
+
+
+async def _drain_outbox(client: httpx.AsyncClient) -> None:
+    """Deliver whatever is due, rescheduling what fails."""
+    now = time.time()
+    dirty = False
+    for alert in _outbox.due(now):
+        ok = await _notify(client, alert.title, alert.body, alert.urgent)
+        if ok:
+            _outbox.succeeded(alert.key)
+        else:
+            _outbox.failed(alert.key, now)
+        dirty = True
+    if dirty:
+        _save()
+
+
+async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool = True) -> bool:
+    """Send an alert banner to every registered device. Returns whether it reached anyone.
 
     `interruption-level: time-sensitive` asks iOS to break through Focus modes and the Scheduled
     Summary — the difference between "the printer halted 40 minutes ago" and knowing now. It requires
@@ -404,30 +679,45 @@ async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool
     takes effect at the next NATIVE build); until then iOS simply ignores the field, and APNs still
     returns 200 either way, so a delivered-but-not-shown alert looks identical to a working one from
     here."""
+    aps = {"alert": {"title": title, "body": body}, "sound": "default",
+           "interruption-level": "time-sensitive" if urgent else "active"}
+    if not _device_tokens:
+        return True  # nobody to tell; not a failure, and retrying would never help
+    delivered = False
     for tok in list(_device_tokens):
         try:
-            r = await client.post(
-                f"https://{APNS_HOST}/3/device/{tok}",
-                headers={"authorization": f"bearer {_apns_token()}", "apns-topic": APNS_BUNDLE_ID, "apns-push-type": "alert", "apns-priority": "10"},
-                json={"aps": {"alert": {"title": title, "body": body}, "sound": "default",
-                              "interruption-level": "time-sensitive" if urgent else "active"}},
-            )
-            print(f"[notify] {title!r} -> {r.status_code}", flush=True)
-            if r.status_code in (400, 410):
+            # Through the same backend as everything else, so the relay's status translation and
+            # the local signer stay observably equivalent to the hygiene below.
+            code = await _apns_send(client, tok, aps, "10", push_type="alert")
+            print(f"[notify] {title!r} -> {code}", flush=True)
+            if code in (400, 410):
                 _device_tokens.remove(tok)
                 _save()
+            elif 200 <= code < 300:
+                delivered = True
         except httpx.HTTPError as e:
             print(f"[notify] error: {e}", flush=True)
+    return delivered
 
 
-def _pending_key() -> str | None:
-    """The single outstanding remote start, dropping it if it has aged out."""
-    for key, ts in list(_p2s_pending.items()):
+def _pending_key(device: str = "") -> str | None:
+    """This device's outstanding remote start, dropping it if it has aged out.
+
+    Still at most ONE unresolved start per device: a card is identifiable only by its push token, so
+    two simultaneously-pending starts for one device could not be told apart and adoption would bind
+    them arbitrarily. Scoping by device keeps that property while letting two phones each adopt
+    their own card.
+    """
+    want = device or registry.LEGACY_DEVICE
+    for pending_id, ts in list(_p2s_pending.items()):
+        key, _, owner = pending_id.rpartition("|")
+        if not key:  # legacy entry written before ids existed
+            key, owner = pending_id, registry.LEGACY_DEVICE
         if time.time() - ts > P2S_PENDING_TTL:
-            _p2s_pending.pop(key, None)
+            _p2s_pending.pop(pending_id, None)
             print(f"[p2s] pending {key} expired — the app will end that card as an orphan", flush=True)
             _save()
-        else:
+        elif owner == want:
             return key
     return None
 
@@ -438,12 +728,25 @@ async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: st
     # claim as the "may I start?" test is exactly what produced hundreds of duplicate cards. The
     # caller decides via should_start(); this only refuses when there is nothing to push to, or the
     # card already exists.
-    if not _p2s_tokens or key in _regs:
+    if not _p2s_tokens:
         return False
     # The registry key is the ONLY place the printer/AMS ids survive to here, and the native client's
     # attributes need both — a start without them creates no card.
     pid, ams = key_ids(key)
+    sent = False
     for tok in list(_p2s_tokens):
+        device = _p2s_devices.get(tok) or registry.LEGACY_DEVICE
+        # Per device, not per key. Asking whether ANY card exists is a nearby question: once one
+        # phone adopts a card, the other would never receive a start again, for any print.
+        if registry.has_card(_regs, key, device):
+            continue
+        if _pending_key(device) == key:
+            continue  # this device already has an unresolved start for this card
+        # A grant is single-use and per device: it is consumed here whether or not the push lands,
+        # so a device cannot accumulate replacements.
+        rearmed = _p2s_rearm.pop(_pending_id(key, device), None) is not None
+        if _p2s_started.get(key) is not None and not rearmed:
+            continue  # already started once this live session, and this device was not re-armed
         tok_client = norm_client(_p2s_clients.get(tok))
         code = await _push_start(client, tok, {**cs, "iconUri": _p2s_icons.get(tok, cs.get("iconUri", ""))},
                                  printer_id=pid, ams_id=ams, la_client=tok_client)
@@ -452,9 +755,13 @@ async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: st
             _p2s_tokens.remove(tok)
             _p2s_icons.pop(tok, None)
             _p2s_clients.pop(tok, None)
-    _p2s_pending[key] = time.time()
-    _save()
-    return True
+            _p2s_devices.pop(tok, None)
+            continue
+        _p2s_pending[_pending_id(key, device)] = time.time()
+        sent = True
+    if sent:
+        _save()
+    return sent
 
 
 def _f(v) -> float:
@@ -522,9 +829,13 @@ async def _poll_loop() -> None:
 
 
 async def _tick(client: httpx.AsyncClient) -> None:
+    # Deliver queued banners first: an event that failed last tick is older than
+    # anything this one will produce.
+    await _drain_outbox(client)
+
     # Poll every printer with a Live-Activity card; also the whole fleet when a device token is
     # registered (so print-done/error alerts fire even with no card up).
-    ids: set[int] = {int(r["printerId"]) for r in _regs.values()}
+    ids: set[int] = registry.printer_ids(_regs)
     if _device_tokens:
         names = await _list_printers(client)
         if names:
@@ -539,66 +850,82 @@ async def _tick(client: httpx.AsyncClient) -> None:
         if status is None:
             continue
         fields, kind = classify(status)
-        reg = _regs.get(str(pid))
-        name = (reg or {}).get("printerName") or _printers_cache.get(pid) or f"Printer {pid}"
+        print_cards = registry.cards(_regs, str(pid))
+        name = (print_cards[0].get("printerName") if print_cards else None) or _printers_cache.get(pid) or f"Printer {pid}"
 
         # 1b) Drying cards: one per UNIT, each with its own lifecycle driven by that unit's
         # dry_time. Keyed "dry:<pid>:<amsId>" — a per-printer key could only ever track one cycle,
         # so a second unit's card was never updated and its completion never pushed.
         for dkey in [k for k in list(_regs) if k.startswith(f"dry:{pid}:") or k == f"dry:{pid}"]:
-            dreg = _regs.get(dkey)
-            if not dreg:
+            # Snapshot: the loop body drops registrations, and mutating while iterating raises
+            # inside the poll loop, which swallows it — drying cards would just stop updating.
+            dregs = list(registry.cards(_regs, dkey))
+            if not dregs:
                 continue
-            dname = dreg.get("printerName") or name
+            dname = dregs[0].get("printerName") or name
             # Legacy per-printer registrations (no ams id) keep working: fall back to "any unit".
             parts = dkey.split(":")
             d_ams = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else None
             ds = dry_state(status, d_ams)
-            if ds is None:
-                end_cs = {**(dreg.get("lastState") or {}), "printerName": dname, "iconUri": dreg.get("iconUri", ""),
-                          "dry": True, "stateLabel": "Done", "finished": True, "etaEpochMs": 0}
-                code = await _push_end(client, dreg, end_cs)
-                print(f"[end] {dkey} -> {code}", flush=True)
-                _regs.pop(dkey, None)
-                _save()
-            else:
+            dirty = False
+            for dreg in dregs:
+                # Every payload is built per element: the end state merges over THIS device's
+                # lastState and carries ITS icon path (an App-Group path only that device knows),
+                # and envelope() picks the shape from ITS client discriminator. A wrong shape is
+                # accepted by APNs with a 200 and silently discarded.
+                if ds is None:
+                    end_cs = {**(dreg.get("lastState") or {}), "printerName": dname,
+                              "iconUri": dreg.get("iconUri", ""), "dry": True,
+                              "stateLabel": "Done", "finished": True, "etaEpochMs": 0}
+                    code = await _push_end(client, dreg, end_cs)
+                    print(f"[end] {dkey} -> {code}", flush=True)
+                    registry.drop_token(_regs, dkey, dreg.get("pushToken"))
+                    dirty = True
+                    continue
+
                 dcs = {"printerName": dname, "iconUri": dreg.get("iconUri", ""), **ds}
-                if meaningful_change(dreg.get("lastState"), dcs) and (now - dreg.get("lastPush", 0) >= MIN_UPDATE_S):
+                if (meaningful_change(dreg.get("lastState"), dcs) or _needs_heartbeat(dreg, now)) \
+                        and (now - dreg.get("lastPush", 0) >= MIN_UPDATE_S):
                     prio = "10" if _urgent(dreg.get("lastState"), dcs) else "5"
                     code = await _push_update(client, dreg, dcs, prio)
                     print(f"[update] {dkey} prio {prio} -> {code}", flush=True)
                     if code in (400, 410):
+                        # Per token: this device's card is gone, the others are still live.
                         print(f"[drop] {dkey} -> {code}", flush=True)
-                        _regs.pop(dkey, None)
-                        _save()
+                        registry.drop_token(_regs, dkey, dreg.get("pushToken"))
                     else:
                         dreg["lastState"], dreg["lastPush"] = dcs, now
-                        _save()
-
-        # 1) Live-Activity card: throttled update, or end on a terminal state.
-        if reg:
-            cs = {"printerName": name, "iconUri": reg.get("iconUri", ""), **fields}
-            if kind in ("complete", "error", "idle"):
-                code = await _push_end(client, reg, cs)
-                print(f"[end] printer {pid} -> {code}", flush=True)
-                _regs.pop(str(pid), None)
+                    dirty = True
+            if dirty:
                 _save()
-            elif meaningful_change(reg.get("lastState"), cs) and (now - reg.get("lastPush", 0) >= MIN_UPDATE_S):
-                prio = "10" if _urgent(reg.get("lastState"), cs) else "5"
-                code = await _push_update(client, reg, cs, prio)
+
+        # 1) Live-Activity card: throttled update, or end on a terminal state. One card per
+        # device, each with its own throttle and its own last-seen state.
+        dirty = False
+        for creg in list(print_cards):
+            cs = {"printerName": name, "iconUri": creg.get("iconUri", ""), **fields}
+            if kind in ("complete", "error", "idle"):
+                code = await _push_end(client, creg, cs)
+                print(f"[end] printer {pid} -> {code}", flush=True)
+                registry.drop_token(_regs, str(pid), creg.get("pushToken"))
+                dirty = True
+            elif (meaningful_change(creg.get("lastState"), cs) or _needs_heartbeat(creg, now)) \
+                    and (now - creg.get("lastPush", 0) >= MIN_UPDATE_S):
+                prio = "10" if _urgent(creg.get("lastState"), cs) else "5"
+                code = await _push_update(client, creg, cs, prio)
                 print(f"[update] printer {pid} prio {prio} -> {code}", flush=True)
                 if code in (400, 410):
                     print(f"[drop] printer {pid} -> {code}", flush=True)
-                    _regs.pop(str(pid), None)
-                    _save()
+                    registry.drop_token(_regs, str(pid), creg.get("pushToken"))
                 else:
-                    reg["lastState"], reg["lastPush"] = cs, now
-                    _save()
+                    creg["lastState"], creg["lastPush"] = cs, now
+                dirty = True
+        if dirty:
+            _save()
 
         # 1c) Push-to-start: a print/dry began while NO card is registered (app closed) -> start the
         # Live Activity remotely. Edge-triggered exactly like the banners so it fires once per event.
         if _p2s_tokens:
-            prev_kind = _last_kind.get(pid)
             # STATE-based, not edge-based: "this printer is live and has no card" is the condition,
             # so a print that was ALREADY running when the service (or the card) went away still gets
             # one. Edge-triggering meant a mid-print restart, or a card the user swiped away, could
@@ -607,7 +934,10 @@ async def _tick(client: httpx.AsyncClient) -> None:
             # ONE card per print, keyed by the print's identity — not one per expiring claim.
             key = str(pid)
             ident = print_identity(status, fields)
-            if should_start(kind == "live", ident, _p2s_started.get(key), key in _regs):
+            # NB `key in _regs` answers "does ANYONE have a card", which is a nearby question and
+            # not this one. _remote_start now decides per device, so a phone that has no card still
+            # gets a start even when another phone in the house does.
+            if should_start(kind == "live", ident, _p2s_started.get(key), False) or _has_rearm(key):
                 await _remote_start(client, key, {"printerName": name, **fields}, f"print {pid} [{ident}]")
             nxt = next_started_for(kind == "live", ident, _p2s_started.get(key))
             if nxt != _p2s_started.get(key):
@@ -630,7 +960,8 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 dkey = f"dry:{pid}:{a_id}"
                 live_dry_keys.add(dkey)
                 dident = dry_identity(a_id, units.get(a_id) or {})
-                if should_start(True, dident, _p2s_started.get(dkey), dkey in _regs):
+                # Per device, decided inside _remote_start — see the print gate above.
+                if should_start(True, dident, _p2s_started.get(dkey), False) or _has_rearm(dkey):
                     await _remote_start(client, dkey, {"printerName": name, **ds0}, f"dry {pid}:{a_id}")
                 _p2s_started[dkey] = dident
             # Forget cycles that ended, so the NEXT cycle on that unit starts a card again.
@@ -651,14 +982,14 @@ async def _tick(client: httpx.AsyncClient) -> None:
             if prev is not None and prev != kind:
                 model = fields.get("name") or "your print"
                 if kind == "complete":
-                    await _notify(client, f"✅ {name} — print finished", model)
+                    _queue_alert(f"{pid}:complete", f"✅ {name} — print finished", model)
                 elif kind == "error":
-                    await _notify(client, f"⚠️ {name} — needs attention", model)
+                    _queue_alert(f"{pid}:error", f"⚠️ {name} — needs attention", model)
                 elif kind == "idle" and prev == "live":
                     # A live print that goes IDLE ended WITHOUT completing — aborted by the printer,
                     # or cancelled. This was silent: only complete/error notified, so the one case
                     # you most want to hear about while away produced nothing at all.
-                    await _notify(client, f"⏹️ {name} — print stopped", f"{model} ended before finishing.")
+                    _queue_alert(f"{pid}:stopped", f"⏹️ {name} — print stopped", f"{model} ended before finishing.")
         # PAUSE is not a `kind` change (see _last_paused), so it needs its own edge. This is the
         # alert that matters most: an AI-detection halt (spaghetti/pile-up/first-layer) stops the
         # print and waits for a human — and those fire false positives.
@@ -672,7 +1003,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 why = "The printer halted it — resume or stop it in the app."
                 if err:
                     why = f"Halted with error {err} — open the app to resume or stop."
-                await _notify(client, f"⏸️ {name} — print paused", f"{model}. {why}")
+                _queue_alert(f"{pid}:paused", f"⏸️ {name} — print paused", f"{model}. {why}")
             _last_paused[pid] = paused_now
             if paused_now:
                 _paused_at[pid] = time.time()
@@ -688,7 +1019,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
             sent = _paused_reminded.get(pid, 0)
             if sent < len(PAUSE_REMINDERS_MIN) and mins >= PAUSE_REMINDERS_MIN[sent]:
                 model = fields.get("name") or "your print"
-                await _notify(client, f"⏸️ {name} — still paused ({int(mins)} min)", f"{model} is waiting on you.")
+                _queue_alert(f"{pid}:paused:{int(mins)}", f"⏸️ {name} — still paused ({int(mins)} min)", f"{model} is waiting on you.")
                 _paused_reminded[pid] = sent + 1
                 _save()
 
@@ -711,11 +1042,11 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 # stay stuck at room temperature, and promising a pop invites someone to force it
                 # and tear the PEI coating off the steel.
                 if action == READY:
-                    await _notify(client, f"🧊 {name} — plate is cool",
-                                  f"Bed at {int(bed_now)}°C. Safe to flex the plate and lift {model} off.")
+                    _queue_alert(f"{pid}:cool", f"🧊 {name} — plate is cool",
+                         f"Bed at {int(bed_now)}°C. Safe to flex the plate and lift {model} off.")
                 else:
-                    await _notify(client, f"🧊 {name} — plate has stopped cooling",
-                                  f"Settled at {int(bed_now)}°C, as cool as it will get today. Go ahead and flex the plate.")
+                    _queue_alert(f"{pid}:cool", f"🧊 {name} — plate has stopped cooling",
+                         f"Settled at {int(bed_now)}°C, as cool as it will get today. Go ahead and flex the plate.")
                 print(f"[cool] printer {pid}: {action} at {int(bed_now)}C (threshold {threshold:g})", flush=True)
             _save()
 
@@ -734,14 +1065,14 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 prev_dry = _last_dry.get(dkey)
                 if prev_dry is not None and prev_dry.get("t", 0) > 0 and cur <= 0 and prev_dry.get("t", 0) <= 15:
                     fil = prev_dry.get("fil") or "Filament"
-                    await _notify(client, f"💨 {name} — drying finished", f"{fil} is dry.")
+                    _queue_alert(f"{pid}:dry:{key}", f"💨 {name} — drying finished", f"{fil} is dry.")
                 if prev_dry is None or prev_dry.get("t") != cur:
                     _last_dry[dkey] = {"t": cur, "fil": (unit.get("dry_filament") or (prev_dry or {}).get("fil") or "")}
                     _save()
 
 
 # ---- HTTP API ----
-app = FastAPI(title="la-push")
+app = FastAPI(title="Trellis")
 
 
 # Accepted-key cache: sha256(key) -> monotonic expiry. Never stores raw keys. Bounded — a scan of
@@ -752,7 +1083,7 @@ _KEY_CACHE_TTL = 300.0
 
 async def _require_key(x_api_key: str | None = Header(default=None)) -> None:
     """Gate the register endpoints on a VALID Bambuddy API key (the app already sends it as
-    X-API-Key). Without this, ANYONE who knows the public la-push URL could POST their token and
+    X-API-Key). Without this, ANYONE who knows the public Trellis URL could POST their token and
     receive the owner's print notifications (name, progress, finish/error) — an info leak.
 
     Validation is delegated to Bambuddy: equality with the configured admin key is a fast path, and
@@ -777,6 +1108,60 @@ async def _require_key(x_api_key: str | None = Header(default=None)) -> None:
     raise HTTPException(status_code=401, detail="unauthorized")
 
 
+async def _forward_claim(claim: dict | None, push_token: str, device: str) -> None:
+    """Relay a device's Canopy claim, if there is one.
+
+    The body is passed through verbatim: every field is inside the device's signed client data, so
+    altering one would only invalidate the signature — which is exactly the property that stops a
+    compromised companion binding somebody else's token.
+
+    A transport failure raises 502 rather than answering the phone with success. If we said 200 on
+    a claim we never delivered, the app would mark the registration accepted and stop retrying, and
+    the card would sit unclaimed for the whole print with every component reporting success.
+    """
+    if not RELAY_MODE:
+        # Nothing to bind: this deployment signs its own pushes, so the registration is as final as
+        # it can be. True means "as bound as this mode gets", not "a relay accepted it".
+        return True
+    if not claim:
+        # Relay mode with NO claim. The registration is stored and answered 200 because the card
+        # itself is fine — but the token is NOT bound, and saying otherwise is how a transient
+        # App Attest failure on the phone became a card frozen for a whole print: the app marked
+        # the registration final on the 200 and never tried again.
+        print(f"[canopy] {push_token[:8]}… registered WITHOUT a claim ({device}); "
+              f"it cannot be pushed to until the device claims it", flush=True)
+        return False
+    if _canopy is None or _canopy.credentials is None:
+        raise HTTPException(status_code=503, detail="not enrolled with the push relay yet")
+
+    res = await _canopy.claim(claim)
+    if res.ok:
+        _needs_claim.pop(push_token, None)
+        _suspended.pop(push_token, None)
+        return True
+    if not res.definitive:
+        raise HTTPException(status_code=502, detail="could not reach the push relay; retry")
+    # Logged, because a refused claim is otherwise invisible from both ends: the phone sees a 403
+    # with no context and the relay's own logs do not say which device it belonged to.
+    print(f"[canopy] claim refused for {push_token[:8]}… ({device}): {res.reason}", flush=True)
+
+    if res.reason == "vouch_required":
+        # The relay wants this token to prove it is reachable before binding it, and only IT
+        # can send that push -- it holds the signing key. So ask, and let the silent push carry
+        # the nonce to the device, which re-registers with the nonce inside its signed claim.
+        # The nonce deliberately never passes through here: a value this box could mint would
+        # prove nothing about who receives pushes on the token.
+        try:
+            await _canopy.vouch(push_token, "production")
+            print(f"[canopy] vouch requested for {push_token[:8]}…", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[canopy] vouch request failed: {e}", flush=True)
+    # The reason travels verbatim: the phone resolves reattest_required itself, and collapsing it
+    # to a generic failure would leave it retrying an assertion against a key the relay has never
+    # seen, indefinitely.
+    raise HTTPException(status_code=403, detail=res.reason or "claim refused")
+
+
 class Register(BaseModel):
     # Card keys: "<printerId>" for the print card, "dry:<printerId>:<amsId>" for a drying card —
     # one per DRYING UNIT, since several units can dry at once.
@@ -790,29 +1175,114 @@ class Register(BaseModel):
     # Defaults to "expo" because the RN build is already installed and does not send the field; it
     # can only be changed by an OTA, so an absent value MUST keep meaning what it meant before.
     client: str = EXPO
+    # Which phone. Minted by the app, not here, so it exists before any registration of any kind and
+    # survives whatever the Keychain survives. Absent = a legacy single-device client.
+    device_id: str = ""
+    # The device's Canopy claim, forwarded verbatim. Absent in DIRECT mode and from the legacy
+    # client, which is why relay mode rejects a registration that omits it rather than binding
+    # something unverified.
+    claim: dict | None = None
 
 
 class DeviceReg(BaseModel):
     device_token: str  # raw APNs device token for regular alert notifications
+    device_id: str = ""  # which phone — see Register.device_id
+    claim: dict | None = None  # see Register.claim
+
+
+_canopy_http: httpx.AsyncClient | None = None
+
+
+async def _canopy_transport(method: str, path: str, body: dict | None, bearer: str | None):
+    """httpx behind the Canopy client's injected transport.
+
+    One client for the process, not one per call: a fresh AsyncClient means a fresh TLS handshake
+    for every push, and this path runs on every meaningful change of every card. Keeping it open
+    also lets HTTP/2 multiplex, which is what makes several cards updating in one tick cheap.
+    """
+    global _canopy_http
+    if _canopy_http is None:
+        _canopy_http = httpx.AsyncClient(timeout=10, http2=True)
+    headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
+    r = await _canopy_http.request(method, f"{CANOPY_URL}{path}", json=body, headers=headers)
+    try:
+        return r.status_code, r.json()
+    except (json.JSONDecodeError, ValueError):
+        return r.status_code, None
+
+
+async def _ensure_enrolled() -> None:
+    """Enrol with Canopy, re-adopting our previous identity if we have a recovery code.
+
+    Failure is deliberately NOT fatal: the service still serves collections, still answers the
+    phone, and retries. A relay that cannot be reached at boot must not take the whole companion
+    down with it.
+    """
+    global _canopy
+    if not RELAY_MODE:
+        return
+    _canopy = canopy.CanopyClient(_canopy_transport)
+
+    stored = {}
+    try:
+        stored = json.loads(TENANT_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    if stored.get("tenant_id") and stored.get("tenant_secret"):
+        _canopy.credentials = canopy.Credentials(
+            stored["tenant_id"], stored["tenant_secret"], stored.get("recovery_code", ""))
+        return
+
+    try:
+        creds = await _canopy.enroll(
+            invite_code=CANOPY_INVITE_CODE,
+            recovery_code=stored.get("recovery_code", ""),
+        )
+    except Exception as e:  # noqa: BLE001
+        hint = ""
+        if "403" in str(e) and not CANOPY_INVITE_CODE:
+            # The one failure a self-hoster cannot diagnose from the status alone.
+            hint = (" — this relay requires an invite; set CANOPY_INVITE_CODE, or point CANOPY_URL "
+                    "at your own Canopy (docs/guides/self-hosting-push.md)")
+        print(f"[canopy] enrolment failed ({e}){hint}; push is off until it succeeds", flush=True)
+        _canopy.credentials = None
+        return
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    TENANT_FILE.write_text(json.dumps({
+        "tenant_id": creds.tenant_id, "tenant_secret": creds.tenant_secret,
+        "recovery_code": creds.recovery_code,
+    }))
+    # Printed once, and only here. The recovery code confers tenant identity, so it must not be
+    # served from an endpoint gated by a key whose scope we do not control — save it somewhere that
+    # outlives this data volume, or a full rebuild cannot re-adopt these bindings.
+    print(f"[canopy] enrolled as {creds.tenant_id}", flush=True)
+    print(f"[canopy] RECOVERY CODE (save this — shown once): {creds.recovery_code}", flush=True)
 
 
 @app.on_event("startup")
 async def _startup() -> None:
     _load()
-    _apns_token()  # fail fast if the .p8 / key id is wrong
+    if RELAY_MODE:
+        await _ensure_enrolled()
+    else:
+        _apns_token()  # fail fast if the .p8 / key id is wrong
     asyncio.create_task(_poll_loop())
-    print(f"la-push up — APNs {APNS_HOST}, LA topic {APNS_TOPIC}, alert topic {APNS_BUNDLE_ID}, "
-          f"{len(_regs)} cards, {len(_device_tokens)} device(s)", flush=True)
+    backend = f"relay {CANOPY_URL}" if RELAY_MODE else f"APNs {APNS_HOST}"
+    print(f"trellis up — {backend}, "
+          f"{registry.card_count(_regs)} cards, {len(_device_tokens)} device(s)", flush=True)
 
 
 @app.get("/health")
 async def health() -> dict:
     return {
-        "ok": True, "registrations": len(_regs), "devices": len(_device_tokens), "apns_host": APNS_HOST,
+        "ok": True, "registrations": registry.card_count(_regs), "devices": len(_device_tokens), "apns_host": APNS_HOST,
         # Per-client counts: a native build whose registration silently landed as "expo" — the exact
         # failure the discriminator exists to prevent, and one that looks like a healthy 200 from
         # every other angle — is visible here without touching the phone.
-        "cards_by_client": {c: sum(1 for reg in _regs.values() if client_of(reg) == c) for c in (EXPO, NATIVE)},
+        "cards_by_client": registry.count_by(_regs, client_of),
+        "push_suspended": [{"token": t[:8], "reason": why} for t, why in _suspended.items()],
         "start_tokens_by_client": {c: sum(1 for t in _p2s_tokens if norm_client(_p2s_clients.get(t)) == c) for c in (EXPO, NATIVE)},
     }
 
@@ -821,10 +1291,13 @@ class StartReg(BaseModel):
     push_token: str  # ActivityKit push-to-start token (per device, per attributes type)
     icon_uri: str = ""  # App-Group glyph path, so remote starts match app-started cards
     client: str = EXPO  # "expo" | "native" — see Register.client
+    device_id: str = ""  # which phone — see Register.device_id
+    claim: dict | None = None  # see Register.claim
 
 
 @app.post("/register-start")
 async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
+    bound = await _forward_claim(r.claim, r.push_token, r.device_id or registry.LEGACY_DEVICE)
     if r.push_token:
         if r.push_token not in _p2s_tokens:
             _p2s_tokens.append(r.push_token)
@@ -835,13 +1308,49 @@ async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
         # OTHER build can re-present a token we already hold, and a stale client here means a start
         # payload of the wrong shape — accepted by APNs, no card on the phone.
         _p2s_clients[r.push_token] = norm_client(r.client)
+        if r.device_id:
+            _p2s_devices[r.push_token] = r.device_id
+        if not bound:
+            _needs_claim[r.push_token] = r.device_id or registry.LEGACY_DEVICE
         _save()
-    return {"ok": True}
+    return {"ok": True, "bound": bound}
+
+
+class ChallengeReq(BaseModel):
+    purpose: str = "assertion"  # "attestation" on first use of a key, "assertion" after
+
+
+@app.post("/challenge")
+async def challenge(r: ChallengeReq, _: None = Depends(_require_key)) -> dict:
+    """Relay a Canopy challenge to the phone.
+
+    The phone never talks to Canopy directly, so this is how it obtains the single-use nonce it must
+    sign over. Trellis only passes it along: the nonce is opaque here, and the claim that spends it
+    is signed by the device, so a compromised companion can neither mint one nor alter the claim it
+    ends up inside.
+    """
+    if not RELAY_MODE:
+        raise HTTPException(status_code=409, detail="not in relay mode; no challenge is needed")
+    if _canopy is None or _canopy.credentials is None:
+        raise HTTPException(status_code=503, detail="not enrolled with the push relay yet")
+    try:
+        return {"challenge": await _canopy.challenge(r.purpose)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"could not reach the push relay: {e}") from e
 
 
 class Sync(BaseModel):
     tokens: list[str] = []  # EVERY live activity the app can currently see
     icon_uri: str = ""
+    # Which device is reporting. Without it two phones share one Bambuddy API key and are
+    # indistinguishable, so one phone's reconcile deregisters the other's cards — they then freeze,
+    # never updated and never ended, while the next tick starts duplicates underneath.
+    device_id: str = ""
+    # Which app is reporting. A card adopted through this path is pushed to with the payload shape
+    # this names, and the shapes are not interchangeable: an expo-shaped start reaches a native
+    # widget as a push APNs accepts and the phone shows no card for. Defaulting to expo keeps the
+    # installed RN app working unchanged; the native app sends "native" explicitly.
+    client: str = ""
 
 
 @app.post("/sync")
@@ -859,50 +1368,76 @@ async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
       * an unknown token with nothing to claim it -> we return it for the app to end.
     """
     seen = {t for t in r.tokens if t}
+    device = r.device_id or registry.LEGACY_DEVICE
 
-    # 1. Forget cards that no longer exist.
-    for key, reg in list(_regs.items()):
-        if reg.get("pushToken") and reg["pushToken"] not in seen:
-            _regs.pop(key, None)
-            print(f"[sync] card {key} is gone from the device — dropped, free to restart", flush=True)
+    # 1. Forget THIS DEVICE's cards that no longer exist. Scoping is essential: a report from one
+    # phone says nothing about what another phone can see.
+    reporting = norm_client(r.client)
+    for key in registry.prune_device(_regs, device, seen):
+        # Grant ONE replacement, for THIS DEVICE only. Arming is otherwise once per live session,
+        # which is what stops a mid-print identity change from spawning a second card — but it also
+        # meant a card that DIED mid-print was never replaced and the lock screen stayed empty for
+        # the rest of the print. Observed: installing a new build terminated the running activity
+        # and the print had no card until the registry was cleared by hand.
+        #
+        # Two things this must NOT become:
+        #
+        #  * global. _p2s_started is keyed by registry key alone while every other push-to-start
+        #    decision is per device, so clearing it outright let one phone's reconcile stack a
+        #    second card onto another phone's lock screen — on top of a card that phone had never
+        #    adopted and could not update.
+        #  * a response to a DISMISSAL. Only a client that reports witnessed dismissals separately
+        #    (via /unregister) can distinguish "this card died" from "the user swiped it away", and
+        #    the RN app does not: its sole reconcile path is this endpoint, so a swiped card would
+        #    come back within 45 seconds, which is the opposite of what the user asked for.
+        if reporting != NATIVE:
+            print(f"[sync] card {key} is gone from {device} — dropped; no re-arm for a "
+                  f"{reporting} client, which cannot tell a dismissal from a death", flush=True)
+            continue
+        _p2s_rearm[_pending_id(key, device)] = time.time()
+        print(f"[sync] card {key} is gone from {device} — dropped and re-armed for that device",
+              flush=True)
 
     # 2. Claim / disown the tokens we were handed.
-    known = {reg.get("pushToken") for reg in _regs.values()}
+    known = registry.all_tokens(_regs)
     orphans: list[str] = []
     for tok in seen:
         if tok in known:
             continue
-        key = _pending_key()
+        key = _pending_key(device)
         if key is None:
             orphans.append(tok)
             continue
         pid = int(key.split(":")[1]) if key.startswith("dry:") else int(key)
-        _regs[key] = {
-            "printerId": pid, "pushToken": tok,
+        registry.upsert(_regs, key, {
+            "printerId": pid, "pushToken": tok, "deviceId": device,
             "printerName": _printers_cache.get(pid) or f"Printer {pid}",
             "iconUri": r.icon_uri, "kind": "dry" if key.startswith("dry:") else "print",
-            # /sync is the RN app's reconcile path and ONLY the RN app's — the native app hands a
-            # remotely-started card over through /register (with client:"native") when its push-token
-            # stream fires, and never posts here. Stated rather than left to default so a native app
-            # that grows a /sync call is an obvious edit rather than a silent expo-shaped push.
-            "client": EXPO,
+            # Taken from the reporting app, not assumed. This was EXPO with a note that the native
+            # app never posted here — it does now, and an unmarked adoption would push an
+            # expo-shaped payload at a native widget: accepted by APNs, no card on the phone.
+            "client": norm_client(r.client),
             "lastPush": 0, "lastState": None,
-        }
-        _p2s_pending.pop(key, None)
+        })
+        _p2s_pending.pop(_pending_id(key, device), None)
         known.add(tok)
         print(f"[sync] bound {key} -> token {tok[:8]}… (card is now updatable)", flush=True)
 
     _save()
-    return {"end": orphans, "cards": list(_regs.keys())}
+    return {"end": orphans, "cards": list(_regs.keys()), "needs_claim": _needs_claim_for(device)}
 
 
 @app.post("/register-device")
 async def register_device(r: DeviceReg, _: None = Depends(_require_key)) -> dict:
+    bound = await _forward_claim(r.claim, r.device_token, r.device_id or registry.LEGACY_DEVICE)
     if r.device_token not in _device_tokens:
         _device_tokens.append(r.device_token)
         _save()
         print(f"[device] registered {r.device_token[:8]}… ({len(_device_tokens)} total)", flush=True)
-    return {"ok": True}
+    if not bound:
+        _needs_claim[r.device_token] = r.device_id or registry.LEGACY_DEVICE
+        _save()
+    return {"ok": True, "bound": bound}
 
 
 @app.post("/register")
@@ -910,22 +1445,50 @@ async def register(r: Register, _: None = Depends(_require_key)) -> dict:
     key = str(r.printer_id) if r.kind != "dry" else (
         f"dry:{r.printer_id}:{r.ams_id}" if r.ams_id is not None else f"dry:{r.printer_id}"
     )
-    _regs[key] = {
-        "printerId": r.printer_id, "pushToken": r.push_token, "printerName": r.printer_name,
+    device = r.device_id or registry.LEGACY_DEVICE
+    bound = await _forward_claim(r.claim, r.push_token, device)
+    # upsert, not assign: another phone may already hold a card under this key, and clobbering it
+    # freezes that phone's card for the rest of the print.
+    registry.upsert(_regs, key, {
+        "printerId": r.printer_id, "pushToken": r.push_token, "deviceId": device,
+        "printerName": r.printer_name,
         "iconUri": r.icon_uri, "kind": r.kind, "client": norm_client(r.client),
         "lastPush": 0, "lastState": None,
-    }
+    })
+    _suspended.pop(r.push_token, None)  # a fresh registration clears any push suspension
+    if bound:
+        _needs_claim.pop(r.push_token, None)
+    else:
+        # Remember it. Clearing this on an unclaimed registration threw away the one record that
+        # this token still needs claiming, so nothing downstream could tell the device to retry.
+        _needs_claim[r.push_token] = device
     if r.kind != "dry":
-        _p2s_pending.pop(str(r.printer_id), None)  # reachable again — future starts are allowed
+        _p2s_pending.pop(_pending_id(str(r.printer_id), device), None)  # reachable again
     _save()
     print(f"[register] {r.kind} printer {r.printer_id} ({r.printer_name}) [{norm_client(r.client)}] "
-          f"token {r.push_token[:8]}…", flush=True)
-    return {"ok": True}
+          f"token {r.push_token[:8]}… bound={bound}", flush=True)
+    # `bound` is the whole point of this response. `ok` says the CARD was stored, which is true even
+    # when the token cannot be pushed to; the app must not treat that as a finished registration.
+    return {"ok": True, "bound": bound}
 
 
 @app.post("/unregister")
-async def unregister(printer_id: int, _: None = Depends(_require_key)) -> dict:
-    _regs.pop(str(printer_id), None)
+async def unregister(printer_id: int, push_token: str = "", device_id: str = "",
+                     _: None = Depends(_require_key)) -> dict:
+    """Drop one card.
+
+    Token-scoped, because "this card is gone" is a statement about one device. Dropping the whole
+    key would take every other phone's live card with it — they would freeze, never be ended, and
+    the next tick would start duplicates underneath. The unqualified form is kept only for the
+    legacy single-device client.
+    """
+    key = str(printer_id)
+    if push_token:
+        registry.drop_token(_regs, key, push_token)
+    elif device_id:
+        registry.drop_device(_regs, key, device_id)
+    else:
+        registry.drop_key(_regs, key)
     _save()
     return {"ok": True}
 

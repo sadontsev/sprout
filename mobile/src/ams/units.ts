@@ -1,6 +1,6 @@
 // Pure AMS topology: 1..N units of mixed kinds -> the view-models every AMS surface consumes.
 //
-// Before this module the app read `status.ams[0]` in four places (plus la-push), so a second unit was
+// Before this module the app read `status.ams[0]` in four places (plus Trellis), so a second unit was
 // invisible. That is not future-proofing: the owner's H2C now reports THREE units — two AMS 2 Pro
 // (ids 0 and 1, module_type "n3f", 4 trays each) and an AMS HT (id 128, "n3s", 1 tray, is_ams_ht) —
 // verified live on 2026-08-01, together with a Filament Track Switch (`fila_switch.installed`).

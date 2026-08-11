@@ -42,7 +42,7 @@ export function normColor(hex?: string | null): string | null {
 
 ### 1. AMS topology — `src/ams/units.ts`
 
-Governs 1..N AMS units of mixed kinds. **Before this module existed the app read `status.ams[0]` in four places (plus la-push), so a second unit was invisible.** The owner's live H2C (verified 2026-08-01) reports THREE units: two AMS 2 Pro (ids `0` and `1`, `module_type: "n3f"`, 4 trays each) and an AMS HT (id `128`, `"n3s"`, 1 tray, `is_ams_ht: true`), plus a Filament Track Switch (`fila_switch.installed`). The H2 series drives up to 4 regular units (ids 0–3) plus 8 HT units (128–135); this module assumes nothing about how many of either exist.
+Governs 1..N AMS units of mixed kinds. **Before this module existed the app read `status.ams[0]` in four places (plus Trellis), so a second unit was invisible.** The owner's live H2C (verified 2026-08-01) reports THREE units: two AMS 2 Pro (ids `0` and `1`, `module_type: "n3f"`, 4 trays each) and an AMS HT (id `128`, `"n3s"`, 1 tray, `is_ams_ht: true`), plus a Filament Track Switch (`fila_switch.installed`). The H2 series drives up to 4 regular units (ids 0–3) plus 8 HT units (128–135); this module assumes nothing about how many of either exist.
 
 #### 1.1 `globalTrayId` — the one piece of id math in the app
 

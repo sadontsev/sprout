@@ -270,14 +270,49 @@ struct DashboardView: View {
 
     // MARK: - Camera tile
 
-    /// Low frame rate on purpose: this is a thumbnail, and the camera is shared. The badge quotes
-    /// this number, so the two cannot drift apart the way they did when the tile was a 2 s poll
-    /// labelled "1 fps".
-    private static let tileFps = 2
+    /// The thumbnail's frame rate, chosen from what the current network path actually costs — full
+    /// rate on wifi, a trickle on cellular or Low Data. `CameraRate` carries the reasoning; the short
+    /// version is that `?fps=` never reaches the printer (it is an ffmpeg *output* flag, so the
+    /// printer streams at full rate either way and Bambuddy forwards fewer frames), which makes the
+    /// only cost of a high rate the phone's own bandwidth — free at home, ~120 MB a minute on
+    /// cellular.
+    ///
+    /// nil until the path resolves. This is the CANDIDATE rate for the next connection, and never the
+    /// live one — see `latchedTileFps`, which is what actually reaches the URL.
+    private var pathTileFps: Int? {
+        let path = model.networkPath
+        guard path.resolved else { return nil }
+        return CameraRate.tile(isExpensive: path.isExpensive, isConstrained: path.isConstrained)
+    }
+
+    /// The rate the CURRENT connection is using, held fixed for as long as that connection lasts.
+    ///
+    /// The latch is the load-bearing part. This number goes into the stream URL, and
+    /// `CameraPiPUIView.setURL` treats a new URL as a reason to restart the connection — so letting a
+    /// path update rewrite it mid-stream drops the tile's socket, and because the tile is usually the
+    /// camera's only viewer, that also tears the shared upstream down and pays the printer's cold
+    /// start over again. Several seconds of "WAKING…" is far too much to pay for re-rating a
+    /// thumbnail, so a changed path is picked up at the next natural connect instead: when the tab
+    /// comes back, or the fullscreen overlay closes.
+    @State private var latchedTileFps: Int?
 
     private var tileStreamURL: URL? {
-        guard let client = model.client, let token = model.cameraToken else { return nil }
-        return client.streamUrl(model.printerId, token: token, fps: Self.tileFps)
+        guard let client = model.client, let token = model.cameraToken, let fps = latchedTileFps else { return nil }
+        return client.streamUrl(model.printerId, token: token, fps: fps)
+    }
+
+    /// Quotes the rate actually streaming rather than the one the path would choose now, so the badge
+    /// can never advertise a number the video is not being delivered at — the same reason it reads the
+    /// rate instead of keeping its own copy, back when the tile was a 2 s poll labelled "1 fps".
+    private var tileBadge: String {
+        guard camLoaded, let fps = latchedTileFps else { return "WAKING…" }
+        return "LIVE · \(fps) fps"
+    }
+
+    /// Fills an EMPTY latch only. Never overwriting a live one is the entire point.
+    private func latchTileFpsIfIdle() {
+        guard tileStreamActive, latchedTileFps == nil else { return }
+        latchedTileFps = pathTileFps
     }
 
     /// Exactly one consumer of the camera at a time. The fullscreen overlay runs its own stream, so
@@ -316,7 +351,7 @@ struct DashboardView: View {
                     } else {
                         Circle().fill(c.t3).frame(width: 6, height: 6)
                     }
-                    Text(camLoaded ? "LIVE · \(Self.tileFps) fps" : "WAKING…")
+                    Text(tileBadge)
                         .font(.system(size: 9.5, weight: .semibold))
                         .tracking(0.6)
                         .foregroundStyle(.white)
@@ -356,7 +391,15 @@ struct DashboardView: View {
         // down on `connecting`/`offline` and rebuilt with a fresh renderer, and a latch left over
         // from the previous appearance would claim LIVE before the new one has decoded anything.
         .onChange(of: tileStreamURL) { _, _ in tileCam.isLive = false }
-        .onChange(of: tileStreamActive, initial: true) { _, _ in tileCam.isLive = false }
+        // Take the rate when streaming starts and release it when it stops, so a path update can
+        // never rewrite the URL of a live connection. The second hook exists because NWPathMonitor's
+        // first callback routinely lands AFTER the tile is already active, leaving the latch empty
+        // with nothing else due to fill it.
+        .onChange(of: tileStreamActive, initial: true) { _, active in
+            tileCam.isLive = false
+            if active { latchTileFpsIfIdle() } else { latchedTileFps = nil }
+        }
+        .onChange(of: pathTileFps, initial: true) { _, _ in latchTileFpsIfIdle() }
     }
 
     // MARK: - LIVE

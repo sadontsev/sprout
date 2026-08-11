@@ -23,7 +23,7 @@ fired* on a single input rather than testing rules in isolation.
 
 ## 1. Context and goals
 
-Today the app is single-user: la-push runs next to the owner's Bambuddy, holds the owner's
+Today the app is single-user: Trellis runs next to the owner's Bambuddy, holds the owner's
 APNs `.p8` auth key, and pushes Live Activities and alert banners directly to APNs. A key
 authorises push for **every install of every app it covers**, which is why the current design
 cannot be shared: `docs/guides/push-notifications.md` tells other people to self-host with
@@ -60,7 +60,7 @@ The goal: ship the native app (Sprout) on the App Store so strangers can install
 The companion service outgrew its name — it serves MakerWorld collections as well as push,
 and this design adds pairing forwarding. Renames:
 
-- **la-push → Trellis** — the user-side companion (`deploy/la-push/` → `deploy/trellis/`,
+- **Trellis → Trellis** — the user-side companion (`deploy/trellis/` → `deploy/trellis/`,
   container `bambu-trellis`, port 8911 unchanged). A trellis is the structure in your own
   garden that supports a growing plant (the app is Sprout).
 - **Canopy** — the new, owner-hosted APNs relay (top-level `canopy/` in the monorepo; it does
@@ -620,7 +620,7 @@ never per-request IPs.
    release that binding.
 
 **Stale dates are a change this design makes, not a capability it inherits.** Nothing sets one
-today: la-push emits `timestamp`, `event`, `content-state`, `attributes`, `alert`, and
+today: Trellis emits `timestamp`, `event`, `content-state`, `attributes`, `alert`, and
 `dismissal-date` but no `stale-date` (`app.py:328-354`), `07-realtime.md:898` is a
 *recommendation to the app* rather than a record of server behaviour, and the native app passes
 `staleDate: nil` (`LiveActivityController.swift:291`, `:310`). So §11's "cards go visibly
@@ -731,7 +731,7 @@ pairing secret.
   token to `needs_claim`, which the app acts on. Conflating them would make ordinary
   housekeeping look like an attack and suspend every token on a Trellis at once.
 - **Multiple phones per printer.** `_regs[key]` becomes a **list** of registrations. This is
-  larger than one call site — `grep -c _regs deploy/la-push/app.py` is 27 — and the plan must
+  larger than one call site — `grep -c _regs deploy/trellis/app.py` is 27 — and the plan must
   sweep all of them. Specifically: `lastState`, `lastPush`, `client`, `iconUri`, and
   `printerName` are **per registration**, so gating (`meaningful_change`, `MIN_UPDATE_S`) and
   envelope construction happen per entry — otherwise a phone joining mid-print shares a gate it
@@ -951,7 +951,7 @@ attestation tests need real-device artefacts, so the harness comes first.
    vouch), the Keychain moves and migration, entitlement-derived
    environment, the pending-claim queue, dismissal reconcile, push-health UI, and the new body
    fields. The first true end-to-end sandbox test happens here, on a real device.
-4. **Rename, dogfood, distribute** — la-push → Trellis across dirs, container, and docs; owner
+4. **Rename, dogfood, distribute** — Trellis → Trellis across dirs, container, and docs; owner
    DNS gains `trellis.<domain>` and keeps `lapush.<domain>` as a CNAME; the owner flips his own
    Trellis to relay mode (DIRECT stays supported and tested); write the self-hoster guide with a
    one-file compose bringing up Bambuddy + Trellis with `CANOPY_URL` preset **and instructions
@@ -960,9 +960,46 @@ attestation tests need real-device artefacts, so the harness comes first.
 
 ## 14. Out of scope / future hardening
 
-- **Apple's fraud-assessment metric** — the receipt is stored at attestation time (§6) precisely
-  so this can be enabled later without re-attesting every install. It is the mechanism that
-  bounds §4's stated residual risk (a hooked app on a jailbroken device).
+- ~~**Apple's fraud-assessment metric**~~ — **built** (`canopy/internal/fraud`). The receipt was
+  stored at attestation time (§6) precisely so this could be enabled later without re-attesting
+  every install, and that is what happened: it reads history rather than starting a clock. An
+  hourly sweep redeems each stored receipt against the host matching the environment **that key**
+  attested in, records Apple's attested-key count, and alerts above `SuspiciousKeyCount` (25 —
+  generous, because an honest household reaches several over a year through reinstalls and
+  restores, and the shape being looked for is one handset minting identities). This is the
+  mechanism that bounds §4's stated residual risk (a hooked app on a jailbroken device).
+
+  Two distinctions the implementation refuses to collapse, both instances of the recurring bug:
+  *no metric is not zero keys* (an `ATTEST` receipt carries none, so `risk_metric` is NULL rather
+  than 0 — a 0 would read as "known clean" forever), and *the redemption host follows the key's
+  attestation environment*, not Canopy's own and not any binding's APNs environment.
+
+  **Still needs a DeviceCheck key** (`CANOPY_DEVICECHECK_KEY`, `CANOPY_DEVICECHECK_KEY_ID`) — a key
+  from *Certificates, Identifiers & Profiles → Keys* with the **DeviceCheck** service ticked. It is
+  a different credential from the APNs signing key (that one authorises sending a push, this one
+  authorises reading Apple's per-device risk data) and it is **not** an App Store Connect API key,
+  though all three download as `AuthKey_<id>.p8` and are indistinguishable on disk. There is no
+  issuer id: this JWT is issued by the **team id** with **no `aud`**, where an App Store Connect
+  token carries an issuer UUID and `aud: appstoreconnect-v1`; the wrong one answers 401 without
+  saying which field was at fault. Content type is `application/octet-stream`, body is the
+  base64 receipt, and the risk metric is a **decimal string**, not a DER integer.
+
+  This was built the App Store Connect way first, on the assumption that a `.p8` named
+  `AuthKey_*.p8` meant App Store Connect. Three of the four wire details were wrong and every one
+  of them fails as a bare 401 or 400. The tests now assert the DeviceCheck shape explicitly.
+
+  **A newly created DeviceCheck key does not work for up to 24 hours.** Apple propagates it
+  asynchronously, and until it has, every token signed by that key is refused *without being
+  verified* — a deliberately corrupted signature and a valid one are rejected identically, so the
+  failure is indistinguishable from a wrong key by inspection. `attestationData` makes this worse
+  by answering a bare 401 with an **empty body**, to a request with no `Authorization` header at
+  all as readily as to a real one. To tell propagation from misconfiguration, sign a token with the
+  same key and send it to `api.development.devicecheck.apple.com/v1/validate_device_token`, which
+  returns a readable message. No action is needed either way: the sweep leaves the keys due and
+  retries hourly, so it starts working by itself.
+
+  Unset, the sweep never runs and every other check is unaffected; the metric refines a bound that
+  already holds, so its absence must degrade the signal and never the service.
 - **Rotating a pairing key without deleting the binding.** v1's reset path is
   `DELETE /v1/bindings` from the bound tenant, which is simple and user-initiated. A future
   in-place rotation would be a claim signed by *both* the old and the new pairing key; it needs

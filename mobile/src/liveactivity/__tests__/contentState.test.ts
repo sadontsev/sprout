@@ -129,13 +129,13 @@ describe('laTint — lock-screen colours must not follow the app theme', () => {
 
   afterEach(() => setTheme('dark'));
 
-  it('is IDENTICAL in light and dark mode (la-push has no idea what theme the phone is on)', () => {
+  it('is IDENTICAL in light and dark mode (Trellis has no idea what theme the phone is on)', () => {
     setTheme('dark');
     const dark = toContentState(presentDashboard(status(), 0), status(), 0).tint;
     setTheme('light');
     const light = toContentState(presentDashboard(status(), 0), status(), 0).tint;
     expect(light).toBe(dark);
-    expect(light).toBe(LA_COLORS.running); // and it matches la-push's COLORS['running']
+    expect(light).toBe(LA_COLORS.running); // and it matches Trellis's COLORS['running']
   });
 
   it('maps each state to the fixed palette', () => {

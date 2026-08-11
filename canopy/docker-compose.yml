@@ -1,0 +1,76 @@
+services:
+  canopy:
+    build: .
+    container_name: canopy
+    restart: unless-stopped
+    # Runs as the deploying user rather than the image's nonroot uid, so the bind-mounted data
+    # directory is writable without loosening its permissions. The image carries no shell and no
+    # libc; this only changes which uid the single binary runs under.
+    #
+    # 1000 is a GUESS, not a default that is right anywhere in particular. Set CANOPY_UID and
+    # CANOPY_GID in .env to `id -u` / `id -g` (scripts-deploy.sh does it for you). If they are
+    # wrong, or if ./data does not exist when the container first starts — Docker then creates it
+    # root-owned — the process cannot create the SQLite file, exits, and `restart: unless-stopped`
+    # loops it. See .env.example.
+    user: "${CANOPY_UID:-1000}:${CANOPY_GID:-1000}"
+    # Reachable from the host LAN so a tunnel can front it. This is the process holding the APNs
+    # signing keys, so publishing it comes with a condition rather than on its own: set
+    # CANOPY_INVITE_CODE. Every other endpoint needs a tenant bearer, but enrolment is open by
+    # design, and open enrolment on a public address is an invitation to accumulate tenants nobody
+    # asked for. The invite gate is the valve the design specifies for exactly this moment.
+    ports:
+      - "8914:8914"
+    environment:
+      CANOPY_ADDR: "0.0.0.0:8914"
+      CANOPY_DB: /data/canopy.db
+      CANOPY_BUNDLE_ID: ${CANOPY_BUNDLE_ID:?set CANOPY_BUNDLE_ID in .env}
+      CANOPY_TEAM_ID: ${CANOPY_TEAM_ID:?set CANOPY_TEAM_ID in .env}
+      # One key per environment. A legacy universal key may be pointed at both paths; an
+      # environment-scoped key only works for its own gateway, and the BadDeviceToken retry against
+      # the other one will answer InvalidProviderToken rather than converging.
+      CANOPY_APNS_KEY_SANDBOX: /keys/apns_key.p8
+      CANOPY_APNS_KEY_ID_SANDBOX: ${CANOPY_APNS_KEY_ID:?set CANOPY_APNS_KEY_ID in .env}
+      CANOPY_APNS_KEY_PRODUCTION: /keys/apns_key.p8
+      CANOPY_APNS_KEY_ID_PRODUCTION: ${CANOPY_APNS_KEY_ID:?set CANOPY_APNS_KEY_ID in .env}
+      CANOPY_APPLE_ROOT_CA: /keys/apple-app-attest-root.pem
+      # Permits Apple's DEVELOPMENT App Attest environment, which a locally-installed build uses.
+      # Leave it off once only TestFlight and App Store builds talk to this.
+      CANOPY_ALLOW_DEVELOPMENT_ATTEST: ${CANOPY_ALLOW_DEVELOPMENT_ATTEST:-1}
+      CANOPY_INVITE_CODE: ${CANOPY_INVITE_CODE:-}
+      # Apple's fraud-assessment metric: how many App Attest keys one device has minted. Optional —
+      # unset means the sweep never runs and every other check is unaffected.
+      #
+      # This is a key from Certificates, Identifiers & Profiles with the DEVICECHECK service ticked.
+      # It is NOT the APNs key above (that one authorises sending a push; this one authorises
+      # reading Apple's per-device risk data) and it is NOT an App Store Connect API key (different
+      # JWT entirely). All three download as AuthKey_<id>.p8 and are identical on disk, so the only
+      # way to tell them apart is to keep track of which is which. The wrong one answers 401.
+      #
+      # No issuer id: this JWT is issued by CANOPY_TEAM_ID, which is already set above.
+      #
+      # The path is set only when a key id is, so an unconfigured deployment passes an empty path
+      # and the sweep stays off. Pointing it at the always-present mount below instead would make
+      # Canopy try to parse whatever is there and exit at startup.
+      CANOPY_DEVICECHECK_KEY: ${CANOPY_DEVICECHECK_KEY_ID:+/keys/devicecheck_key.p8}
+      CANOPY_DEVICECHECK_KEY_ID: ${CANOPY_DEVICECHECK_KEY_ID:-}
+    volumes:
+      - ${APNS_KEY_FILE:-${HOME}/.config/sprout/apns_key.p8}:/keys/apns_key.p8:ro
+      # Defaults to /dev/null, NOT to the APNs key.
+      #
+      # It defaulted to the APNs key so that an unconfigured deployment always had a real file to
+      # mount (a bind mount whose source is missing is created by Docker as a DIRECTORY). But then
+      # setting only CANOPY_DEVICECHECK_KEY_ID — which the comment above says is the switch — mounts
+      # the APNS key at this path, and Canopy signs DeviceCheck tokens with it. Both are PKCS8
+      # ECDSA P-256, so it parses, the startup check that exists to catch exactly this passes, and
+      # every sweep then fails Apple's 401 path forever while the deployment believes the metric is
+      # on. Key-id-is-set was standing in for "a DeviceCheck key is mounted".
+      #
+      # /dev/null is a real file, so Docker will not invent a directory, and it fails to parse as a
+      # key — so a half-configured deployment stops at startup with a message instead of running
+      # blind.
+      - ${DEVICECHECK_KEY_FILE:-/dev/null}:/keys/devicecheck_key.p8:ro
+      - ${APPLE_ROOT_CA_FILE:-${HOME}/.config/sprout/apple-app-attest-root.pem}:/keys/apple-app-attest-root.pem:ro
+      # Bindings and attest keys are durable state, not a cache: a device cannot re-attest on
+      # demand, so losing this costs every install a re-attestation round it has no way to know it
+      # needs. Back it up.
+      - ./data:/data

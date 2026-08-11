@@ -134,6 +134,49 @@ final class CameraStreamTests: XCTestCase {
         XCTAssertGreaterThan(CameraUpstreamClaim.maxAttempts, 1)
     }
 
+    // MARK: - Picking the tile's frame rate from what the path costs
+
+    /// An always-on thumbnail is the one surface that can quietly spend an allowance, so a metered or
+    /// Low Data path drops it to a trickle. Both flags mean "these bytes cost the user", so either one
+    /// alone is enough.
+    func testAMeteredOrConstrainedPathDropsTheTileToATrickle() {
+        XCTAssertEqual(CameraRate.tile(isExpensive: true, isConstrained: false), CameraRate.tileMetered)
+        XCTAssertEqual(CameraRate.tile(isExpensive: false, isConstrained: true), CameraRate.tileMetered)
+        XCTAssertEqual(CameraRate.tile(isExpensive: true, isConstrained: true), CameraRate.tileMetered)
+    }
+
+    func testAnUnmeteredPathGivesTheTileFullRate() {
+        XCTAssertEqual(CameraRate.tile(isExpensive: false, isConstrained: false), CameraRate.tileUnmetered)
+    }
+
+    /// THE load-bearing coupling. `fullscreenNeedsFreshUpstream` decides whether to tear down and
+    /// restart the shared upstream purely by comparing these two numbers, so if they ever drift apart
+    /// the skip silently stops happening (a wasted camera restart on every fullscreen open) — or
+    /// starts happening when it should not (fullscreen stuck on the tile's rate). Neither shows up as
+    /// a failure anywhere else.
+    func testTheUnmeteredTileMatchesFullscreen() {
+        XCTAssertEqual(CameraRate.tileUnmetered, CameraRate.fullscreen)
+        XCTAssertLessThan(CameraRate.tileMetered, CameraRate.fullscreen)
+    }
+
+    /// On wifi the tile already runs at the fullscreen rate, so whatever it started IS what we want and
+    /// restarting it would only cost the user a warm-up in front of a black screen.
+    func testFullscreenSkipsTheRestartWhenTheTileAlreadyMatchesIt() {
+        let unmetered = CameraRate.tile(isExpensive: false, isConstrained: false)
+        XCTAssertFalse(CameraRate.fullscreenNeedsFreshUpstream(tileFps: unmetered))
+    }
+
+    func testFullscreenClaimsAFreshUpstreamWhenTheTileStartedItSlower() {
+        let metered = CameraRate.tile(isExpensive: true, isConstrained: false)
+        XCTAssertTrue(CameraRate.fullscreenNeedsFreshUpstream(tileFps: metered))
+    }
+
+    /// A viewer already running FASTER than we would ask for is not a reason to restart anything —
+    /// only a slower one is. Guards the comparison against being written as `!=`.
+    func testAFasterExistingRateIsNotAReasonToRestart() {
+        XCTAssertFalse(CameraRate.fullscreenNeedsFreshUpstream(tileFps: CameraRate.fullscreen + 5))
+    }
+
     // MARK: - /camera/stop payload
 
     /// THE regression this type exists for. The backend answers the SUCCESS path with `{"stopped": n}`

@@ -4,7 +4,7 @@ Both stacks run on <your-server> via Docker Compose, copied to `<deploy-dir>/bam
 and `<deploy-dir>/slicer-api/`. Tailnet-only; never exposed via cloudflared.
 
 For push notifications / Live Activities — and for the native app's MakerWorld **collections** —
-also deploy `la-push`: [deploy/la-push/README.md](la-push/README.md) for the service,
+also deploy Trellis: [deploy/trellis/README.md](Trellis/README.md) for the service,
 [docs/guides/push-notifications.md](../docs/guides/push-notifications.md) for the APNs walkthrough.
 
 ## Slicer

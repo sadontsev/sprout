@@ -13,7 +13,7 @@ Notifications.setNotificationHandler({
 });
 
 /**
- * Requests notification permission, gets the raw APNs *device* token, and registers it with la-push
+ * Requests notification permission, gets the raw APNs *device* token, and registers it with Trellis
  * so the server can send print-done / error banners (separate from the per-card Live-Activity tokens).
  * No-op without a pushUrl or on non-iOS; failures are swallowed — the app works regardless.
  */
@@ -28,7 +28,7 @@ export function useStatusNotifications(pushUrl?: string | null, apiKey?: string)
         if (!granted || cancelled) return;
         const token = await Notifications.getDevicePushTokenAsync(); // iOS -> { type: 'ios', data: '<hex>' }
         if (cancelled || token.type !== 'ios' || typeof token.data !== 'string') return;
-        // X-API-Key gates la-push registration (see useLiveActivity) — without it a stranger who knows
+        // X-API-Key gates Trellis registration (see useLiveActivity) — without it a stranger who knows
         // the URL could register their device and receive this printer's status banners.
         await fetch(`${pushUrl.replace(/\/+$/, '')}/register-device`, {
           method: 'POST',

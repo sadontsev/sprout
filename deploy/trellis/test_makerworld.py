@@ -1,4 +1,4 @@
-"""Unit tests for the MakerWorld collection endpoints. Run: python3 -m unittest discover deploy/la-push
+"""Unit tests for the MakerWorld collection endpoints. Run: python3 -m unittest discover deploy/Trellis
 
 Dependency-free apart from what the service itself imports (stdlib unittest, no pytest) — same rule
 as test_clients.py / test_cooldown.py / test_p2s.py, so this runs anywhere the service runs,
@@ -13,13 +13,20 @@ the owner reads.
 """
 from __future__ import annotations
 
-import json as json_module
 import sqlite3
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import makerworld as mw
+try:
+    import httpx  # noqa: F401 - makerworld imports it at module scope
+except ImportError:  # the service's own deps are absent; see scripts-test.sh
+    HAVE_DEPS = False
+else:
+    HAVE_DEPS = True
+    # Outside the guard on purpose: with httpx present, a failure to import
+    # makerworld is a real bug and must fail rather than skip.
+    import makerworld as mw
 
 
 # MARK: - A stand-in for httpx, so no test touches the network
@@ -53,6 +60,7 @@ class FakeClient:
         return self._handler(url, headers or {})
 
 
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
 class MakerWorldTestCase(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
@@ -129,6 +137,7 @@ class ReadToken(MakerWorldTestCase):
 # MARK: - Shaping a collection
 
 
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
 class NormaliseCollection(unittest.TestCase):
 
     def test_a_collection_carries_its_count_so_empty_can_be_shown_as_empty(self):
@@ -186,7 +195,7 @@ class ListCollections(MakerWorldTestCase):
         url, headers = self.requests[0]
         self.assertIn("/my/favorites/listlite", url)
         self.assertEqual(headers.get("Authorization"), "Bearer tok-abc")
-        self.assertIn("la-push", headers.get("User-Agent", ""))
+        self.assertIn("bambu-trellis", headers.get("User-Agent", ""))
 
     async def test_a_collection_without_an_id_is_dropped_not_rendered(self):
         """The id is what opening it needs, so a row without one would be a folder that cannot open."""
@@ -259,6 +268,7 @@ class FailuresStayDistinct(MakerWorldTestCase):
 # un-collects things the owner curated.
 
 
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
 class MembershipArithmetic(unittest.TestCase):
 
     def test_adding_keeps_every_collection_it_was_already_in(self):

@@ -69,9 +69,11 @@ struct CameraOverlay: View {
     private var token: String? { localToken ?? model.cameraToken }
 
     /// The token goes in the QUERY STRING; `X-API-Key` is rejected with 401 on stream and snapshot.
+    /// The rate is named rather than left to the client's default, because `claimUpstream` compares it
+    /// against the tile's — the two have to be the same number for that comparison to mean anything.
     private var streamUrl: URL? {
         guard let client = model.client, let token else { return nil }
-        return client.streamUrl(model.printerId, token: token)
+        return client.streamUrl(model.printerId, token: token, fps: CameraRate.fullscreen)
     }
 
     private var snapshotUrl: URL? {
@@ -564,6 +566,12 @@ struct CameraOverlay: View {
     /// already running. A slow picture beats no picture.
     private func claimUpstream() async {
         defer { upstreamReady = true }
+        // On an unmetered path the tile already streams at the fullscreen rate, so whatever it started
+        // is the rate we want and restarting it would only cost the user an ffmpeg respawn and an RTSP
+        // reconnect in front of a black screen.
+        let path = model.networkPath
+        let tileFps = CameraRate.tile(isExpensive: path.isExpensive, isConstrained: path.isConstrained)
+        guard CameraRate.fullscreenNeedsFreshUpstream(tileFps: tileFps) else { return }
         guard let client = model.client else { return }
         for _ in 0..<CameraUpstreamClaim.maxAttempts {
             guard !Task.isCancelled else { return }

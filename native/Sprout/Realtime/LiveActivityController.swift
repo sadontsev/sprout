@@ -2,10 +2,10 @@ import ActivityKit
 import Foundation
 import Observation
 
-/// What this build calls itself when it registers with la-push.
+/// What this build calls itself when it registers with Trellis.
 ///
 /// The RN app and this one ship as different TestFlight builds of the SAME bundle id and both talk to
-/// one la-push, but their Live-Activity wire shapes are incompatible: expo-widgets' ContentState is
+/// one Trellis, but their Live-Activity wire shapes are incompatible: expo-widgets' ContentState is
 /// `Codable{name, props}` with the fields serialized into `props`, ours is flat, and push-to-start
 /// names a different attributes type (`PrintActivityAttributes` + `{printerId, amsId}`, not
 /// `LiveActivityAttributes` + `{}`). The server cannot tell from a push token which app sent it, and
@@ -17,7 +17,7 @@ private let laPushClient = "native"
 /// Builds Live Activity content from live status, and owns the app's side of the card lifecycle.
 ///
 /// Two ownership modes, and exactly one owner at a time:
-/// - **SERVER** (a la-push URL resolves): the server starts every card by push-to-start, pushes every
+/// - **SERVER** (a Trellis URL resolves): the server starts every card by push-to-start, pushes every
 ///   update off its own poll, and ends it. The app's entire job is to hand over two tokens — the
 ///   device's push-to-start token, and each card's per-activity update token once a card exists — and
 ///   to notice dismissal. It calls neither `request` nor `update`.
@@ -52,7 +52,7 @@ final class LiveActivityController {
     /// waiting for the token to rotate — tokens rotate rarely, and a card with no token registered is
     /// a card frozen at the content it was created with.
     private var tokens: [String: String] = [:]
-    /// `"<activity id>|<token>"` pairs la-push has accepted.
+    /// `"<activity id>|<token>"` pairs Trellis has accepted.
     private var registered: Set<String> = []
     private var lastRegisterAttempt: [String: Date] = [:]
 
@@ -60,15 +60,103 @@ final class LiveActivityController {
     /// updates every status frame gets its budget cut.
     private static let throttle: TimeInterval = 4
     /// Minimum gap between registration attempts for one (card, token) pair. `sync` runs every 4 s and
-    /// an unreachable la-push must not turn that into a POST storm.
+    /// an unreachable Trellis must not turn that into a POST storm.
     private static let registerRetry: TimeInterval = 30
 
     var isServerOwned: Bool { pushUrl != nil }
 
+    /// This device's durable identity. Loaded once: it is what owns every push binding this phone
+    /// holds, so a failure to load must not silently regenerate it.
+    private let identity: PairingIdentity?
+    /// Registrations still owed to the server, across all three token kinds.
+    private var pending = PendingClaims()
+
     init(config: AppConfig) {
         pushUrl = ConfigRules.resolvePushUrl(config)
         apiKey = config.apiKey
+        identity = try? PairingStore.loadOrCreate()
         startObserving()
+    }
+
+    /// The device id sent with every registration, so Trellis can tell two phones apart. They share
+    /// one Bambuddy key, so without this one phone's reconcile deregisters the other's cards.
+    private var deviceID: String { identity?.deviceID ?? "" }
+
+    /// App Attest, shared across claims so one key is attested and then asserted with.
+    private let attestor = AttestClient()
+
+    /// When we last reported our cards to Trellis.
+    private var lastReconcile: Date?
+
+    /// How often to reconcile. The 4-second tick drives it, but the set of cards this device can see
+    /// changes only when one appears or disappears, so a round trip per tick would be waste.
+    private static let reconcileInterval: TimeInterval = 30
+
+    /// Builds the claim a registration carries, or nil when the server signs locally and needs none.
+    ///
+    /// Returns nil rather than throwing on any failure: a claim that cannot be built must degrade to
+    /// the pre-relay behaviour, not take the registration down with it. A relay-mode server refuses
+    /// an unclaimed registration itself, which is where that decision belongs.
+    private func buildClaim(token: String, kind: ClaimBuilder.BindingKind, vouchNonce: String?) async -> ClaimBuilder.Claim? {
+        // Every failure here is logged. A claim that silently comes back nil produces a
+        // registration the relay accepts and then refuses to push to — the exact shape of failure
+        // this project keeps rediscovering, where every component reports success and the card
+        // never updates.
+        guard let identity else {
+            NSLog("[claim] no pairing identity; registration will go out unclaimed")
+            return nil
+        }
+        guard attestor.isSupported else {
+            NSLog("[claim] App Attest unsupported on this device; registration will go out unclaimed")
+            return nil
+        }
+        // Reserve the proof kind first: the challenge must be requested for the purpose the claim
+        // will actually answer with, and the relay checks they agree.
+        let plan = await attestor.planProof()
+        guard let challenge = await fetchChallenge(attesting: plan == .attestation) else {
+            NSLog("[claim] could not obtain a challenge; registration will go out unclaimed")
+            return nil
+        }
+
+        let builder = ClaimBuilder(
+            identity: identity,
+            environment: APNSEnvironment.current,
+            sign: { try PairingStore.sign($0) },
+            attest: { [attestor] data in try await attestor.proof(for: data) }
+        )
+        do {
+            return try await builder.build(token: token, kind: kind, challenge: challenge, vouchNonce: vouchNonce)
+        } catch {
+            NSLog("[claim] build failed for %@ token: %@", kind.rawValue, String(describing: error))
+            return nil
+        }
+    }
+
+    /// Fetches a single-use challenge from the relay, through Trellis.
+    ///
+    /// The purpose has to match what the proof will be, because the relay checks it: an attestation
+    /// challenge lives fifteen minutes to honour Apple's retry guidance, an assertion challenge two,
+    /// and letting one satisfy the other would stretch the assertion replay window sevenfold.
+    private func fetchChallenge(attesting: Bool) async -> String? {
+        guard let url = Self.endpoint(pushUrl, "/challenge") else { return nil }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(
+            withJSONObject: ["purpose": attesting ? "attestation" : "assertion"]
+        )
+
+        guard
+            let (data, response) = try? await URLSession.shared.data(for: req),
+            // Any 2xx. Trellis is a proxy here and answers with ITS status, not the relay's —
+            // checking for the relay's 201 meant every challenge fetch failed against a Trellis
+            // that had done its job perfectly, and the registration then went out unclaimed.
+            let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+            let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let challenge = body["challenge"] as? String
+        else { return nil }
+        return challenge
     }
 
     // MARK: - Content mapping
@@ -230,16 +318,24 @@ final class LiveActivityController {
     /// `offline` and `connecting` are deliberately no-ops: a WebSocket blip must never kill a card
     /// that represents a print still running.
     func sync(printerId: Int, printerName: String, vm: DashVM, status: PrinterStatus?) async {
-        // Cards also appear without us: in SERVER mode la-push starts them remotely, and cards from a
+        // Cards also appear without us: in SERVER mode Trellis starts them remotely, and cards from a
         // previous launch outlive the process. Sweeping here — not only from `activityUpdates`, whose
         // replay of already-live activities is not something to bet a subsystem on — is what
         // guarantees every card ends up wired to its dismissal and push-token streams.
         adoptExistingActivities()
 
         // Deliberately not awaited: this loop runs every 4 s and also drives the cooldown readout, so
-        // a slow la-push must not stall it. `lastRegisterAttempt` is stamped BEFORE the request, so an
+        // a slow Trellis must not stall it. `lastRegisterAttempt` is stamped BEFORE the request, so an
         // overlapping flush cannot double-POST.
         if isServerOwned, !tokens.isEmpty { Task { [weak self] in await self?.flushRegistrations() } }
+        // The queue covers the registrations that have no stream to re-emit them: a start or
+        // device token is handed over once, so a POST that failed is otherwise the end of it, and
+        // the server is left with nothing to push a start to for the rest of the process.
+        if isServerOwned, !pending.isEmpty { Task { [weak self] in await self?.flushPending() } }
+        // Reconcile even with no tokens held: "this device now sees no cards" is exactly the report
+        // that frees a ghost registration, and gating it on a non-empty set would withhold the one
+        // message that matters most.
+        Task { [weak self] in await self?.reconcile() }
 
         guard let status else { return }
         guard vm.kind != .offline, vm.kind != .connecting else { return }
@@ -272,7 +368,7 @@ final class LiveActivityController {
     private func upsert(printerId: Int, amsId: Int?, content: PrintActivityAttributes.ContentState, ended: Bool) async {
         // SERVER mode: the server is the sole WRITER as well as the sole creator, so this returns
         // before touching a card or the gate state behind it. Two writers do not merely halve the
-        // ActivityKit budget — la-push pushes off a 5 s poll while the app reads a socket, so the two
+        // ActivityKit budget — Trellis pushes off a 5 s poll while the app reads a socket, so the two
         // hold different snapshots and the card's progress visibly jitters backwards. The local gate
         // (`lastContent`/`lastUpdate`) also knows nothing about what the server last rendered, so the
         // two sides cannot even agree on what counts as a change.
@@ -319,7 +415,7 @@ final class LiveActivityController {
     }
 
     /// Take a card down. Unlike `update`, this runs in BOTH modes on purpose: ending is terminal and
-    /// idempotent, so the worst a duplicated end can do is remove a card a few seconds before la-push
+    /// idempotent, so the worst a duplicated end can do is remove a card a few seconds before Trellis
     /// would have. The failure it prevents is far worse — a server that dies mid-print leaves a card
     /// counting down to a stale ETA on the lock screen with nothing able to clear it.
     func end(printerId: Int, amsId: Int?) async {
@@ -339,7 +435,7 @@ final class LiveActivityController {
 
     /// Attach everything the app is responsible for regardless of who owns the cards.
     private func startObserving() {
-        // The push-to-start token is the ONLY way la-push can create a card while the app is closed,
+        // The push-to-start token is the ONLY way Trellis can create a card while the app is closed,
         // and `upsert` refuses to create one in SERVER mode — so without this registration neither
         // party ever starts a card and the lock screen simply stays empty for the whole print. The
         // stream emits the current token as soon as it is iterated, then again on rotation.
@@ -347,9 +443,23 @@ final class LiveActivityController {
             Task { [weak self] in
                 for await tokenData in Activity<PrintActivityAttributes>.pushToStartTokenUpdates {
                     guard let self else { return }
+                    let token = Self.hex(tokenData)
+                    // Queued as well as sent. This stream only re-emits when the token rotates, so
+                    // a POST that failed here used to be the end of it: the server then had nothing
+                    // to push a start to and the lock screen stayed empty for the whole print.
+                    self.pending.add(token: token, kind: .start)
                     // `icon_uri` is empty until the brand glyph is written to the App Group (a known
-                    // gap); la-push treats an empty value as "keep what you have" for start tokens.
-                    await self.post("/register-start", body: StartRegistration(pushToken: Self.hex(tokenData), iconUri: ""))
+                    // gap); Trellis treats an empty value as "keep what you have" for start tokens.
+                    let claim = await self.buildClaim(token: token, kind: .start, vouchNonce: nil)
+                    let result = await self.postWithReason("/register-start", body: StartRegistration(
+                        pushToken: token, iconUri: "", deviceId: self.deviceID, claim: claim
+                    ))
+                    if result.ok && result.bound {
+                        self.pending.remove(token: token)
+                        await self.attestor.confirmAttested()
+                    } else {
+                        await self.handle(refusal: result.reason)
+                    }
                 }
             }
         }
@@ -378,7 +488,9 @@ final class LiveActivityController {
                 guard let self else { return }
                 // Only `.dismissed` means the card has actually left the screen. `.ended` still leaves
                 // it visible under `.default`, and acting on it would drop the card early.
-                if case .dismissed = state { self.cardVanished(activityId: id, key: k) }
+                if case .dismissed = state {
+                    self.cardVanished(activityId: id, key: k, printerId: activity.attributes.printerId)
+                }
             }
         }
 
@@ -393,7 +505,10 @@ final class LiveActivityController {
         }
     }
 
-    private func cardVanished(activityId: String, key k: String) {
+    private func cardVanished(activityId: String, key k: String, printerId: Int) {
+        // Captured before the bookkeeping clears it: the server needs the token to scope the drop
+        // to this device, and by the end of this function we no longer have it.
+        let vanishedToken = tokens[activityId]
         observed.remove(activityId)
         tokens[activityId] = nil
         registered = registered.filter { !$0.hasPrefix("\(activityId)|") }
@@ -403,14 +518,157 @@ final class LiveActivityController {
         dismissed.insert(k)
         lastContent[k] = nil
         lastUpdate[k] = nil
+
+        // Tell the server, or it keeps a registration for a card that no longer exists: APNs
+        // answers 200 to a push into the void, and because the server refuses to start a card for a
+        // key it already holds, no replacement is ever created. That deadlock is how the lock
+        // screen ends up empty mid-print. The RN app reconciles via /sync; this one never did.
+        if isServerOwned, let token = vanishedToken, !token.isEmpty {
+            pending.remove(token: token)
+            Task { [weak self] in
+                await self?.unregister(printerId: printerId, token: token)
+            }
+        }
     }
 
-    // MARK: - la-push registration
+    // MARK: - Reconciliation
+
+    /// `POST /sync` — tell Trellis every card this device can actually see.
+    ///
+    /// APNs answering 200 does NOT mean a card exists. A card that dies on the phone — swiped away,
+    /// or terminated because a new build was installed over the running app — leaves Trellis pushing
+    /// into the void while its registry still claims the card is ours, and because it refuses to
+    /// start a card for a key it already holds, no replacement is ever created. The lock screen then
+    /// stays empty for the rest of the print. Observed exactly that way.
+    ///
+    /// `unregister` covers the one case the app witnesses (a dismissal it saw). This covers the ones
+    /// it cannot: an activity that vanished while the process was dead has no dismissal callback to
+    /// fire, so the only way the truth ever reaches Trellis is the app stating the full set.
+    ///
+    /// The reply carries two instructions back:
+    ///   * `end` — tokens Trellis has nothing to bind to. Ending them stops a card that can never
+    ///     update from sitting on the lock screen looking live.
+    ///   * `needs_claim` — tokens the relay cannot push to. Intersected against what this device
+    ///     actually holds before acting: read as a list of tokens to claim, it would be an
+    ///     attestation oracle, letting a compromised server name another user's token and have this
+    ///     device sign a valid claim for it.
+    struct SyncReport: Encodable, Equatable {
+        let tokens: [String]
+        let deviceId: String
+        /// Never omitted. A card adopted through /sync is pushed to with this client's payload
+        /// shape, and an expo-shaped start reaches a native widget as a push APNs accepts and the
+        /// phone shows no card for.
+        let client = "native"
+    }
+
+    struct SyncReply: Decodable, Equatable {
+        var end: [String] = []
+        var needsClaim: [String] = []
+
+        enum CodingKeys: String, CodingKey {
+            case end
+            case needsClaim = "needs_claim"
+        }
+
+        /// Written out rather than synthesised. A property default does NOT make a key optional to
+        /// Swift's generated decoder — it throws keyNotFound — so against a Trellis that omits
+        /// either field the whole reply would fail to decode and the ghost-card reconcile, the more
+        /// valuable half, would go down with the field it had never heard of.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            end = try c.decodeIfPresent([String].self, forKey: .end) ?? []
+            needsClaim = try c.decodeIfPresent([String].self, forKey: .needsClaim) ?? []
+        }
+
+        init(end: [String] = [], needsClaim: [String] = []) {
+            self.end = end
+            self.needsClaim = needsClaim
+        }
+    }
+
+    /// Reconcile with Trellis. Rate-limited: this is driven by the 4-second tick and costs a round
+    /// trip, while the state it reports changes only when a card appears or disappears.
+    private func reconcile() async {
+        guard isServerOwned else { return }
+        if let last = lastReconcile, Date().timeIntervalSince(last) < Self.reconcileInterval { return }
+        lastReconcile = Date()
+
+        let held = Set(tokens.values.filter { !$0.isEmpty })
+        guard let url = Self.endpoint(pushUrl, "/sync"),
+              let data = Self.encode(SyncReport(tokens: Array(held), deviceId: deviceID))
+        else { return }
+
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        req.httpBody = data
+
+        guard let (payload, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let reply = try? JSONDecoder().decode(SyncReply.self, from: payload)
+        else { return }
+
+        await endOrphans(reply.end, held: held)
+        reclaim(reply.needsClaim, held: held)
+    }
+
+    /// End cards Trellis has nothing to bind to. Intersected against held tokens for the same reason
+    /// the claim list is: the server names tokens, and only ours are ours to act on.
+    private func endOrphans(_ orphanTokens: [String], held: Set<String>) async {
+        let doomed = Set(orphanTokens).intersection(held)
+        guard !doomed.isEmpty else { return }
+        for activity in Activity<PrintActivityAttributes>.activities {
+            guard let token = tokens[activity.id], doomed.contains(token) else { continue }
+            NSLog("[sync] ending orphan card %@", String(token.prefix(8)))
+            endedByApp.insert(activity.id)
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+    }
+
+    /// Queue a re-claim for tokens the relay cannot push to.
+    ///
+    /// This is what makes an unbound card recover without a human. `needingReclaim` does the
+    /// intersection, and its own test explains why the naive reading is an oracle.
+    private func reclaim(_ serverSays: [String], held: Set<String>) {
+        for token in pending.needingReclaim(serverSays: serverSays, heldTokens: held) {
+            // Clearing the stamp lets the next tick retry immediately: the server has just told us
+            // this token is unusable, which is newer information than the backoff was protecting.
+            registered = registered.filter { !$0.hasSuffix("|\(token)") }
+            lastRegisterAttempt = lastRegisterAttempt.filter { !$0.key.hasSuffix("|\(token)") }
+            NSLog("[sync] relay cannot push to %@; will re-claim", String(token.prefix(8)))
+        }
+    }
+
+    /// `POST /unregister` — token-scoped, so one phone dropping its card leaves the other's alone.
+    private func unregister(printerId: Int, token: String) async {
+        guard let base = pushUrl else { return }
+        var trimmed = base
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard var components = URLComponents(string: trimmed + "/unregister") else { return }
+        components.queryItems = [
+            URLQueryItem(name: "printer_id", value: String(printerId)),
+            URLQueryItem(name: "push_token", value: token),
+            URLQueryItem(name: "device_id", value: deviceID),
+        ]
+        guard let url = components.url else { return }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        _ = try? await URLSession.shared.data(for: req)
+    }
+
+    // MARK: - Trellis registration
 
     /// `POST /register-start` — the device's push-to-start token.
     struct StartRegistration: Encodable, Equatable {
         let pushToken: String
         let iconUri: String
+        /// Which phone. Without it two devices sharing one Bambuddy key are indistinguishable to
+        /// Trellis, so one phone's reconcile deregisters the other's cards.
+        var deviceId: String = ""
+        /// The Canopy claim, forwarded verbatim. Absent when the server signs locally.
+        var claim: ClaimBuilder.Claim? = nil
         /// Constant, so it stays out of the memberwise init and cannot be forgotten at a call site.
         let client = laPushClient
     }
@@ -421,23 +679,29 @@ final class LiveActivityController {
         let pushToken: String
         let printerName: String
         let iconUri: String
-        /// `"print"` | `"dry"`. la-push keys drying cards `dry:<printerId>:<amsId>` off THIS field, so
+        /// `"print"` | `"dry"`. Trellis keys drying cards `dry:<printerId>:<amsId>` off THIS field, so
         /// a drying card registered as a print overwrites the print card's registration instead.
         let kind: String
         let amsId: Int?
+        /// Which phone — see StartRegistration.deviceId.
+        var deviceId: String = ""
+        /// The Canopy claim, forwarded verbatim — see StartRegistration.claim.
+        var claim: ClaimBuilder.Claim? = nil
         /// Constant, so it stays out of the memberwise init and cannot be forgotten at a call site.
         let client = laPushClient
     }
 
-    /// Pure: what a card says about itself → the body la-push wants.
+    /// Pure: what a card says about itself → the body Trellis wants.
     ///
     /// The name and glyph are echoed from the card's OWN content rather than from anything the app has
     /// cached, because `/register` overwrites both server-side: in SERVER mode this card was created
-    /// by la-push, and posting the app's idea of the name would blank a title the server got right.
+    /// by Trellis, and posting the app's idea of the name would blank a title the server got right.
     nonisolated static func cardRegistration(
         attributes: PrintActivityAttributes,
         state: PrintActivityAttributes.ContentState,
-        token: String
+        token: String,
+        deviceId: String = "",
+        claim: ClaimBuilder.Claim? = nil
     ) -> CardRegistration {
         CardRegistration(
             printerId: attributes.printerId,
@@ -445,12 +709,83 @@ final class LiveActivityController {
             printerName: state.printerName,
             iconUri: state.iconUri,
             kind: attributes.amsId == nil ? "print" : "dry",
-            amsId: attributes.amsId
+            amsId: attributes.amsId,
+            deviceId: deviceId,
+            claim: claim
         )
     }
 
+    /// Re-attempt the queued start and device registrations.
+    ///
+    /// Rate-limited by the same 30-second per-token backoff as card registrations: this runs on a
+    /// 4-second tick, and each attempt costs a challenge and a Secure Enclave signature.
+    private func flushPending() async {
+        for intent in pending.intents {
+            if let last = lastRegisterAttempt[intent.token],
+               Date().timeIntervalSince(last) < Self.registerRetry { continue }
+            lastRegisterAttempt[intent.token] = Date()
+
+            switch intent.kind {
+            case ClaimBuilder.BindingKind.start.rawValue:
+                let claim = await buildClaim(token: intent.token, kind: .start, vouchNonce: intent.vouchNonce)
+                let result = await postWithReason("/register-start", body: StartRegistration(
+                    pushToken: intent.token, iconUri: "", deviceId: deviceID, claim: claim
+                ))
+                if result.ok && result.bound {
+                    pending.remove(token: intent.token)
+                    await attestor.confirmAttested()
+                } else { await handle(refusal: result.reason) }
+
+            case ClaimBuilder.BindingKind.device.rawValue:
+                let claim = await buildClaim(token: intent.token, kind: .device, vouchNonce: intent.vouchNonce)
+                let result = await postWithReason("/register-device", body: DeviceRegistration(
+                    deviceToken: intent.token, deviceId: deviceID, claim: claim
+                ))
+                if result.ok && result.bound {
+                    pending.remove(token: intent.token)
+                    await attestor.confirmAttested()
+                } else { await handle(refusal: result.reason) }
+
+            default:
+                // Card tokens have their own stream and their own flush; nothing to do here.
+                continue
+            }
+        }
+    }
+
+    /// `POST /register-device` — the raw APNs device token, for alert banners.
+    ///
+    /// Also the only token kind Apple will deliver a silent push to, which makes it the only one
+    /// that can be vouched: the relay pushes a nonce to it and the device echoes it back.
+    struct DeviceRegistration: Encodable, Equatable {
+        let deviceToken: String
+        var deviceId: String = ""
+        var claim: ClaimBuilder.Claim? = nil
+    }
+
+    /// Queue a device token for registration, and re-claim it when a vouch nonce arrives.
+    func registerDeviceToken(_ token: String) {
+        pending.add(token: token, kind: .device)
+        Task { [weak self] in await self?.flushPending() }
+    }
+
+    /// The device tokens this install holds. A vouch nonce names no token — it arrives in a push
+    /// addressed to one — so it is matched against what this device actually has, never against a
+    /// list the server supplied.
+    var deviceTokens: [String] {
+        pending.intents.filter { $0.kind == ClaimBuilder.BindingKind.device.rawValue }.map(\.token)
+    }
+
+    /// A vouch nonce arrived by silent push: attach it and let the next flush spend it. The nonce
+    /// is single-use and short-lived, so the retry has to be prompt rather than wait for a rotation.
+    func vouchNonceArrived(_ nonce: String, for token: String) {
+        pending.attach(nonce: nonce, to: token)
+        lastRegisterAttempt[token] = nil  // do not make a fresh proof wait out the backoff
+        Task { [weak self] in await self?.flushPending() }
+    }
+
     /// Re-attempt registrations that have not been accepted yet. A card whose token never reached
-    /// la-push is a card frozen at the content it was created with — the "stuck at 0 %" symptom — and
+    /// Trellis is a card frozen at the content it was created with — the "stuck at 0 %" symptom — and
     /// the token stream will not re-emit just because a POST failed.
     private func flushRegistrations() async {
         for activity in Activity<PrintActivityAttributes>.activities {
@@ -466,11 +801,30 @@ final class LiveActivityController {
         if let last = lastRegisterAttempt[pair], Date().timeIntervalSince(last) < Self.registerRetry { return }
         lastRegisterAttempt[pair] = Date()
 
-        let body = Self.cardRegistration(attributes: activity.attributes, state: activity.content.state, token: token)
-        if await post("/register", body: body) { registered.insert(pair) }
+        let claim = await buildClaim(token: token, kind: .activity, vouchNonce: nil)
+        let body = Self.cardRegistration(
+            attributes: activity.attributes, state: activity.content.state,
+            token: token, deviceId: deviceID, claim: claim
+        )
+        pending.add(token: token, kind: .activity)
+        let result = await postWithReason("/register", body: body)
+        // Finalised ONLY when the relay can actually push to this token. Trellis answers 200 for a
+        // registration it stored but could not bind — which is the normal outcome when App Attest
+        // hiccups — and treating that as done leaves the card frozen at its opening content with
+        // every component reporting success.
+        if result.ok && result.bound {
+            registered.insert(pair)
+            pending.remove(token: token)
+            await attestor.confirmAttested()
+        } else {
+            if result.ok {
+                NSLog("[claim] %@ registered but NOT bound; will retry", String(token.prefix(8)))
+            }
+            await handle(refusal: result.reason)
+        }
     }
 
-    /// la-push endpoint for `path`, or nil when push is off. Trailing slashes are stripped because
+    /// Trellis endpoint for `path`, or nil when push is off. Trailing slashes are stripped because
     /// `…/` + `/register` is `//register`, which the server 404s.
     nonisolated static func endpoint(_ base: String?, _ path: String) -> URL? {
         guard var base = base else { return nil }
@@ -479,7 +833,7 @@ final class LiveActivityController {
         return URL(string: base + path)
     }
 
-    /// The JSON shape la-push's pydantic models expect: snake_case, nil optionals omitted.
+    /// The JSON shape Trellis's pydantic models expect: snake_case, nil optionals omitted.
     nonisolated static func encode(_ body: some Encodable) -> Data? {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -490,10 +844,50 @@ final class LiveActivityController {
         data.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// POST a registration body. Returns whether la-push accepted it.
+    /// POST a registration body. Returns whether Trellis accepted it.
     ///
     /// The status code is checked rather than discarded: this app spent a release posting to a route
     /// that did not exist, and a swallowed 404/422 looks exactly like success from in here.
+    /// POST and surface the server's refusal reason, which some callers must act on: the relay
+    /// answering `reattest_required` means it holds no attested key for us, and the only thing that
+    /// resolves it is attesting afresh. Treating that as a plain failure would retry an assertion
+    /// against a key the relay has never seen, forever.
+    /// Posts a registration and reports both questions separately.
+    ///
+    /// `ok` is "did Trellis store this?" and `bound` is "can the relay actually push to this token?"
+    /// They are NOT the same question, and answering the second with the first is what froze a card
+    /// for an entire print: a claim that failed to build on the phone still produced a 200, the app
+    /// marked the registration final, and nothing retried for the life of the process.
+    ///
+    /// An absent `bound` field means a Trellis old enough not to answer the question. It is read as
+    /// true, because the alternative — retrying forever against a server that signs locally and has
+    /// nothing to bind — is a worse failure than the one being fixed.
+    private func postWithReason(_ path: String, body: some Encodable) async -> (ok: Bool, bound: Bool, reason: String?) {
+        guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else { return (false, false, nil) }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        req.httpBody = data
+
+        guard let (payload, response) = try? await URLSession.shared.data(for: req),
+              let http = response as? HTTPURLResponse else { return (false, false, nil) }
+        let json = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any]
+        if (200..<300).contains(http.statusCode) {
+            return (true, json?["bound"] as? Bool ?? true, nil)
+        }
+        return (false, false, json?["detail"] as? String)
+    }
+
+    /// Acts on a refusal that the app itself can resolve.
+    private func handle(refusal reason: String?) async {
+        guard reason == "reattest_required" else { return }
+        // The relay holds no public key for ours — a restore that predates this install, not an
+        // attack. Discard the key so the next claim carries a fresh attestation.
+        NSLog("[claim] relay asked for re-attestation; discarding the local key")
+        await attestor.reattest()
+    }
+
     @discardableResult
     private func post(_ path: String, body: some Encodable) async -> Bool {
         guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else { return false }
