@@ -10,5 +10,12 @@
 	</array>
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
+	<!-- App Attest. Which of Apple's attestation environments a build talks to is NOT the APNs
+	     environment: Apple explicitly allows a development build to attest against production, and
+	     the entitlement is ignored entirely once the app is distributed. Stated explicitly here so
+	     a locally-installed build is known to produce development attestations, which is what
+	     Canopy's CANOPY_ALLOW_DEVELOPMENT_ATTEST is set for. -->
+	<key>com.apple.developer.devicecheck.appattest-environment</key>
+	<string>development</string>
 </dict>
 </plist>
