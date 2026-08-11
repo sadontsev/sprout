@@ -145,3 +145,40 @@ class SelfHostingGuideExists(unittest.TestCase):
         self.assertIn("your own build of the app", text)
         self.assertIn("bundle id", text)
         self.assertIn("team-scoped", text, "the reason must be stated, not just the rule")
+
+
+class TheExampleEnvMatchesTheDefault(unittest.TestCase):
+    """.env.example is the first thing a new deployment copies, so it IS the setup instructions.
+
+    It shipped `APNS_KEY_ID=` / `APNS_TEAM_ID=` / `APNS_TOPIC=...` uncommented, under a header
+    saying the deploy "fails loudly if the APNS_* values are missing" — written when signing locally
+    was the only mode. Following it means obtaining an Apple developer account to do something that
+    now requires none, and it contradicts the README's "BAMBUDDY_API_KEY is the only value you must
+    set". Documentation that disagrees with the code sends people to fix the wrong thing.
+    """
+
+    def setUp(self):
+        import pathlib
+        self.path = pathlib.Path(__file__).parent / ".env.example"
+        self.active = [
+            line.split("=", 1)[0]
+            for line in self.path.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#") and "=" in line
+        ]
+
+    def test_only_the_bambuddy_key_is_uncommented(self):
+        self.assertEqual(
+            self.active, ["BAMBUDDY_API_KEY"],
+            "everything else is for self-hosting and must stay commented, or a new deployment is "
+            "told to configure Apple credentials the default path does not use",
+        )
+
+    def test_it_says_what_happens_with_nothing_set(self):
+        text = self.path.read_text().lower()
+        self.assertIn("relays through the push service", text)
+        self.assertIn("recovery code", text,
+                      "printed once at enrolment and never served from an endpoint; a deployment "
+                      "that misses it cannot re-adopt its bindings after losing the data volume")
+
+    def test_it_points_at_the_self_hosting_guide(self):
+        self.assertIn("docs/guides/self-hosting-push.md", self.path.read_text())
