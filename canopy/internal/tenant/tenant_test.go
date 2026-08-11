@@ -163,3 +163,52 @@ func TestSecretsAreNotStoredInTheClear(t *testing.T) {
 		t.Fatal("no digest was stored")
 	}
 }
+
+func TestRecoveryWorksWithoutAnInvite(t *testing.T) {
+	// The invite gates NEW tenants. Requiring it for recovery too meant a user whose data volume
+	// was lost had to ask the operator for an invite before the recovery code they were told to
+	// save would do anything — the exact situation it exists to let them handle alone.
+	s := newService(t)
+	s.InviteCode = "let-me-in"
+
+	first, err := s.Enroll("let-me-in", "", t0)
+	if err != nil {
+		t.Fatalf("initial enroll: %v", err)
+	}
+
+	// Data volume lost; all that survives is the recovery code.
+	back, err := s.Enroll("", first.Recovery, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("recovery without an invite: %v", err)
+	}
+	if back.ID != first.ID {
+		t.Errorf("recovered id = %q, want the original %q", back.ID, first.ID)
+	}
+	if back.Secret == first.Secret {
+		t.Error("the secret must rotate, or a leaked one stays valid")
+	}
+}
+
+func TestANewTenantStillNeedsTheInvite(t *testing.T) {
+	// The gate must not have been widened into nothing.
+	s := newService(t)
+	s.InviteCode = "let-me-in"
+
+	if _, err := s.Enroll("", "", t0); !errors.Is(err, ErrInviteRequired) {
+		t.Fatalf("err = %v, want ErrInviteRequired", err)
+	}
+	if _, err := s.Enroll("wrong", "", t0); !errors.Is(err, ErrInviteRequired) {
+		t.Fatalf("err = %v, want ErrInviteRequired for a wrong code", err)
+	}
+}
+
+func TestAnUnknownRecoveryCodeIsStillRefused(t *testing.T) {
+	// Skipping the invite for recovery must not become a way in for someone holding nothing.
+	s := newService(t)
+	s.InviteCode = "let-me-in"
+
+	_, err := s.Enroll("", "not-a-real-recovery-code", t0)
+	if !errors.Is(err, ErrUnknownRecovery) {
+		t.Fatalf("err = %v, want ErrUnknownRecovery", err)
+	}
+}

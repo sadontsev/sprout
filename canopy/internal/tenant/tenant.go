@@ -60,7 +60,20 @@ func (c Credentials) Bearer() string { return c.ID + "." + c.Secret }
 // Enroll creates a tenant, or — when recoveryCode matches an existing one —
 // re-adopts that identity with a fresh secret.
 func (s *Service) Enroll(inviteCode, recoveryCode string, now time.Time) (Credentials, error) {
-	if s.InviteCode != "" && !hashing.Equal(hashing.Digest(inviteCode), hashing.Digest(s.InviteCode)) {
+	// The invite gates NEW tenants, not the return of an existing one.
+	//
+	// It ran first, unconditionally, so a user whose data volume was lost needed the operator to
+	// hand out an invite before their recovery code would work — which is precisely the situation
+	// the recovery code exists to let them handle alone. The gate answers "may a stranger create a
+	// tenant here?"; a recovery code answers "am I already one?", and only the first is what an
+	// invite is for.
+	//
+	// Safe because the recovery code IS the credential: it is 32 random bytes, single-use, and
+	// rotated on redemption, so anyone holding one already owns that tenant and gains nothing by
+	// skipping the invite. Enrolment is rate-limited per IP besides. An unknown code still fails —
+	// this widens nothing except the door back in for someone who was already inside.
+	if recoveryCode == "" && s.InviteCode != "" &&
+		!hashing.Equal(hashing.Digest(inviteCode), hashing.Digest(s.InviteCode)) {
 		return Credentials{}, ErrInviteRequired
 	}
 
