@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mvks5/canopy/internal/apns"
+	"github.com/mvks5/canopy/internal/binding"
 	"github.com/mvks5/canopy/internal/challenge"
 	"github.com/mvks5/canopy/internal/pairing"
 	"github.com/mvks5/canopy/internal/store"
@@ -385,7 +386,7 @@ func TestPushFromAnotherTenantIsNotOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enroll: %v", err)
 	}
-	push := map[string]any{"token": "tok-A", "push_type": "alert", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
+	push := map[string]any{"token": "tok-A", "push_type": "liveactivity", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
 	resp, body := h.do("POST", "/v1/push", push, other.Bearer())
 
 	if resp.StatusCode != http.StatusForbidden || body["error"] != "not_owner" {
@@ -399,7 +400,7 @@ func TestTransportFailureIsNotAnAPNsStatus(t *testing.T) {
 	// Point the gateway at a dead port so the request cannot complete.
 	h.server.APNs.SetHostForTest(apns.Production, "http://127.0.0.1:1")
 
-	push := map[string]any{"token": "tok-A", "push_type": "alert", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
+	push := map[string]any{"token": "tok-A", "push_type": "liveactivity", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
 	resp, body := h.do("POST", "/v1/push", push, h.creds.Bearer())
 
 	if resp.StatusCode != http.StatusBadGateway {
@@ -418,7 +419,7 @@ func TestDeadTokenDropsTheBinding(t *testing.T) {
 	bindStart(t, h, "tok-A")
 	h.apns.reply = func(*http.Request) (int, string) { return 410, "Unregistered" }
 
-	push := map[string]any{"token": "tok-A", "push_type": "alert", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
+	push := map[string]any{"token": "tok-A", "push_type": "liveactivity", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
 	resp, body := h.do("POST", "/v1/push", push, h.creds.Bearer())
 	if resp.StatusCode != http.StatusOK || body["apns_status"] != float64(410) {
 		t.Fatalf("status %d body %v, want 200 carrying APNs 410", resp.StatusCode, body)
@@ -436,7 +437,7 @@ func TestReleaseThenReclaimThenPushSucceeds(t *testing.T) {
 		t.Fatalf("release: status %d", resp.StatusCode)
 	}
 
-	push := map[string]any{"token": "tok-A", "push_type": "alert", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
+	push := map[string]any{"token": "tok-A", "push_type": "liveactivity", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
 	if resp, body := h.do("POST", "/v1/push", push, h.creds.Bearer()); resp.StatusCode != http.StatusForbidden || body["error"] != "not_bound" {
 		t.Fatalf("push to a released token: status %d body %v, want 403 not_bound", resp.StatusCode, body)
 	}
@@ -546,4 +547,58 @@ func hexOf(b []byte) string {
 		out[i*2+1] = hextable[v&0x0f]
 	}
 	return string(out)
+}
+
+// TestABindingCannotCarryAPushTypeItsKindDoesNotOwn is the regression test for a reproduced
+// tenant-isolation break.
+//
+// Canopy cannot tell a device token from a push-to-start token by value — only the claimant's own
+// binding_kind says which it is. R0 binds start tokens with NO vouch, because start tokens
+// genuinely cannot receive the silent push a vouch rides on. So an attacker who holds a victim's
+// DEVICE token declares it a "start" token, binds it unvouched, and then pushes an `alert` — whose
+// topic is the bare bundle id, the correct topic for a device token — and APNs delivers an
+// attacker-authored banner to the victim's phone.
+//
+// NeedsVouch answers "what did the claimant CALL this token?" when the question is "can this token
+// receive the push that proves reachability?". The label is now worth only the capability it names.
+func TestABindingCannotCarryAPushTypeItsKindDoesNotOwn(t *testing.T) {
+	h := newHarness(t)
+	bindStart(t, h, "tok-A") // the victim's device token, declared "start" by the attacker
+
+	// An alert resolves to the bare bundle id — the device-token topic. This is the push that
+	// reached the victim's lock screen before the gate existed.
+	push := map[string]any{"token": "tok-A", "push_type": "alert", "priority": 10, "payload": json.RawMessage(`{"aps":{}}`)}
+	resp, body := h.do("POST", "/v1/push", push, h.creds.Bearer())
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d body %v, want 403; a start binding must not be able to send an alert",
+			resp.StatusCode, body)
+	}
+	if body["error"] != "push_type_not_permitted" {
+		t.Errorf("error = %v, want push_type_not_permitted", body["error"])
+	}
+}
+
+func TestEachKindCarriesOnlyItsOwnPushTypes(t *testing.T) {
+	// The whole table, so a later edit cannot quietly widen one kind.
+	cases := []struct {
+		kind      binding.Kind
+		pushType  string
+		permitted bool
+	}{
+		{binding.KindDevice, "alert", true},
+		{binding.KindDevice, "background", true}, // the vouch itself rides on this
+		{binding.KindDevice, "liveactivity", false},
+		{binding.KindStart, "liveactivity", true},
+		{binding.KindStart, "alert", false}, // the reproduced attack
+		{binding.KindStart, "background", false},
+		{binding.KindActivity, "liveactivity", true},
+		{binding.KindActivity, "alert", false},
+		{binding.KindActivity, "background", false},
+	}
+	for _, c := range cases {
+		if got := c.kind.Permits(c.pushType); got != c.permitted {
+			t.Errorf("%s.Permits(%q) = %v, want %v", c.kind, c.pushType, got, c.permitted)
+		}
+	}
 }

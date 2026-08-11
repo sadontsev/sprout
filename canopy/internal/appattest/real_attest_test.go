@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,6 +21,20 @@ func TestRealDeviceAttestation(t *testing.T) {
 	keyID, _ := os.ReadFile("testdata/attestation.keyid")
 	clientData, _ := os.ReadFile("testdata/attestation.clientdata")
 
+	// The app id is team.bundle, and the team id identifies a real Apple developer account. This
+	// repository is public and states that nothing identifying is committed, so it lives in a
+	// gitignored file beside the rest of the fixture rather than in source.
+	//
+	// Missing it FAILS rather than skips. The attestation is present — so this is a checkout that
+	// captured a fixture and lost one piece of it, and skipping would report a green suite for the
+	// one test that verifies the design against reality.
+	appID, err := os.ReadFile("testdata/attestation.appid")
+	if err != nil {
+		t.Fatalf("testdata/attestation.appid is missing while attestation.bin is present. "+
+			"It holds <TEAMID>.<bundle id> for the capture, is gitignored, and cannot be derived "+
+			"from the attestation (only its SHA-256 appears there): %v", err)
+	}
+
 	rootPEM, err := os.ReadFile("testdata/apple-app-attest-root.pem")
 	if err != nil {
 		t.Fatalf("root CA: %v", err)
@@ -32,7 +47,7 @@ func TestRealDeviceAttestation(t *testing.T) {
 
 	v := &Verifier{
 		Roots:            roots,
-		AppID:            "<YOUR_TEAM_ID>.com.mvks5.bambu",
+		AppID:            strings.TrimSpace(string(appID)),
 		AllowDevelopment: true,
 	}
 

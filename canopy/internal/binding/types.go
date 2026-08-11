@@ -57,6 +57,44 @@ func (k Kind) DormancyApplies() bool { return k != KindActivity }
 // which is a stated residual in spec §4 rather than a gap to paper over.
 func (k Kind) NeedsVouch() bool { return k == KindDevice }
 
+// Permits reports whether a binding of this kind may carry an APNs push of this
+// type. Values match apns.PushType; they are strings here so this package stays
+// free of the APNs client.
+//
+// THIS IS THE GATE THAT MAKES binding_kind SAFE TO TAKE FROM THE CLAIMANT.
+//
+// Canopy cannot tell a device token from a push-to-start token by looking at it
+// — only the claimant's own binding_kind says which it is. NeedsVouch therefore
+// answers "what did the claimant CALL this token?" when the security question
+// is "can this token receive the silent push that would prove reachability?".
+// Those are synonyms only while the claimant is honest, which is exactly the
+// assumption the vouch exists to remove.
+//
+// An adversarial review reproduced the consequence end to end: claim a victim's
+// DEVICE token while declaring binding_kind "start", and R0 binds it with no
+// vouch because start tokens legitimately cannot be vouched. Push `alert` to it
+// and APNs resolves the topic to the bare bundle id — the correct topic for a
+// device token — and delivers an attacker-authored banner to the victim's
+// phone.
+//
+// The label is now only as powerful as the capability it names. A row bound as
+// `start` may send Live Activity pushes and nothing else, so declaring a device
+// token to be a start token buys an attacker a binding that can only carry a
+// push APNs will not deliver to that token. The lie stops paying.
+func (k Kind) Permits(pushType string) bool {
+	switch k {
+	case KindDevice:
+		// Alert banners, and the silent push the vouch itself rides on.
+		return pushType == "alert" || pushType == "background"
+	case KindStart, KindActivity:
+		// Push-to-start and content-state updates. Both are Live Activity
+		// pushes and both resolve to the .push-type.liveactivity topic.
+		return pushType == "liveactivity"
+	default:
+		return false
+	}
+}
+
 // Rule identifies which rule of spec §5 decided a claim. Tests assert on this
 // rather than on the resulting row: a suite that checks each rule in isolation
 // cannot catch two rules matching one input, which is how three revisions of
