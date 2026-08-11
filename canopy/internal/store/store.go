@@ -237,3 +237,54 @@ func (s *Store) PurgeExpiredChallenges(now time.Time) error {
 	_, err := s.db.Exec(`DELETE FROM challenges WHERE expires_at <= ?`, now.UnixMilli())
 	return err
 }
+
+// ReleaseBinding marks the row released, but only for the tenant that holds it.
+// Release is not deletion: the row keeps its anchors and its retention horizon,
+// so a released token is never reopened to a first-come claim.
+func (s *Store) ReleaseBinding(tokenHash, tenant string, now time.Time) (bool, error) {
+	const q = `UPDATE bindings SET released_at = ? WHERE token_hash = ? AND tenant = ?`
+	res, err := s.db.Exec(q, now.UnixMilli(), tokenHash, tenant)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DeleteBinding removes the row, returning the token to UNSEEN. Only the tenant
+// that holds it may do this: it is the most security-sensitive transition in the
+// design, which is why it is an explicit, authenticated, user-initiated action
+// rather than something a rule infers.
+func (s *Store) DeleteBinding(tokenHash, tenant string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM bindings WHERE token_hash = ? AND tenant = ?`, tokenHash, tenant)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DropBinding removes the row regardless of tenant. Used when APNs reports the
+// token is dead, where there is no tenant to consult.
+func (s *Store) DropBinding(tokenHash string) error {
+	_, err := s.db.Exec(`DELETE FROM bindings WHERE token_hash = ?`, tokenHash)
+	return err
+}
+
+// MarkDelivered records a successful push: it stamps the delivery clock and
+// renews the lease, which is what keeps an actively-used token from ever
+// drifting toward dormancy.
+func (s *Store) MarkDelivered(tokenHash string, now, leaseExpiry time.Time) error {
+	const q = `UPDATE bindings SET last_delivery_at = ?, lease_expiry = ? WHERE token_hash = ?`
+	_, err := s.db.Exec(q, now.UnixMilli(), leaseExpiry.UnixMilli(), tokenHash)
+	return err
+}
+
+// SetAPNSEnvironment persists a gateway self-correction. It is deliberately not
+// something a claim can do: the phone derives the environment from an
+// entitlement and would keep supplying the same wrong value, silently reverting
+// the correction.
+func (s *Store) SetAPNSEnvironment(tokenHash, env string) error {
+	_, err := s.db.Exec(`UPDATE bindings SET apns_environment = ? WHERE token_hash = ?`, env, tokenHash)
+	return err
+}

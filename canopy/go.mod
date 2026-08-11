@@ -2,7 +2,10 @@ module github.com/mvks5/canopy
 
 go 1.26.5
 
-require modernc.org/sqlite v1.56.0
+require (
+	golang.org/x/time v0.15.0
+	modernc.org/sqlite v1.56.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
