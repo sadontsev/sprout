@@ -194,4 +194,52 @@ final class VersionGroupingTests: XCTestCase {
         XCTAssertTrue(f.isActive)
         XCTAssertEqual(f.activeCount, 2)
     }
+    // MARK: Which spool serves which slot
+
+    private func tray(_ unit: Int, _ slot: Int, _ type: String) -> VersionGrouping.Tray {
+        VersionGrouping.Tray(unit: unit, slot: slot, type: type)
+    }
+
+    private func slot(_ type: String?) -> MWSlot {
+        var s = MWSlot(); s.type = type; return s
+    }
+
+    /// The bug this exists to prevent: reporting the same tray for every slot of a material, so a
+    /// three-colour version claimed to print from one spool. "The material is loaded" and "this
+    /// slot has a tray" are different questions.
+    func testEachSlotGetsItsOwnTray() {
+        let trays = [tray(0, 0, "PLA"), tray(0, 1, "PLA"), tray(0, 2, "PETG")]
+        let got = VersionGrouping.assignTrays(slots: [slot("PLA"), slot("PLA"), slot("PETG")], trays: trays)
+        XCTAssertEqual(got.map { $0?.slot }, [0, 1, 2])
+        XCTAssertEqual(Set(got.compactMap { $0?.slot }).count, 3, "no tray may serve two slots")
+    }
+
+    func testASlotWithNoTrayLeftGetsNothingRatherThanSomeoneElsesTray() {
+        let trays = [tray(0, 0, "PLA")]
+        let got = VersionGrouping.assignTrays(slots: [slot("PLA"), slot("PLA")], trays: trays)
+        XCTAssertEqual(got[0]?.slot, 0)
+        XCTAssertNil(got[1], "the second PLA slot has no tray of its own and must say so")
+    }
+
+    /// Universal asks for nothing in particular, so nothing is claimed on its behalf.
+    func testUniversalSlotsClaimNoTray() {
+        let got = VersionGrouping.assignTrays(slots: [slot("Universal"), slot(nil)],
+                                              trays: [tray(0, 0, "PLA")])
+        XCTAssertEqual(got.compactMap { $0 }.count, 0)
+    }
+
+    /// "You have none" and "you have fewer than this needs" are different problems with different
+    /// fixes, so they are counted separately.
+    func testShortfallDistinguishesNoneFromNotEnough() {
+        let trays = [tray(0, 0, "PLA")]
+        let short = VersionGrouping.shortfall(slots: [slot("PLA"), slot("PLA"), slot("ABS")], trays: trays)
+        XCTAssertEqual(short["PLA"], 1, "two wanted, one loaded")
+        XCTAssertEqual(short["ABS"], 1, "one wanted, none loaded")
+        XCTAssertNil(VersionGrouping.shortfall(slots: [slot("PLA")], trays: trays)["PLA"])
+    }
+
+    func testShortfallIgnoresUniversal() {
+        XCTAssertTrue(VersionGrouping.shortfall(slots: [slot("Universal")], trays: []).isEmpty)
+    }
+
 }

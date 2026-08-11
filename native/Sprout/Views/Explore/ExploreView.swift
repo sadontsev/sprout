@@ -90,12 +90,57 @@ private struct ExploreRoot: View {
             // Pinned, not scrolled. The chips used to live inside the ScrollView, so the categories
             // vanished the moment you looked at any results (F6).
             searchField
+            if case .resolve(let id) = explore.intent { openModelSuggestion(id) }
             if !explore.navs.isEmpty || collectionsClient.isAvailable { chips }
             Divider().overlay(c.line2)
 
             content
         }
         .background(c.bg)
+        // C6 — the field used to fire only on submit, so every query cost a tap. Keyed on the text,
+        // so typing another character cancels this and restarts the wait; `ExploreModel` then
+        // cancels the in-flight request itself, and `activeQuery` stops a straggler landing.
+        //
+        // A string that parses as a MakerWorld link is deliberately NOT searched: it becomes the
+        // suggestion row above instead. Searching for "makerworld.com/models/1400373" would return
+        // nothing and look broken, and retitling the button was the old way of saying so.
+        .task(id: explore.query) {
+            guard case .search(let term) = explore.intent else { return }
+            guard term.count >= 2 else { return }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            explore.search(term)
+        }
+    }
+
+    /// The link path, offered rather than guessed at. One row, and it says exactly what it will do.
+    private func openModelSuggestion(_ id: Int) -> some View {
+        Tap {
+            var hit = MWSearchHit(id: id)
+            hit.title = "Model \(id)"
+            explore.query = ""
+            fieldFocused = false
+            explore.path.append(hit)
+        } content: {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(c.accent)
+                Text(verbatim: "Open model \(id)")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(c.t1)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(c.t3)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(c.accentDim))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+            .contentShape(.rect)
+        }
     }
 
     // MARK: Pinned header

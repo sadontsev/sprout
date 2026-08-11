@@ -228,6 +228,54 @@ enum VersionGrouping {
         }
     }
 
+    // MARK: Which of your spools would serve which slot
+
+    /// One loaded tray, flattened out of the AMS status.
+    struct Tray: Equatable, Sendable {
+        var unit: Int      // 0-based AMS unit
+        var slot: Int      // 0-based slot within the unit
+        var type: String   // upper-cased material
+    }
+
+    /// Assign a distinct tray to each of a version's filament slots.
+    ///
+    /// **Distinct is the whole point.** The first version of this answered "is there a tray with
+    /// this material?" and so reported the same tray for every PLA slot — a three-colour version
+    /// claiming to print from one spool. That is the nearby-question bug this codebase keeps
+    /// shipping: "the material is loaded" and "this slot has a tray" are different questions.
+    ///
+    /// Greedy and first-fit, in slot order, because that is all this page needs: it is a statement
+    /// about what you have, not the mapping. `AmsMapping` owns the real mapping and the wizard is
+    /// where it is chosen — a second matcher that drifted from it would be worse than none.
+    ///
+    /// A slot needing a material with no tray left returns `nil`, and the caller says why.
+    static func assignTrays(slots: [MWSlot], trays: [Tray]) -> [Tray?] {
+        var available = trays
+        return slots.map { slot in
+            guard let want = slot.type?.uppercased(), !want.isEmpty, want != "UNIVERSAL" else {
+                return nil   // Universal asks for nothing, so nothing is claimed for it
+            }
+            guard let i = available.firstIndex(where: { $0.type == want }) else { return nil }
+            return available.remove(at: i)
+        }
+    }
+
+    /// Why a slot got no tray — "you have none" and "you have fewer than this version needs" are
+    /// different problems with different fixes.
+    static func shortfall(slots: [MWSlot], trays: [Tray]) -> [String: Int] {
+        var needed: [String: Int] = [:]
+        for slot in slots {
+            guard let t = slot.type?.uppercased(), !t.isEmpty, t != "UNIVERSAL" else { continue }
+            needed[t, default: 0] += 1
+        }
+        var short: [String: Int] = [:]
+        for (material, want) in needed {
+            let have = trays.filter { $0.type == material }.count
+            if have < want { short[material] = want - have }
+        }
+        return short
+    }
+
     /// The materials worth offering, built from the versions actually present rather than a
     /// hardcoded list — a filter for a material no version uses returns nothing and teaches nothing.
     static func materialsPresent(_ rows: [MWProfileRow]) -> [String] {
