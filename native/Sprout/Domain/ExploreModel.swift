@@ -31,7 +31,13 @@ final class ExploreModel {
     var activeQuery: String?
     var sort: MakerWorldSearch.Sort = .relevance
     var recent: [MakerWorldRecentImport] = []
+    /// What is pushed on top of the results. In the model rather than the view so that dismissing
+    /// Explore and coming back returns to where you were, which is the whole point of F2.
+    var path: [MWSearchHit] = []
     var access: MakerWorldAccess = .checking
+    /// Set by the "Paste a link" menu item so the page opens with the cursor already in the field.
+    /// One-shot: the page clears it on arrival, or every re-entry would steal focus.
+    var wantsFieldFocus = false
 
     /// True while a result set is being fetched. The grid keeps its old content underneath — see
     /// `startFetch`, and C5 in the design handoff: blanking first makes a request read as slower

@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 // MARK: - File kinds
 
-private enum UploadFileKind {
+enum UploadFileKind {
     /// What the document browser will let you pick.
     ///
     /// Built with `UTType(tag:tagClass:conformingTo:)` rather than `UTType(filenameExtension:)`
@@ -37,7 +37,7 @@ private final class UploadProgressBox {
 /// Deliberately narrower than `BambuddyError.detail`, which falls back to the raw body: a proxy's
 /// HTML error page is not something to put in front of a person, so callers keep their own wording
 /// when there is no structured detail.
-private func uploadApiDetail(_ error: Error) -> String? {
+func uploadApiDetail(_ error: Error) -> String? {
     guard let e = error as? BambuddyError,
           let data = e.body.data(using: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -59,7 +59,7 @@ private func uploadApiDetail(_ error: Error) -> String? {
 ///
 /// Free function, not a method, so it can run off the main actor: copying tens of megabytes is not
 /// something to do while the sheet is trying to animate.
-private func stageUploadCopy(_ picked: URL) throws -> URL {
+func stageUploadCopy(_ picked: URL) throws -> URL {
     let scoped = picked.startAccessingSecurityScopedResource()
     defer { if scoped { picked.stopAccessingSecurityScopedResource() } }
 
@@ -1778,7 +1778,7 @@ private struct UploadSourceTile: View {
 }
 
 /// The one failure card used by both panels.
-private struct UploadErrorCard: View {
+struct UploadErrorCard: View {
     let text: String
     @Environment(\.palette) private var c
 
