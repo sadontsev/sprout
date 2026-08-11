@@ -25,6 +25,7 @@ struct ModelDetailView: View {
     @State private var failure: MWFailure?
     @State private var importing = false
     @State private var licenceExpanded = false
+    @State private var descriptionExpanded = false
     @State private var importResult: ImportReceipt?
 
     private var design: MWDesign? { resolved?.design }
@@ -104,6 +105,30 @@ struct ModelDetailView: View {
                         .foregroundStyle(c.t2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+
+            if let blurb = MakerWorldSearch.plainText(design?.summary) {
+                // The uploader's description of the MODEL, which is a different thing from a
+                // version's settings note — this is what the object IS, not how one profile slices
+                // it. Collapsed by default because these run long, and the versions are what the
+                // page is for.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: blurb)
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(c.t2)
+                        .lineLimit(descriptionExpanded ? nil : 4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // Only offered when there is more to see — a "More" that reveals nothing is the
+                    // same lie as a control for a capability the build lacks.
+                    if blurb.count > 220 {
+                        Tap { descriptionExpanded.toggle() } content: {
+                            Text(descriptionExpanded ? "Less" : "More")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(c.accent)
+                        }
+                    }
+                }
+                .padding(.top, 2)
             }
 
             if design?.isExclusive == true {

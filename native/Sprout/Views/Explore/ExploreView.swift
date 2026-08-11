@@ -76,12 +76,6 @@ struct ExploreView: View {
                 explore.recent = await client.recentMakerWorldImports()
             }
         }
-        .onAppear {
-            if explore.wantsFieldFocus {
-                fieldFocused = true
-                explore.wantsFieldFocus = false   // one-shot, or every re-entry steals focus
-            }
-        }
     }
 }
 
