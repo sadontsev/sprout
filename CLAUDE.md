@@ -41,7 +41,7 @@ DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
 - Swift 6 with `SWIFT_STRICT_CONCURRENCY: complete`. The camera renderer needed real changes to pass it: its event payload became a typed `Sendable` enum, and the stream-URL provider a concrete error, because `[String: Any]` and `any Error` cannot cross the network→main hop.
 - A property named `body` on a `View` collides with the protocol requirement. Two ported screens hit this; call it `message`.
 - Bare-slash regex literals may not begin or end with a space — write `\s`.
-- **`PrintActivityAttributes.ContentState` field names are a wire format.** la-push pushes that JSON over APNs, so renaming a property breaks remote Live Activity updates without breaking the build.
+- **`PrintActivityAttributes.ContentState` field names are a wire format.** Trellis pushes that JSON over APNs, so renaming a property breaks remote Live Activity updates without breaking the build.
 - The Keychain schema differs from `expo-secure-store`'s, so settings do **not** migrate between the two apps — the base URL and API key are re-entered once.
 - `Text("…")` with a **string literal** is a `LocalizedStringKey`, so SwiftUI parses it as Markdown — and Markdown autolinks a bare URL. A placeholder containing one rendered as blue tappable link text with `foregroundStyle` ignored. Use `Text(verbatim:)`. A `String` *variable* picks the non-Markdown overload, which is why the Settings fields never hit this.
 - `.frame(maxHeight:)` **centres** its child by default. A greedy child (a `ScrollView`) keeps the frame at full height while the content shrinks, leaving a bottom sheet floating mid-screen. Pass `alignment: .bottom`.
@@ -78,7 +78,7 @@ Three network surfaces, deliberately kept apart so one breaking cannot break the
 |---|---|---|
 | resolve + import | Bambuddy (`/api/v1/makerworld/*`) | app's `X-API-Key`; the *import* additionally needs the server signed in to Bambu Cloud |
 | search + browse | `api.bambulab.com/v1/search-service` — **called straight from the app** (`MakerWorldSearchClient`) | none, anonymous |
-| the owner's collections | the owner's own **la-push** (`/makerworld/collections`) | app's `X-API-Key`; la-push reads Bambuddy's stored Bambu Cloud bearer |
+| the owner's collections | the owner's own **Trellis** (`/makerworld/collections`) | app's `X-API-Key`; Trellis reads Bambuddy's stored Bambu Cloud bearer |
 
 **The app must never hold a Bambu Cloud bearer.** A phone is lost far more often than a home server, and Bambu has been actively hostile to third-party cloud access. If `search-service` ever starts requiring one, search is **removed**, not worked around.
 
@@ -97,9 +97,9 @@ Two questions, two functions, and they must not be merged back:
 
 - `resolvePushUrl` — *"should Live Activities be pushed through a server, and where?"* `nil` when the
   user turns push off.
-- `laPushUrl` — *"where is la-push?"* Ignores the toggle.
+- `laPushUrl` — *"where is Trellis?"* Ignores the toggle.
 
-la-push serves MakerWorld **collections** as well as push, and collections are plain authenticated
+Trellis serves MakerWorld **collections** as well as push, and collections are plain authenticated
 HTTP with no APNs involved. Gating them on the push toggle made switching push off silently remove
 the Collections tab — the recurring bug, in a predicate that only *nearly* answered the question.
 
@@ -232,8 +232,8 @@ never have to discover a limitation by hitting an error.
 ## Testing
 
 **`native/`** has its own suite — ~760 XCTest cases over `Sprout/Domain/` and the API decoders, run
-with the `xcodebuild … test` line in the native section above. **`deploy/la-push/`** uses stdlib
+with the `xcodebuild … test` line in the native section above. **`deploy/trellis/`** uses stdlib
 `unittest` (no pytest, deliberately, so it runs inside the container): `python3 -m unittest discover
-deploy/la-push`.
+deploy/trellis`.
 
 Everything below is about **`mobile/`**. `jest-expo`. Tests cover **pure logic** only — `present.ts` view-model, `bambuddyClient` URL/token builders, settings key sanitization, and the config-plugin transforms (`plugins/__tests__/`). Native modules (`expo-widgets`, `@expo/ui`, `react-native-webview`) are not imported by tests. `npx tsc --noEmit` is the main correctness gate before every build.

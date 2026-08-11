@@ -17,10 +17,10 @@ struct AppConfig: Codable, Equatable, Sendable {
     /// Last-selected printer (restored on launch).
     var printerId: Int?
     var printerName: String?
-    /// la-push base URL for Live-Activity APNs push. Blank ⇒ derived from the bambuddy host as
+    /// Trellis base URL for Live-Activity APNs push. Blank ⇒ derived from the bambuddy host as
     /// `lapush.*`; anyone self-hosting with a different host sets it explicitly.
     var pushUrl: String?
-    /// Live-Activity mode. true/nil ⇒ register with la-push so cards persist after the app is
+    /// Live-Activity mode. true/nil ⇒ register with Trellis so cards persist after the app is
     /// suspended + status banners fire. false ⇒ LOCAL only: cards update while the app runs.
     var serverPush: Bool?
     /// stl-texturize sidecar URL. Blank ⇒ derived from the bambuddy host as `texturize.*`.

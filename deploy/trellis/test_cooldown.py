@@ -1,4 +1,4 @@
-"""Unit tests for the plate-cooldown decision. Run: python3 -m unittest discover deploy/la-push
+"""Unit tests for the plate-cooldown decision. Run: python3 -m unittest discover deploy/Trellis
 
 Deliberately dependency-free (stdlib unittest, no pytest/httpx/fastapi) so it runs anywhere the
 service does, including inside the container.

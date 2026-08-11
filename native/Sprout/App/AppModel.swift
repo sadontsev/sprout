@@ -54,6 +54,11 @@ final class AppModel {
 
     private(set) var lanMode: LanMode = .unknown
 
+    /// Is the current network path metered? Owned here because it is app-wide and long-lived — the
+    /// monitor should not start and stop with whichever view happens to care. Today that is the
+    /// dashboard camera tile, which picks its frame rate from it (`CameraRate`).
+    let networkPath = NetworkPathCost()
+
     // MARK: Derived surfaces
 
     private(set) var cooldown: CooldownStore?

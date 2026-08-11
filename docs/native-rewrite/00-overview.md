@@ -113,7 +113,7 @@ These are real feature losses against `mobile/`, not deliberate differences. Lis
 | Gap | What's missing | What exists already |
 |---|---|---|
 | **Model texturizer** | `TexturizeClient` and the whole texturize UI (sheet, preview/commit, mapping modes, amplitude/scale/refine). | Settings toggle, URL resolution and health-probe config are in place, so this is the client plus one overlay. |
-| **Push notifications** | No `UNUserNotificationCenter` registration, so no device-token POST to la-push and no print-finished / cooldown banners. Live Activity push tokens *are* registered. | `ConfigRules.resolvePushUrl` and the `serverPush` setting. |
+| **Push notifications** | No `UNUserNotificationCenter` registration, so no device-token POST to Trellis and no print-finished / cooldown banners. Live Activity push tokens *are* registered. | `ConfigRules.resolvePushUrl` and the `serverPush` setting. |
 | **App Group assets** | The brand nozzle glyph and plate thumbnail are never written to the App Group container, so lock-screen cards fall back to an SF Symbol instead of the glyph + model image. | The widget already reads `iconUri` / `modelUri` and falls back cleanly. |
 | **SD-card layer viewer** | The layer viewer is reachable for library files but not for a sliced 3MF on the printer's SD card — the overlay case takes a `LibraryFile`, and an SD file is addressed by path. | `client.printerGcodePath(_:path:)` is already there. |
 | **`presentNozzles`** | Ported as a file-private helper inside `AmsView` rather than a tested `Domain/` module, so it is the one piece of ported logic without tests. | The logic itself is complete, including the rack/no-rack cross-map. |

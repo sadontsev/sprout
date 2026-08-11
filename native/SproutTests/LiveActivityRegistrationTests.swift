@@ -1,7 +1,7 @@
 import XCTest
 @testable import Sprout
 
-/// The app's side of the SERVER-mode contract: the bodies and URLs handed to la-push, and the change
+/// The app's side of the SERVER-mode contract: the bodies and URLs handed to Trellis, and the change
 /// gate that decides what is worth a push. All of it is pure, so it is testable without ActivityKit.
 ///
 /// This half of the contract is easy to get wrong silently — a card registered against a route that
@@ -46,7 +46,7 @@ final class LiveActivityRegistrationTests: XCTestCase {
 
     // MARK: - Registration bodies
 
-    /// la-push's `Register` model is snake_case and requires `printer_id` + `push_token`.
+    /// Trellis's `Register` model is snake_case and requires `printer_id` + `push_token`.
     func testPrintCardRegistrationMatchesTheServersFieldNames() throws {
         let body = LiveActivityController.cardRegistration(
             attributes: PrintActivityAttributes(printerId: 7, amsId: nil),
@@ -91,14 +91,14 @@ final class LiveActivityRegistrationTests: XCTestCase {
     /// name would blank a title the server had right.
     func testRegistrationEchoesTheCardsOwnNameAndGlyph() {
         var state = PrintActivityAttributes.ContentState()
-        state.printerName = "Named by la-push"
+        state.printerName = "Named by Trellis"
         state.iconUri = "file:///glyph.png"
         let body = LiveActivityController.cardRegistration(
             attributes: PrintActivityAttributes(printerId: 1, amsId: nil),
             state: state,
             token: "t"
         )
-        XCTAssertEqual(body.printerName, "Named by la-push")
+        XCTAssertEqual(body.printerName, "Named by Trellis")
         XCTAssertEqual(body.iconUri, "file:///glyph.png")
     }
 

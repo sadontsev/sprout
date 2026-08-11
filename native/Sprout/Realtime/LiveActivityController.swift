@@ -2,10 +2,10 @@ import ActivityKit
 import Foundation
 import Observation
 
-/// What this build calls itself when it registers with la-push.
+/// What this build calls itself when it registers with Trellis.
 ///
 /// The RN app and this one ship as different TestFlight builds of the SAME bundle id and both talk to
-/// one la-push, but their Live-Activity wire shapes are incompatible: expo-widgets' ContentState is
+/// one Trellis, but their Live-Activity wire shapes are incompatible: expo-widgets' ContentState is
 /// `Codable{name, props}` with the fields serialized into `props`, ours is flat, and push-to-start
 /// names a different attributes type (`PrintActivityAttributes` + `{printerId, amsId}`, not
 /// `LiveActivityAttributes` + `{}`). The server cannot tell from a push token which app sent it, and
@@ -17,7 +17,7 @@ private let laPushClient = "native"
 /// Builds Live Activity content from live status, and owns the app's side of the card lifecycle.
 ///
 /// Two ownership modes, and exactly one owner at a time:
-/// - **SERVER** (a la-push URL resolves): the server starts every card by push-to-start, pushes every
+/// - **SERVER** (a Trellis URL resolves): the server starts every card by push-to-start, pushes every
 ///   update off its own poll, and ends it. The app's entire job is to hand over two tokens — the
 ///   device's push-to-start token, and each card's per-activity update token once a card exists — and
 ///   to notice dismissal. It calls neither `request` nor `update`.
@@ -52,7 +52,7 @@ final class LiveActivityController {
     /// waiting for the token to rotate — tokens rotate rarely, and a card with no token registered is
     /// a card frozen at the content it was created with.
     private var tokens: [String: String] = [:]
-    /// `"<activity id>|<token>"` pairs la-push has accepted.
+    /// `"<activity id>|<token>"` pairs Trellis has accepted.
     private var registered: Set<String> = []
     private var lastRegisterAttempt: [String: Date] = [:]
 
@@ -60,7 +60,7 @@ final class LiveActivityController {
     /// updates every status frame gets its budget cut.
     private static let throttle: TimeInterval = 4
     /// Minimum gap between registration attempts for one (card, token) pair. `sync` runs every 4 s and
-    /// an unreachable la-push must not turn that into a POST storm.
+    /// an unreachable Trellis must not turn that into a POST storm.
     private static let registerRetry: TimeInterval = 30
 
     var isServerOwned: Bool { pushUrl != nil }
@@ -230,14 +230,14 @@ final class LiveActivityController {
     /// `offline` and `connecting` are deliberately no-ops: a WebSocket blip must never kill a card
     /// that represents a print still running.
     func sync(printerId: Int, printerName: String, vm: DashVM, status: PrinterStatus?) async {
-        // Cards also appear without us: in SERVER mode la-push starts them remotely, and cards from a
+        // Cards also appear without us: in SERVER mode Trellis starts them remotely, and cards from a
         // previous launch outlive the process. Sweeping here — not only from `activityUpdates`, whose
         // replay of already-live activities is not something to bet a subsystem on — is what
         // guarantees every card ends up wired to its dismissal and push-token streams.
         adoptExistingActivities()
 
         // Deliberately not awaited: this loop runs every 4 s and also drives the cooldown readout, so
-        // a slow la-push must not stall it. `lastRegisterAttempt` is stamped BEFORE the request, so an
+        // a slow Trellis must not stall it. `lastRegisterAttempt` is stamped BEFORE the request, so an
         // overlapping flush cannot double-POST.
         if isServerOwned, !tokens.isEmpty { Task { [weak self] in await self?.flushRegistrations() } }
 
@@ -272,7 +272,7 @@ final class LiveActivityController {
     private func upsert(printerId: Int, amsId: Int?, content: PrintActivityAttributes.ContentState, ended: Bool) async {
         // SERVER mode: the server is the sole WRITER as well as the sole creator, so this returns
         // before touching a card or the gate state behind it. Two writers do not merely halve the
-        // ActivityKit budget — la-push pushes off a 5 s poll while the app reads a socket, so the two
+        // ActivityKit budget — Trellis pushes off a 5 s poll while the app reads a socket, so the two
         // hold different snapshots and the card's progress visibly jitters backwards. The local gate
         // (`lastContent`/`lastUpdate`) also knows nothing about what the server last rendered, so the
         // two sides cannot even agree on what counts as a change.
@@ -319,7 +319,7 @@ final class LiveActivityController {
     }
 
     /// Take a card down. Unlike `update`, this runs in BOTH modes on purpose: ending is terminal and
-    /// idempotent, so the worst a duplicated end can do is remove a card a few seconds before la-push
+    /// idempotent, so the worst a duplicated end can do is remove a card a few seconds before Trellis
     /// would have. The failure it prevents is far worse — a server that dies mid-print leaves a card
     /// counting down to a stale ETA on the lock screen with nothing able to clear it.
     func end(printerId: Int, amsId: Int?) async {
@@ -339,7 +339,7 @@ final class LiveActivityController {
 
     /// Attach everything the app is responsible for regardless of who owns the cards.
     private func startObserving() {
-        // The push-to-start token is the ONLY way la-push can create a card while the app is closed,
+        // The push-to-start token is the ONLY way Trellis can create a card while the app is closed,
         // and `upsert` refuses to create one in SERVER mode — so without this registration neither
         // party ever starts a card and the lock screen simply stays empty for the whole print. The
         // stream emits the current token as soon as it is iterated, then again on rotation.
@@ -348,7 +348,7 @@ final class LiveActivityController {
                 for await tokenData in Activity<PrintActivityAttributes>.pushToStartTokenUpdates {
                     guard let self else { return }
                     // `icon_uri` is empty until the brand glyph is written to the App Group (a known
-                    // gap); la-push treats an empty value as "keep what you have" for start tokens.
+                    // gap); Trellis treats an empty value as "keep what you have" for start tokens.
                     await self.post("/register-start", body: StartRegistration(pushToken: Self.hex(tokenData), iconUri: ""))
                 }
             }
@@ -405,7 +405,7 @@ final class LiveActivityController {
         lastUpdate[k] = nil
     }
 
-    // MARK: - la-push registration
+    // MARK: - Trellis registration
 
     /// `POST /register-start` — the device's push-to-start token.
     struct StartRegistration: Encodable, Equatable {
@@ -421,7 +421,7 @@ final class LiveActivityController {
         let pushToken: String
         let printerName: String
         let iconUri: String
-        /// `"print"` | `"dry"`. la-push keys drying cards `dry:<printerId>:<amsId>` off THIS field, so
+        /// `"print"` | `"dry"`. Trellis keys drying cards `dry:<printerId>:<amsId>` off THIS field, so
         /// a drying card registered as a print overwrites the print card's registration instead.
         let kind: String
         let amsId: Int?
@@ -429,11 +429,11 @@ final class LiveActivityController {
         let client = laPushClient
     }
 
-    /// Pure: what a card says about itself → the body la-push wants.
+    /// Pure: what a card says about itself → the body Trellis wants.
     ///
     /// The name and glyph are echoed from the card's OWN content rather than from anything the app has
     /// cached, because `/register` overwrites both server-side: in SERVER mode this card was created
-    /// by la-push, and posting the app's idea of the name would blank a title the server got right.
+    /// by Trellis, and posting the app's idea of the name would blank a title the server got right.
     nonisolated static func cardRegistration(
         attributes: PrintActivityAttributes,
         state: PrintActivityAttributes.ContentState,
@@ -450,7 +450,7 @@ final class LiveActivityController {
     }
 
     /// Re-attempt registrations that have not been accepted yet. A card whose token never reached
-    /// la-push is a card frozen at the content it was created with — the "stuck at 0 %" symptom — and
+    /// Trellis is a card frozen at the content it was created with — the "stuck at 0 %" symptom — and
     /// the token stream will not re-emit just because a POST failed.
     private func flushRegistrations() async {
         for activity in Activity<PrintActivityAttributes>.activities {
@@ -470,7 +470,7 @@ final class LiveActivityController {
         if await post("/register", body: body) { registered.insert(pair) }
     }
 
-    /// la-push endpoint for `path`, or nil when push is off. Trailing slashes are stripped because
+    /// Trellis endpoint for `path`, or nil when push is off. Trailing slashes are stripped because
     /// `…/` + `/register` is `//register`, which the server 404s.
     nonisolated static func endpoint(_ base: String?, _ path: String) -> URL? {
         guard var base = base else { return nil }
@@ -479,7 +479,7 @@ final class LiveActivityController {
         return URL(string: base + path)
     }
 
-    /// The JSON shape la-push's pydantic models expect: snake_case, nil optionals omitted.
+    /// The JSON shape Trellis's pydantic models expect: snake_case, nil optionals omitted.
     nonisolated static func encode(_ body: some Encodable) -> Data? {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -490,7 +490,7 @@ final class LiveActivityController {
         data.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// POST a registration body. Returns whether la-push accepted it.
+    /// POST a registration body. Returns whether Trellis accepted it.
     ///
     /// The status code is checked rather than discarded: this app spent a release posting to a route
     /// that did not exist, and a swallowed 404/422 looks exactly like success from in here.

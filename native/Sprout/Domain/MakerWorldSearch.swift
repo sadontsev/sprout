@@ -209,6 +209,168 @@ enum MakerWorldSearch {
         return joined.isEmpty ? nil : joined
     }
 
+    // MARK: Rich descriptions
+
+    /// A MakerWorld description as **Markdown**, so its formatting survives.
+    ///
+    /// These are real HTML documents — the measured tag set on one model is `h2`, `p`, `strong`,
+    /// `i`, `br`, `ol`, `li`, `img`, `figure`, `span`, plus custom `boost*` elements. Flattening all
+    /// of that to plain text (which is what shipped first) throws away the headings, the emphasis
+    /// and the numbered steps that carry most of the meaning: "**6-cell and 9-cell trays**" and
+    /// "6-cell and 9-cell trays" are not the same sentence.
+    ///
+    /// Markdown rather than `NSAttributedString(html:)` on purpose. That initialiser is WebKit-backed,
+    /// must run on the main thread, is slow enough to stutter a scroll, and imports its own fonts and
+    /// colours which then fight the app's palette. This is a pure string transform: testable, fast,
+    /// and it inherits whatever styling the view applies.
+    ///
+    /// **Text is escaped, markup is not.** Everything between tags is uploader-supplied, so its
+    /// Markdown metacharacters are escaped before emitting — otherwise a description reading
+    /// `2 * 3 * 4` silently becomes italic, and `[see here]` becomes a broken link. Only the markup
+    /// this function generates is meant to be parsed.
+    static func markdown(fromHTML html: String?) -> String? {
+        guard let html, !html.isEmpty else { return nil }
+
+        var out = ""
+        var linkBuffer: String?         // set while inside <a>, collecting its text
+        var linkHref: String?
+        var listStack: [(ordered: Bool, counter: Int)] = []
+
+        func emit(_ s: String) {
+            if linkBuffer != nil { linkBuffer! += s } else { out += s }
+        }
+
+        var i = html.startIndex
+        while i < html.endIndex {
+            guard let open = html[i...].firstIndex(of: "<") else {
+                emit(escapeMarkdown(decodeEntities(String(html[i...]))))
+                break
+            }
+            if open > i {
+                emit(escapeMarkdown(decodeEntities(String(html[i..<open]))))
+            }
+            guard let close = html[open...].firstIndex(of: ">") else {
+                // An unclosed tag at the end is malformed input, not a crash: drop the remainder.
+                break
+            }
+            let raw = String(html[html.index(after: open)..<close])
+            i = html.index(after: close)
+
+            let isEnd = raw.hasPrefix("/")
+            let body = isEnd ? String(raw.dropFirst()) : raw
+            let name = body.prefix { !$0.isWhitespace && $0 != "/" }.lowercased()
+
+            switch name {
+            case "strong", "b":
+                emit("**")
+            case "em", "i":
+                emit("*")
+            case "br":
+                emit("\n")
+            case "p", "div", "figure", "figcaption":
+                if isEnd { emit("\n\n") }
+            case "h1", "h2", "h3", "h4", "h5", "h6":
+                // Bold on its own line: inline-only Markdown parsing does not render `#`, and a
+                // literal hash on screen would look like a typo.
+                emit(isEnd ? "**\n\n" : "\n**")
+            case "ul", "ol":
+                if isEnd {
+                    listStack.removeLast(listStack.isEmpty ? 0 : 1)
+                    emit("\n")
+                } else {
+                    listStack.append((ordered: name == "ol", counter: 0))
+                    emit("\n")
+                }
+            case "li":
+                if !isEnd {
+                    if listStack.isEmpty {
+                        emit("\n• ")
+                    } else {
+                        listStack[listStack.count - 1].counter += 1
+                        let item = listStack[listStack.count - 1]
+                        emit(item.ordered ? "\n\(item.counter). " : "\n• ")
+                    }
+                } else {
+                    emit("\n")
+                }
+            case "a":
+                if isEnd {
+                    let text = linkBuffer ?? ""
+                    linkBuffer = nil
+                    if let href = linkHref, !text.isEmpty {
+                        out += "[\(text)](\(href))"
+                    } else {
+                        out += text
+                    }
+                    linkHref = nil
+                } else {
+                    linkHref = safeHref(body)
+                    linkBuffer = ""
+                }
+            case "img":
+                // Dropped rather than rendered. A remote image cannot be inlined in a `Text`, and the
+                // gallery already shows this model's photos — a broken image marker in the middle of
+                // the prose would be worse than its absence.
+                break
+            default:
+                // Unknown and custom elements (MakerWorld ships `boostme`, `boosttitle`, …) keep
+                // their contents and lose their tag.
+                break
+            }
+        }
+
+        // Collapse the runs of blank lines the block tags leave behind.
+        let lines = out.components(separatedBy: "\n").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        var collapsed: [String] = []
+        for line in lines {
+            if line.isEmpty, collapsed.last?.isEmpty ?? true { continue }
+            collapsed.append(line)
+        }
+        while collapsed.last?.isEmpty == true { collapsed.removeLast() }
+        let text = collapsed.joined(separator: "\n")
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+
+    /// Only `http(s)` links are emitted.
+    ///
+    /// A description is uploader-supplied, so `javascript:` and `data:` hrefs are exactly the kind of
+    /// thing that should never reach a tappable link. Anything else keeps its text and loses its URL.
+    private static func safeHref(_ tagBody: String) -> String? {
+        guard let m = tagBody.firstMatch(of: /href\s*=\s*["']([^"']+)["']/) else { return nil }
+        let href = decodeEntities(String(m.1)).trimmingCharacters(in: .whitespaces)
+        guard let url = URL(string: href), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return nil }
+        // Parentheses would terminate the Markdown link target early.
+        return href.contains("(") || href.contains(")") ? nil : href
+    }
+
+    /// Escape the characters that would otherwise be read as Markdown in uploader text.
+    private static func escapeMarkdown(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        for ch in s {
+            if ch == "\\" || ch == "*" || ch == "_" || ch == "[" || ch == "]" || ch == "`" {
+                out.append("\\")
+            }
+            out.append(ch)
+        }
+        return out
+    }
+
+    private static func decodeEntities(_ s: String) -> String {
+        var text = s
+        for (entity, char) in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""),
+                              ("&#39;", "'"), ("&apos;", "'"), ("&nbsp;", " "), ("&ndash;", "–"),
+                              ("&mdash;", "—"), ("&hellip;", "…"), ("&rsquo;", "’"), ("&lsquo;", "‘"),
+                              ("&ldquo;", "“"), ("&rdquo;", "”")] {
+            text = text.replacingOccurrences(of: entity, with: char)
+        }
+        return text
+    }
+
     // MARK: Paging
 
     /// Whether another page exists, given what has been loaded so far.

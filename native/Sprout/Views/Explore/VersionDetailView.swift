@@ -100,13 +100,10 @@ struct VersionDetailView: View {
                 .font(.mono(10.5, weight: .bold))
                 .foregroundStyle(c.t3)
 
-            if let summary = row.summary {
-                // Verbatim, and already reduced from HTML by `MakerWorldSearch.plainText`. Never
-                // paraphrased — it is the uploader's description of their own work.
-                Text(verbatim: summary)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(c.t1)
-                    .fixedSize(horizontal: false, vertical: true)
+            if let summary = row.summaryHTML {
+                // The uploader's own words, with their formatting. Never paraphrased — it is their
+                // description of their own work.
+                RichDescription(html: summary)
             } else {
                 // The sentence that makes an empty page read as finished rather than failed.
                 Text("Most versions of a popular model are uploaded without a word of explanation. "

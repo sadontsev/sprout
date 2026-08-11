@@ -175,13 +175,13 @@ export default function Settings() {
         placeholderTextColor={c.t3}
         style={field}
       />
-      {/* PUSH & LIVE ACTIVITIES — each person runs their own la-push next to their own Bambuddy. */}
+      {/* PUSH & LIVE ACTIVITIES — each person runs their own Trellis next to their own Bambuddy. */}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 24 }}>
         <View style={{ flex: 1 }}>
           <Text style={{ fontWeight: '600', fontSize: 14, color: c.t1 }}>Background push</Text>
           <Text style={{ marginTop: 4, fontWeight: '500', fontSize: 11.5, color: c.t3, lineHeight: 16 }}>
             {serverPush
-              ? 'Lock-screen Live Activities keep updating after the app closes, plus print-done / error alerts. Needs a la-push server.'
+              ? 'Lock-screen Live Activities keep updating after the app closes, plus print-done / error alerts. Needs a Trellis server.'
               : 'Live Activities update only while the app is open — no lock-screen alerts, no server needed.'}
           </Text>
         </View>
@@ -189,7 +189,7 @@ export default function Settings() {
       </View>
       {serverPush && (
         <>
-          <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 18, marginBottom: 9 }}>PUSH SERVER (la-push)</Text>
+          <Text style={{ fontWeight: '600', fontSize: 11, color: c.t3, letterSpacing: 1, fontFamily: mono, marginTop: 18, marginBottom: 9 }}>PUSH SERVER (Trellis)</Text>
           <TextInput
             value={pushUrl}
             onChangeText={setPushUrl}
@@ -202,7 +202,7 @@ export default function Settings() {
             style={field}
           />
           <Text style={{ marginTop: 7, fontSize: 11, color: c.t3, lineHeight: 15 }}>
-            Your own la-push URL. Leave blank to derive it from the Bambuddy host (bambuddy.→lapush.); set it if la-push runs elsewhere.
+            Your own Trellis URL. Leave blank to derive it from the Bambuddy host (bambuddy.→lapush.); set it if Trellis runs elsewhere.
           </Text>
         </>
       )}

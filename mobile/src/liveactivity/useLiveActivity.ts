@@ -22,11 +22,11 @@ export type ActivityEntry = {
   extras?: LiveActivityExtras;
 };
 
-/** Register a card's APNs push token with the la-push service (keyed by printer) so it keeps updating
+/** Register a card's APNs push token with the Trellis service (keyed by printer) so it keeps updating
  *  when the app is closed. Fire-and-forget — push is a bonus; foreground updates work regardless. */
 function registerPushToken(pushUrl: string, apiKey: string, printerId: number, printerName: string, pushToken: string, kind: 'print' | 'dry' = 'print', amsId?: number): void {
   if (!pushToken) return;
-  // X-API-Key gates la-push registration to holders of the Bambuddy key, so a stranger who knows the
+  // X-API-Key gates Trellis registration to holders of the Bambuddy key, so a stranger who knows the
   // URL can't register their token and receive this printer's notifications.
   fetch(`${pushUrl.replace(/\/+$/, '')}/register`, {
     method: 'POST',
@@ -39,7 +39,7 @@ function registerPushToken(pushUrl: string, apiKey: string, printerId: number, p
 /**
  * Live Activities, with EXACTLY ONE OWNER of every card.
  *
- * The old design had two independent producers — this hook started cards locally AND la-push
+ * The old design had two independent producers — this hook started cards locally AND Trellis
  * push-to-started them — with nothing able to reconcile the two, because expo-widgets exposes no id
  * and no content on an adopted activity (see getInstances(): you get an opaque handle). That produced
  * all three reported failures at once: duplicate cards for one print, cards frozen at 0% that nobody
@@ -47,19 +47,19 @@ function registerPushToken(pushUrl: string, apiKey: string, printerId: number, p
  *
  * Ownership is now decided by MODE, so a conflict cannot arise:
  *
- *   SERVER mode (a la-push URL is configured) — la-push owns every card: it starts them (push-to-
+ *   SERVER mode (a Trellis URL is configured) — Trellis owns every card: it starts them (push-to-
  *   start), updates them, and ends them. This hook NEVER calls start(). Its only jobs are to hand
  *   over the device's push-to-start token and to RECONCILE: enumerate the live activities, read each
- *   one's push token (the only identity an adopted card exposes), and offer it to la-push. la-push
+ *   one's push token (the only identity an adopted card exposes), and offer it to Trellis. Trellis
  *   either recognises it, binds it to the card it just remote-started (this is what un-freezes a
  *   stuck card), or disowns it — and a disowned card is ended here. Cards therefore converge to
- *   exactly the set la-push believes in.
+ *   exactly the set Trellis believes in.
  *
- *   LOCAL mode (no la-push) — this hook owns every card, exactly as before: start on live, throttled
+ *   LOCAL mode (no Trellis) — this hook owns every card, exactly as before: start on live, throttled
  *   updates, end on terminal. No server, no push, no reconciliation needed.
  *
- * Tradeoff, deliberately taken: in server mode a card appears on la-push's next poll (<=5s) rather
- * than instantly, and if la-push is down there is no card at all. Predictable beats partially-working
+ * Tradeoff, deliberately taken: in server mode a card appears on Trellis's next poll (<=5s) rather
+ * than instantly, and if Trellis is down there is no card at all. Predictable beats partially-working
  * — the previous "both try" behaviour is precisely what produced duplicates and zombies.
  *
  * offline/connecting remain no-ops so a WS blip never kills a card mid-print; only complete/error/idle
@@ -80,7 +80,7 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
   const dryLastState = useRef(new Map<string, PrintActivityProps>());
   const drySubs = useRef(new Map<string, { remove: () => void }>());
 
-  // Grab the card's APNs push token (now + on rotation) and register it with la-push.
+  // Grab the card's APNs push token (now + on rotation) and register it with Trellis.
   const wirePush = (printerId: number, printerName: string, inst: LiveActivity<PrintActivityProps>, kind: 'print' | 'dry' = 'print', amsId?: number) => {
     const sm = kind === 'dry' ? drySubs : subs;
     const key = kind === 'dry' ? `${printerId}:${amsId}` : String(printerId);
@@ -97,10 +97,10 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
   const serverMode = !!(pushUrl && apiKey);
 
   /**
-   * Tell la-push exactly which cards exist, and act on what it can't account for.
+   * Tell Trellis exactly which cards exist, and act on what it can't account for.
    *
    * This has to be the FULL set, not one token at a time: APNs answers 200 for a card the user has
-   * swiped away, so la-push cannot detect a dismissal on its own — it kept believing it owned a card
+   * swiped away, so Trellis cannot detect a dismissal on its own — it kept believing it owned a card
    * that was gone, and refused to start a replacement. The app is the only party that can see the
    * truth, so it reports all of it and the server converges: forget vanished cards, bind an unknown
    * token to a card it just remote-started (what makes a frozen card updatable), and hand back
@@ -129,7 +129,7 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
         headers: { 'content-type': 'application/json', 'X-API-Key': apiKey! },
         body: JSON.stringify({ tokens: [...byToken.keys()], icon_uri: nozzleIconUri() }),
       });
-      if (!res.ok) return; // la-push unreachable -> leave every card alone; never destroy on doubt
+      if (!res.ok) return; // Trellis unreachable -> leave every card alone; never destroy on doubt
       const { end = [] } = (await res.json()) as { end?: string[] };
       for (const tok of end) await byToken.get(tok)?.end('immediate', GENERIC_END, new Date()).catch(() => {});
     } catch {
@@ -137,7 +137,7 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
     }
   };
 
-  // Re-reconcile periodically while the app is open: a card la-push starts while we're running only
+  // Re-reconcile periodically while the app is open: a card Trellis starts while we're running only
   // becomes updatable once we hand over its token, and tokens can rotate.
   useEffect(() => {
     if (!serverMode) return;
@@ -146,7 +146,7 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverMode, pushUrl, apiKey]);
 
-  // Push-to-start: register the DEVICE's start token so la-push can CREATE cards with the app
+  // Push-to-start: register the DEVICE's start token so Trellis can CREATE cards with the app
   // closed — a print or drying cycle started from Studio / the printer screen / the queue raises a
   // lock-screen card without the app ever being opened (iOS 17.2+). The native module emits the
   // current token as soon as the listener attaches, then again on rotation.
@@ -160,7 +160,7 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
         fetch(`${pushUrl.replace(/\/+$/, '')}/register-start`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'X-API-Key': apiKey },
-          // Hand over the App-Group glyph path too: la-push has no way to know it, so without this
+          // Hand over the App-Group glyph path too: Trellis has no way to know it, so without this
           // remotely-started cards render the SF-symbol fallback while app-started ones show the
           // brand nozzle — the visual tell that gave this whole bug away.
           body: JSON.stringify({ push_token: tok, icon_uri: nozzleIconUri() }),
@@ -175,7 +175,7 @@ export function usePrinterActivities(entries: ActivityEntry[], pushUrl?: string 
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
 
-    // SERVER mode: la-push owns every card. Reconcile instead of starting anything.
+    // SERVER mode: Trellis owns every card. Reconcile instead of starting anything.
     if (serverMode) {
       if (!adopted.current) {
         adopted.current = true;

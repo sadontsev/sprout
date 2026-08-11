@@ -2,12 +2,12 @@
 
 How Sprout keeps the lock-screen print cards updating **after iOS suspends the app**, and
 how the "print finished / needs attention / drying finished" banners work. Everything runs
-through the bundled **`la-push`** service (`deploy/la-push/`) — no third-party push
+through the bundled **Trellis** service (`deploy/trellis/`) — no third-party push
 provider, no Expo push service.
 
 ```
                 ┌──────────── your server ────────────┐
- printer ──► Bambuddy ──► la-push (polls /status) ──► APNs ──► iPhone
+ printer ──► Bambuddy ──► Trellis (polls /status) ──► APNs ──► iPhone
                                    ▲
         app registers tokens ──────┘   (Live-Activity token per printer + one device token)
 ```
@@ -20,22 +20,22 @@ provider, no Expo push service.
    - ⚠️ Apple caps you at **2 APNs keys per team**, team-wide. If you're blocked, audit the
      existing keys before revoking — EAS-managed apps on the same team may be using one.
    - The same key signs pushes for **all** apps on the team; no per-app key needed.
-2. No push *certificate* is needed — `la-push` uses token-based auth (ES256 JWT from the `.p8`).
+2. No push *certificate* is needed — Trellis uses token-based auth (ES256 JWT from the `.p8`).
 
-## 1b. Each person runs their OWN la-push
+## 1b. Each person runs their OWN Trellis
 
-`la-push` polls **your** Bambuddy with **your** API key and signs pushes with **your** APNs `.p8`,
+Trellis polls **your** Bambuddy with **your** API key and signs pushes with **your** APNs `.p8`,
 so you can't share someone else's instance — everyone self-hosts one next to their own Bambuddy.
 The app is pointed at yours in **Settings → Background push**:
 
 - **Background push toggle** — ON = the app registers each Live-Activity card's push token with
-  la-push (cards keep updating after iOS suspends the app + you get print-done/error banners). OFF =
+  Trellis (cards keep updating after iOS suspends the app + you get print-done/error banners). OFF =
   **local mode**: Live Activities update only while the app is open, no banners, no server required.
-- **Push server (la-push)** field — your la-push base URL. Leave blank to derive it from your
-  Bambuddy host (`bambuddy.` → `lapush.`); set it explicitly if la-push runs somewhere else (a LAN
+- **Push server (Trellis)** field — your Trellis base URL. Leave blank to derive it from your
+  Bambuddy host (`bambuddy.` → `lapush.`); set it explicitly if Trellis runs somewhere else (a LAN
   IP:8911, a different subdomain, etc.). The resolver lives in `mobile/src/config/pushConfig.ts`.
 
-If you don't want to run la-push at all, just leave **Background push** off — everything else in the
+If you don't want to run Trellis at all, just leave **Background push** off — everything else in the
 app works; you only lose closed-app Live-Activity updates and the status banners.
 
 ## 2. App-side prerequisites (already wired in this repo)
@@ -45,17 +45,17 @@ app works; you only lose closed-app Live-Activity updates and the status banners
 - `expo-notifications` — regular alert banners (permission prompt + device token).
 - `usePrinterActivities(entries, pushUrl)` starts one Live Activity **per printing machine**,
   grabs each card's ActivityKit push token (`getPushToken()` + `addPushTokenListener`), and
-  POSTs it to `la-push` `/register` keyed by printer id.
+  POSTs it to Trellis `/register` keyed by printer id.
 - `useStatusNotifications(pushUrl)` asks notification permission once, then POSTs the raw
   APNs **device token** to `/register-device`.
 - `pushUrl` is derived from the backend host by swapping `bambuddy.` → `lapush.` in the
   hostname, or set explicitly (`pushUrl` in the stored config).
 
-## 3. Deploy `la-push`
+## 3. Deploy Trellis
 
 ```bash
 # on your server
-cp -r deploy/la-push ~/docker/la-push && cd ~/docker/la-push
+cp -r deploy/trellis ~/docker/Trellis && cd ~/docker/Trellis
 cp .env.example .env            # then fill it in — every APNS_* below is REQUIRED
 #   BAMBUDDY_API_KEY=bb_...            (scoped key, can_read_status is enough)
 #   APNS_KEY_ID=XXXXXXXXXX             (from step 1 — YOURS, not the repo owner's)
@@ -77,7 +77,7 @@ the troubleshooting table below, whose stated cause then sends you looking in th
 
 **One more mount.** `docker-compose.yml` also attaches Bambuddy's data volume read-only, for the
 native app's MakerWorld **collections** endpoints — see
-[deploy/la-push/README.md](../../deploy/la-push/README.md#makerworld-collections). The volume is
+[deploy/trellis/README.md](../../deploy/trellis/README.md#makerworld-collections). The volume is
 declared `external`, so it must already exist under the expected name:
 
 ```bash
@@ -105,7 +105,7 @@ APNs has two gateways and **tokens from one are invalid on the other**:
 Wrong pairing ⇒ every push gets HTTP **400 `BadDeviceToken`**. Flip `APNS_HOST` when you
 move to TestFlight.
 
-## 4. What `la-push` does (behaviors you should expect)
+## 4. What Trellis does (behaviors you should expect)
 
 - **Live-Activity cards**: polls each *registered* printer's `/status` every ~5s, pushes the
   ContentState on meaningful change (throttled), and **ends** the card on
@@ -124,16 +124,16 @@ move to TestFlight.
 
 ```bash
 # 1. auth sanity — a FAKE token must yield 400 BadDeviceToken (proves the JWT/key works):
-docker logs bambu-la-push | grep -i apns
+docker logs bambu-Trellis | grep -i apns
 # 2. real registration — launch the app, allow notifications, then:
 curl -s localhost:8911/health          # devices: 1; registrations: N while printing
 # 3. real banner through the production path without waiting for a print:
-docker exec -i bambu-la-push python - <<'EOF'
+docker exec -i bambu-Trellis python - <<'EOF'
 import asyncio, httpx, app
 app._load()
 async def main():
     async with httpx.AsyncClient(http2=True) as c:
-        await app._notify(c, "test banner", "hello from la-push")
+        await app._notify(c, "test banner", "hello from Trellis")
 asyncio.run(main())
 EOF
 ```

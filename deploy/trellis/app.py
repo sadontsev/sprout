@@ -1,5 +1,5 @@
 """
-la-push — keeps Sprout's iOS Live Activities updating when the app is closed.
+Trellis — keeps Sprout's iOS Live Activities updating when the app is closed.
 
 The app (foreground) starts one Live Activity per printer and registers each card's APNs push token
 with this service. This service polls Bambuddy for each registered printer's status and pushes the
@@ -958,7 +958,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
 
 
 # ---- HTTP API ----
-app = FastAPI(title="la-push")
+app = FastAPI(title="Trellis")
 
 
 # Accepted-key cache: sha256(key) -> monotonic expiry. Never stores raw keys. Bounded — a scan of
@@ -969,7 +969,7 @@ _KEY_CACHE_TTL = 300.0
 
 async def _require_key(x_api_key: str | None = Header(default=None)) -> None:
     """Gate the register endpoints on a VALID Bambuddy API key (the app already sends it as
-    X-API-Key). Without this, ANYONE who knows the public la-push URL could POST their token and
+    X-API-Key). Without this, ANYONE who knows the public Trellis URL could POST their token and
     receive the owner's print notifications (name, progress, finish/error) — an info leak.
 
     Validation is delegated to Bambuddy: equality with the configured admin key is a fast path, and

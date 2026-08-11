@@ -39,9 +39,9 @@ enum ConfigRules {
         return body.unicodeScalars.allSatisfy { keyCharacters.contains($0) }
     }
 
-    /// The effective la-push base URL the app should register with — or nil for LOCAL-ONLY mode.
+    /// The effective Trellis base URL the app should register with — or nil for LOCAL-ONLY mode.
     ///
-    /// Each person self-hosts their OWN la-push next to their OWN Bambuddy (it polls Bambuddy with
+    /// Each person self-hosts their OWN Trellis next to their OWN Bambuddy (it polls Bambuddy with
     /// their API key and signs with their APNs key), so the app must be pointed at it. Two modes:
     /// - SERVER (a URL): the app registers each card's push token, so lock-screen cards keep
     ///   updating and status banners fire even after iOS suspends the app.
@@ -53,9 +53,9 @@ enum ConfigRules {
         cfg.serverPush == false ? nil : laPushUrl(cfg)
     }
 
-    /// **Where la-push is**, whether or not Live Activities are pushed through it.
+    /// **Where Trellis is**, whether or not Live Activities are pushed through it.
     ///
-    /// A different question from `resolvePushUrl`, and keeping them apart matters: la-push also
+    /// A different question from `resolvePushUrl`, and keeping them apart matters: Trellis also
     /// serves MakerWorld collections, which are plain authenticated HTTP and have nothing to do with
     /// APNs. Reading the push toggle to decide whether collections exist made turning OFF
     /// "Live Activity via server" silently remove the Collections tab — a predicate answering a
