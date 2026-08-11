@@ -47,6 +47,29 @@ DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
 - `.frame(maxHeight:)` **centres** its child by default. A greedy child (a `ScrollView`) keeps the frame at full height while the content shrinks, leaving a bottom sheet floating mid-screen. Pass `alignment: .bottom`.
 - `.overlay { … }` content is **not** clipped to the base. A `.fill` image is flexible, so a `maxWidth/maxHeight` frame does not constrain it and a `clipShape` *inside* the overlay clips nothing — put the `clipShape` on the composite. A fixed `.frame(width:height:)` does constrain, which is why the small thumbnails never showed it.
 
+### MakerWorld is a PAGE in `native/`, not a sheet
+
+`Views/Explore/` — `ExploreView` (NavigationStack root: pinned search + chips + grid),
+`ModelDetailView`, `VersionChooserView`, `VersionDetailView`, `VersionGallery`,
+`ImportReceiptSheet`. The browse session lives in `Domain/ExploreModel.swift`, owned by `Shell` via
+the environment, so leaving Explore and coming back returns to the same results, query and scroll —
+it was `@State` on a view a `fullScreenCover` mounted, and died with it every time.
+
+Three rules that keep being re-learnt here:
+
+- **Never blank the grid while loading.** `ExploreModel.startFetch` keeps the outgoing hits until
+  the replacement lands; an empty scroll reads as slower than the request is.
+- **Never drop input.** The old `guard !searching` meant tapping a category during a search did
+  nothing at all. Cancel-and-replace, with `activeQuery`/`activeNav` as the write barrier.
+- **`VersionGrouping` is where the honesty lives.** A model publishes up to 88 versions and ~58 % of
+  them publish no time, weight or material at all. Unlabelled rows keep MakerWorld's order in a
+  trailing group under every sort, the count says "7 of 88 match · 51 publish no settings", and a
+  version you cannot print is greyed with the remedy rather than hidden. `Universal` is the absence
+  of a material constraint, not a material.
+
+Thumbnails go through `ThumbCache` (actor; NSCache for decoded images, URLCache for bytes,
+in-flight coalescing). A bare `AsyncImage` in a grid re-fetches and re-decodes on every scroll back.
+
 ### MakerWorld — search, browse and collections are native-only; resolve + import exist in both apps
 
 Three network surfaces, deliberately kept apart so one breaking cannot break the others:
