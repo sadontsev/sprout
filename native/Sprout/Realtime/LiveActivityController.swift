@@ -411,6 +411,11 @@ final class LiveActivityController {
     struct StartRegistration: Encodable, Equatable {
         let pushToken: String
         let iconUri: String
+        /// Which phone. Without it two devices sharing one Bambuddy key are indistinguishable to
+        /// Trellis, so one phone's reconcile deregisters the other's cards.
+        var deviceId: String = ""
+        /// The Canopy claim, forwarded verbatim. Absent when the server signs locally.
+        var claim: ClaimBuilder.Claim? = nil
         /// Constant, so it stays out of the memberwise init and cannot be forgotten at a call site.
         let client = laPushClient
     }
@@ -425,6 +430,10 @@ final class LiveActivityController {
         /// a drying card registered as a print overwrites the print card's registration instead.
         let kind: String
         let amsId: Int?
+        /// Which phone — see StartRegistration.deviceId.
+        var deviceId: String = ""
+        /// The Canopy claim, forwarded verbatim — see StartRegistration.claim.
+        var claim: ClaimBuilder.Claim? = nil
         /// Constant, so it stays out of the memberwise init and cannot be forgotten at a call site.
         let client = laPushClient
     }
@@ -437,7 +446,9 @@ final class LiveActivityController {
     nonisolated static func cardRegistration(
         attributes: PrintActivityAttributes,
         state: PrintActivityAttributes.ContentState,
-        token: String
+        token: String,
+        deviceId: String = "",
+        claim: ClaimBuilder.Claim? = nil
     ) -> CardRegistration {
         CardRegistration(
             printerId: attributes.printerId,
@@ -445,7 +456,9 @@ final class LiveActivityController {
             printerName: state.printerName,
             iconUri: state.iconUri,
             kind: attributes.amsId == nil ? "print" : "dry",
-            amsId: attributes.amsId
+            amsId: attributes.amsId,
+            deviceId: deviceId,
+            claim: claim
         )
     }
 
