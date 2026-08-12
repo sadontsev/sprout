@@ -193,23 +193,11 @@ final class PendingClaimsTests: XCTestCase {
         XCTAssertTrue(q.isEmpty)
     }
 
-    func testPersistenceRoundTrips() {
-        // The queue must survive a relaunch: an install whose first registration failed has nothing
-        // else to remind it, since the token streams do not re-emit on a failed POST.
-        var q = PendingClaims()
-        q.add(token: "tok-1", kind: .device, vouchNonce: "n")
-        q.add(token: "tok-2", kind: .start)
-
-        let restored = PendingClaims.decoded(q.encoded())
-
-        XCTAssertEqual(restored, q)
-        XCTAssertEqual(restored.intents.first?.vouchNonce, "n")
-    }
-
-    func testGarbageDecodesToAnEmptyQueue() {
-        XCTAssertTrue(PendingClaims.decoded(nil).isEmpty)
-        XCTAssertTrue(PendingClaims.decoded(Data("nonsense".utf8)).isEmpty)
-    }
+    // There was a `testPersistenceRoundTrips` here, over `encoded()`/`decoded()` that no production
+    // code ever called. Its comment justified them with "the token streams do not re-emit on a
+    // failed POST" — true WITHIN a process, and false across the relaunch the persistence was for.
+    // Measured on a real device: after a relaunch, /register, /register-start and /register-device
+    // all fired unprompted, because every producer is re-iterated from scratch. See PendingClaims.
 }
 
 /// The reconcile reply, which is how an unbound or dead card recovers without a human.

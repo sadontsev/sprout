@@ -451,7 +451,7 @@ final class LiveActivityController {
                     // `icon_uri` is empty until the brand glyph is written to the App Group (a known
                     // gap); Trellis treats an empty value as "keep what you have" for start tokens.
                     let claim = await self.buildClaim(token: token, kind: .start, vouchNonce: nil)
-                    let result = await self.postWithReason("/register-start", body: StartRegistration(
+                    let result = await self.postWithReason("/register-start", token: token, body: StartRegistration(
                         pushToken: token, iconUri: "", deviceId: self.deviceID, claim: claim
                     ))
                     if result.ok && result.bound {
@@ -594,18 +594,10 @@ final class LiveActivityController {
         lastReconcile = Date()
 
         let held = Set(tokens.values.filter { !$0.isEmpty })
-        guard let url = Self.endpoint(pushUrl, "/sync"),
-              let data = Self.encode(SyncReport(tokens: Array(held), deviceId: deviceID))
-        else { return }
+        let (outcome, payload) = await send("/sync", body: SyncReport(tokens: Array(held), deviceId: deviceID))
+        if let line = PostOutcome.logLine(path: "/sync", token: nil, outcome: outcome) { NSLog("%@", line) }
 
-        var req = URLRequest(url: url, timeoutInterval: 10)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
-        req.httpBody = data
-
-        guard let (payload, response) = try? await URLSession.shared.data(for: req),
-              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+        guard outcome.ok, let payload,
               let reply = try? JSONDecoder().decode(SyncReply.self, from: payload)
         else { return }
 
@@ -728,7 +720,7 @@ final class LiveActivityController {
             switch intent.kind {
             case ClaimBuilder.BindingKind.start.rawValue:
                 let claim = await buildClaim(token: intent.token, kind: .start, vouchNonce: intent.vouchNonce)
-                let result = await postWithReason("/register-start", body: StartRegistration(
+                let result = await postWithReason("/register-start", token: intent.token, body: StartRegistration(
                     pushToken: intent.token, iconUri: "", deviceId: deviceID, claim: claim
                 ))
                 if result.ok && result.bound {
@@ -738,7 +730,7 @@ final class LiveActivityController {
 
             case ClaimBuilder.BindingKind.device.rawValue:
                 let claim = await buildClaim(token: intent.token, kind: .device, vouchNonce: intent.vouchNonce)
-                let result = await postWithReason("/register-device", body: DeviceRegistration(
+                let result = await postWithReason("/register-device", token: intent.token, body: DeviceRegistration(
                     deviceToken: intent.token, deviceId: deviceID, claim: claim
                 ))
                 if result.ok && result.bound {
@@ -806,20 +798,20 @@ final class LiveActivityController {
             attributes: activity.attributes, state: activity.content.state,
             token: token, deviceId: deviceID, claim: claim
         )
-        pending.add(token: token, kind: .activity)
-        let result = await postWithReason("/register", body: body)
+        // Deliberately NOT queued in `pending`: card tokens are retried by `flushRegistrations`,
+        // which walks the live activities, and `flushPending` explicitly skips the `.activity` kind.
+        // Adding one here only planted an entry nothing would ever consume or clear.
+        let result = await postWithReason("/register", token: token, body: body)
         // Finalised ONLY when the relay can actually push to this token. Trellis answers 200 for a
         // registration it stored but could not bind — which is the normal outcome when App Attest
         // hiccups — and treating that as done leaves the card frozen at its opening content with
         // every component reporting success.
         if result.ok && result.bound {
             registered.insert(pair)
-            pending.remove(token: token)
             await attestor.confirmAttested()
         } else {
-            if result.ok {
-                NSLog("[claim] %@ registered but NOT bound; will retry", String(token.prefix(8)))
-            }
+            // The "why" is already logged by postWithReason, for every failure rather than only
+            // this one.
             await handle(refusal: result.reason)
         }
     }
@@ -862,8 +854,16 @@ final class LiveActivityController {
     /// An absent `bound` field means a Trellis old enough not to answer the question. It is read as
     /// true, because the alternative — retrying forever against a server that signs locally and has
     /// nothing to bind — is a worse failure than the one being fixed.
-    private func postWithReason(_ path: String, body: some Encodable) async -> (ok: Bool, bound: Bool, reason: String?) {
-        guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else { return (false, false, nil) }
+    /// The one place a Trellis POST is built and its outcome classified.
+    ///
+    /// There were three of these, differing only in how much they discarded: this one kept a detail
+    /// string, `post` kept a Bool, and `reconcile` inlined a fourth copy. All three threw away WHY a
+    /// request failed, and none of them logged, which is how a server returning 500 to every
+    /// registration stayed invisible on the phone for an entire print.
+    private func send(_ path: String, body: some Encodable) async -> (outcome: PostOutcome, payload: Data?) {
+        guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else {
+            return (.misconfigured, nil)
+        }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -871,12 +871,26 @@ final class LiveActivityController {
         req.httpBody = data
 
         guard let (payload, response) = try? await URLSession.shared.data(for: req),
-              let http = response as? HTTPURLResponse else { return (false, false, nil) }
+              let http = response as? HTTPURLResponse else { return (.unreachable, nil) }
+
         let json = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any]
-        if (200..<300).contains(http.statusCode) {
-            return (true, json?["bound"] as? Bool ?? true, nil)
+        guard (200..<300).contains(http.statusCode) else {
+            return (.refused(status: http.statusCode, detail: json?["detail"] as? String), payload)
         }
-        return (false, false, json?["detail"] as? String)
+        // Absent `bound` means the endpoint does not bind anything (/sync, /update), not that
+        // binding failed — defaulting to false there would retry registrations that are complete.
+        return (.stored(bound: json?["bound"] as? Bool ?? true), payload)
+    }
+
+    /// Send, and say out loud what happened. `token` is what makes a line attributable when several
+    /// cards register on the same tick; endpoints that carry no single token pass nil.
+    @discardableResult
+    private func postWithReason(_ path: String, token: String? = nil, body: some Encodable) async -> PostOutcome {
+        let (outcome, _) = await send(path, body: body)
+        if let line = PostOutcome.logLine(path: path, token: token, outcome: outcome) {
+            NSLog("%@", line)
+        }
+        return outcome
     }
 
     /// Acts on a refusal that the app itself can resolve.
@@ -890,14 +904,6 @@ final class LiveActivityController {
 
     @discardableResult
     private func post(_ path: String, body: some Encodable) async -> Bool {
-        guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else { return false }
-        var req = URLRequest(url: url, timeoutInterval: 10)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
-        req.httpBody = data
-        guard let (_, response) = try? await URLSession.shared.data(for: req),
-              let http = response as? HTTPURLResponse else { return false }
-        return (200..<300).contains(http.statusCode)
+        await postWithReason(path, body: body).ok
     }
 }

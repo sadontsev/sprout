@@ -60,16 +60,20 @@ struct PendingClaims: Equatable {
 
     var isEmpty: Bool { intents.isEmpty }
 
-    // MARK: - persistence
-
-    func encoded() -> Data? { try? JSONEncoder().encode(intents) }
-
-    static func decoded(_ data: Data?) -> PendingClaims {
-        guard let data, let intents = try? JSONDecoder().decode([Intent].self, from: data) else {
-            return PendingClaims()
-        }
-        var out = PendingClaims()
-        out.intents = intents
-        return out
-    }
+    // MARK: - deliberately process-scoped
+    //
+    // This queue used to carry `encoded()`/`decoded()` helpers, unit-tested and called by nothing.
+    // They are gone, because the durability they implied was never needed and would have been
+    // wrong:
+    //
+    //   - Every producer re-emits on a fresh process. Measured on a real device after a relaunch
+    //     mid-print: /register, /register-start and /register-device all fired unprompted, because
+    //     `pushTokenUpdates`, `pushToStartTokenUpdates` and the APNs device-token callback are each
+    //     re-iterated from scratch. A restored queue would only have raced them to the same POST.
+    //   - A vouch nonce is single-use and short-lived. Carrying one across a launch restores a
+    //     credential that is already spent — a stored value that is worse than an absent one.
+    //
+    // What does NOT survive a failed POST is the re-emission WITHIN a process, which is why the
+    // queue exists at all. That is a different question from surviving a relaunch, and conflating
+    // them is what put an unused API here.
 }
