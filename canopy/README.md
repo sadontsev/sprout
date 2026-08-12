@@ -94,6 +94,21 @@ That returns the token to UNSEEN, and the next honest claim takes it. Tenants
 can do this for their own bindings over the API (`DELETE /v1/bindings`); the
 manual route is for when they cannot.
 
+### Removing tenants that never bound anything
+
+    ./canopy prune-tenants                    # reports, deletes nothing
+    ./canopy prune-tenants --apply            # deletes what it just listed
+    ./canopy prune-tenants --older-than 90d   # be more conservative
+
+Dry run by default, and the age bound is a MINIMUM. That direction is the point: an empty tenant
+that enrolled an hour ago is far more likely to be a real deployment mid-setup — enrolled, app not
+opened yet — than junk. Doing this by hand once, with the filter the other way round, deleted a real
+user's tenant and left them holding credentials this database no longer recognised, with nothing on
+their side to explain why push had stopped.
+
+A tenant holding any binding is never a candidate, released or expired, and `DeleteTenant` refuses
+one in SQL rather than trusting the caller to have checked.
+
 ### Backups
 
 `data/` holds the bindings and the attested public keys, and **a device cannot

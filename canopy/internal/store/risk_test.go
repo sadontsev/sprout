@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sadontsev/sprout/canopy/internal/binding"
 )
 
 func putKey(t *testing.T, s *Store, keyID, env string, receipt []byte) {
@@ -288,5 +290,115 @@ func TestConcurrentWritersDoNotGetDatabaseIsLocked(t *testing.T) {
 	}
 	if other > 0 {
 		t.Errorf("%d writes failed for another reason, e.g. %v", other, sample)
+	}
+}
+
+// --- operator pruning ---
+//
+// These pin the safety properties of a command that deletes from a live multi-tenant database. The
+// job was once done by hand with a filter typed in the moment, and it deleted a real deployment's
+// tenant.
+
+func TestOnlyEmptyTenantsAreCandidates(t *testing.T) {
+	s := openTemp(t)
+	if err := s.PutTenant("empty", "h", "r", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutTenant("busy", "h", "r", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutBinding(&binding.Row{
+		TokenHash: "tok", Kind: binding.KindStart, Tenant: "busy",
+		APNSEnvironment: "production", LeaseExpiry: t0.Add(time.Hour), CreatedAt: t0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.TenantsWithoutBindings(t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "empty" {
+		t.Fatalf("candidates = %+v, want only the tenant with no bindings", got)
+	}
+}
+
+func TestATenantWhoseBindingIsReleasedIsStillNotACandidate(t *testing.T) {
+	// It bound something once, so it is a real deployment whose card ended — not junk. Counting only
+	// LIVE bindings would sweep somebody between prints.
+	s := openTemp(t)
+	if err := s.PutTenant("t", "h", "r", t0); err != nil {
+		t.Fatal(err)
+	}
+	released := t0.Add(time.Minute)
+	if err := s.PutBinding(&binding.Row{
+		TokenHash: "tok", Kind: binding.KindActivity, Tenant: "t",
+		APNSEnvironment: "production", LeaseExpiry: t0.Add(time.Hour),
+		ReleasedAt: &released, CreatedAt: t0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := s.TenantsWithoutBindings(t0.Add(time.Hour))
+	if len(got) != 0 {
+		t.Fatalf("candidates = %+v, want none", got)
+	}
+}
+
+func TestARecentlyEnrolledEmptyTenantIsProtected(t *testing.T) {
+	// THE bug this whole command exists to prevent. Cleaning up by hand, the filter was "no bindings
+	// AND created recently" — which describes a real deployment mid-setup at least as well as it
+	// describes junk, and deleting one left someone holding credentials Canopy no longer knew.
+	// The age bound is a MINIMUM.
+	s := openTemp(t)
+	if err := s.PutTenant("just-enrolled", "h", "r", t0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Anything enrolled after the cutoff is out of scope, however empty it is.
+	got, _ := s.TenantsWithoutBindings(t0.Add(-time.Second))
+	if len(got) != 0 {
+		t.Fatalf("candidates = %+v; a tenant newer than the cutoff must never be one", got)
+	}
+}
+
+func TestDeleteRefusesATenantThatHoldsABinding(t *testing.T) {
+	// Enforced in the SQL rather than by the caller: a check the caller performs is a check a future
+	// caller can forget, and what it guards is somebody's push stopping for good.
+	s := openTemp(t)
+	if err := s.PutTenant("busy", "h", "r", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutBinding(&binding.Row{
+		TokenHash: "tok", Kind: binding.KindStart, Tenant: "busy",
+		APNSEnvironment: "production", LeaseExpiry: t0.Add(time.Hour), CreatedAt: t0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := s.DeleteTenant("busy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("a tenant holding a binding must not be deletable, even when asked directly")
+	}
+	if h, _ := s.TenantSecretHash("busy"); h == "" {
+		t.Error("and it must still be there")
+	}
+}
+
+func TestDeleteRemovesAnEmptyTenant(t *testing.T) {
+	s := openTemp(t)
+	if err := s.PutTenant("empty", "h", "r", t0); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := s.DeleteTenant("empty")
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v, want it removed", ok, err)
+	}
+	if h, _ := s.TenantSecretHash("empty"); h != "" {
+		t.Error("still present")
 	}
 }

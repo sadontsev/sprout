@@ -29,6 +29,13 @@ import (
 )
 
 func main() {
+	// Subcommands before anything else: maintenance must not need the full serving configuration
+	// (APNs keys, Apple root CA) just to look at the database.
+	if len(os.Args) > 1 && os.Args[1] == "prune-tenants" {
+		pruneTenants(os.Args[2:])
+		return
+	}
+
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	cfg, err := loadConfig()

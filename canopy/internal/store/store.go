@@ -475,3 +475,64 @@ func (s *Store) CountAttestKeyTenants(keyID string, now time.Time) (int, error) 
 	err := s.db.QueryRow(q, keyID, now.UnixMilli()).Scan(&n)
 	return n, err
 }
+
+// --- operator maintenance ---
+
+// PrunableTenant is a tenant that holds no bindings at all.
+type PrunableTenant struct {
+	ID        string
+	CreatedAt time.Time
+	LastSeen  time.Time
+}
+
+// TenantsWithoutBindings returns tenants that have never held a binding and were created before
+// `before`.
+//
+// The age bound is a MINIMUM age, and that direction is the whole point. Cleaning up test tenants
+// by hand once, the filter used was "no bindings AND created recently" — which is exactly backwards:
+// a brand-new tenant with no bindings is most likely a real user who enrolled a minute ago and has
+// not opened the app yet. That deletion left a real deployment holding credentials this database no
+// longer recognised. An old tenant with no bindings is the one that is safe to assume is junk.
+//
+// Bindings are checked with NOT EXISTS rather than a count, so a tenant that ever bound anything —
+// released or expired — is never a candidate.
+func (s *Store) TenantsWithoutBindings(before time.Time) ([]PrunableTenant, error) {
+	const q = `SELECT id, created_at, last_seen FROM tenants t
+	            WHERE t.created_at < ?
+	              AND NOT EXISTS (SELECT 1 FROM bindings b WHERE b.tenant = t.id)
+	         ORDER BY t.created_at`
+	rows, err := s.db.Query(q, before.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []PrunableTenant
+	for rows.Next() {
+		var t PrunableTenant
+		var created, seen int64
+		if err := rows.Scan(&t.ID, &created, &seen); err != nil {
+			return nil, err
+		}
+		t.CreatedAt = time.UnixMilli(created).UTC()
+		t.LastSeen = time.UnixMilli(seen).UTC()
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DeleteTenant removes a tenant, and refuses if it holds any binding.
+//
+// The refusal is in the SQL rather than in the caller: a check the caller performs is a check a
+// future caller can forget, and what it guards here is somebody's push stopping for good.
+func (s *Store) DeleteTenant(id string) (bool, error) {
+	const q = `DELETE FROM tenants
+	            WHERE id = ?
+	              AND NOT EXISTS (SELECT 1 FROM bindings b WHERE b.tenant = tenants.id)`
+	res, err := s.db.Exec(q, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
