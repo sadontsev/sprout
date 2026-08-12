@@ -41,7 +41,16 @@ struct AppConfig: Codable, Equatable, Sendable {
 /// `ThisDeviceOnly` throughout: the config never leaves the device and never lands in an
 /// iCloud/iTunes backup. `AfterFirstUnlock` rather than `WhenUnlocked` — see `write`.
 enum SecureConfig {
-    private static let service = "com.mvks5.bambu"
+    /// The keychain service these items live under.
+    ///
+    /// It is the bundle id, and it is IDENTITY rather than configuration: change it and every
+    /// existing install stops finding its stored base URL and API key — the app silently falls back
+    /// to onboarding, exactly as if the credentials had been thrown away. A blanket rename of the
+    /// bundle id across this repo did that to the tests, which is how the risk was found.
+    ///
+    /// Internal rather than private so tests can query the same value instead of restating it.
+    static let serviceName = "com.mvks5.bambu"
+    private static let service = serviceName
     private static let account = "bambu.config"
 
     static func load() -> AppConfig? {

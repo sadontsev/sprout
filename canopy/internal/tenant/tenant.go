@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mvks5/canopy/internal/hashing"
-	"github.com/mvks5/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/hashing"
+	"github.com/sadontsev/sprout/canopy/internal/store"
 )
 
 var (

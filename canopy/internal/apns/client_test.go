@@ -98,7 +98,7 @@ func TestSendSetsTheHeadersAPNsRequires(t *testing.T) {
 	if got.path != "/3/device/abc123" {
 		t.Errorf("path = %q", got.path)
 	}
-	if got.topic != "com.mvks5.bambu.push-type.liveactivity" {
+	if got.topic != "com.example.sprout.push-type.liveactivity" {
 		t.Errorf("apns-topic = %q", got.topic)
 	}
 	if got.pushType != "liveactivity" {

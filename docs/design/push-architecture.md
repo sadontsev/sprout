@@ -33,9 +33,9 @@ install signed by the owner's team.
 (Apple's key model has moved on from what `push-notifications.md` records. There are now
 team-scoped keys — two per environment, covering every app on the team — and topic-specific
 keys tied to named bundle ids, with a much higher cap. Canopy uses a **topic-specific key
-scoped to `com.mvks5.bambu`**, so a Canopy compromise cannot reach any other app on the team
+scoped to `com.example.sprout`**, so a Canopy compromise cannot reach any other app on the team
 and rotation is cheap. A bundle-scoped key covers that bundle's Live Activity sub-topic
-`com.mvks5.bambu.push-type.liveactivity` as well; confirm this when provisioning, since both
+`com.example.sprout.push-type.liveactivity` as well; confirm this when provisioning, since both
 topics are signed. Because modern keys are environment-scoped, Canopy holds **one key per
 APNs environment**; see §6.)
 
@@ -466,7 +466,7 @@ Endpoints (JSON over HTTPS; tenant auth is `Authorization: Bearer <tenant_id>.<t
   omitting it (revision 2) makes the whole check bypassable by replaying any well-formed
   attestation; (6) `SHA-256` of the credCert public key in uncompressed EC point form equals
   the base64url-decoded `attest_key_id`; (7) `authData[0..32] == SHA-256("<APP ID>")` where
-  APP ID is `<TEAM_ID>.com.mvks5.bambu`; (8) counter is 0; (9) `aaguid` compared as **exact 16
+  APP ID is `<TEAM_ID>.com.example.sprout`; (8) counter is 0; (9) `aaguid` compared as **exact 16
   bytes** — `appattestdevelop`, or `appattest` followed by seven `0x00` bytes (a prefix
   comparison would also match a hostile value beginning `appattest`); (10) `authData`
   `credentialId` equals the key identifier. Then store the public key, the counter, the

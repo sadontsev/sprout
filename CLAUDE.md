@@ -177,7 +177,7 @@ LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 xcodebuild \
   DEVELOPMENT_TEAM=<YOUR_TEAM_ID> CODE_SIGN_STYLE=Automatic ENABLE_USER_SCRIPT_SANDBOXING=NO build
 # Install + launch (DerivedData path: ~/Library/Developer/Xcode/DerivedData/Bambu-*/Build/Products/Release-iphoneos/Bambu.app):
 xcrun devicectl device install app --device <YOUR_DEVICE_UDID> "<.../Bambu.app>"
-xcrun devicectl device process launch --device <YOUR_DEVICE_UDID> --terminate-existing com.mvks5.bambu
+xcrun devicectl device process launch --device <YOUR_DEVICE_UDID> --terminate-existing com.example.sprout
 ```
 
 Why each non-obvious flag/step matters (forgetting these costs build cycles):

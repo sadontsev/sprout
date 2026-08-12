@@ -17,14 +17,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mvks5/canopy/internal/apns"
-	"github.com/mvks5/canopy/internal/binding"
-	"github.com/mvks5/canopy/internal/challenge"
-	"github.com/mvks5/canopy/internal/keystore"
-	"github.com/mvks5/canopy/internal/pairing"
-	"github.com/mvks5/canopy/internal/store"
-	"github.com/mvks5/canopy/internal/tenant"
-	"github.com/mvks5/canopy/internal/vouch"
+	"github.com/sadontsev/sprout/canopy/internal/apns"
+	"github.com/sadontsev/sprout/canopy/internal/binding"
+	"github.com/sadontsev/sprout/canopy/internal/challenge"
+	"github.com/sadontsev/sprout/canopy/internal/keystore"
+	"github.com/sadontsev/sprout/canopy/internal/pairing"
+	"github.com/sadontsev/sprout/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/tenant"
+	"github.com/sadontsev/sprout/canopy/internal/vouch"
 )
 
 var t0 = time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
@@ -105,7 +105,7 @@ func newHarness(t *testing.T) *harness {
 		}
 		return s
 	}
-	client, err := apns.NewClient("com.mvks5.bambu", mkSigner("SAND"), mkSigner("PROD"))
+	client, err := apns.NewClient("com.example.sprout", mkSigner("SAND"), mkSigner("PROD"))
 	if err != nil {
 		t.Fatalf("apns.NewClient: %v", err)
 	}

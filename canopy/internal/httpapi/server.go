@@ -19,16 +19,16 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mvks5/canopy/internal/apns"
-	"github.com/mvks5/canopy/internal/binding"
-	"github.com/mvks5/canopy/internal/challenge"
-	"github.com/mvks5/canopy/internal/claims"
-	"github.com/mvks5/canopy/internal/hashing"
-	"github.com/mvks5/canopy/internal/keystore"
-	"github.com/mvks5/canopy/internal/pairing"
-	"github.com/mvks5/canopy/internal/store"
-	"github.com/mvks5/canopy/internal/tenant"
-	"github.com/mvks5/canopy/internal/vouch"
+	"github.com/sadontsev/sprout/canopy/internal/apns"
+	"github.com/sadontsev/sprout/canopy/internal/binding"
+	"github.com/sadontsev/sprout/canopy/internal/challenge"
+	"github.com/sadontsev/sprout/canopy/internal/claims"
+	"github.com/sadontsev/sprout/canopy/internal/hashing"
+	"github.com/sadontsev/sprout/canopy/internal/keystore"
+	"github.com/sadontsev/sprout/canopy/internal/pairing"
+	"github.com/sadontsev/sprout/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/tenant"
+	"github.com/sadontsev/sprout/canopy/internal/vouch"
 )
 
 // AttestVerifier checks Apple App Attest proofs. It is an interface because the

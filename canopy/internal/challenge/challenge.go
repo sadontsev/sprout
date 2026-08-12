@@ -23,8 +23,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/mvks5/canopy/internal/hashing"
-	"github.com/mvks5/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/hashing"
+	"github.com/sadontsev/sprout/canopy/internal/store"
 )
 
 // Purpose is what a challenge may be spent on.

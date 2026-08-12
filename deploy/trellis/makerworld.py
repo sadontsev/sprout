@@ -29,7 +29,7 @@ import httpx
 API = "https://api.bambulab.com/v1/design-service"
 
 # Honest, identifying, and never pretending to be Bambu Studio or Handy.
-USER_AGENT = "bambu-trellis/1.0 (+https://github.com/mvks5/bambu-app; personal 3D printer client)"
+USER_AGENT = "bambu-trellis/1.0 (+https://github.com/sadontsev/sprout; personal 3D printer client)"
 
 # Bambuddy's SQLite, mounted read-only. Overridable so tests never touch a real one.
 DB_PATH = os.environ.get("BAMBUDDY_DB", "/bambuddy/bambuddy.db")

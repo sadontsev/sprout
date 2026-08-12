@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mvks5/canopy/internal/binding"
+	"github.com/sadontsev/sprout/canopy/internal/binding"
 
 	_ "modernc.org/sqlite"
 )
@@ -19,7 +19,27 @@ type Store struct{ db *sql.DB }
 
 // Open opens (creating if needed) the database at path and applies the schema.
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// PRAGMAs belong in the DSN, not in the schema. database/sql keeps a POOL, and most pragmas are
+	// per-connection: one executed through db.Exec lands on whichever connection served it and no
+	// other connection in the pool ever sees it. In the DSN the driver applies them to each
+	// connection as it opens.
+	//
+	// busy_timeout was missing altogether. Without it a writer that finds the database locked fails
+	// IMMEDIATELY with SQLITE_BUSY instead of waiting, and in production that surfaced as
+	// `ERROR "issue challenge" err="database is locked"` — each one a claim the app could not
+	// complete, so a push token went unbound and a card stopped updating until the retry. It is
+	// intermittent and self-healing, which is exactly why it went unnoticed.
+	//
+	// foreign_keys was in the schema, and therefore ON for one connection out of the pool.
+	dsn := "file:" + path + "?" + strings.Join([]string{
+		"_pragma=busy_timeout(5000)",
+		"_pragma=journal_mode(WAL)",
+		"_pragma=foreign_keys(on)",
+		// NORMAL is the documented companion to WAL: durable across a process crash, at risk only
+		// from an OS-level one — and this database is restored from backup in that case anyway.
+		"_pragma=synchronous(normal)",
+	}, "&")
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}

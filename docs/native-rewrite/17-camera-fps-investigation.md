@@ -79,7 +79,7 @@ contamination. Read it with:
 
 ```bash
 xcrun simctl spawn <udid> log show --last 5m --info \
-  --predicate 'subsystem == "com.mvks5.bambu"' --style compact | grep "camera frames"
+  --predicate 'subsystem == "com.example.sprout"' --style compact | grep "camera frames"
 ```
 
 `--info` is **required** or the lines are silently dropped. On a physical device the same log comes

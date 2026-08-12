@@ -11,9 +11,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/mvks5/canopy/internal/appattest"
-	"github.com/mvks5/canopy/internal/pairing"
-	"github.com/mvks5/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/appattest"
+	"github.com/sadontsev/sprout/canopy/internal/pairing"
+	"github.com/sadontsev/sprout/canopy/internal/store"
 )
 
 // ErrReattestRequired means Canopy holds no public key for this key id, so an

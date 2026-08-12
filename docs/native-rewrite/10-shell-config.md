@@ -757,7 +757,7 @@ expo.icon              "./assets/icon-bambu.png"
 **iOS:**
 | key | value |
 |---|---|
-| `ios.bundleIdentifier` | `com.mvks5.bambu` |
+| `ios.bundleIdentifier` | `com.example.sprout` |
 | `ios.appleTeamId` | `<TEAM_ID>` (required — `expo prebuild` does not write a team; the app *and* the widget extension both need it for automatic signing) |
 | `ios.buildNumber` | `"6"` (bump this only) |
 | `ios.icon` | `./assets/Bambu.icon` (Icon Composer `.icon` bundle — Liquid Glass) |
@@ -769,7 +769,7 @@ expo.icon              "./assets/icon-bambu.png"
 ```xml
 aps-environment = development
 com.apple.developer.usernotifications.time-sensitive = true
-com.apple.security.application-groups = [ group.com.mvks5.bambu ]
+com.apple.security.application-groups = [ group.com.example.sprout ]
 ```
 
 **`ios.infoPlist` (declared):**
@@ -788,10 +788,10 @@ com.apple.security.application-groups = [ group.com.mvks5.bambu ]
 NSSupportsLiveActivities            = true
 NSSupportsLiveActivitiesFrequentUpdates = true
 ExpoWidgets_EnablePushNotifications = true
-ExpoWidgetsAppGroupIdentifier       = group.com.mvks5.bambu
+ExpoWidgetsAppGroupIdentifier       = group.com.example.sprout
 NSAppTransportSecurity              = { NSAllowsArbitraryLoads: false, NSAllowsLocalNetworking: true }
 NSFaceIDUsageDescription            = "Allow $(PRODUCT_NAME) to access your Face ID biometric data."   (expo-secure-store boilerplate; unused)
-CFBundleURLTypes                    = [{ CFBundleURLSchemes: ["bambu", "com.mvks5.bambu"] }]
+CFBundleURLTypes                    = [{ CFBundleURLSchemes: ["bambu", "com.example.sprout"] }]
 UISupportedInterfaceOrientations    = [Portrait, PortraitUpsideDown]
 UIRequiresFullScreen                = false
 UIUserInterfaceStyle                = Automatic
@@ -806,7 +806,7 @@ UIApplicationSceneManifest          = { UIApplicationSupportsMultipleScenes: fal
 **There are NO camera / photo-library / microphone / location usage descriptions** — the app never touches device hardware. The "camera" is entirely a remote MJPEG stream.
 
 **Plugins** (order matters):
-`expo-router`, `["expo-splash-screen", { backgroundColor: "#208AEF", android: {...} }]`, `expo-secure-store`, `expo-image`, `./plugins/withIosSceneLifecycle`, `["expo-build-properties", { ios: { deploymentTarget: "16.4" } }]`, `./plugins/withIosPodMinDeploymentTarget`, `["expo-widgets", { bundleIdentifier: "com.mvks5.bambu.LiveActivity", groupIdentifier: "group.com.mvks5.bambu", enablePushNotifications: true, frequentUpdates: true, widgets: [] }]`, `expo-video`.
+`expo-router`, `["expo-splash-screen", { backgroundColor: "#208AEF", android: {...} }]`, `expo-secure-store`, `expo-image`, `./plugins/withIosSceneLifecycle`, `["expo-build-properties", { ios: { deploymentTarget: "16.4" } }]`, `./plugins/withIosPodMinDeploymentTarget`, `["expo-widgets", { bundleIdentifier: "com.example.sprout.LiveActivity", groupIdentifier: "group.com.example.sprout", enablePushNotifications: true, frequentUpdates: true, widgets: [] }]`, `expo-video`.
 
 **Updates:** channel `production`, `updates.url = https://u.expo.dev/<EAS_PROJECT_ID>`, `runtimeVersion.policy = "appVersion"`.
 **Experiments:** `typedRoutes: true`, `reactCompiler: false`.
@@ -881,7 +881,7 @@ with `static let dark` / `static let light`, injected via `@Environment(\.palett
 - The live-derived placeholders (`resolvePushUrl({baseUrl: sanitizeBaseUrl(baseUrl)})`) recompute on every keystroke of the URL field; that is a nice touch worth preserving — it is cheap and pure.
 - `Constants.expoConfig?.version` → `Bundle.main.infoDictionary?["CFBundleShortVersionString"]`. **`Updates.updateId` has no equivalent** — the OTA row becomes meaningless in a native app. Replace it with `CFBundleVersion` (build number) or drop the row; do not leave a stub reading `'embedded'`.
 
-**app.json → Xcode project.** All of §18 becomes a checked-in `Info.plist` + `.entitlements` — and the entire "`ios/` is gitignored, use config plugins" constraint **vanishes**, which is the single biggest simplification of the port. Specifically retire: `withIosSceneLifecycle` (a native app adopts UIScene by default), `withIosPodMinDeploymentTarget` (no Pods), and the `patch-package` expo-modules-jsi fix. Carry over verbatim: bundle id `com.mvks5.bambu`, display name **`Sprout`**, app group `group.com.mvks5.bambu`, `UIBackgroundModes: [audio]` (still required to keep the MJPEG stream alive backgrounded — it is not decorative), the time-sensitive notifications entitlement, `NSSupportsLiveActivities` + `…FrequentUpdates`, `NSAllowsLocalNetworking: true` with `NSAllowsArbitraryLoads: false`, all 4 `CFBundleDocumentTypes` + 3 `UTImportedTypeDeclarations`, `LSSupportsOpeningDocumentsInPlace: false`, both URL schemes, portrait-only, and `CADisableMinimumFrameDurationOnPhone: true` (needed for 120 Hz). Drop `NSFaceIDUsageDescription` (expo-secure-store boilerplate, unused). Add `NSAppTransportSecurity` exceptions only if the backend uses a self-signed cert — note `classifyConnectError` explicitly mentions untrusted TLS as a failure mode, so this is a live scenario.
+**app.json → Xcode project.** All of §18 becomes a checked-in `Info.plist` + `.entitlements` — and the entire "`ios/` is gitignored, use config plugins" constraint **vanishes**, which is the single biggest simplification of the port. Specifically retire: `withIosSceneLifecycle` (a native app adopts UIScene by default), `withIosPodMinDeploymentTarget` (no Pods), and the `patch-package` expo-modules-jsi fix. Carry over verbatim: bundle id `com.example.sprout`, display name **`Sprout`**, app group `group.com.example.sprout`, `UIBackgroundModes: [audio]` (still required to keep the MJPEG stream alive backgrounded — it is not decorative), the time-sensitive notifications entitlement, `NSSupportsLiveActivities` + `…FrequentUpdates`, `NSAllowsLocalNetworking: true` with `NSAllowsArbitraryLoads: false`, all 4 `CFBundleDocumentTypes` + 3 `UTImportedTypeDeclarations`, `LSSupportsOpeningDocumentsInPlace: false`, both URL schemes, portrait-only, and `CADisableMinimumFrameDurationOnPhone: true` (needed for 120 Hz). Drop `NSFaceIDUsageDescription` (expo-secure-store boilerplate, unused). Add `NSAppTransportSecurity` exceptions only if the backend uses a self-signed cert — note `classifyConnectError` explicitly mentions untrusted TLS as a failure mode, so this is a live scenario.
 
 **Live Activities** — the widget currently suffers a severe constraint that **disappears**: the `'widget'`-directive function must be fully self-contained (no module-scope references) because babel stringifies it into an isolated runtime. Natively this is just a normal `ActivityKit` `Widget` in an extension target with full access to a shared framework. Keep the app-group image-passing (`file://` into `widgetsDirectory`) — that part is a genuine cross-process constraint, not a workaround. Keep one activity **per printer** (`ActivityAttributes` keyed by printer id), which is already the design.
 

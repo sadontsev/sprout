@@ -17,15 +17,15 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mvks5/canopy/internal/apns"
-	"github.com/mvks5/canopy/internal/appattest"
-	"github.com/mvks5/canopy/internal/challenge"
-	"github.com/mvks5/canopy/internal/fraud"
-	"github.com/mvks5/canopy/internal/httpapi"
-	"github.com/mvks5/canopy/internal/keystore"
-	"github.com/mvks5/canopy/internal/store"
-	"github.com/mvks5/canopy/internal/tenant"
-	"github.com/mvks5/canopy/internal/vouch"
+	"github.com/sadontsev/sprout/canopy/internal/apns"
+	"github.com/sadontsev/sprout/canopy/internal/appattest"
+	"github.com/sadontsev/sprout/canopy/internal/challenge"
+	"github.com/sadontsev/sprout/canopy/internal/fraud"
+	"github.com/sadontsev/sprout/canopy/internal/httpapi"
+	"github.com/sadontsev/sprout/canopy/internal/keystore"
+	"github.com/sadontsev/sprout/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/tenant"
+	"github.com/sadontsev/sprout/canopy/internal/vouch"
 )
 
 func main() {

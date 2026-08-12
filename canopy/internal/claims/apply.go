@@ -5,8 +5,8 @@ package claims
 import (
 	"time"
 
-	"github.com/mvks5/canopy/internal/binding"
-	"github.com/mvks5/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/binding"
+	"github.com/sadontsev/sprout/canopy/internal/store"
 )
 
 // Apply loads the current row for the claim's token, decides, and persists the

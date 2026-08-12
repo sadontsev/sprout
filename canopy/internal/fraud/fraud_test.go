@@ -144,7 +144,7 @@ func rawAttr(typ int, b []byte) receiptAttribute {
 func redeemedReceipt(t *testing.T, keys int) []byte {
 	t.Helper()
 	return buildReceipt(t, []receiptAttribute{
-		strAttr(fieldAppID, "TEAMID1234.com.mvks5.bambu"),
+		strAttr(fieldAppID, "TEAMID1234.com.example.sprout"),
 		strAttr(fieldReceiptType, TypeReceipt),
 		strAttr(fieldCreation, "2026-08-11T09:00:00Z"),
 		numAttr(fieldRiskMetric, keys),
@@ -164,7 +164,7 @@ func TestParseReadsEveryFieldCanopyActsOn(t *testing.T) {
 	if got.Type != TypeReceipt {
 		t.Errorf("Type = %q, want %q", got.Type, TypeReceipt)
 	}
-	if got.AppID != "TEAMID1234.com.mvks5.bambu" {
+	if got.AppID != "TEAMID1234.com.example.sprout" {
 		t.Errorf("AppID = %q", got.AppID)
 	}
 	if !got.HasKeys || got.Keys != 3 {
@@ -185,7 +185,7 @@ func TestAnAttestReceiptCarriesNoMetricAndThatIsNotZero(t *testing.T) {
 	// Reporting that as "0 keys" would mark every unredeemed device permanently innocent, which is
 	// the same silent-false-negative shape as gating an affordance on a nearby predicate.
 	receipt := buildReceipt(t, []receiptAttribute{
-		strAttr(fieldAppID, "TEAMID1234.com.mvks5.bambu"),
+		strAttr(fieldAppID, "TEAMID1234.com.example.sprout"),
 		strAttr(fieldReceiptType, TypeAttest),
 		strAttr(fieldCreation, "2026-08-11T09:00:00Z"),
 	})

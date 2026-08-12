@@ -19,9 +19,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/mvks5/canopy/internal/apns"
-	"github.com/mvks5/canopy/internal/hashing"
-	"github.com/mvks5/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/apns"
+	"github.com/sadontsev/sprout/canopy/internal/hashing"
+	"github.com/sadontsev/sprout/canopy/internal/store"
 )
 
 const (

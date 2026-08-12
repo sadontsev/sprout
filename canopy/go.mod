@@ -1,4 +1,4 @@
-module github.com/mvks5/canopy
+module github.com/sadontsev/sprout/canopy
 
 go 1.26.5
 

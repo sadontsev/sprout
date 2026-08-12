@@ -3,9 +3,10 @@ package store
 // schema is applied on every Open. Canopy stores hashes, public keys and
 // counters — never push payloads, never raw tokens. Raw tokens arrive per
 // request and die with it.
+// No PRAGMAs here. database/sql pools connections and most pragmas are per-connection, so one set
+// as part of this schema applies to a single connection and no other. They live in the DSN in
+// store.Open, where the driver applies them to every connection it opens.
 const schema = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS bindings (
     token_hash                TEXT PRIMARY KEY,

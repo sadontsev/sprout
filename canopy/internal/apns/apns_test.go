@@ -5,16 +5,16 @@ import (
 	"testing"
 )
 
-const bundleID = "com.mvks5.bambu"
+const bundleID = "com.example.sprout"
 
 func TestTopicIsHardcodedPerPushType(t *testing.T) {
 	cases := []struct {
 		p    PushType
 		want string
 	}{
-		{LiveActivity, "com.mvks5.bambu.push-type.liveactivity"},
-		{Alert, "com.mvks5.bambu"},
-		{Background, "com.mvks5.bambu"},
+		{LiveActivity, "com.example.sprout.push-type.liveactivity"},
+		{Alert, "com.example.sprout"},
+		{Background, "com.example.sprout"},
 	}
 	for _, tc := range cases {
 		got, err := tc.p.Topic(bundleID)

@@ -73,7 +73,7 @@ These three are ~700 lines of in-WebView graphics code and are the biggest singl
 
 ### 2c. `app.json` plugin list
 
-`expo-router`, `expo-splash-screen` (background `#208AEF`), `expo-secure-store`, `expo-image`, `withIosSceneLifecycle`, `expo-build-properties` (`ios.deploymentTarget: "16.4"`), `withIosPodMinDeploymentTarget`, **`expo-widgets`** (`bundleIdentifier: com.mvks5.bambu.LiveActivity`, `groupIdentifier: group.com.mvks5.bambu`, `enablePushNotifications: true`, `frequentUpdates: true`), `expo-video`.
+`expo-router`, `expo-splash-screen` (background `#208AEF`), `expo-secure-store`, `expo-image`, `withIosSceneLifecycle`, `expo-build-properties` (`ios.deploymentTarget: "16.4"`), `withIosPodMinDeploymentTarget`, **`expo-widgets`** (`bundleIdentifier: com.example.sprout.LiveActivity`, `groupIdentifier: group.com.example.sprout`, `enablePushNotifications: true`, `frequentUpdates: true`), `expo-video`.
 
 ### 2d. Entitlements (verified in the generated project)
 
@@ -81,11 +81,11 @@ These three are ~700 lines of in-WebView graphics code and are the biggest singl
 ```
 aps-environment = development            (→ production for TestFlight/App Store)
 com.apple.developer.usernotifications.time-sensitive = true
-com.apple.security.application-groups = [group.com.mvks5.bambu]
+com.apple.security.application-groups = [group.com.example.sprout]
 ```
 `/Users/max/ai-projects/bambu-app/mobile/ios/ExpoWidgetsTarget/ExpoWidgetsTarget.entitlements`:
 ```
-com.apple.security.application-groups = [group.com.mvks5.bambu]
+com.apple.security.application-groups = [group.com.example.sprout]
 ```
 All three capabilities (Push Notifications, App Groups, Time Sensitive Notifications) must exist on the App ID **before** signing.
 
@@ -98,7 +98,7 @@ All three capabilities (Push Notifications, App Groups, Time Sensitive Notificat
 | `NSSupportsLiveActivities` | `true` | ActivityKit |
 | `NSSupportsLiveActivitiesFrequentUpdates` | `true` | Higher push-update budget |
 | `NSAppTransportSecurity` | `NSAllowsArbitraryLoads: false`, **`NSAllowsLocalNetworking: true`** | Permits plain-HTTP to LAN/`.local` backends while keeping ATS on for the public internet. Dropping this breaks LAN setups. |
-| `CFBundleURLTypes` | schemes `bambu` **and** `com.mvks5.bambu` | Two schemes, not one |
+| `CFBundleURLTypes` | schemes `bambu` **and** `com.example.sprout` | Two schemes, not one |
 | `CFBundleDocumentTypes` | 4 entries | `3MF Model`, `Bambu Sliced 3MF`, `G-code` all `LSHandlerRank: Owner`; `STL Model` (`public.standard-tesselated-geometry-format`) `Alternate` |
 | `UTImportedTypeDeclarations` | 3 UTIs | `com.bambulab.3mf` (conforms `public.data`+`public.zip-archive`, ext `3mf`, 2 MIME types); `com.bambulab.gcode-3mf` (conforms to the above, **double extension `gcode.3mf`**); `com.bambulab.gcode` (conforms `public.text`+`public.data`, MIME `text/x.gcode`) |
 | `LSSupportsOpeningDocumentsInPlace` | `false` | Files are copied into Inbox; `index.tsx` then re-copies to `Paths.cache` before upload |
@@ -114,7 +114,7 @@ All three capabilities (Push Notifications, App Groups, Time Sensitive Notificat
 
 ### 2f. App Group container usage
 
-`group.com.mvks5.bambu` is the only channel to the widget process. Three writers: `nozzle.png` (brand glyph), `model.png` (plate thumbnail), and expo-widgets' own bookkeeping. Any image the Live Activity shows must be a `file://` URI inside this container.
+`group.com.example.sprout` is the only channel to the widget process. Three writers: `nozzle.png` (brand glyph), `model.png` (plate thumbnail), and expo-widgets' own bookkeeping. Any image the Live Activity shows must be a `file://` URI inside this container.
 
 ### 2g. Widget extension target
 
@@ -187,7 +187,7 @@ EXUpdatesURL = https://u.expo.dev/<eas-project-id>
 ## 4. Build / signing / distribution the rewrite must reproduce
 
 **Identity (all three must be created/reused together)**
-- App bundle id `com.mvks5.bambu`; widget extension `com.mvks5.bambu.LiveActivity`; App Group `group.com.mvks5.bambu`. Development team is `ios.appleTeamId` in `app.json` (the owner's — substitute your own).
+- App bundle id `com.example.sprout`; widget extension `com.example.sprout.LiveActivity`; App Group `group.com.example.sprout`. Development team is `ios.appleTeamId` in `app.json` (the owner's — substitute your own).
 - Marketing version `1.0.0`, build `6`. Build number must keep climbing; **host and extension versions must match**.
 - Deployment target **16.4** (Live Activities ≥16.1, frequent updates ≥16.2, `AVPictureInPictureController` sample-buffer content source ≥15).
 

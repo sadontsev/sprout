@@ -11,7 +11,7 @@ The Picture-in-Picture chamber-camera pipeline. **This module is already 100% Sw
 
 | File | Lines | Role | Ports as-is? |
 |---|---|---|---|
-| `modules/camera-pip/ios/CameraPiPLog.swift` | 11 | `let pipLog = Logger(subsystem: "com.mvks5.bambu", category: "camera-pip")` | **Yes** |
+| `modules/camera-pip/ios/CameraPiPLog.swift` | 11 | `let pipLog = Logger(subsystem: "com.example.sprout", category: "camera-pip")` | **Yes** |
 | `modules/camera-pip/ios/MJPEGParser.swift` | 273 | Incremental `multipart/x-mixed-replace` parser + JPEG header inspector | **Yes, 100%** |
 | `modules/camera-pip/ios/MJPEGStream.swift` | 519 | Frame gate, JPEG→CMSampleBuffer builder, URLSession client | **Yes, 100%** |
 | `modules/camera-pip/ios/CameraPiPRenderer.swift` | 335 | Audio keep-alive, display layer, PiP controller, reconnect policy | **Yes** (only the `onEvent` dict shape changes) |
@@ -850,7 +850,7 @@ plus `paddingLeft: (landscape ? insets.top : 0) + 16` because *rotated, the notc
 |---|---|---|
 | `MJPEGParser.swift` | **Copy verbatim.** Zero Expo dependencies. Keep the unit tests. | trivial |
 | `MJPEGStream.swift` (`LatestFrameGate`, `JPEGFrameBuilder`, `MJPEGStreamClient`) | **Copy verbatim.** Zero Expo dependencies. | trivial |
-| `CameraPiPLog.swift` | Copy; keep `subsystem: "com.mvks5.bambu"`, `category: "camera-pip"`. | trivial |
+| `CameraPiPLog.swift` | Copy; keep `subsystem: "com.example.sprout"`, `category: "camera-pip"`. | trivial |
 | `CameraPiPRenderer.swift` | Copy. Replace `var onEvent: ((String, [String: Any]) -> Void)?` with a typed `enum CameraPiPEvent { case live, error(message: String, retryable: Bool), pipStart, pipStop(error: String?), stats(frames: Int, pip: Bool), audio(ok: Bool, message: String?) }` published via `@Published` / `AsyncStream` / a delegate. Everything else — reconnect math, notification observers, PiP delegates, keep-alive — is unchanged. | small |
 | `CameraPiPView.swift` | Rewrite as a plain `final class CameraPiPUIView: UIView` (same `layoutSubviews` `CATransaction` trick, same `UIColor(white: 0.02, alpha: 1)`), wrapped in a `UIViewRepresentable`. `EventDispatcher` → the typed event stream. `setURL`/`setActive` become methods on an observable `CameraPiPController`. | small |
 | `CameraPiPModule.swift` | **Delete.** `isSupported()` → call `AVPictureInPictureController.isPictureInPictureSupported()` directly. `startPiP`/`stopPiP` → methods on the controller, annotated `@MainActor` (this *replaces* `.runOnQueue(.main)` and is strictly better — the compiler enforces it). | delete |

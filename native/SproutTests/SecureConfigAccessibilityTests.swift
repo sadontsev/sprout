@@ -25,7 +25,7 @@ final class SecureConfigAccessibilityTests: XCTestCase {
         var out: CFTypeRef?
         let status = SecItemCopyMatching([
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: "com.mvks5.bambu",
+            kSecAttrService: SecureConfig.serviceName,
             kSecAttrAccount: "bambu.config",
             kSecReturnAttributes: true,
             kSecMatchLimit: kSecMatchLimitOne,
@@ -58,7 +58,7 @@ final class SecureConfigAccessibilityTests: XCTestCase {
         // precisely the installs that already have credentials worth not losing.
         SecItemAdd([
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: "com.mvks5.bambu",
+            kSecAttrService: SecureConfig.serviceName,
             kSecAttrAccount: "bambu.config",
             kSecValueData: try JSONEncoder().encode(config),
             kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
@@ -75,7 +75,7 @@ final class SecureConfigAccessibilityTests: XCTestCase {
         // this is an in-place SecItemUpdate.
         SecItemAdd([
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: "com.mvks5.bambu",
+            kSecAttrService: SecureConfig.serviceName,
             kSecAttrAccount: "bambu.config",
             kSecValueData: try JSONEncoder().encode(config),
             kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,

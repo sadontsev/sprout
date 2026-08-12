@@ -1,6 +1,6 @@
 """Which iOS app a Live-Activity registration came from, and the wire shape that app needs.
 
-TWO APPS, ONE BUNDLE ID. `com.mvks5.bambu` ships as two different TestFlight builds — the React
+TWO APPS, ONE BUNDLE ID. The app ships as two different TestFlight builds — the React
 Native app (`mobile/`, Live Activities via expo-widgets) and the native SwiftUI rewrite (`native/`) —
 and the owner switches between them to compare. They disagree about the JSON a Live-Activity push
 must carry, in two places, and BOTH failures are silent: APNs answers 200 and the update simply never

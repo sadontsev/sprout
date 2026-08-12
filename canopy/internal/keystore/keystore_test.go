@@ -18,14 +18,14 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/mvks5/canopy/internal/appattest"
-	"github.com/mvks5/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/appattest"
+	"github.com/sadontsev/sprout/canopy/internal/store"
 )
 
 var (
 	tNow       = time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
 	clientData = []byte(`{"challenge":"abc","token":"tok-A"}`)
-	appID      = "TEAMID6789.com.mvks5.bambu"
+	appID      = "TEAMID6789.com.example.sprout"
 	nonceOID   = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 8, 2}
 )
 

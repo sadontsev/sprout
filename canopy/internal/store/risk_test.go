@@ -2,7 +2,10 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -232,5 +235,58 @@ func TestOpeningTwiceIsIdempotent(t *testing.T) {
 			t.Fatalf("Open #%d: %v", i+1, err)
 		}
 		s.Close()
+	}
+}
+
+func TestConcurrentWritersDoNotGetDatabaseIsLocked(t *testing.T) {
+	// The production failure: `ERROR "issue challenge" err="database is locked (5) (SQLITE_BUSY)"`.
+	//
+	// Without busy_timeout a writer that finds the database locked fails instantly rather than
+	// waiting, and every one of those was a claim the app could not complete — a push token left
+	// unbound and a card that stopped updating until the retry. Intermittent and self-healing,
+	// which is why it ran for hours unnoticed.
+	//
+	// PRAGMAs also have to be in the DSN rather than the schema: database/sql pools connections and
+	// busy_timeout is per-connection, so setting it once through db.Exec would leave every other
+	// pooled connection without it — and this test would still fail intermittently.
+	s := openTemp(t)
+
+	const writers, each = 8, 25
+	errs := make(chan error, writers*each)
+	var wg sync.WaitGroup
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				// Challenges are the hot write path — one per claim, plus the sweep's own writes.
+				err := s.PutChallenge(
+					fmt.Sprintf("nonce-%d-%d", w, i), "tenant", "assertion",
+					t0.Add(time.Hour), t0)
+				if err != nil {
+					errs <- err
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(errs)
+
+	var locked, other int
+	var sample error
+	for err := range errs {
+		if strings.Contains(err.Error(), "database is locked") {
+			locked++
+		} else {
+			other++
+		}
+		sample = err
+	}
+	if locked > 0 {
+		t.Errorf("%d writes failed with SQLITE_BUSY; busy_timeout is what makes a writer wait "+
+			"instead of failing, and it must be in the DSN so every pooled connection has it", locked)
+	}
+	if other > 0 {
+		t.Errorf("%d writes failed for another reason, e.g. %v", other, sample)
 	}
 }

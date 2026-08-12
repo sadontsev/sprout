@@ -312,7 +312,7 @@ func TestAMatchingAppIdIsAccepted(t *testing.T) {
 
 	keys := newFakeKeys(KeyRecord{KeyID: "k1", Receipt: []byte("r")})
 	s := sweeperFor(t, keys, srv.URL)
-	s.AppID = "TEAMID1234.com.mvks5.bambu"
+	s.AppID = "TEAMID1234.com.example.sprout"
 
 	if _, err := s.Run(context.Background(), testNow); err != nil {
 		t.Fatal(err)

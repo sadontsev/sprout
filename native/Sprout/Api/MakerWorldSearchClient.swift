@@ -84,7 +84,7 @@ extension MakerWorldSearching {
 
 struct MakerWorldSearchClient: MakerWorldSearching, Sendable {
     private static let base = "https://api.bambulab.com/v1/search-service"
-    private static let userAgent = "Sprout/1.0 (+https://github.com/mvks5/bambu-app; personal 3D printer client)"
+    private static let userAgent = "Sprout/1.0 (+https://github.com/sadontsev/sprout; personal 3D printer client)"
 
     /// Short, and with **no retry**. A stalled browse should fail and let the user try again rather
     /// than hold a spinner, and automatic retries against an undocumented endpoint are the fastest

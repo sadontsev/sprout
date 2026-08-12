@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const testAppID = "TEAMID6789.com.mvks5.bambu"
+const testAppID = "TEAMID6789.com.example.sprout"
 
 var (
 	tNow       = time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)

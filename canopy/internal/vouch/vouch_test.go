@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mvks5/canopy/internal/apns"
-	"github.com/mvks5/canopy/internal/store"
+	"github.com/sadontsev/sprout/canopy/internal/apns"
+	"github.com/sadontsev/sprout/canopy/internal/store"
 )
 
 var t0 = time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
