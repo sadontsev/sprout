@@ -536,3 +536,78 @@ class ContactDiagnostics(unittest.TestCase):
         self.assertTrue(body["any_request"], "it reached us")
         self.assertFalse(body["authenticated"], "but it did not get past the key")
         self.assertGreaterEqual(body["rejected"], 1)
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class TheRealKeyGate(unittest.TestCase):
+    """Exercise _require_key ITSELF, with no dependency_overrides.
+
+    Every other test in this file replaces the gate with `lambda: None` to skip the Bambuddy round
+    trip. That is reasonable for testing what is BEHIND the gate — and it meant the gate's own
+    success path had never once been executed by the suite. A NameError on that path shipped green:
+    224 passing tests, and every authenticated request in production answering 500.
+
+    So these deliberately go through the real thing. `BAMBUDDY_API_KEY=test-key` is set at import,
+    which makes the equality fast path reachable without any network.
+    """
+
+    def setUp(self):
+        self.client = TestClient(la.app, raise_server_exceptions=False)
+        la._regs = {}
+        la._device_tokens = []
+        la._first_seen_any = None
+        la._first_seen_authed = None
+        la._seen_any = 0
+        la._seen_authed = 0
+        la._seen_unauthorized = 0
+        la._key_cache = {}
+        la._save = lambda: None
+
+    def post(self, key):
+        headers = {"X-API-Key": key} if key else {}
+        return self.client.post("/sync", json={"tokens": [], "device_id": "phoneA"}, headers=headers)
+
+    def test_a_good_key_is_accepted(self):
+        resp = self.post("test-key")
+
+        self.assertEqual(
+            resp.status_code, 200,
+            "a 500 here is the gate throwing, and it locks out registration, sync and claims at "
+            "once — every authenticated endpoint there is",
+        )
+        self.assertTrue(la._first_seen_authed, "the success path must record that it authenticated")
+
+    def test_a_wrong_key_is_rejected_not_crashed(self):
+        # Bambuddy is unreachable from the test env, so this exercises the fail-closed branch.
+        resp = self.post("not-the-key")
+
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(la._seen_unauthorized, 1)
+
+    def test_a_missing_key_is_rejected(self):
+        self.assertEqual(self.post(None).status_code, 401)
+        self.assertEqual(la._seen_unauthorized, 1)
+
+    def test_arrived_but_no_verdict_is_not_blamed_on_the_key(self):
+        # The state the broken gate actually produced: requests arrive, none authenticate, and none
+        # are rejected either. The watchdog used to call that "this is the API key", sending the
+        # operator to check a credential that was never involved.
+        la._seen_any, la._seen_unauthorized, la._first_seen_authed = 47, 0, None
+        msg = self.watch_message()
+
+        self.assertIn("NOT the API key", msg)
+        self.assertIn("traceback", msg)
+
+    def test_arrived_and_rejected_IS_blamed_on_the_key(self):
+        la._seen_any, la._seen_unauthorized, la._first_seen_authed = 47, 47, None
+        msg = self.watch_message()
+
+        self.assertIn("API key", msg)
+        self.assertNotIn("NOT the API key", msg)
+
+    def watch_message(self):
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            la._contact_report()
+        return buf.getvalue()

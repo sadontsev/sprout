@@ -1045,6 +1045,21 @@ _key_cache: dict[str, float] = {}
 _KEY_CACHE_TTL = 300.0
 
 
+def _note_authed() -> None:
+    """Record a request that got past the key gate, and say so once.
+
+    Called from every success path in _require_key rather than from the middleware, because the
+    middleware runs BEFORE the dependency and cannot see the outcome.
+    """
+    global _first_seen_authed, _seen_authed
+    _seen_authed += 1
+    if _first_seen_authed is None:
+        _first_seen_authed = time.time()
+        print("[contact] first AUTHENTICATED request — the app can reach Trellis and its API key "
+              "is good. If a card is still stuck, look at bound= on the next registration.",
+              flush=True)
+
+
 async def _require_key(x_api_key: str | None = Header(default=None)) -> None:
     """Gate the register endpoints on a VALID Bambuddy API key (the app already sends it as
     X-API-Key). Without this, ANYONE who knows the public Trellis URL could POST their token and
@@ -1267,25 +1282,42 @@ async def _contact_watch() -> None:
         first = False
         if _first_seen_authed is not None:
             return
-        if _seen_any == 0:
-            print(
-                "[contact] NOTHING has reached Trellis yet — the app has never connected.\n"
-                "          Push cannot work until it does: the phone hands over its push token here.\n"
-                "          Check, in this order:\n"
-                f"           1. from the PHONE, on cellular with Wi-Fi off, open  <your-trellis-url>/health\n"
-                "           2. that the address resolves to a PUBLIC ip — a public hostname pointing\n"
-                "              at a 192.168.x / 10.x address works on your LAN and nowhere else\n"
-                "           3. that it is https:// — iOS blocks plain http to a public hostname with\n"
-                "              no visible error (an ip literal or a .local name is exempt, LAN only)\n"
-                "           4. in the app: Settings -> Live Activity via server ON, Trellis URL set",
-                flush=True)
-        else:
-            print(
-                f"[contact] {_seen_any} request(s) have reached Trellis but NONE authenticated "
-                f"({_seen_unauthorized} rejected).\n"
-                "          The network path works — this is the API key. The key in the app's\n"
-                "          settings must be one your Bambuddy accepts.",
-                flush=True)
+        _contact_report()
+
+
+def _contact_report() -> None:
+    """Print the current contact verdict. Separate from the loop above so it can be tested."""
+    if _seen_any == 0:
+        print(
+            "[contact] NOTHING has reached Trellis yet — the app has never connected.\n"
+            "          Push cannot work until it does: the phone hands over its push token here.\n"
+            "          Check, in this order:\n"
+            f"           1. from the PHONE, on cellular with Wi-Fi off, open  <your-trellis-url>/health\n"
+            "           2. that the address resolves to a PUBLIC ip — a public hostname pointing\n"
+            "              at a 192.168.x / 10.x address works on your LAN and nowhere else\n"
+            "           3. that it is https:// — iOS blocks plain http to a public hostname with\n"
+            "              no visible error (an ip literal or a .local name is exempt, LAN only)\n"
+            "           4. in the app: Settings -> Live Activity via server ON, Trellis URL set",
+            flush=True)
+    elif _seen_unauthorized > 0:
+        print(
+            f"[contact] {_seen_any} request(s) have reached Trellis, {_seen_unauthorized} were\n"
+            "          REJECTED and none authenticated.\n"
+            "          The network path works — this is the API key. The key in the app's\n"
+            "          settings must be one your Bambuddy accepts.",
+            flush=True)
+    else:
+        # Arrived, not authenticated, and not rejected either. The gate did not reach a verdict:
+        # something threw inside it, and FastAPI turned that into a 500. Blaming the API key here
+        # is the mistake this whole file is about — a branch that answers the NEARBY question
+        # ("did anything authenticate?") when the real one is "did the gate get to decide?".
+        # Said differently: it sent the operator to check a key that was never the problem.
+        print(
+            f"[contact] {_seen_any} request(s) have reached Trellis and NONE reached a verdict —\n"
+            "          not authenticated, but not rejected either.\n"
+            "          This is NOT the API key. The key check itself is failing: look for a\n"
+            "          traceback above (docker logs), which is Trellis's own bug, not yours.",
+            flush=True)
 
 
 @app.get("/health")
