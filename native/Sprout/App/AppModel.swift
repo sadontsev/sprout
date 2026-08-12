@@ -29,6 +29,10 @@ final class AppModel {
     /// nil while the Keychain read is still in flight, so the shell can hold the splash instead of
     /// flashing onboarding at someone who is already set up.
     private(set) var configLoaded = false
+    /// True while the app is showing canned data and talking to nothing. Read by the UI to say so
+    /// on every screen — a demo that cannot be told from a live connection is a trap, for a
+    /// reviewer and for the owner.
+    private(set) var isDemo = false
 
     // MARK: Fleet & status
 
@@ -90,7 +94,14 @@ final class AppModel {
     // MARK: - Lifecycle
 
     func load() async {
-        let stored = SecureConfig.load()
+        var stored = SecureConfig.load()
+        // Belt and braces: a demo config must never come back as a real one. `persist` is guarded,
+        // but a build that already wrote one (or a future path that forgets) would otherwise strand
+        // the owner on a server that does not exist, with no obvious way to tell why.
+        if stored?.baseUrl == AppModel.demoBaseUrl {
+            SecureConfig.clear()
+            stored = nil
+        }
         config = stored
         theme = ThemePreference.from(stored?.theme)
         configLoaded = true
@@ -156,7 +167,64 @@ final class AppModel {
         startLanModeRefresh()
     }
 
+    /// Start a demo session: canned data, no server, nothing persisted.
+    ///
+    /// Deliberately does NOT call `SecureConfig.save` — a demo must not overwrite real credentials,
+    /// and must not survive a relaunch as if it were a configured server. Leaving is `signOut`,
+    /// which already tears everything down and returns to the config gate.
+    ///
+    /// The base URL is a placeholder that is never dialled: every request is answered by
+    /// `DemoServer` inside the client's transport. It still has to parse as a URL, because the real
+    /// URL builder runs — which is the point.
+    /// The placeholder host a demo session claims. Never dialled — every request is answered inside
+    /// the client — but it has to parse as a URL because the real URL builder runs.
+    static let demoBaseUrl = "https://demo.invalid"
+
+    func startDemo() async {
+        teardownSession()
+        isDemo = true
+        let cfg = AppConfig(baseUrl: AppModel.demoBaseUrl, apiKey: "demo")
+        config = cfg
+        let c = BambuddyClient(baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, demo: DemoServer())
+        client = c
+        printerId = 1
+        cameraToken = nil
+        // `.lan` would offer LAN-only controls that cannot work here; `.unknown` leaves the gates
+        // that already exist to explain themselves, which is the honest state for "no printer".
+        lanMode = .unknown
+
+        // The same stores the real session uses. The status store's socket attempt fails (the demo
+        // refuses to mint a ws token) and it falls back to its REST poll, which the demo DOES
+        // answer — so the print advances on screen through the app's own polling path.
+        let store = PrinterStatusStore(client: c, printerId: printerId)
+        status = store
+        store.start()
+
+        printers = (try? await c.listPrinters()) ?? []
+    }
+
+    /// Leave the demo and go back to whatever the owner actually had.
+    ///
+    /// NOT `signOut`. That clears the Keychain, which is right when someone deliberately
+    /// disconnects and catastrophic when they were only looking at the demo — entering it from a
+    /// configured app and leaving would have destroyed the base URL and API key they had typed in
+    /// once and never wanted to type again.
+    func exitDemo() async {
+        guard isDemo else { return }
+        teardownSession()
+        isDemo = false
+        client = nil
+        printers = []
+        if let stored = SecureConfig.load(), stored.isComplete {
+            await connect(stored)
+        } else {
+            config = nil        // nothing to go back to: the config gate, not a broken session
+        }
+    }
+
     func signOut() {
+        isDemo = false
+
         endLiveActivities()
         teardownSession()
         liveActivity = nil
@@ -319,6 +387,12 @@ final class AppModel {
         guard var cfg = config else { return }
         mutate(&cfg)
         config = cfg
+        // NEVER write a demo session to the Keychain. `printerId` and `theme` both persist through
+        // here on `didSet`, so simply selecting the demo printer was enough to overwrite the owner's
+        // real base URL and API key with `demo.invalid` — and on the next launch the app restored
+        // that as a genuine server and sat on "Connecting" forever. The demo is a session, not a
+        // configuration; the only place that may enforce it is this one chokepoint.
+        guard !isDemo else { return }
         SecureConfig.save(cfg)
     }
 

@@ -88,6 +88,8 @@ final class BambuddyClient: Sendable {
     private let adminPassword: String?
     private let session: URLSession
     private let tokens = AdminTokenStore()
+    /// When set, requests are answered locally and NOTHING leaves the device — see `DemoServer`.
+    let demo: DemoServer?
 
     init(
         baseUrl: String,
@@ -95,8 +97,10 @@ final class BambuddyClient: Sendable {
         extraHeaders: [String: String] = [:],
         adminUsername: String? = nil,
         adminPassword: String? = nil,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        demo: DemoServer? = nil
     ) {
+        self.demo = demo
         // Trim trailing slashes so path concatenation never doubles them.
         var b = baseUrl
         while b.hasSuffix("/") { b.removeLast() }
@@ -168,6 +172,20 @@ final class BambuddyClient: Sendable {
 
     @discardableResult
     private func send(_ req: URLRequest, path: String) async throws -> Data {
+        // The whole of demo mode is this branch. Above it everything is the real client — the URL
+        // was built for real, the response is decoded by the real decoder, a refusal becomes the
+        // real `BambuddyError` — so the demo exercises the app rather than a parallel copy of it.
+        if let demo {
+            let method = req.httpMethod ?? "GET"
+            guard let data = demo.respond(path: path, method: method) else {
+                // Unmodelled routes and every write fail like a real server would, with a reason
+                // worth reading. Silently returning empty data would make a control look like it
+                // worked — the exact bug this codebase keeps writing.
+                throw BambuddyError(method: method, path: path, status: method == "GET" ? 404 : 403,
+                                    body: #"{"detail":"\#(DemoServer.writeRefusal)"}"#)
+            }
+            return data
+        }
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse else { return data }
         guard (200..<300).contains(http.statusCode) else {

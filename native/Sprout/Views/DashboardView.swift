@@ -27,7 +27,10 @@ struct DashboardView: View {
     }
 
     private var showCamera: Bool {
-        [.live, .idle, .complete, .error].contains(vm.kind)
+        // Never in demo mode: the camera is a physical device on a real printer, and the tile's
+        // on-demand warm-up would sit on "WAKING…" forever waiting for one. A stated absence beats
+        // a control that looks like it is about to work and never does.
+        !model.isDemo && [.live, .idle, .complete, .error].contains(vm.kind)
     }
 
     private var alerts: [AlertVM] {
@@ -47,7 +50,7 @@ struct DashboardView: View {
                 if maintenance.due > 0 || maintenance.warn > 0 { maintenanceChip }
                 if let summary = Alerts.summary(alerts) { alertChip(summary) }
                 hero
-                if showCamera { cameraTile }
+                if showCamera { cameraTile } else if model.isDemo { demoCameraNote }
                 // Only after a print, and only when the model is willing to say something honest.
                 if let cool = model.cooldown?.vm, cool.phase != .none { CooldownCard(vm: cool) }
 
@@ -324,6 +327,25 @@ struct DashboardView: View {
     /// Derived, never mirrored into a second `@State`: a copy of "a frame has decoded" is a copy
     /// that can be left behind claiming LIVE over a tile that has gone blank.
     private var camLoaded: Bool { tileStreamActive && tileCam.isLive }
+
+    /// What stands in for the camera in demo mode. Named for what it is rather than dressed up as
+    /// a feed that is about to arrive.
+    private var demoCameraNote: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "video.slash")
+                .font(.system(size: 15))
+                .foregroundStyle(c.t3)
+            Text("The chamber camera streams from the printer, so it isn’t part of the demo.")
+                .font(.system(size: 12))
+                .foregroundStyle(c.t3)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(13)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(c.s2))
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+    }
 
     private var cameraTile: some View {
         // NOT wrapped in `Tap`. SwiftUI may instantiate a `UIViewRepresentable` inside a Button's
@@ -646,7 +668,7 @@ struct DashboardView: View {
                 if speedOverride == i { speedOverride = nil }
             } catch {
                 speedOverride = nil
-                model.toast = "Speed failed — \((error as? BambuddyError)?.detail ?? error.localizedDescription)"
+                model.toast = "Speed failed – \((error as? BambuddyError)?.detail ?? error.localizedDescription)"
             }
         }
     }
@@ -757,7 +779,7 @@ struct DashboardView: View {
                 } content: {
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.square").font(.system(size: 15)).foregroundStyle(c.accentInk)
-                        Text("Plate cleared — continue queue")
+                        Text("Plate cleared – continue queue")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(c.accentInk)
                     }

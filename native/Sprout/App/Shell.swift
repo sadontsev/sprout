@@ -51,7 +51,44 @@ struct Shell: View {
     }
 
     private var main: some View {
-        MainTabs(model: model, onSettings: { showSettings = true })
+        // The banner is part of the LAYOUT, not an overlay. As a `safeAreaInset` on the ZStack it
+        // drew on top of the dashboard header — the ZStack's background ignores the safe area, so
+        // the inset had nothing to push. In the stack it takes its own room.
+        VStack(spacing: 0) {
+            if model.isDemo { demoBanner }
+            MainTabs(model: model, onSettings: { showSettings = true })
+        }
+    }
+
+    /// On every screen, not just the first. A demo that cannot be told from a live connection is a
+    /// trap — for a reviewer deciding what the app does, and for the owner wondering why their
+    /// printer is not responding.
+    ///
+    /// Styled as CHROME, not as an alert. The first version was a full-width accent bar, which shouted
+    /// over the app's own titles and read as a warning about something being wrong. This is a thin
+    /// muted strip in the same mono the rest of the app uses for labels: unmissable if you look at
+    /// it, invisible if you are looking at the print.
+    private var demoBanner: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(c.accent)
+                .frame(width: 5, height: 5)
+            Text("DEMO · sample data")
+                .font(.mono(10, weight: .bold))
+                .foregroundStyle(c.t3)
+            Spacer(minLength: 0)
+            Tap { Task { await model.exitDemo() } } content: {
+                Text("Exit demo")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(c.accent)
+                    .contentShape(.rect)
+            }
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 26)
+        .frame(maxWidth: .infinity)
+        .background(c.s2)
+        .overlay(alignment: .bottom) { Rectangle().fill(c.line2).frame(height: 0.5) }
     }
 }
 
