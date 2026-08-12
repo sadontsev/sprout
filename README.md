@@ -1,12 +1,10 @@
 # Sprout 🌱
 
-A self-hosted iOS companion app for **Bambu Lab 3D printers** — born because the official
-Bambu Handy app can't drive China-market units, and grown into a full-featured client that
-outdoes it in a few places.
+An iOS app for **Bambu Lab 3D printers** that you host yourself. Built because the official Bambu
+Handy app can't drive China-market units, and grown into a fuller client than it.
 
-The app is a polished **Expo / React Native** client for a
-[**Bambuddy**](https://github.com/maziggy/bambuddy) backend you run on your own server.
-The printer never talks to a phone directly — everything flows through your box:
+Your printer talks to **your** server. Nothing about your prints, files or camera goes to anyone
+else.
 
 ```
                       ┌──────── your server ────────┐   ┌── the author's ──┐
@@ -15,102 +13,80 @@ printer ──MQTT/FTPS──► Bambuddy ──► Trellis ──────�
                           └──────► Sprout (iOS)
 ```
 
-**Trellis** runs next to your Bambuddy and knows your printer. **Canopy** holds the APNs signing
-keys and knows nothing about printers — it never contacts your server. That split is what lets push
-work straight from the App Store with no Apple developer account of your own, while the author still
-cannot reach your data. You can host Canopy yourself, or skip it and have Trellis sign its own
-pushes: [docs/guides/self-hosting-push.md](docs/guides/self-hosting-push.md).
+Only one piece is not yours: **Canopy**, which signs the push notifications. It holds Apple's
+signing keys so you don't need an Apple developer account, and it never contacts your server —
+it can't see your printer, your files or your camera. [Run your own](docs/guides/self-hosting-push.md)
+if you'd rather.
+
+## What you need
+
+| | |
+|---|---|
+| A Bambu Lab printer | on your LAN |
+| A machine that runs Docker | for [Bambuddy](https://github.com/maziggy/bambuddy) — a NAS, a Pi, any spare box |
+| A Mac with Xcode | the app is not on the App Store; you build and install it yourself |
+| An Apple Developer account | **paid** — Live Activities need App Groups and Push, which a free team can't provision |
+
+## Getting started
+
+Three steps, in order. Each links to the detail.
+
+**1. Run the backend** — [`deploy/README.md`](deploy/README.md)
+
+Bambuddy talks to the printer and does the real work. Register your printer, then mint a scoped
+API key (`bb_…`) — that key is what the app uses.
+
+**2. Run Trellis, for push** — [`docs/guides/push-notifications.md`](docs/guides/push-notifications.md)
+
+```bash
+cp -r deploy/trellis <deploy-dir>/trellis && cd <deploy-dir>/trellis
+cp .env.example .env        # BAMBUDDY_API_KEY is the only value you must set
+docker compose up -d --build
+```
+
+That's the whole configuration. Trellis relays through Canopy by default, so there is no Apple
+credential to obtain and no key to install. Without this step the app still works — lock-screen
+cards just stop updating once you close it.
+
+**3. Build the app** — see [Building](#building) below.
 
 ## Features
 
-- **Dashboard** — live temps (dual-nozzle aware), progress, speed control, light, HMS
-  notices, multi-printer fleet switcher; pure view-model (`present.ts`) drives everything.
-- **Live Activities** — one lock-screen / Dynamic Island card *per printing machine*, kept
-  updating after iOS suspends the app via APNs pushes from the bundled **Trellis** service.
-- **Push banners** — print finished, print failed, filament-drying finished.
-- **Files** — Bambuddy library (upload, MakerWorld import, delete) *and* the printer's SD
-  card: plate previews, download/share, delete, a 3D **layer viewer** (build plate, orbit,
-  layer scrub), plus thumbnail grids with native playback for **timelapse** and **ipcam**
-  recordings.
-- **MakerWorld** *(native app)* — search and browse MakerWorld from inside the app, open
-  **your own collections**, pick a profile with its real print time / weight / filaments and
-  licence, import, and land straight in the print wizard. Search and browse are anonymous;
-  collections are served by your own **Trellis** so no Bambu Cloud token ever reaches the
-  phone. See [deploy/trellis/README.md](deploy/trellis/README.md#makerworld-collections).
-- **Jobs** — queue + print history with stats, cost, and reprint, in one timeline.
-- **Hardware** — AMS trays with spool inventory, **filament drying** (recommended temp/time
-  per filament, spool rotation, live cycle status), nozzle rack, maintenance reminders.
+- **Dashboard** — live temperatures (dual-nozzle aware), progress, speed, chamber light, HMS
+  notices, and a switcher if you run more than one machine.
+- **Live Activities** — a lock-screen and Dynamic Island card per printing machine, kept current
+  after iOS suspends the app.
+- **Notifications** — print finished, print failed, filament drying finished.
+- **Files** — your Bambuddy library and the printer's own SD card: plate previews, download,
+  delete, and a 3D **layer viewer** you can orbit and scrub. Timelapse and IP-cam recordings play
+  inline.
+- **MakerWorld** — search and browse without signing in, open **your own collections**, pick a
+  profile with its real print time, weight, filaments and licence, and land in the print wizard.
+  Your Bambu Cloud login stays on your server; the phone never sees it.
+- **Jobs** — queue and history in one timeline, with stats, cost and one-tap reprint.
+- **Hardware** — AMS trays with spool inventory, **filament drying** with per-material temperature
+  and time, nozzle rack, maintenance reminders.
 - **Power** — smart-plug control with live watts and per-print energy cost.
-- **Camera** — MJPEG chamber stream with warm-up handling, honest failure states, and a
-  live delivered-fps counter.
-- **Print wizard** — pick file → filament/quality (with a working supports toggle) →
-  server-side slicing → plate preview → AMS mapping → print.
+- **Camera** — chamber stream with honest failure states and a real delivered-fps counter.
 
 ## Repo layout
 
 | path | what |
 |---|---|
-| `mobile/` | the Expo app (SDK 56 / RN 0.85). Built locally with Xcode — no EAS. |
-| `native/` | a native SwiftUI reimplementation of the same app, built to compare against the RN one. Same bundle id, so the two ship as separate TestFlight builds of one app record. `Sprout.xcodeproj` is generated by xcodegen from `project.yml` and is gitignored. |
-| `deploy/bambuddy/` | docker-compose for Bambuddy + helper scripts (support-profile provisioning) |
+| `native/` | the SwiftUI app. Where new work lands. Xcode project generated by xcodegen from `project.yml`. |
+| `mobile/` | the original Expo / React Native app. Same bundle id, shipped as a separate TestFlight build. |
+| `deploy/bambuddy/` | compose for the Bambuddy backend |
 | `deploy/slicer-api/` | Bambu Studio / OrcaSlicer slicing sidecars |
-| `deploy/trellis/` | the push + MakerWorld service you run next to Bambuddy (FastAPI). Formerly `la-push`. |
-| `canopy/` | the APNs relay the app author hosts (Go). Holds the signing keys, verifies App Attest, binds each push token to one tenant. Self-hostable. |
-| `docs/` | validated backend facts and design notes |
-| `CLAUDE.md` | working notes for AI-assisted development — also the most complete build reference |
+| `deploy/trellis/` | the push + MakerWorld service **you** run next to Bambuddy |
+| `canopy/` | the APNs relay the **author** runs. Self-hostable — see the guide. |
+| `docs/guides/` | setup, in the order you need it |
+| `docs/design/` | how the push architecture works, and why |
+| `docs/native-rewrite/` | internal: the behavioural spec the SwiftUI port was written against. Useful if you are changing the app; not needed to run it. |
+| `CLAUDE.md` | notes for AI-assisted development, and the most complete build reference |
 
-## Getting started
+## Building
 
-### 1. Backend (any Docker host on your LAN)
-
-1. Copy `deploy/bambuddy/.env.example` to `.env` and set `JWT_SECRET_KEY`
-   (`openssl rand -hex 32`) — compose uses the fail-hard `${VAR:?}` form and refuses to
-   start without it. Then deploy Bambuddy + the slicer sidecar:
-   see [`deploy/README.md`](deploy/README.md).
-2. Register your printer in Bambuddy's web UI (LAN IP + access code).
-3. Enable auth and mint a **scoped API key** (`bb_…`) — this is what the app uses.
-4. Reachability: LAN works as-is; for remote use put Bambuddy behind Tailscale or an
-   HTTPS tunnel (iOS ATS requires HTTPS for non-LAN hosts).
-
-### 2. Push (optional — Live Activities, banners, MakerWorld collections)
-
-Full walkthrough: [**docs/guides/push-notifications.md**](docs/guides/push-notifications.md).
-
-**The short version: there is nothing to configure.** Deploy Trellis next to Bambuddy with your
-`BAMBUDDY_API_KEY`, and it relays through the author's Canopy by default — no Apple developer
-account, no APNs key, no push certificate.
-
-```bash
-cp -r deploy/trellis <deploy-dir>/trellis && cd <deploy-dir>/trellis
-cp .env.example .env      # BAMBUDDY_API_KEY is the only value you must set
-docker compose up -d --build
-curl -s localhost:8911/health
-```
-
-Trellis enrols itself as a tenant on first start and prints a **recovery code once**. Save it — it
-is the only way to recover your tenant if `data/tenant.json` is lost, and it is deliberately never
-served from an endpoint.
-
-What the relay operator can and cannot see, and how to run your own instead:
-[**docs/guides/self-hosting-push.md**](docs/guides/self-hosting-push.md). The short answer is that
-Canopy never contacts your server and stores hashes rather than payloads — but a Live Activity's
-content (the print name and progress) does pass through whoever signs the push. Self-host if that
-matters to you.
-
-Trellis also serves **your MakerWorld collections**, which is why its compose file mounts Bambuddy's
-data volume read-only: collections need a Bambu Cloud bearer, and that bearer stays on the server
-rather than going on a phone. Skip the mount and everything else still works. The volume is declared
-`external` under the name compose generated for Bambuddy (`bambuddy_bambuddy_data`), so a wrong name
-stops the deploy rather than failing quietly.
-
-**Using a TestFlight build someone else signed?** Push cannot work, and no configuration fixes it:
-APNs only accepts a key belonging to the team that owns the bundle id. Turn off "Live Activity via
-server" in Settings — MakerWorld collections still work, and lock-screen cards simply stop updating
-while the app is closed. For real push, build it under your own team.
-
-Android status (spoiler: not yet): [docs/guides/android.md](docs/guides/android.md).
-
-### 3. iOS app
+### The app
 
 Requirements: macOS with Xcode (the repo currently targets an iOS 27 device via the Xcode
 beta — see `CLAUDE.md` for the exact recipe and its hard-won gotchas), a **paid Apple

@@ -23,3 +23,11 @@ ios/build/
 .idea/
 .vscode/
 mobile/simseed.json
+
+# Author-specific deployment notes: real hosts, paths and usernames. The repo is public.
+DEPLOYMENT.local.md
+*.local.md
+
+# Working plans and specs: process artifacts, dated, and full of one deployment's specifics.
+# The design documentation that outlives them lives in docs/design/.
+docs/superpowers/

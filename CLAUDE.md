@@ -4,8 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-> **Placeholders, not values.** `<YOUR_TEAM_ID>`, `<YOUR_DEVICE_UDID>`, `<your-server>`/
-> `<your-server>` and `*.example.com` stand in for your own. Nothing identifying is committed:
+> **Placeholders, not values.** `<YOUR_TEAM_ID>`, `<YOUR_DEVICE_UDID>`, `<your-server>`, `<deploy-dir>` and `*.example.com` stand in for your own. Nothing identifying is committed:
 > the team id comes from `DEVELOPMENT_TEAM` (see `native/.env-local.example`), and secrets live on
 > your server. Start with [README.md](README.md) for setup.
 
@@ -125,7 +124,7 @@ cd canopy && go build ./... && go vet ./... && go test ./...   # ~199 tests, sec
 Go, SQLite, three dependencies **forever** (`modernc.org/sqlite`, `golang.org/x/time/rate`,
 `github.com/fxamacker/cbor/v2`) — this process holds the APNs signing keys for every install, so its
 supply chain is part of its threat model. `canopy/README.md` is the operator reference;
-`docs/superpowers/specs/2026-08-11-trellis-canopy-push-design.md` is the design.
+`docs/design/push-architecture.md` is the design.
 
 **Deploy with the script, never a hand-rolled rsync.** `--delete` into `<deploy-dir>/canopy` will remove
 `data/` (the bindings and attest keys) and `.env`, neither of which is in git. rsync anchors a
