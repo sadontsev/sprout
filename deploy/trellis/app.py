@@ -1002,6 +1002,42 @@ async def _tick(client: httpx.AsyncClient) -> None:
 # ---- HTTP API ----
 app = FastAPI(title="Trellis")
 
+# ── first-contact diagnostics ───────────────────────────────────────────────────────────────────
+#
+# The failure that motivated all of this logs NOTHING, because nothing arrives: the phone cannot
+# reach Trellis, so there is no request to log and no verbosity setting that would produce one. The
+# operator sees a healthy-looking service, an empty log, and no way to tell "unreachable" from
+# "working, nothing printing yet".
+#
+# So the absence is what gets reported, and the two failures downstream of it are kept apart:
+#
+#   nothing at all          -> DNS, routing, TLS, firewall. The phone never got here.
+#   requests but all 401    -> it got here. The API key is wrong.
+#   authenticated requests  -> the path works; look at bound= and the poll loop instead.
+#
+# Those are three different problems with three different fixes, and a bare "no cards registered"
+# does not distinguish them.
+_first_seen_any: float | None = None      # any HTTP request at all reached us
+_first_seen_authed: float | None = None   # …and got past the API-key gate
+_seen_any = 0
+_seen_authed = 0
+_seen_unauthorized = 0
+
+
+@app.middleware("http")
+async def _observe_contact(request, call_next):
+    """Record that SOMETHING reached us, before any auth decision."""
+    global _first_seen_any, _seen_any
+    # /health is what an operator curls while debugging; counting it as "the app found me" would
+    # answer the question with their own probe.
+    if request.url.path != "/health":
+        if _first_seen_any is None:
+            _first_seen_any = time.time()
+            print(f"[contact] first request from a client: {request.method} {request.url.path} — "
+                  f"the network path works", flush=True)
+        _seen_any += 1
+    return await call_next(request)
+
 
 # Accepted-key cache: sha256(key) -> monotonic expiry. Never stores raw keys. Bounded — a scan of
 # garbage keys can't grow it (only keys Bambuddy ACCEPTED are cached).
@@ -1018,21 +1054,41 @@ async def _require_key(x_api_key: str | None = Header(default=None)) -> None:
     any other presented key is accepted iff Bambuddy answers 200 to a read with it. The app may hold
     a SCOPED key that differs from the admin key on disk — a plain equality check 401'd those and
     silently broke Live-Activity push registration."""
+    global _first_seen_authed, _seen_authed, _seen_unauthorized
     if not x_api_key:
+        _seen_unauthorized += 1
+        print("[contact] a request arrived with NO X-API-Key header — if this is the app, its "
+              "settings are incomplete", flush=True)
         raise HTTPException(status_code=401, detail="unauthorized")
     if x_api_key == BAMBUDDY_API_KEY:
+        _note_authed()
         return
     h = hashlib.sha256(x_api_key.encode()).hexdigest()
     if _key_cache.get(h, 0.0) > time.monotonic():
+        _note_authed()
         return
+    reachable = True
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(f"{BAMBUDDY_URL}/api/v1/printers/", headers={"X-API-Key": x_api_key}, timeout=8)
         if r.status_code == 200:
             _key_cache[h] = time.monotonic() + _KEY_CACHE_TTL
+            _note_authed()
             return
-    except Exception:
-        pass  # Bambuddy unreachable -> fall through to 401 (fail closed)
+    except Exception:  # noqa: BLE001
+        reachable = False  # Bambuddy unreachable -> fall through to 401 (fail closed)
+
+    _seen_unauthorized += 1
+    # Two causes, indistinguishable from a bare 401, fixed in different places. Failing closed means
+    # an unreachable Bambuddy looks exactly like a wrong key.
+    if reachable:
+        print("[contact] a request arrived with an API key Bambuddy REJECTED. Trellis validates the "
+              "app's key against your Bambuddy, so the key in the app's settings must be one "
+              "Bambuddy accepts.", flush=True)
+    else:
+        print(f"[contact] a request arrived, but Trellis could not reach Bambuddy at {BAMBUDDY_URL} "
+              f"to validate its key, so it failed CLOSED. That is a Trellis->Bambuddy problem, not "
+              f"an app one — check BAMBUDDY_URL and that Bambuddy is up.", flush=True)
     raise HTTPException(status_code=401, detail="unauthorized")
 
 
@@ -1188,15 +1244,62 @@ async def _startup() -> None:
     _load()
     await _ensure_enrolled()
     asyncio.create_task(_poll_loop())
+    asyncio.create_task(_contact_watch())
     backend = f"relay {CANOPY_URL}"
     print(f"trellis up — {backend}, "
           f"{registry.card_count(_regs)} cards, {len(_device_tokens)} device(s)", flush=True)
+
+
+async def _contact_watch() -> None:
+    """Say, periodically and unprompted, that nothing has arrived yet.
+
+    This is the diagnostic the silent failure needed. When the phone cannot reach Trellis there is
+    no request to log, so the log stays empty and the service looks healthy — the operator has a
+    running container, no errors, and no idea whether push is broken or simply idle.
+
+    Quiet once contact is made: after that the useful signals are bound= on a registration and the
+    poll loop's own output, and a service that keeps repeating setup advice teaches people to skim
+    past it.
+    """
+    first = True
+    while True:
+        await asyncio.sleep(30 if first else 300)
+        first = False
+        if _first_seen_authed is not None:
+            return
+        if _seen_any == 0:
+            print(
+                "[contact] NOTHING has reached Trellis yet — the app has never connected.\n"
+                "          Push cannot work until it does: the phone hands over its push token here.\n"
+                "          Check, in this order:\n"
+                f"           1. from the PHONE, on cellular with Wi-Fi off, open  <your-trellis-url>/health\n"
+                "           2. that the address resolves to a PUBLIC ip — a public hostname pointing\n"
+                "              at a 192.168.x / 10.x address works on your LAN and nowhere else\n"
+                "           3. that it is https:// — iOS blocks plain http to a public hostname with\n"
+                "              no visible error (an ip literal or a .local name is exempt, LAN only)\n"
+                "           4. in the app: Settings -> Live Activity via server ON, Trellis URL set",
+                flush=True)
+        else:
+            print(
+                f"[contact] {_seen_any} request(s) have reached Trellis but NONE authenticated "
+                f"({_seen_unauthorized} rejected).\n"
+                "          The network path works — this is the API key. The key in the app's\n"
+                "          settings must be one your Bambuddy accepts.",
+                flush=True)
 
 
 @app.get("/health")
 async def health() -> dict:
     return {
         "ok": True, "registrations": registry.card_count(_regs), "devices": len(_device_tokens),
+        # Has the app ever reached us, and did it get past the key check? A card count of 0 does not
+        # distinguish "unreachable" from "reachable, nothing printing" — these do.
+        "app_contact": {
+            "any_request": _first_seen_any is not None,
+            "authenticated": _first_seen_authed is not None,
+            "requests": _seen_any,
+            "rejected": _seen_unauthorized,
+        },
         # Which relay signs for this deployment. Was "apns_host", from the days when Trellis chose
         # a gateway; it never signs anything now, so reporting an APNs hostname would describe a
         # decision it does not make.

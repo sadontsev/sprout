@@ -476,3 +476,63 @@ class ReArmIsPerDeviceAndOnlyForClientsThatReportDismissals(unittest.TestCase):
 
         self.assertFalse(la._has_rearm("2"), "keys must not match on a prefix")
         self.assertTrue(la._has_rearm("dry:2:128"))
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class ContactDiagnostics(unittest.TestCase):
+    """Telling the operator what has NOT happened.
+
+    The failure that motivated this logs nothing: the phone cannot reach Trellis, so there is no
+    request to log and no verbosity setting that would produce one. The operator sees a healthy
+    container, an empty log, and no way to tell "unreachable" from "working, nothing printing".
+    """
+
+    def setUp(self):
+        la.app.dependency_overrides[la._require_key] = lambda: None
+        self.client = TestClient(la.app)
+        la._regs = {}
+        la._device_tokens = []
+        la._first_seen_any = None
+        la._first_seen_authed = None
+        la._seen_any = 0
+        la._seen_unauthorized = 0
+        la._save = lambda: None
+
+    def tearDown(self):
+        la.app.dependency_overrides.clear()
+
+    def test_health_says_nothing_has_ever_connected(self):
+        body = self.client.get("/health").json()["app_contact"]
+
+        self.assertFalse(body["any_request"])
+        self.assertFalse(body["authenticated"])
+        self.assertEqual(body["requests"], 0)
+
+    def test_a_request_is_recorded_as_contact(self):
+        self.client.post("/sync", json={"tokens": [], "device_id": "phoneA", "client": "native"})
+        body = self.client.get("/health").json()["app_contact"]
+
+        self.assertTrue(body["any_request"], "the network path demonstrably works once anything arrives")
+        self.assertEqual(body["requests"], 1)
+
+    def test_health_itself_does_not_count_as_contact(self):
+        # /health is what an operator curls WHILE debugging. Counting it would answer the question
+        # with their own probe and report the path as working when nothing else has arrived.
+        self.client.get("/health")
+        self.client.get("/health")
+        body = self.client.get("/health").json()["app_contact"]
+
+        self.assertFalse(body["any_request"])
+        self.assertEqual(body["requests"], 0)
+
+    def test_reachable_but_unauthenticated_is_a_distinct_state(self):
+        # The whole point of splitting these: "nothing arrived" is DNS/routing/TLS, "arrived and was
+        # rejected" is the API key. Different problems, different files, indistinguishable from a
+        # card count of zero.
+        la.app.dependency_overrides.clear()  # exercise the real key gate
+        self.client.post("/sync", json={"tokens": [], "device_id": "phoneA"})
+        body = self.client.get("/health").json()["app_contact"]
+
+        self.assertTrue(body["any_request"], "it reached us")
+        self.assertFalse(body["authenticated"], "but it did not get past the key")
+        self.assertGreaterEqual(body["rejected"], 1)
