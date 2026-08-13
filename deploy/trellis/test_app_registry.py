@@ -11,6 +11,7 @@ skipped where they are absent — the same reason test_makerworld skips outside
 the container.
 """
 
+import asyncio
 import os
 import unittest
 
@@ -611,3 +612,85 @@ class TheRealKeyGate(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             la._contact_report()
         return buf.getvalue()
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class PushToStartSpendsItsOneShotWisely(unittest.TestCase):
+    """A print gets ONE start per live session. These are the two ways it was thrown away.
+
+    Found with a real print stuck at 0 %. Two Simulator instances (App Attest does not exist in the
+    Simulator, so every claim they send is nil and every token they own is permanently unbound) had
+    registered start tokens against the production service. The log read:
+
+        [p2s] start print 2 (native) -> 200
+        [p2s] start print 2 (native) -> 0
+        [p2s] start print 2 (native) -> 0
+        [p2s] start print 2 (native) -> 0
+
+    Three of those four pushes failed outright, and every one of them still armed a pending claim and
+    reported the start as sent.
+    """
+
+    def setUp(self):
+        la._regs = {}
+        la._p2s_tokens = ["good", "unbound"]
+        la._p2s_devices = {"good": "phone", "unbound": "simulator"}
+        la._p2s_clients = {"good": "native", "unbound": "native"}
+        la._p2s_icons = {}
+        la._p2s_pending = {}
+        la._p2s_started = {}
+        la._p2s_rearm = {}
+        la._needs_claim = {}
+        la._save = lambda: None
+        self.pushed = []
+
+    def run_start(self, codes):
+        """Drive _remote_start with a stubbed APNs, returning per-token status codes."""
+        async def fake_push(client, token, cs, printer_id, ams_id, la_client=la.EXPO):
+            self.pushed.append(token)
+            return codes.get(token, 200)
+
+        real, la._push_start = la._push_start, fake_push
+        try:
+            return asyncio.run(la._remote_start(None, "2", {"stateLabel": "Printing"}, "print 2"))
+        finally:
+            la._push_start = real
+
+    def test_a_token_known_to_be_unbound_is_not_pushed_to(self):
+        # Trellis already recorded this at registration: the relay refuses it. Spending the one start
+        # on it is the "offer what the backend will refuse" bug, with the print's only card as cost.
+        la._needs_claim["unbound"] = "simulator"
+
+        self.run_start({})
+
+        self.assertEqual(self.pushed, ["good"], "the unbound token must be skipped, not attempted")
+
+    def test_a_failed_push_does_not_arm_a_pending_claim(self):
+        # A pending claim for a device that never received a card expires ~10 minutes later as
+        # "the app will end that card as an orphan" — chasing a card that was never created.
+        self.run_start({"good": 0, "unbound": 0})
+
+        self.assertEqual(la._p2s_pending, {}, "nothing was delivered, so nothing is awaiting adoption")
+
+    def test_a_failed_push_is_not_reported_as_sent(self):
+        # The caller marks the print started on this return value. Reporting a total failure as sent
+        # burns the one start for the whole print, and the lock screen stays empty to the end.
+        self.assertFalse(self.run_start({"good": 0, "unbound": 0}))
+
+    def test_a_delivered_push_still_arms_and_reports(self):
+        self.assertTrue(self.run_start({}))
+        self.assertIn(la._pending_id("2", "phone"), la._p2s_pending)
+
+    def test_one_failure_does_not_taint_a_delivered_sibling(self):
+        # The real shape: the phone's push lands, the simulator's does not.
+        self.assertTrue(self.run_start({"unbound": 0}))
+
+        self.assertIn(la._pending_id("2", "phone"), la._p2s_pending)
+        self.assertNotIn(
+            la._pending_id("2", "simulator"), la._p2s_pending,
+            "the device that received nothing must not be waited on",
+        )
+
+    def test_a_dead_token_is_still_dropped(self):
+        self.run_start({"unbound": 410})
+        self.assertNotIn("unbound", la._p2s_tokens)

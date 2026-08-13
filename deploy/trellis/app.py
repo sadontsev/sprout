@@ -675,6 +675,14 @@ async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: st
         rearmed = _p2s_rearm.pop(_pending_id(key, device), None) is not None
         if _p2s_started.get(key) is not None and not rearmed:
             continue  # already started once this live session, and this device was not re-armed
+        # We already KNOW the relay refuses this token — that is what _needs_claim records. Pushing
+        # to it anyway spends a start that a print only gets one of, and the device that owns it
+        # never sees a card. (Where this came from: two Simulator instances registered start tokens
+        # against the live service. App Attest does not exist in the Simulator, so their claims are
+        # nil and their tokens are permanently unbound; every push to one is a guaranteed failure.)
+        if tok in _needs_claim:
+            print(f"[p2s] skipping {tok[:8]}… — unbound, the relay would refuse it", flush=True)
+            continue
         tok_client = norm_client(_p2s_clients.get(tok))
         code = await _push_start(client, tok, {**cs, "iconUri": _p2s_icons.get(tok, cs.get("iconUri", ""))},
                                  printer_id=pid, ams_id=ams, la_client=tok_client)
@@ -684,6 +692,12 @@ async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: st
             _p2s_icons.pop(tok, None)
             _p2s_clients.pop(tok, None)
             _p2s_devices.pop(tok, None)
+            continue
+        # ONLY a delivered push. This used to arm and report regardless of the status, so a push that
+        # failed outright (code 0) both burnt the print's single start AND left a pending claim for a
+        # device that had received nothing — which surfaces ten minutes later as "pending expired,
+        # the app will end that card as an orphan", chasing a card that was never created.
+        if not 200 <= code < 300:
             continue
         _p2s_pending[_pending_id(key, device)] = time.time()
         sent = True
