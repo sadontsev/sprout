@@ -80,12 +80,30 @@ func TestKeyProbe(t *testing.T) {
 		t.Errorf("VERDICT: this key authenticates to APNs, so it is live and propagated — "+
 			"therefore the DeviceCheck 401 means the DEVICECHECK SERVICE IS NOT ENABLED on key %s. "+
 			"Create a new key with it ticked.", *keyID)
+	case aged(*keyPath) > 24*time.Hour:
+		// The distinction that matters, and the one this probe exists to stop people getting wrong.
+		// "Wait for propagation" is the correct answer for a few hours and a WRONG answer after
+		// that, and repeating it past the deadline is how a broken key sits unfixed for two days.
+		t.Errorf("VERDICT: the key file is %s old, well past Apple's 24-hour propagation window, "+
+			"and Apple still accepts key %s nowhere. STOP WAITING: the DeviceCheck service is not "+
+			"enabled on it, or it does not exist for team %s. Create a NEW key with DeviceCheck "+
+			"ticked at creation.", aged(*keyPath).Round(time.Hour), *keyID, *teamID)
 	default:
-		t.Errorf("VERDICT: Apple accepts this key nowhere. Either it has not propagated (wait out "+
-			"the 24 hours from creation), or key %s does not exist for team %s. Re-run the same "+
-			"command against your APNs key: if THAT returns 400 BadDeviceToken, this code and the "+
-			"team id are fine and the fault is the key itself.", *keyID, *teamID)
+		t.Errorf("VERDICT: Apple accepts this key nowhere, and it is only %s old — still inside the "+
+			"24-hour propagation window, so this may yet resolve on its own. Re-run later. If the "+
+			"APNs control above returned 400 BadDeviceToken, this code and the team id are fine and "+
+			"the only remaining suspect is the key.", aged(*keyPath).Round(time.Hour))
 	}
+}
+
+// aged reports how long ago the key file was written — a good enough proxy for when the key was
+// created, since a .p8 can only be downloaded once, at creation.
+func aged(path string) time.Duration {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return time.Since(info.ModTime())
 }
 
 func probeDeviceCheck(t *testing.T, token string) int {
