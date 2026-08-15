@@ -102,6 +102,80 @@ cross-platform. The imports are vestigial. §5.2's "reused unchanged" holds.
 `#if os(iOS)`: `Camera/CameraPiP*`, `Realtime/PushRegistrar`, the `SproutWidget` dependency
 (`platforms: [iOS]`), `LiveActivityController`'s ActivityKit surface, `tabBarMinimizeBehavior`.
 
+## Traps, all of which stay green
+
+Every one of these compiled, ran, and passed the suite. None was found by reading.
+
+### `platforms:` is not `platformFilter:`
+
+§0 puts `platforms: [iOS]` on the `SproutWidget` dependency. That key does not filter an embed — it
+**removes the embed phase entirely, on every platform**, so the iOS app builds, installs and runs
+with no `PlugIns/` directory and no Live Activity at all. Measured on both destinations:
+
+| dependency form | iOS appex | macOS build |
+|---|---|---|
+| `platforms: [iOS]` | **missing** | ok |
+| `platformFilter: iOS` | present | ok |
+| *(no filter)* | present | **fails** |
+
+It survived one round of "verification" because that check confirmed the appex was absent from the
+*macOS* bundle. It was — and from the iOS one too. **Confirming the negative is not confirming the
+positive.**
+
+### Inspecting a Mac app's windows from a shell is blind
+
+Both obvious routes need TCC permissions a terminal usually lacks, and neither fails loudly:
+
+- `System Events` window enumeration needs Accessibility. Without it it returns **`0 windows` for
+  every app**, including Finder.
+- `CGWindowListCopyWindowInfo` needs Screen Recording for names and returns a restricted list that
+  omits other apps entirely.
+
+So a perfectly healthy app reports as having no windows. `MacWindowProbe` (DEBUG, `SPROUT_WINDOW_PROBE=1`)
+asks the app itself, which needs no permission and cannot lie. Use it before believing a window is
+missing.
+
+### An unsatisfied `@Environment` object is a runtime trap
+
+`AmsView` took `HardwareStore` from `@Environment` and nothing injected it. That compiles, and the
+whole suite passes, because no test mounts the view — it dies on first render with SwiftUI's "No
+Observable object of type … found". Stores are read off `AppModel` as plain properties for exactly
+this reason; nothing in this app should reach for a store through the environment.
+
+### Polling belongs to whoever can see the section
+
+`AppModel` has **no `startStores()`**, deliberately. It once did, on both platforms, while the iOS
+views also drove their own `.task` polls — so Jobs fetched the queue twice every 5 s with two loads
+racing over one failure flag, and an `AppModel`-owned loop has no view to cancel it, so leaving the
+tab stopped nothing.
+
+On macOS the lifetime is owned by `MacSectionContent` and nowhere else, because it is the only thing
+in the app that knows which section is on screen. Leaving it to each section produced immediate
+drift: Power did it, Files did it, Hardware called `reload` without starting, Jobs did nothing at all
+— and since Jobs also backs the Printer section's UP NEXT, the screen a launch lands on sat on
+"Loading the queue…" for ever.
+
+### A store that outlives its session must clear on `attach`
+
+The stores are owned by `AppModel` and survive a reconnect; the `@State` they replaced did not.
+Three of the four recorded the new client without clearing, so one server's data survived into
+another. The worst case was destructive rather than cosmetic: multi-select survived sign-out, so
+Delete issued the **previous** library's ids against a different Bambuddy, and library ids are small
+integers that collide.
+
+"A refresh should not blank the list" is true, and it is a different question from "this is a
+different server now".
+
+### `private` in an iOS-guarded file is invisible, and gets duplicated
+
+`LibraryBrowse` was `private` inside `LibraryView.swift`, which is `#if os(iOS)`. The macOS Files
+section could not see it and grew its own copies of `displayName`, `safeShareName`, `filter` and
+`sortPrinterFiles`. Not cosmetic: `displayName` feeds `LibraryDownloadName.pathSegment`, which builds
+the download URL's last path segment — two copies drifting is a **404 on one platform**.
+
+Anything both trees need lives in `Domain/` and is internal. If a helper is pure, that is already the
+argument for moving it.
+
 ## Corrections to the handoff spec
 
 Both were found by checking rather than reading, and both fail silently.
@@ -125,9 +199,42 @@ project-wide `"1"`, which is meaningless on macOS and misleading to read.
 
 **§4 Hardware states "`AppModel.hwSegment` still owns the selection".** No such property exists —
 `grep` finds `hwSegment` nowhere in the tree, and `AmsView` holds the segment in local `@State`. It
-is added to `AppModel` as §4 assumes, because `⌘R` has to know which segment to refetch.
+now lives on `HardwareStore.segment` (reached as `model.hardware.segment`), because `⌘R` has to know
+which segment to refetch — and because `⌘R` must refetch Filament and Service but **not** Nozzles,
+which is live socket state with nothing to refetch.
+
+**`NSPrincipalClass` was absent from the Mac bundle.** Xcode injects it only when it *generates* the
+Info.plist; this target names one explicitly, so the key never appeared. Set per-sdk
+(`NSApplication` on macOS, `UIApplication` on iOS). No misbehaviour was traced to its absence — it is
+set because every Xcode-generated macOS app has it, not because something broke.
+
+**`LSSupportsOpeningDocumentsInPlace` is not among the iOS-only keys macOS ignores.** §0 lists four
+that are; this fifth one fails the build outright. Dropped rather than set: absent means what `false`
+meant, and Sprout copies imports into its library rather than editing in place.
 
 Every other cross-reference in §4 is verified against the source before it is relied on.
+
+## What macOS deliberately does not have
+
+Beyond §6's list, and each for a reason rather than an omission:
+
+- **The keychain accessibility class.** macOS `SecItem` uses the legacy file-based keychain, which
+  does not store `kSecAttrAccessible`. Opting into the data-protection keychain was tried and
+  reverted: it needs an entitlement this App ID cannot get without being enabled for macOS on the
+  developer portal, and without it *every* keychain call fails `errSecMissingEntitlement` (-34018) —
+  the app cannot store credentials at all. The attribute guards a locked-device background wake-up,
+  which is an iOS event. Round-trip and migration are still asserted on macOS and pass.
+- **An alerts surface.** `Overlay.alerts` is never presented, so `AlertVM.actions` — including the
+  ordered HMS wiki lookups — are unreachable. The Printer inspector shows alert text read-only. A
+  Mac alerts sheet is worth building; nothing pretends it exists in the meantime.
+
+## Known, not done
+
+- Distribution needs the App ID enabled for **macOS** on the developer portal. There is no Mac
+  provisioning profile for `com.mvks5.bambu`, so signed builds fail; unsigned local builds are fine.
+  This blocks the first notarised or TestFlight build, nothing before it.
+- Dragging a file **out** of the Files grid (`NSItemProvider` file promises, §5.3) is not wired.
+  Dropping in, from the window and from the Dock, is.
 
 ## Verified before starting
 
