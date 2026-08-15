@@ -255,6 +255,51 @@ final class ExploreModel {
         }
     }
 
+    /// Re-issue the fetch behind whatever is currently on screen — macOS's `⌘R` (§7).
+    ///
+    /// Deliberately NOT implemented by calling `search`/`browse`/`openCollection` again. Those are
+    /// NAVIGATION: each rewrites the `active*` fields, and `browse` and `openCollections` also call
+    /// `rememberCurrent()` — so refreshing through them would push a duplicate entry onto the back
+    /// stack on every `⌘R`, and "Back" would walk through a history of the same screen. Refreshing
+    /// is "fetch the same thing again"; the mode has already been decided.
+    ///
+    /// The user's sort is restored afterwards. `startFetch` resets it to `.relevance` because a sort
+    /// carried into a NEW result set reorders it unasked — but this is the same result set, and
+    /// silently re-ordering the grid is not what someone pressing refresh asked for.
+    func refresh(_ client: CollectionsClient) {
+        let keepSort = sort
+        defer { sort = keepSort }       // startFetch resets it synchronously, before its Task runs
+
+        if showingCollections {
+            startFetch(keepContent: false) { m in
+                m.collections = try await client.collections()
+            }
+        } else if let folder = activeCollection {
+            startFetch { m in
+                let page = try await client.designs(in: folder.id)
+                guard m.activeCollection?.id == folder.id else { return }
+                m.hits = page.hits ?? []
+                m.hitTotal = page.total
+            }
+        } else if let navKey = activeNav {
+            startFetch { m in
+                let page = try await m.searchClient.browse(navKey: navKey)
+                guard m.activeNav == navKey else { return }
+                m.hits = page.hits ?? []
+                m.hitTotal = page.total
+            }
+        } else if let text = activeQuery {
+            startFetch { m in
+                let page = try await m.searchClient.search(text)
+                guard m.activeQuery == text else { return }
+                m.hits = page.hits ?? []
+                m.hitTotal = page.total
+            }
+        }
+        // Cold start: nothing has been asked for, so there is nothing to ask for again. Not an
+        // error, and not a no-op worth reporting — the grid is already showing the cold shelves.
+    }
+
     /// Fetch the next page. Driven by a tile appearing near the end of the grid rather than by a
     /// button, so it must be safe to call repeatedly and while another page is in flight.
     func loadMore(_ client: CollectionsClient) {

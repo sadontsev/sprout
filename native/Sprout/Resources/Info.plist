@@ -82,6 +82,8 @@
 	<string>Sprout talks to your self-hosted Bambuddy server, which may be on your local network.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Save printed-model snapshots and timelapses to your photo library.</string>
+	<key>NSPrincipalClass</key>
+	<string>$(SPROUT_PRINCIPAL_CLASS)</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

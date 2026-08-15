@@ -3,111 +3,14 @@
 // Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
-// MARK: - Live plug state
-
-/// Live state for one smart plug: a poll loop plus optimistic toggles.
-///
-/// Shared by the printer's hero control (5 s — the thing you are watching) and each peripheral row
-/// (8 s — background devices), so the settle/revert behaviour cannot drift between them.
-@MainActor
-@Observable
-final class PlugPoller {
-    private(set) var on = false
-    private(set) var reachable = true
-    private(set) var watts: Double?
-    private(set) var kwh: Double?
-
-    private let period: Duration
-    private var client: BambuddyClient?
-    private var plugId: Int?
-
-    /// Poll results are DISCARDED until this instant. Bambuddy drives the plug through Home
-    /// Assistant, which takes a few seconds to report the new state; without the window the poll
-    /// that lands in between is stale and visibly bounces the switch back under the user's finger.
-    private var settledUntil: Date = .distantPast
-    private static let settleWindow: TimeInterval = 8
-
-    init(period: Duration) {
-        self.period = period
-    }
-
-    /// Poll until cancelled. Owned by `.task(id:)`, so binding a different plug restarts it and
-    /// leaving the screen ends it.
-    func run(client: BambuddyClient?, plugId: Int?) async {
-        self.client = client
-        self.plugId = plugId
-        guard let client, let plugId else { return }
-        while !Task.isCancelled {
-            await poll(client, plugId)
-            try? await Task.sleep(for: period)
-        }
-    }
-
-    /// One poll out of band. Pull-to-refresh re-resolves the plug list, and the live numbers should
-    /// refresh with it rather than waiting out the remaining interval.
-    func refreshNow() async {
-        guard let client, let plugId else { return }
-        await poll(client, plugId)
-    }
-
-    /// Optimistic write: the switch flips now and holds through the settle window; a rejection
-    /// reverts it and reopens polling immediately so the truth comes back without a delay.
-    func set(_ next: Bool) async throws {
-        guard let client, let plugId else { return }
-        on = next
-        settledUntil = Date().addingTimeInterval(Self.settleWindow)
-        do {
-            try await client.plugControl(plugId, on: next)
-        } catch {
-            settledUntil = .distantPast
-            on = !next
-            throw error
-        }
-    }
-
-    private func poll(_ client: BambuddyClient, _ plugId: Int) async {
-        do {
-            let s = try await client.plugStatus(plugId)
-            guard Date() >= settledUntil else { return }
-            on = s.state?.uppercased() == "ON"
-            reachable = s.reachable ?? false
-            watts = finiteNumber(s.energy?.power)
-            kwh = finiteNumber(s.energy?.today)
-        } catch {
-            // A failed status read is exactly what "unreachable" means here — the plug integration
-            // is the thing that answers this endpoint.
-            reachable = false
-        }
-    }
-}
-
-/// `LooseNumber` turns the literal string `"nan"` these energy fields sometimes carry into a real
-/// `Double.nan`, which would render as "nan W". Anything non-finite is absent.
-private func finiteNumber(_ n: LooseNumber?) -> Double? {
-    guard let v = n?.double, v.isFinite else { return nil }
-    return v
-}
-
 // MARK: - Screen
-
-/// The printer's own plug is a three-way answer, and the empty state hangs on telling the cases
-/// apart: still-loading must never render "No smart plug linked".
-private enum PlugSlot: Equatable {
-    case loading
-    /// No plug bound to this printer. `getPlug` swallows its transport error, so a server that is
-    /// simply unreachable also lands here.
-    case unlinked
-    case linked(SmartPlug)
-
-    var value: SmartPlug? {
-        if case .linked(let p) = self { return p }
-        return nil
-    }
-}
 
 /// The Power tab: the printer's smart plug as a hero on/off control with live draw and today's
 /// energy, this print's projected cost while one is running, the automations Bambuddy runs on the
 /// plug, and every other socket on the strip as a row.
+///
+/// Every fetch, poll loop and money figure lives in `PowerStore` (Domain/), which the Mac Power
+/// section drives too — this view is layout and confirmation plumbing only.
 ///
 /// The automations card is deliberately read-only: writes to `/smart-plugs/{id}` are admin-only and
 /// 403 with a scoped API key, so the honest thing the app can do is report them accurately.
@@ -115,43 +18,27 @@ struct PowerView: View {
     let model: AppModel
     @Environment(\.palette) private var c
 
-    @State private var plug: PlugSlot = .loading
-    @State private var allPlugs: [SmartPlug] = []
-    @State private var settings: AppSettings?
-    @State private var hero = PlugPoller(period: .seconds(5))
+    /// Read off `AppModel` rather than passed in or put in the environment: `Shell` already hands
+    /// this view the model, so this is the whole of the wiring.
+    private var power: PowerStore { model.power }
+
     @State private var confirmOff = false
 
     private var status: PrinterStatus? { model.status?.status }
 
-    /// Every socket, the printer's own included — passing nil keeps it. All of these are sockets on
-    /// one physical strip, and hiding the printer's made the strip look like it was missing one even
-    /// though that socket drives the big control above the list.
-    private var sockets: [SmartPlug] { Power.otherPlugs(allPlugs, printerPlugId: nil) }
-    private var automations: [PlugAutomation] { Power.plugAutomations(plug.value) }
+    // Thin reads of the store, so the layout below says what it means. Nothing is derived twice.
+    private var plug: PlugSlot { power.plug }
+    private var hero: PlugPoller { power.hero }
+    private var sockets: [PlugSocket] { power.sockets }
+    private var automations: [PlugAutomation] { power.automations }
 
-    private var price: Double? { finiteNumber(settings?.energyCostPerKwh) }
-    private var symbol: String { currencySymbol(settings?.currency) }
-    private var todayCost: Double? {
-        guard let price, let kwh = hero.kwh else { return nil }
-        return kwh * price
-    }
+    private var price: Double? { power.price }
+    private func money(_ amount: Double) -> String { power.money(amount) }
+    private var todayCost: Double? { power.todayCost }
 
-    private var running: Bool { (status?.state ?? "").uppercased() == "RUNNING" }
-    private var remainMin: Double? { finiteNumber(status?.remainingTime) }
-
-    /// This print's energy cost so far and at completion, extrapolated from the live draw.
-    private var projection: (soFar: Double?, projected: Double?) {
-        guard running,
-              let price,
-              let watts = hero.watts,
-              let remain = remainMin,
-              let pct = finiteNumber(status?.progress), pct > 0, pct < 100
-        else { return (nil, nil) }
-        // total = elapsed + remain and pct = elapsed / total, so elapsed = remain · pct / (100 − pct).
-        let elapsed = (remain * pct) / (100 - pct)
-        let kwhPerMin = watts / 1000 / 60
-        return (elapsed * kwhPerMin * price, (elapsed + remain) * kwhPerMin * price)
-    }
+    private var running: Bool { PowerStore.isRunning(status) }
+    private var remainMin: Double? { PowerStore.remainingMinutes(status) }
+    private var projection: (soFar: Double?, projected: Double?) { power.projection(status) }
 
     var body: some View {
         PowerPage(title: "Power") {
@@ -172,11 +59,16 @@ struct PowerView: View {
             }
         }
         // Keyed on the printer: switching machines has to re-resolve which plug is "the printer's".
-        .task(id: model.printerId) { await reload() }
-        .task(id: plug.value?.id) {
-            await hero.run(client: model.client, plugId: plug.value?.id)
-        }
-        .refreshable { await reload() }
+        // `AppModel` has already re-attached the store by the time this re-runs.
+        .task(id: model.printerId) { await power.reload() }
+        // The store owns the poll loops — one per socket, and the SET of them changes with the plug
+        // list, which a single `.task` cannot express. So the tab's appearance gates them instead,
+        // riding the same events `.task` cancellation used to: leaving the Power tab still genuinely
+        // stops the traffic, and nothing is polled before the first visit because a store that has
+        // not loaded a plug list has nothing bound to poll.
+        .onAppear { power.start() }
+        .onDisappear { power.stop() }
+        .refreshable { await power.reload() }
         .alert("Switch off the printer?", isPresented: $confirmOff) {
             Button("Cancel", role: .cancel) {}
             Button("Switch off", role: .destructive) { apply(false) }
@@ -314,7 +206,7 @@ struct PowerView: View {
 
     private var todayCostLabel: String {
         guard let todayCost else { return price == nil ? "price not set" : "—" }
-        return "\(fmtMoney(symbol, todayCost)) today"
+        return "\(money(todayCost)) today"
     }
 
     /// A 28 pt figure with its unit on the same baseline, or an em dash when there is no reading.
@@ -375,7 +267,7 @@ struct PowerView: View {
                 .font(.mono(10))
                 .kerning(0.5)
                 .foregroundStyle(c.t3)
-            Text(amount.map { fmtMoney(symbol, $0) } ?? "—")
+            Text(amount.map { money($0) } ?? "—")
                 .font(.system(size: 20, weight: .bold))
                 .monospacedDigit()
                 .kerning(-0.5)
@@ -463,8 +355,8 @@ struct PowerView: View {
             .padding(.horizontal, 20)
             .padding(.top, 22)
 
-        ForEach(sockets) { p in
-            PlugRow(model: model, plug: p, isPrinter: p.id == plug.value?.id)
+        ForEach(sockets) { socket in
+            PlugRow(model: model, socket: socket, isPrinter: socket.id == plug.value?.id)
         }
     }
 
@@ -474,7 +366,7 @@ struct PowerView: View {
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(c.t3)
             Text(
-                price.map { "Tariff \(fmtMoney(symbol, $0))/kWh · set in Bambuddy → Settings → Energy" }
+                price.map { "Tariff \(money($0))/kWh · set in Bambuddy → Settings → Energy" }
                     ?? "Electricity price not set. Add it in Bambuddy → Settings → Energy."
             )
             .font(.system(size: 12, weight: .medium))
@@ -491,51 +383,39 @@ struct PowerView: View {
 
     // MARK: Actions
 
+    /// The decision lives in `PowerStore.heroIntent`; this only chooses which surface asks.
     private func toggleHero() {
-        guard plug.value != nil else { return }
-        if hero.on {
-            // Switching OFF cuts power to the printer — confirm, so an accidental tap can't kill a
-            // print. Turning on is harmless and applies immediately.
-            confirmOff = true
-        } else {
-            apply(true)
+        switch power.heroIntent {
+        case .ignore: break
+        case .apply(let next): apply(next)
+        case .confirmOff: confirmOff = true
         }
     }
 
     private func apply(_ next: Bool) {
         Task {
-            do { try await hero.set(next) } catch { model.toast = plugFailureMessage(error) }
+            do { try await hero.set(next) } catch { model.toast = PowerStore.failureMessage(error) }
         }
-    }
-
-    private func reload() async {
-        guard let client = model.client else { return }
-        async let fetchedPlug = client.getPlug(model.printerId)
-        async let fetchedAll = client.listPlugs()
-        async let fetchedSettings = settingsOrNil(client)
-        let (p, all, s) = await (fetchedPlug, fetchedAll, fetchedSettings)
-        plug = p.map(PlugSlot.linked) ?? .unlinked
-        allPlugs = all
-        settings = s
-        // Refreshing the plug list without refreshing the numbers it describes would leave stale
-        // watts on screen for the rest of the poll interval.
-        await hero.refreshNow()
     }
 }
 
 // MARK: - One socket
 
-/// One peripheral socket on the strip. Polls slower than the printer's own plug — these are
-/// background devices, not the thing you are watching.
+/// One peripheral socket on the strip.
+///
+/// The poller arrives WITH the plug (`PlugSocket`) rather than being `@State` here: the store owns
+/// the loop, on its slower cadence, so this row cannot be rendered without the numbers that belong
+/// to it and the Mac socket list drives the same one.
 struct PlugRow: View {
     let model: AppModel
-    let plug: SmartPlug
+    let socket: PlugSocket
     var isPrinter: Bool = false
 
     @Environment(\.palette) private var c
-    @State private var poller = PlugPoller(period: .seconds(8))
     @State private var confirmOff = false
 
+    private var plug: SmartPlug { socket.plug }
+    private var poller: PlugPoller { socket.poller }
     private var name: String { Power.plugLabel(plug) }
     private var armed: [PlugAutomation] { Power.plugAutomations(plug) }
 
@@ -601,7 +481,6 @@ struct PlugRow: View {
         .powerCard(c)
         .padding(.horizontal, 20)
         .padding(.top, 10)
-        .task(id: plug.id) { await poller.run(client: model.client, plugId: plug.id) }
         .alert(offConfirmTitle, isPresented: $confirmOff) {
             Button("Cancel", role: .cancel) {}
             Button("Switch off", role: .destructive) { apply(false) }
@@ -614,48 +493,22 @@ struct PlugRow: View {
     /// treating the interpolated sentence as a localization key.
     private var offConfirmTitle: String { "Switch off \(name)?" }
 
+    /// Cutting power to a peripheral is disruptive too — an AMS mid-print, a running dryer — so this
+    /// asks the same question the hero control does. `PowerStore.socketIntent` is where that rule
+    /// lives; here it only picks the surface.
     private func request(_ next: Bool) {
-        // Cutting power to a peripheral is disruptive too — an AMS mid-print, a running dryer.
-        if next { apply(true) } else { confirmOff = true }
+        switch PowerStore.socketIntent(next) {
+        case .ignore: break
+        case .apply(let v): apply(v)
+        case .confirmOff: confirmOff = true
+        }
     }
 
     private func apply(_ next: Bool) {
         Task {
-            do { try await poller.set(next) } catch { model.toast = plugFailureMessage(error) }
+            do { try await poller.set(next) } catch { model.toast = PowerStore.failureMessage(error) }
         }
     }
-}
-
-// MARK: - Formatting
-
-/// The settings read is the only one of the three fetches that throws, and a failure here just
-/// means "price unknown", so it is flattened before the concurrent load.
-private func settingsOrNil(_ client: BambuddyClient) async -> AppSettings? {
-    try? await client.getSettings()
-}
-
-/// Surfaces Bambuddy's own `detail` (e.g. "Plug is disabled") instead of transport noise.
-private func plugFailureMessage(_ error: Error) -> String {
-    if let e = error as? BambuddyError { return "Plug command failed — \(e.detail)" }
-    return "Plug command failed — \(error.localizedDescription)"
-}
-
-private func currencySymbol(_ code: String?) -> String {
-    switch (code ?? "").uppercased() {
-    case "GBP": return "£"
-    case "USD", "AUD", "CAD", "NZD": return "$"
-    case "EUR": return "€"
-    case "JPY", "CNY": return "¥"
-    default:
-        // An unknown ISO code is still information; showing "SEK 12.34" beats guessing a glyph.
-        let raw = code ?? ""
-        return raw.isEmpty ? "$" : "\(raw) "
-    }
-}
-
-/// Always two decimals, so a column of costs lines up under tabular figures.
-private func fmtMoney(_ symbol: String, _ amount: Double) -> String {
-    "\(symbol)\(String(format: "%.2f", amount))"
 }
 
 // MARK: - Screen chrome

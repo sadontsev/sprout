@@ -1,6 +1,6 @@
 import Foundation
 
-// Extracted from CameraPiPRenderer so it survives on macOS, where PiP does not exist but the
+// Extracted from CameraRenderer so it survives on macOS, where PiP does not exist but the
 // reconnect cadence still governs the camera window (1c) and the inspector tile. Pure arithmetic
 // with its own tests — nothing here was ever about PiP.
 

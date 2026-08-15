@@ -9,29 +9,22 @@ import SwiftUI
 /// The **Hardware** tab: filament (every AMS unit and every slot across all of them), the per-unit
 /// drying cards, the toolhead nozzles, and the maintenance reminders.
 ///
-/// Topology comes from `AmsTopology` (via `DashVM`) and drying from `Dryer` — nothing here re-derives
-/// either. The two things this screen fetches for itself, spool assignments and maintenance, are what
-/// pull-to-refresh reloads; trays, temperatures and the drying countdown are live WebSocket state and
-/// need no refetch.
+/// Layout only. Every fetch, the three-way load state and the segment selection live in
+/// `HardwareStore` (`Domain/HardwareStore.swift`), so the Mac tree drives the same copy — including
+/// the rule that the two things this screen fetches for itself are spool assignments and
+/// maintenance, while trays, temperatures and the drying countdown are live WebSocket state and
+/// need no refetch. Topology still comes from `AmsTopology` (via `DashVM`) and drying from `Dryer`;
+/// nothing here re-derives either.
 @MainActor
 struct AmsView: View {
     let model: AppModel
 
+    /// Injected above the tab bar (and above `MacWindow`) — see `HardwareStore`.
+    @Environment(HardwareStore.self) private var hw
     @Environment(\.palette) private var c
 
-    /// nil while the first assignment fetch is in flight. The client swallows its own errors and
-    /// returns `[]`, so an empty array means "no spools mapped", never "the fetch failed" — either
-    /// way the slot cards degrade to status-only tray data.
-    @State private var assigns: [SlotAssignment]?
-    @State private var maint: MaintLoad = .loading
-    /// Maintenance item currently being marked done.
-    @State private var maintBusy: Int?
     @State private var notice: HwNotice?
     @State private var lanAlert = false
-    /// Which segment is showing. On the view rather than AppModel for now — AppModel is open in a
-    /// parallel session, and the dashboard's maintenance chip deep-link (which is the reason the
-    /// handoff wanted it app-wide) also lives in a file that session is editing.
-    @State private var segment: HardwareTriage.Segment = .filament
 
     private var vm: DashVM { model.vm }
     private var status: PrinterStatus? { model.status?.status }
@@ -45,7 +38,12 @@ struct AmsView: View {
             segmentContent
         }
         .background(c.bg)
-        .task(id: model.printerId) { await reload() }
+        // Attach then load, rather than relying on whoever owns the store having attached first: a
+        // store pointed at the wrong printer fetches the wrong printer's spools silently.
+        .task(id: model.printerId) {
+            hw.attach(client: model.client, printerId: model.printerId)
+            await hw.reload()
+        }
         .lockedActionAlert($lanAlert)
         .hwNotice($notice)
     }
@@ -55,7 +53,8 @@ struct AmsView: View {
     /// Title, the triage card, and the picker — all pinned, so an overdue service item is legible
     /// from any segment (F8). It used to sit at the bottom of a 2 500 pt scroll.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        @Bindable var hw = hw
+        return VStack(alignment: .leading, spacing: 12) {
             Text("Hardware")
                 .font(.system(size: 30, weight: .bold))
                 .kerning(-0.8)
@@ -63,7 +62,7 @@ struct AmsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if let headline = HardwareTriage.headline(triage) {
-                Tap { segment = triage.first?.segment ?? segment } content: {
+                Tap { hw.segment = triage.first?.segment ?? hw.segment } content: {
                     HStack(spacing: 11) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 15))
@@ -90,8 +89,8 @@ struct AmsView: View {
                 .accessibilityLabel("\(headline). \(HardwareTriage.detail(triage)). Tap to go there.")
             }
 
-            Picker("Section", selection: $segment) {
-                ForEach(HardwareTriage.Segment.allCases) { seg in
+            Picker("Section", selection: $hw.segment) {
+                ForEach(HardwareSegment.allCases) { seg in
                     // The dot repeats the triage signal quietly, so the picker itself carries it.
                     Text(flagged.contains(seg) ? "\(seg.label) •" : seg.label).tag(seg)
                 }
@@ -107,7 +106,7 @@ struct AmsView: View {
     ///2 500 pt scroll.
     @ViewBuilder
     private var segmentContent: some View {
-        switch segment {
+        switch hw.segment {
         case .filament:
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -117,7 +116,7 @@ struct AmsView: View {
                 }
                 .padding(.bottom, 32)
             }
-            .refreshable { await reload() }
+            .refreshable { await hw.refresh(.filament) }
 
         case .nozzles:
             ScrollView {
@@ -135,18 +134,20 @@ struct AmsView: View {
                 }
             }
             // Nozzles are live socket state — there is nothing to refetch, it just re-renders.
+            // `HardwareStore.refresh(.nozzles)` says the same thing in code, for ⌘R on the Mac.
 
         case .service:
             ScrollView {
                 MaintenanceSection(
-                    state: maint,
-                    busyId: maintBusy,
-                    onRetry: { Task { await reloadMaintenance() } },
+                    state: hw.maint,
+                    items: hw.serviceItems,
+                    busyId: hw.maintBusy,
+                    onRetry: { Task { await hw.reloadMaintenance() } },
                     onMarkDone: markDone
                 )
                 .padding(.bottom, 32)
             }
-            .refreshable { await reloadMaintenance() }
+            .refreshable { await hw.refresh(.service) }
         }
     }
 
@@ -154,13 +155,13 @@ struct AmsView: View {
 
     private var triage: [HardwareTriage.Item] {
         HardwareTriage.items(
-            maintenance: { if case .loaded(let m) = maint { return m.maintenanceItems } else { return [] } }(),
+            maintenance: hw.maintenanceItems,
             humidities: vm.amsUnits.map { (label: $0.label, rh: $0.humidity) },
             nozzlesKnown: !toolheads.isEmpty
         )
     }
 
-    private var flagged: Set<HardwareTriage.Segment> { HardwareTriage.flagged(triage) }
+    private var flagged: Set<HardwareSegment> { HardwareTriage.flagged(triage) }
 
     /// The same presenter the section itself uses, so "is the segment empty" and "does the section
     /// render anything" cannot answer differently.
@@ -249,7 +250,7 @@ struct AmsView: View {
                     SlotCard(
                         model: model,
                         slot: slot,
-                        spool: spool(for: slot),
+                        spool: hw.spool(for: slot, status: status),
                         // The HT is a single-spool unit whose id IS its tray id; Bambuddy documents
                         // ams/load for tray ids 0-15 only, so its Load button stays hidden.
                         isHt: vm.amsUnits.first { $0.id == slot.unitId }?.kind == .ht,
@@ -264,52 +265,15 @@ struct AmsView: View {
         }
     }
 
-    /// The inventory spool bound to a slot. Prefer `trayUuid` (RFID); fall back to (unit, LOCAL tray).
-    ///
-    /// Assignments are stored per (ams_id, LOCAL tray_id), so matching on the tray id alone would
-    /// resolve the HT's spool to AMS-0's — both units have a tray 0.
-    private func spool(for slot: AmsSlotVM) -> Spool? {
-        guard let assigns, !assigns.isEmpty else { return nil }
-        let uuid = status?.ams?
-            .first { $0.id == slot.unitId }?
-            .tray?.first { $0.id == slot.localId }?
-            .trayUuid
-        if let uuid, !uuid.isEmpty, let hit = assigns.first(where: { $0.spool.trayUuid == uuid }) {
-            return hit.spool
-        }
-        return assigns.first { $0.amsId == slot.unitId && $0.trayId == slot.localId }?.spool
-    }
+    // MARK: Commands
 
-    // MARK: Loading
-
-    private func reload() async {
-        guard let client = model.client else { return }
-        let id = model.printerId
-        async let spools = client.listAssignments(printerId: id)
-        async let maintenance = fetchMaintenance(client, id)
-        let (loadedSpools, loadedMaintenance) = await (spools, maintenance)
-        assigns = loadedSpools
-        maint = loadedMaintenance
-    }
-
-    private func reloadMaintenance() async {
-        guard let client = model.client else { return }
-        maint = .loading
-        maint = await fetchMaintenance(client, model.printerId)
-    }
-
+    /// The fetch, the busy flag and the retry all live in `HardwareStore`; only the alert is the
+    /// screen's, because each view tree presents failures its own way.
     private func markDone(_ item: MaintenanceItem) {
-        guard let client = model.client else { return }
-        maintBusy = item.id
-        let id = item.id
         Task {
-            do {
-                try await client.performMaintenance(id)
-                await reloadMaintenance()
-            } catch {
-                notice = HwNotice(title: "Couldn’t update", message: errorDetail(error))
+            if let failure = await hw.markDone(item) {
+                notice = HwNotice(title: "Couldn’t update", message: failure)
             }
-            maintBusy = nil
         }
     }
 }
@@ -1287,19 +1251,9 @@ private struct NozzleCard: View {
 
 // MARK: - Maintenance
 
-/// Loading / failed / loaded, spelled out. The RN original used a `T | null | undefined` tri-state
-/// here and the three branches drive genuinely different UI.
-private enum MaintLoad {
-    case loading
-    case failed
-    case loaded(MaintenancePrinter)
-}
-
-private func fetchMaintenance(_ client: BambuddyClient, _ printerId: Int) async -> MaintLoad {
-    do { return .loaded(try await client.getMaintenance(printerId)) } catch { return .failed }
-}
-
 /// Service reminders for this printer, with "mark done".
+///
+/// `MaintLoad` and the fetch behind it live in `HardwareStore`.
 ///
 /// Not LAN-gated: marking an item done is Bambuddy-side bookkeeping in its own database and the
 /// printer is never asked. It IS admin-gated, which the client handles by routing through the JWT
@@ -1307,6 +1261,9 @@ private func fetchMaintenance(_ client: BambuddyClient, _ printerId: Int) async 
 @MainActor
 private struct MaintenanceSection: View {
     let state: MaintLoad
+    /// Already filtered to enabled items and ordered by `HardwareStore.serviceItems` — due first,
+    /// then warnings, then by how soon each falls due.
+    let items: [MaintenanceItem]
     /// Item id currently being marked done.
     let busyId: Int?
     let onRetry: () -> Void
@@ -1351,18 +1308,6 @@ private struct MaintenanceSection: View {
     private var hoursPrinted: String? {
         guard case .loaded(let data) = state else { return nil }
         return String(format: "%.1f h printed", data.totalPrintHours?.double ?? 0)
-    }
-
-    /// Due first, then warnings, then by how soon each falls due.
-    private var items: [MaintenanceItem] {
-        guard case .loaded(let data) = state else { return [] }
-        return data.maintenanceItems
-            .filter { $0.enabled ?? false }
-            .sorted { a, b in
-                if (a.isDue ?? false) != (b.isDue ?? false) { return a.isDue ?? false }
-                if (a.isWarning ?? false) != (b.isWarning ?? false) { return a.isWarning ?? false }
-                return (a.hoursUntilDue?.double ?? 0) < (b.hoursUntilDue?.double ?? 0)
-            }
     }
 
     private var failedCard: some View {

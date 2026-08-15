@@ -1,17 +1,30 @@
-#if os(iOS)
-// PiP is iOS-only (§6). Also holds the near-silent audio session, which has no macOS meaning.
-// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
+// The MJPEG stream renderer: display layer, decode/enqueue path and reconnect policy — SHARED, plus
+// the Picture in Picture controller and its audio keep-alive, which are iOS-only.
+//
+// The file used to be `CameraPiPRenderer.swift` under a whole-file `#if os(iOS)`. That guard was too
+// blunt: the macOS camera window (spec 1c) and the Mac inspector's camera tile need every part of
+// this except PiP, and §5.2 of docs/native-rewrite/18-mac-port-architecture.md says the camera is
+// "reused unchanged" apart from the window chrome. The type is named for what it does on BOTH
+// platforms — a `…PiPRenderer` driving a Mac window that can never have PiP is actively misleading,
+// the same rename `pipLog` -> `cameraLog` already made.
+//
+// Only the members listed under §6 and the two `AVPictureInPicture*` conformances below are guarded.
 import Foundation
 import AVFoundation
-import AVKit
 import CoreMedia
 import CoreVideo
 import ImageIO
-import UIKit
 import os
+#if os(iOS)
+import AVKit
+#endif
 
-// MARK: - 6. Background keep-alive
+#if os(iOS)
+// MARK: - 6. Background keep-alive (iOS only)
 // ============================================================================
+//
+// There is no macOS equivalent and no macOS need: AppKit apps are not suspended behind a floating
+// window, because there is no floating window.
 
 /// PiP by itself does NOT keep an app out of suspension — an ACTIVE audio session does.
 /// (Apple DTS, forums thread 793010: "your app will suspend, because it doesn't have an active
@@ -94,6 +107,7 @@ final class PiPBackgroundKeepAlive: @unchecked Sendable {
         }
     }
 }
+#endif
 
 // ============================================================================
 // MARK: - 7. The renderer: layer + PiP controller + reconnect policy
@@ -112,6 +126,10 @@ typealias StreamURLProvider = @Sendable (@escaping @Sendable (Result<URL, Stream
 /// What the renderer reports upward. A typed enum rather than the old `(String, [String: Any])`
 /// pair: the payloads cross from the network queue to the main queue, and a dictionary of `Any` is
 /// not `Sendable`, so the compiler could not check that hop.
+///
+/// Deliberately NOT forked per platform. It is one `Sendable` type crossing one hop; macOS simply
+/// never emits `.pipStart`, `.pipStop` or `.audio`, and an unreachable case costs nothing next to
+/// two enums that have to be kept in step.
 enum CameraEvent: Sendable {
     case live
     /// A new connection attempt has begun, or the stream was torn down — nothing on screen is a live
@@ -141,17 +159,20 @@ enum CameraEvent: Sendable {
 //  * `builder` and every `displayLayer` sample-buffer call belong to `decodeQueue`. The two
 //    AVSampleBufferDisplayLayer notifications arrive on an unspecified thread and hop there.
 //  * `gate` is the one deliberately shared object, and it is internally locked.
-final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientDelegate,
-                               AVPictureInPictureControllerDelegate,
-                               AVPictureInPictureSampleBufferPlaybackDelegate {
+//
+// The rule is unchanged by the macOS build: the guarded members simply do not exist there, and every
+// shared member keeps the same confinement.
+final class CameraRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientDelegate {
 
     let displayLayer = AVSampleBufferDisplayLayer()
     private let rateWindowStart = Date()
 
     private let client = MJPEGStreamClient()
     private let builder = JPEGFrameBuilder()
+    #if os(iOS)
     private let keepAlive = PiPBackgroundKeepAlive()
     private var pip: AVPictureInPictureController?
+    #endif
     private var gate: LatestFrameGate!
 
     private let decodeQueue = DispatchQueue(label: "bambu.mjpeg.decode", qos: .userInitiated)
@@ -177,6 +198,17 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
     /// start is indistinguishable from one the user simply hasn't noticed — so every terminal state
     /// is reported, not just the happy path.
     var onEvent: (@Sendable (CameraEvent) -> Void)?
+
+    /// Main queue only, like everything else that reads `pip`. Exists so the two shared call sites
+    /// below (the stats event and the reconnect decision) do not each need a `#if` — on macOS there
+    /// is no floating window to keep alive, so the answer is a constant `false`.
+    private var pipIsActive: Bool {
+        #if os(iOS)
+        return pip?.isPictureInPictureActive == true
+        #else
+        return false
+        #endif
+    }
 
     override init() {
         super.init()
@@ -228,6 +260,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
         client.invalidate()
     }
 
+    #if os(iOS)
     /// MUST be called while the app is in the foreground: PiP cannot be started from the
     /// background (Apple DTS, forums thread 793010).
     func enablePiP() throws {
@@ -259,6 +292,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
 
     func startPiP() { pip?.startPictureInPicture() }
     func stopPiP()  { pip?.stopPictureInPicture() }
+    #endif
 
     // ---- connection lifecycle ----
 
@@ -332,7 +366,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
             cameraLog.info("camera frames=\(self.frameCount, privacy: .public) rate=\(String(format: "%.1f", Double(self.frameCount) / max(dt, 0.001)), privacy: .public)/s")
         }
         if frameCount % 20 == 0 {
-            deliver(.stats(frames: frameCount, pipActive: pip?.isPictureInPictureActive == true))
+            deliver(.stats(frames: frameCount, pipActive: pipIsActive))
         }
     }
 
@@ -364,7 +398,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
             guard !self.stopped else { return }
             // While PiP is up, ALWAYS reconnect: a dead socket means the camera shuts down 7 s later
             // and the floating window freezes with no way for the user to intervene.
-            if retryable || self.pip?.isPictureInPictureActive == true {
+            if retryable || self.pipIsActive {
                 self.scheduleReconnect()
             }
         }
@@ -412,7 +446,21 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
         }
     }
 
-    // ---- AVPictureInPictureSampleBufferPlaybackDelegate ----
+}
+
+#if os(iOS)
+// ============================================================================
+// MARK: - PiP delegates (iOS only)
+// ============================================================================
+//
+// The conformances live in extensions rather than in the class's inheritance clause because `#if`
+// cannot appear inside an inheritance clause — an extension is the only way to make a conformance
+// platform-conditional. Same file, so `private` members of the class are still reachable (SE-0169),
+// and the method bodies are unchanged from when they sat in the class.
+
+// ---- AVPictureInPictureSampleBufferPlaybackDelegate ----
+
+extension CameraRenderer: AVPictureInPictureSampleBufferPlaybackDelegate {
 
     func pictureInPictureController(_ c: AVPictureInPictureController, setPlaying playing: Bool) {
         // `stopped` IS the transport state — `pictureInPictureControllerIsPlaybackPaused` below
@@ -455,8 +503,11 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
                                     skipByInterval: CMTime, completion: @escaping () -> Void) {
         completion()    // live stream: nothing to seek. Failing to call this wedges the PiP UI.
     }
+}
 
-    // ---- AVPictureInPictureControllerDelegate ----
+// ---- AVPictureInPictureControllerDelegate ----
+
+extension CameraRenderer: AVPictureInPictureControllerDelegate {
 
     func pictureInPictureControllerDidStartPictureInPicture(_ c: AVPictureInPictureController) {
         cameraLog.info("PiP started")
@@ -477,6 +528,6 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
         emit(.pipStop(error: nil))
     }
 }
+#endif
 
 // ============================================================================
-#endif

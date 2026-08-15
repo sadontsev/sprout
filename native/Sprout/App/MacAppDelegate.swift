@@ -45,6 +45,9 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.registerForRemoteNotifications()
+        #if DEBUG
+        MacWindowProbe.runIfRequested()
+        #endif
     }
 
     func application(

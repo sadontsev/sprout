@@ -48,7 +48,7 @@ struct CameraOverlay: View {
     /// slow warm-up and a fast-erroring dead camera converge on the same deadline.
     private static let warmUpDeadline: Duration = .seconds(40)
 
-    @State private var pip = CameraPiPModel()
+    @State private var pip = CameraStreamModel()
     @State private var phase: Phase = .connecting
     @State private var reloadKey = 0
     @State private var landscape = false
@@ -500,7 +500,7 @@ struct CameraOverlay: View {
     // MARK: - Actions
 
     /// The phase must be a FUNCTION of the current stream state, never just the edge that got us
-    /// here. `CameraPiPModel.isLive` is a latch the renderer only ever raises, so `onChange` fires at
+    /// here. `CameraStreamModel.isLive` is a latch the renderer only ever raises, so `onChange` fires at
     /// most once per connection — and Retry re-arms the phase whether or not anything about the
     /// stream changed. Reading the flag directly at every re-arm is what keeps a stream that is
     /// still delivering frames from sitting on "CONNECTING…" and then painting "NO SIGNAL" over

@@ -7,15 +7,6 @@ import UIKit
 
 // MARK: - Pure browse helpers
 
-/// Which store the Files tab is showing.
-private enum LibrarySource: String, CaseIterable, Identifiable, Sendable {
-    case library
-    case printer
-
-    var id: String { rawValue }
-    var label: String { self == .library ? "Library" : "Printer" }
-}
-
 /// The type chips above the list. Counts are computed against the UNFILTERED list, so they never
 /// move as the user types.
 private enum LibraryTypeFilter: String, CaseIterable, Identifiable, Sendable {
@@ -103,21 +94,6 @@ private enum LibraryFormat {
 }
 
 
-// MARK: - Small shared value types
-
-/// A share target. `Identifiable` so the activity sheet can be driven by `.sheet(item:)`.
-private struct LibShareItem: Identifiable, Hashable {
-    let id = UUID()
-    let url: URL
-}
-
-/// A failure worth interrupting the user for.
-private struct LibProblem: Identifiable, Hashable {
-    let id = UUID()
-    let title: String
-    let message: String
-}
-
 // MARK: - LibraryView
 
 /// The Files tab: the Bambuddy library (grid/list, search, bulk delete, share, print) and the
@@ -132,25 +108,18 @@ struct LibraryView: View {
 
     @Environment(\.palette) private var c
 
-    @State private var source: LibrarySource = .library
+    /// Every fetch, the source segment and the multi-select set live in `LibraryStore` so the macOS
+    /// Files section drives the same copy — see docs/native-rewrite/18-mac-port-architecture.md.
+    /// What stays here is layout: which chip is lit, which sheet is up, what is being confirmed.
+    private var store: LibraryStore { model.library }
+
     /// Uploading survives this view: the task holds the client, not the view.
     @State private var uploader = LibraryUploader()
     @State private var picking = false
     @Environment(ExploreModel.self) private var explore
-    /// nil while the first load is in flight. An empty array is a genuinely empty library — the
-    /// difference decides between a spinner, a retry banner and "No files yet".
-    @State private var files: [LibraryFile]?
-    @State private var loadFailed = false
     @State private var filter: LibraryTypeFilter = .all
     @State private var layout: LibraryLayout = .grid
     @State private var query = ""
-    @State private var selecting = false
-    @State private var selected: Set<Int> = []
-
-    // Printer onboard storage (SD card).
-    @State private var pList: PrinterFileList?
-    @State private var pPath = "/"
-    @State private var pLoading = false
 
     @State private var sheetFile: PrinterFile?
     @State private var playFile: PrinterFile?
@@ -158,20 +127,17 @@ struct LibraryView: View {
     /// `AppModel.overlay`, whose `layerViewer` case carries a `LibraryFile`; an SD file has no
     /// library id, only a path.
     @State private var layerFile: PrinterFile?
-    @State private var dlBusy = false
-    @State private var shareItem: LibShareItem?
 
     @State private var pendingDelete: LibraryFile?
     @State private var pendingSdDelete: PrinterFile?
     @State private var confirmBulk = false
-    @State private var problem: LibProblem?
 
-    private var hasFiles: Bool { !(files?.isEmpty ?? true) }
-    private var shown: [LibraryFile] { LibraryBrowse.filter(files ?? [], filter, query) }
-    private var pSorted: [PrinterFile] { LibraryBrowse.sortPrinterFiles(pList?.files ?? []) }
+    private var hasFiles: Bool { !(store.files?.isEmpty ?? true) }
+    private var shown: [LibraryFile] { LibraryBrowse.filter(store.files ?? [], filter, query) }
+    private var pSorted: [PrinterFile] { LibraryBrowse.sortPrinterFiles(store.printerList?.files ?? []) }
 
     private func count(_ f: LibraryTypeFilter) -> Int {
-        let all = files ?? []
+        let all = store.files ?? []
         switch f {
         case .all: return all.count
         case .models: return all.filter { !LibraryFileCaps.isSliced($0) }.count
@@ -188,7 +154,7 @@ struct LibraryView: View {
             VStack(spacing: 0) {
                 header
                 sourcePicker
-                if source == .library { librarySection } else { printerSection }
+                if store.source == .library { librarySection } else { printerSection }
             }
             .padding(.top, 8)
             // End-of-content breathing room only — the system tab bar insets the safe area for us.
@@ -196,14 +162,14 @@ struct LibraryView: View {
         }
         .scrollIndicators(.hidden)
         .background(c.bg)
-        .refreshable { await refresh() }
-        .overlay(alignment: .bottom) { if dlBusy { busyPill } }
-        .task { await load() }
+        .refreshable { await store.reload() }
+        .overlay(alignment: .bottom) { if store.downloadBusy { busyPill } }
+        .task { await store.load() }
         .fileImporter(isPresented: $picking, allowedContentTypes: UploadFileKind.all) { result in
             switch result {
             case .success(let url):
                 guard let client = model.client else { return }
-                uploader.upload(url, client: client, model: model) { Task { await load() } }
+                uploader.upload(url, client: client, model: model) { Task { await store.load() } }
             case .failure(let error):
                 // Cancelling the browser is reported as a failure; it is not one.
                 if (error as? CocoaError)?.code != .userCancelled {
@@ -219,21 +185,21 @@ struct LibraryView: View {
         } message: {
             Text(verbatim: uploader.error ?? "")
         }
-        // The SD listing loads the first time the segment is opened and then persists across
-        // segment switches.
-        .task(id: source) {
-            if source == .printer, pList == nil { await loadPrinter("/") }
-        }
+        .task(id: store.source) { await store.loadPrinterIfNeeded() }
         // The upload sheet writes into the very library this list is showing.
         .onChange(of: model.overlay) { old, new in
-            if old == .upload, new == nil { Task { await load() } }
+            if old == .upload, new == nil { Task { await store.load() } }
         }
     }
 
     /// Every modal this screen owns, kept off `body` so the type-checker sees two small expressions
     /// instead of one enormous one.
     private func presentations<V: View>(_ content: V) -> some View {
-        content
+        // The share sheet and the error alert are driven by store state, so they need bindings into
+        // it rather than into `@State`. Only those two read `bound`; everything else goes through
+        // `store` as usual.
+        @Bindable var bound = model.library
+        return content
             .sheet(item: $sheetFile) { file in
             if let client = model.client {
                 PrinterFileSheet(
@@ -269,7 +235,7 @@ struct LibraryView: View {
                 onClose: { layerFile = nil }
             )
         }
-        .sheet(item: $shareItem) { item in
+        .sheet(item: $bound.shareItem) { item in
             LibShareSheet(url: item.url)
         }
         .alert(
@@ -277,7 +243,7 @@ struct LibraryView: View {
             isPresented: presenting($pendingDelete),
             presenting: pendingDelete
         ) { f in
-            Button("Delete", role: .destructive) { Task { await deleteLibrary(f) } }
+            Button("Delete", role: .destructive) { Task { await store.deleteLibrary(f) } }
             Button("Cancel", role: .cancel) {}
         } message: { f in
             Text("“\(LibraryBrowse.displayName(f))” will be removed from the library. This can’t be undone.")
@@ -293,15 +259,15 @@ struct LibraryView: View {
             Text("“\(pf.name)” will be removed from the printer’s storage. This can’t be undone.")
         }
         .alert(bulkTitle, isPresented: $confirmBulk) {
-            Button("Delete", role: .destructive) { Task { await bulkDelete() } }
+            Button("Delete", role: .destructive) { Task { await store.bulkDelete() } }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("They will be removed from the library. This can’t be undone.")
         }
-        .alert(problem?.title ?? "", isPresented: presenting($problem)) {
+        .alert(store.problem?.title ?? "", isPresented: presenting($bound.problem)) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(problem?.message ?? "")
+            Text(store.problem?.message ?? "")
         }
     }
 
@@ -310,7 +276,7 @@ struct LibraryView: View {
     }
 
     private var bulkTitle: String {
-        let n = selected.count
+        let n = store.selected.count
         return "Delete \(n) \(n == 1 ? "file" : "files")?"
     }
 
@@ -324,7 +290,7 @@ struct LibraryView: View {
                 .foregroundStyle(c.t1)
             Spacer(minLength: 12)
             // Upload belongs to the library only — there is no way to push a file onto the SD card.
-            if source == .library {
+            if store.source == .library {
                 // A native Menu, not a sheet. With Explore promoted to its own page, the "Add a
                 // file" sheet's entire content was a two-item list — a modal to choose between two
                 // things that can both be one tap (F10).
@@ -374,15 +340,15 @@ struct LibraryView: View {
     private var sourcePicker: some View {
         HStack(spacing: 4) {
             ForEach(LibrarySource.allCases) { s in
-                Tap { source = s } content: {
+                Tap { store.source = s } content: {
                     Text(s.label)
                         .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(source == s ? c.t1 : c.t2)
+                        .foregroundStyle(store.source == s ? c.t1 : c.t2)
                         .frame(maxWidth: .infinity)
                         .frame(height: 38)
                         .background(
                             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(source == s ? c.s4 : .clear)
+                                .fill(store.source == s ? c.s4 : .clear)
                         )
                 }
             }
@@ -397,17 +363,17 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var librarySection: some View {
-        if loadFailed { retryBanner }
-        if hasFiles, !selecting { filterRow }
-        if hasFiles, selecting { selectBar }
+        if store.loadFailed { retryBanner }
+        if hasFiles, !store.selecting { filterRow }
+        if hasFiles, store.selecting { selectBar }
         if hasFiles { searchField }
 
-        if files == nil, !loadFailed {
+        if store.files == nil, !store.loadFailed {
             ProgressView()
                 .tint(c.accent)
                 .padding(.top, 40)
         }
-        if files?.isEmpty == true, !loadFailed {
+        if store.files?.isEmpty == true, !store.loadFailed {
             LibEmpty(
                 icon: "folder",
                 title: "No files yet",
@@ -424,7 +390,7 @@ struct LibraryView: View {
         }
         if hasFiles, !shown.isEmpty {
             if layout == .grid { grid } else { list }
-            Text(selecting ? "Tap to select · Delete removes all selected" : "Tap to print · hold for options")
+            Text(store.selecting ? "Tap to select · Delete removes all selected" : "Tap to print · hold for options")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity)
@@ -448,7 +414,7 @@ struct LibraryView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(c.t2)
             Spacer(minLength: 8)
-            Tap { Task { await load() } } content: {
+            Tap { Task { await store.load() } } content: {
                 Text("Retry")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(c.t1)
@@ -490,7 +456,7 @@ struct LibraryView: View {
             Tap { layout = layout == .grid ? .list : .grid } content: {
                 squareButton(layout == .grid ? "list.bullet" : "square.grid.2x2")
             }
-            Tap { selecting = true } content: {
+            Tap { store.beginSelecting() } content: {
                 squareButton("checkmark.square")
             }
         }
@@ -507,8 +473,9 @@ struct LibraryView: View {
     }
 
     private var selectBar: some View {
-        HStack(spacing: 10) {
-            Tap { exitSelect() } content: {
+        let selected = store.selected
+        return HStack(spacing: 10) {
+            Tap { store.exitSelect() } content: {
                 Text("Done")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(c.t1)
@@ -587,7 +554,8 @@ struct LibraryView: View {
     }
 
     private func gridCell(_ f: LibraryFile) -> some View {
-        let sel = selected.contains(f.id)
+        let selecting = store.selecting
+        let sel = store.isSelected(f.id)
         let sliced = LibraryFileCaps.isSliced(f)
         return withMenu(f) {
             Tap { pick(f) } content: {
@@ -658,13 +626,14 @@ struct LibraryView: View {
     private var list: some View {
         let rows = shown
         let lastId = rows.last?.id
+        let selecting = store.selecting
         // Identified by file id, NOT by array position. With a positional identity every row below a
         // deletion (or below the cut of a search keystroke) keeps its view and swaps its contents, so
         // its `AsyncImage` restarts at `.empty` — the whole thumbnail column blanks and re-downloads
         // instead of one row disappearing. The grid above has always keyed on `LibraryFile.id`.
         return VStack(spacing: 0) {
             ForEach(rows) { f in
-                let sel = selected.contains(f.id)
+                let sel = store.isSelected(f.id)
                 withMenu(f) {
                     Tap { pick(f) } content: {
                         HStack(spacing: 12) {
@@ -750,7 +719,7 @@ struct LibraryView: View {
     /// undiscoverable. Suppressed entirely while selecting, where a long press means nothing.
     @ViewBuilder
     private func withMenu<Content: View>(_ f: LibraryFile, @ViewBuilder content: () -> Content) -> some View {
-        if selecting {
+        if store.selecting {
             content()
         } else {
             content().contextMenu {
@@ -769,16 +738,11 @@ struct LibraryView: View {
     }
 
     private func pick(_ f: LibraryFile) {
-        if selecting {
-            if selected.contains(f.id) { selected.remove(f.id) } else { selected.insert(f.id) }
+        if store.selecting {
+            store.toggleSelection(f.id)
         } else {
             model.overlay = .wizard(f)
         }
-    }
-
-    private func exitSelect() {
-        selecting = false
-        selected = []
     }
 
     private func play(_ pf: PrinterFile) { handOff(pf, to: .player) }
@@ -804,13 +768,13 @@ struct LibraryView: View {
     private var printerSection: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                if pPath != "/" {
+                if store.printerPath != "/" {
                     // `chevron.backward`, not `arrow.up`: this is "go back one level", and an upward
                     // arrow reads as sort order or scroll-to-top. The label also needs an explicit
                     // `contentShape` — a glyph over a background is only hit-tested on the drawn
                     // pixels, so taps that missed the strokes fell THROUGH to the file row behind and
                     // opened it, which is what made the control look broken rather than merely ugly.
-                    Tap { Task { await loadPrinter(LibraryBrowse.parentPath(pPath)) } } content: {
+                    Tap { Task { await store.loadPrinter(LibraryBrowse.parentPath(store.printerPath)) } } content: {
                         Image(systemName: "chevron.backward")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(c.t1)
@@ -818,9 +782,9 @@ struct LibraryView: View {
                             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(c.s2))
                             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .accessibilityLabel("Back to \(LibraryBrowse.parentPath(pPath))")
+                    .accessibilityLabel("Back to \(LibraryBrowse.parentPath(store.printerPath))")
                 }
-                Text("printer:\(pPath)")
+                Text("printer:\(store.printerPath)")
                     .font(.mono(12))
                     .foregroundStyle(c.t3)
                     .lineLimit(1)
@@ -833,15 +797,15 @@ struct LibraryView: View {
 
             // Exclusive branches: an empty media folder used to render "Empty folder" AND the grid's
             // own "No videos here yet." one under the other.
-            if pLoading {
+            if store.printerLoading {
                 ProgressView().tint(c.accent).padding(.top, 30)
-            } else if pList != nil, pSorted.isEmpty {
+            } else if store.printerList != nil, pSorted.isEmpty {
                 LibEmpty(
                     icon: "externaldrive",
                     title: "Empty folder",
                     message: "Nothing here on the printer's onboard storage."
                 )
-            } else if PrinterFiles.isMediaFolder(pPath) {
+            } else if PrinterFiles.isMediaFolder(store.printerPath) {
                 mediaGrid
             } else {
                 ForEach(pSorted) { pf in
@@ -932,7 +896,7 @@ struct LibraryView: View {
     private func printerRow(_ pf: PrinterFile) -> some View {
         let row = Tap {
             if pf.isDirectory {
-                Task { await loadPrinter(pf.path) }
+                Task { await store.loadPrinter(pf.path) }
             } else {
                 sheetFile = pf
             }
@@ -1001,108 +965,23 @@ struct LibraryView: View {
     }
 
     // MARK: - Data
-
-    private func load() async {
-        guard let client = model.client else { return }
-        do {
-            files = try await client.listFiles()
-            loadFailed = false
-        } catch {
-            // A failed fetch is NOT an empty library — keep whatever is on screen and offer a retry.
-            files = files ?? []
-            loadFailed = true
-        }
-    }
-
-    private func loadPrinter(_ path: String) async {
-        guard let client = model.client else { return }
-        pLoading = true
-        defer { pLoading = false }
-        if let r = try? await client.listPrinterFiles(model.printerId, path: path) {
-            pList = r
-            pPath = r.path.isEmpty ? path : r.path
-        } else {
-            // Silent on purpose: an unreadable folder reads as empty rather than as a broken tab.
-            pList = PrinterFileList(path: path, files: [])
-        }
-    }
-
-    private func refresh() async {
-        // The SD segment has its own spinner, so re-list it too when it is the one on screen.
-        if source == .printer { await loadPrinter(pPath) }
-        await load()
-    }
-
-    private func deleteLibrary(_ f: LibraryFile) async {
-        guard let client = model.client else { return }
-        do {
-            try await client.deleteFile(f.id)
-            await load()
-        } catch {
-            problem = LibProblem(title: "Couldn’t delete", message: error.localizedDescription)
-        }
-    }
-
-    private func bulkDelete() async {
-        guard let client = model.client else { return }
-        let ids = Array(selected)
-        guard !ids.isEmpty else { return }
-        // Partial failure is tolerated and reported — never abort the batch half-way.
-        var failed = 0
-        await withTaskGroup(of: Bool.self) { group in
-            for id in ids {
-                group.addTask {
-                    do {
-                        try await client.deleteFile(id)
-                        return false
-                    } catch {
-                        return true
-                    }
-                }
-            }
-            for await didFail in group where didFail { failed += 1 }
-        }
-        exitSelect()
-        await load()
-        if failed > 0 {
-            problem = LibProblem(
-                title: "Some deletes failed",
-                message: "\(failed) of \(ids.count) files couldn’t be deleted."
-            )
-        }
-    }
+    //
+    // Every fetch and every mutation lives in `LibraryStore`. What is left here is the part that is
+    // genuinely about THIS screen: dismissing a presentation before an alert can appear, and naming
+    // the cache slot a share downloads into.
 
     private func deleteSd(_ pf: PrinterFile) async {
-        guard let client = model.client else { return }
         // Close the sheet/player first: they are modal presentations, and an error alert raised
         // from underneath one would never appear.
         sheetFile = nil
         playFile = nil
-        do {
-            try await client.deletePrinterFile(model.printerId, path: pf.path)
-            await loadPrinter(pPath)
-        } catch {
-            problem = LibProblem(title: "Couldn’t delete", message: error.localizedDescription)
-        }
+        await store.deleteSd(pf)
     }
 
+    /// The local copy is cached under the file's DISPLAY name, made separator-safe. The naming rules
+    /// are `LibraryBrowse`'s, which is why the store is handed the result rather than deriving it.
     private func share(_ f: LibraryFile) async {
-        guard let client = model.client else { return }
-        dlBusy = true
-        defer { dlBusy = false }
-        do {
-            // The slicer token IS the auth and is single-use and short-lived, so it is minted per
-            // share and the download carries no headers at all. The filename lands in a path
-            // segment, so it goes through the sanitiser first — an empty `filename` is not caught by
-            // the client's `?? "model-{id}.stl"` default and would leave the URL a segment short.
-            let downloadName = LibraryDownloadName.pathSegment(f.filename, fallback: "model-\(f.id)")
-            let url = try await client.mintFileDownloadUrl(f.id, filename: downloadName)
-            let dest = LibCache.url(for: LibraryBrowse.safeShareName(LibraryBrowse.displayName(f)))
-            let local = try await FileDownloadDelegate.run(URLRequest(url: url), to: dest)
-            shareItem = LibShareItem(url: local)
-        } catch {
-            problem = LibProblem(title: "Couldn’t download", message: error.localizedDescription)
-        }
+        await store.share(f, cacheName: LibraryBrowse.safeShareName(LibraryBrowse.displayName(f)))
     }
 }
 
@@ -1571,83 +1450,7 @@ private actor PrinterFileImageCache {
     }
 }
 
-// MARK: - Downloads, cache, share sheet
-
-private enum LibCache {
-    /// A file in the caches directory. Callers pass names that have already been made
-    /// path-separator safe.
-    static func url(for name: String) -> URL {
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        return dir.appendingPathComponent(name.isEmpty ? "file" : name)
-    }
-}
-
-/// Downloads one URL to a fixed destination, reporting byte progress.
-///
-/// `URLSession.download(for:)` reports no progress, and an ipcam chunk runs to ~250 MB — the bar is
-/// the difference between "downloading" and "frozen". One session per download keeps the delegate's
-/// state trivially isolated; downloads here are user-initiated and rare.
-private final class FileDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    private let destination: URL
-    private let onProgress: (@Sendable (Int64, Int64) -> Void)?
-    private var continuation: CheckedContinuation<URL, Error>?
-    private var failure: Error?
-
-    private init(destination: URL, onProgress: (@Sendable (Int64, Int64) -> Void)?) {
-        self.destination = destination
-        self.onProgress = onProgress
-    }
-
-    static func run(
-        _ request: URLRequest,
-        to destination: URL,
-        onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
-    ) async throws -> URL {
-        let delegate = FileDownloadDelegate(destination: destination, onProgress: onProgress)
-        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
-
-        return try await withCheckedThrowingContinuation { cont in
-            delegate.continuation = cont
-            session.downloadTask(with: request).resume()
-        }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        onProgress?(totalBytesWritten, totalBytesExpectedToWrite)
-    }
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // `location` is deleted the moment this method returns, so the move happens here, not in the
-        // completion callback.
-        do {
-            let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
-            guard (200..<300).contains(status) else {
-                throw SproutError("Download failed (HTTP \(status)).")
-            }
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: location, to: destination)
-        } catch {
-            failure = error
-        }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let continuation else { return }
-        self.continuation = nil
-        if let problem = error ?? failure {
-            continuation.resume(throwing: problem)
-        } else {
-            continuation.resume(returning: destination)
-        }
-    }
-}
+// MARK: - Share sheet
 
 /// The system share sheet. SwiftUI's `ShareLink` needs its item up front, but everything shared here
 /// only exists after an async download.

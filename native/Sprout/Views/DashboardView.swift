@@ -22,7 +22,7 @@ struct DashboardView: View {
     /// while the camera is actually streaming — cold, it replays the last cached frame forever, which
     /// is why a polled tile looked frozen. One low-rate stream is both live and cheaper than a
     /// 266 KB still every two seconds.
-    @State private var tileCam = CameraPiPModel()
+    @State private var tileCam = CameraStreamModel()
 
     private var vm: DashVM { model.vm }
     private var lock: LockedActions {

@@ -56,12 +56,24 @@ targets:
         "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]": Sprout/Resources/Sprout.entitlements
         "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Sprout/Resources/Sprout-macOS.entitlements
         "ENABLE_HARDENED_RUNTIME[sdk=macosx*]": YES
+        # Substituted into NSPrincipalClass in the shared Info.plist below.
+        #
+        # Xcode injects this key only when it GENERATES the plist. Sprout uses an explicit
+        # INFOPLIST_FILE, so it was simply absent from the Mac bundle. Set here because every
+        # Xcode-generated macOS app has it and a bundle that omits it is relying on an AppKit
+        # default rather than declaring what it is — not because it was observed to break anything.
+        # It has to be conditional: NSApplication is wrong on iOS, where the value is UIApplication.
+        "SPROUT_PRINCIPAL_CLASS[sdk=macosx*]": NSApplication
+        "SPROUT_PRINCIPAL_CLASS[sdk=iphone*]": UIApplication
     info:
       path: Sprout/Resources/Info.plist
       properties:
         CFBundleDisplayName: Sprout
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # NSApplication on macOS, UIApplication on iOS — see SPROUT_PRINCIPAL_CLASS above for why
+        # this cannot be hard-coded in a plist shared by two platforms.
+        NSPrincipalClass: "$(SPROUT_PRINCIPAL_CLASS)"
         # Read on macOS (Finder, the App Store category, Launchpad grouping); ignored on iOS, where
         # the category comes from App Store Connect.
         LSApplicationCategoryType: public.app-category.utilities
@@ -76,7 +88,7 @@ targets:
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        # PiP keeps the app alive via a near-silent audio session — see CameraPiPRenderer.
+        # PiP keeps the app alive via a near-silent audio session — see CameraRenderer.
         UIBackgroundModes:
           - audio
         ITSAppUsesNonExemptEncryption: false

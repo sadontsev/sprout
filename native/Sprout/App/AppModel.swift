@@ -44,6 +44,12 @@ final class AppModel {
             guard printerId != oldValue else { return }
             status?.printerId = printerId
             cooldown?.start(printerId: printerId)
+            // The stores that are per-printer have to follow the selection, or switching machine
+            // leaves Files showing the other printer's SD card and Power polling the wrong plug.
+            // `jobs` is deliberately absent: the queue and the archive are server-wide.
+            library.attach(client: client, printerId: printerId)
+            power.attach(client: client, printerId: printerId)
+            hardware.attach(client: client, printerId: printerId)
             persist { $0.printerId = self.printerId; $0.printerName = self.printer?.name }
             Task { await refreshLanMode() }
         }
@@ -73,6 +79,49 @@ final class AppModel {
     #if os(iOS)
     private(set) var liveActivity: LiveActivityController?
     #endif
+
+    // MARK: Section stores
+    //
+    // One store per section, owned here and driven by BOTH view trees. They used to be `@State`
+    // and `private func load()` inside each iOS view, which meant a second view tree would have had
+    // to re-implement every fetch, poll cadence, sort and failure rule. Layout is the only thing
+    // the two platforms duplicate; this is where "and nothing else" is enforced.
+    //
+    // Long-lived rather than per-session: a store outlives a reconnect, so `attach` re-points it at
+    // the new client instead of the app throwing away and rebuilding four objects on every Save.
+    let jobs = JobsStore()
+    let library = LibraryStore()
+    let power = PowerStore()
+    let hardware = HardwareStore()
+
+    /// The library upload in flight, if any.
+    ///
+    /// App-level rather than owned by the Files section, because on macOS a drop is accepted
+    /// **anywhere in the window** (§5.3) and from the Dock icon — so the upload can begin while
+    /// Files is not even on screen. It was already written to survive navigation (it holds the
+    /// client, not a view); this only widens who can start one.
+    let uploader = LibraryUploader()
+
+    /// Every store, for the wiring that treats them uniformly. Written once so adding a fifth store
+    /// cannot be half-wired — the failure mode would be a section that silently never refreshes.
+    private func attachStores(client: BambuddyClient?) {
+        jobs.attach(client: client)
+        library.attach(client: client, printerId: printerId)
+        power.attach(client: client, printerId: printerId)
+        hardware.attach(client: client, printerId: printerId)
+    }
+
+    private func startStores() {
+        jobs.start()
+        power.start()
+        hardware.start()
+    }
+
+    private func stopStores() {
+        jobs.stop()
+        power.stop()
+        hardware.stop()
+    }
 
     /// Appearance preference. Applied at the root, so a change re-themes the whole tree at once.
     var theme: ThemePreference = .system {
@@ -158,6 +207,9 @@ final class AppModel {
         cooldown = cool
         cool.start(printerId: printerId)
 
+        attachStores(client: c)
+        startStores()
+
         #if os(iOS)
         liveActivity = LiveActivityController(config: cfg)
 
@@ -217,6 +269,12 @@ final class AppModel {
         status = store
         store.start()
 
+        // The demo answers the same endpoints the stores call, so they run unmodified against it —
+        // which is the point of the demo: it exercises the app's real code paths, not a parallel
+        // set of fixtures.
+        attachStores(client: c)
+        startStores()
+
         printers = (try? await c.listPrinters()) ?? []
     }
 
@@ -264,6 +322,11 @@ final class AppModel {
         status = nil
         cooldown?.stop()
         cooldown = nil
+        // Same reasoning as the two stores above: each keeps itself alive from inside its own poll
+        // loop, so dropping a reference is not a teardown — `stop()` is. Without this, every Save
+        // left four orphaned poll loops running against the previous base URL and API key.
+        stopStores()
+        attachStores(client: nil)
         derivedTask?.cancel()
         derivedTask = nil
         cameraTokenTask?.cancel()
