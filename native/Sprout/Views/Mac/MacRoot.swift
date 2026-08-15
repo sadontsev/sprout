@@ -33,7 +33,7 @@ struct MacRoot: View {
             // assignment in `withAnimation`, so without this the banner cuts in and out.
             ZStack {
                 if let toast = model.toast {
-                    MacToast(text: toast) { model.toast = nil }
+                    MacToast(toast: toast) { model.toast = nil }
                 }
             }
             .animation(Motion.standard(0.28), value: model.toast)

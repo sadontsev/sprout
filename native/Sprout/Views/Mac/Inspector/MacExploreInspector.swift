@@ -31,16 +31,6 @@ struct MacExploreInspector: View {
     /// arrives.
     @State private var failure: MWFailure?
 
-    /// Imports, keyed by the model each one belongs to.
-    ///
-    /// A **dictionary**, not one slot, and the difference is a bug the copy under the button
-    /// invites: "Import runs in the background… Browsing continues." With a single slot, starting B
-    /// while A was still downloading destroyed A's record — A's button went live again (a second,
-    /// identical download of the same file), A's completion then flipped B out of "Importing…", and
-    /// whichever finished last had its receipt shown under whichever model happened to be selected.
-    /// The key *is* the tag here; as a field beside the state it was free to name a different model
-    /// than the state it guarded.
-
     /// A resolve, with everything derived from it that the panel needs more than once.
     private struct Loaded {
         let resolved: MakerWorldResolved
@@ -52,8 +42,6 @@ struct MacExploreInspector: View {
         }
     }
 
-    /// Where one model's import has got to. Three states, because "running" and "finished" and
-    /// "refused" want three different things on screen.
     private var resolved: MakerWorldResolved? { loaded?.resolved }
     private var rows: [MWProfileRow] { loaded?.rows ?? [] }
     private var design: MWDesign? { resolved?.design }
@@ -351,29 +339,23 @@ struct MacExploreInspector: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// Which version Import will take, and **whose choice it was**.
+    /// Which version Import will take, and **whose choice it was** — see `MacExploreCopy.importPick`
+    /// for why those are two questions and not one.
     ///
-    /// Two questions that the old single sentence collapsed into one: "what did MakerWorld
-    /// recommend?" and "what will Import use?". `MakerWorld.preselect` deliberately *rejects*
-    /// MakerWorld's `defaultInstanceId` when that profile publishes no details — measured on model
-    /// 40146, where their pre-selected profile answers `400` — so in precisely the case this caption
-    /// exists for, the old copy credited MakerWorld with a version it had not recommended.
+    /// The membership test is done here rather than by handing the whole row set to a pure function:
+    /// `recommendationIsListed` is the only thing about the other 87 rows that the sentence depends
+    /// on, and one `contains` beats copying an array of ids out on every body evaluation.
     private var importPlan: String {
-        guard let picked else {
-            return "Import takes the one profile the resolve published."
-        }
-        guard let theirs = design?.defaultInstanceId else {
-            return "MakerWorld names no recommended version, so Import uses \(picked.title)."
-        }
-        if picked.id == theirs {
-            return "Import uses MakerWorld’s recommended version, \(picked.title)."
-        }
-        if !rows.contains(where: { $0.id == theirs }) {
-            return "MakerWorld’s recommended version isn’t among the ones it listed, so Import uses "
-                + "\(picked.title)."
-        }
-        return "MakerWorld’s recommended version publishes no print details, and those are the ones "
-            + "it most often refuses to release — so Import uses \(picked.title) instead."
+        let theirs = design?.defaultInstanceId
+        return MacExploreCopy.importPlan(
+            MacExploreCopy.importPick(
+                pickedId: picked?.id,
+                pickedTitle: picked?.title,
+                pickedPublishesDetail: picked?.detail != nil,
+                recommendedId: theirs,
+                recommendationIsListed: theirs.map { want in rows.contains { $0.id == want } } ?? false
+            )
+        )
     }
 
     private func sectionLabel(_ text: String) -> some View {
@@ -481,12 +463,13 @@ struct MacExploreInspector: View {
 
     // MARK: Counting
 
-    /// What the AMS can currently supply, upper-cased.
+    /// What the AMS holds, as TRAYS.
     ///
-    /// Read from live status exactly as the iOS `VersionChooserView` does, so the two screens cannot
-    /// disagree about what is loaded. **Empty means "we don't know"**, not "you have nothing".
-    /// What the AMS holds, as TRAYS. One builder in `VersionGrouping` — three views had their own
-    /// copy, and two collapsed it to a set of materials on the way, losing the tray count.
+    /// One builder — `VersionGrouping.trays(in:)`, read from live status exactly as the iOS
+    /// `VersionChooserView` does, so the two screens cannot disagree about what is loaded. Three
+    /// views had their own copy and two collapsed it to a `Set<String>` on the way, which lost the
+    /// tray COUNT: "is PLA loaded?" and "can three PLA slots each get a tray?" are different
+    /// questions, and the second is the one "fit your filament" claims to answer.
     ///
     /// Empty means "we don't know", not "you have nothing": no row is greyed out on a status that
     /// has not arrived.
@@ -494,10 +477,12 @@ struct MacExploreInspector: View {
         VersionGrouping.trays(in: model.status?.status)
     }
 
-    /// The materials on hand, for copy that lists them. Derived from the trays so it cannot drift.
-    private var printableMaterials: Set<String> { Set(loadedTrays.map(\.type)) }
-
-    private var knowsFilament: Bool { !printableMaterials.isEmpty }
+    /// **Has the AMS been read at all?** — not "does the user have filament", which is a question
+    /// nothing here can answer. `trays(in:)` drops trays with no material, so an empty list means
+    /// the status has not arrived (or reports no loaded spool) and `place` marks nothing missing.
+    /// Any count wearing the words "fit your filament" has to be withheld in that state, because it
+    /// would really be counting "rows that are labelled".
+    private var knowsFilament: Bool { !loadedTrays.isEmpty }
 
     /// Every number the summary states, from ONE placement pass.
     ///
@@ -620,6 +605,16 @@ struct MacExploreInspector: View {
             do {
                 let res = try await client.importMakerWorld(request)
                 explore.imports[id] = .landed(res)
+                // BOTH twins announce. The receipt card says where the file landed when this model
+                // is still the selected one; when it is not — which is the whole point of a
+                // background import — nothing in the view tree says anything, and "reports where the
+                // file landed" (§4, and the line under the button) is the entire promise. The guard
+                // used to be on the failure path alone, so a *successful* background import was the
+                // one outcome that reported nowhere at all.
+                announce(MacExploreCopy.landedToast(filename: res.filename,
+                                                    libraryFileId: res.libraryFileId,
+                                                    wasExisting: res.wasExisting == true),
+                         for: id)
                 // Files may well be on screen in another window, and the cold shelf here lists what
                 // has been imported — both are now stale.
                 await model.library.load()
@@ -627,12 +622,27 @@ struct MacExploreInspector: View {
             } catch {
                 let f = mwFailure(.importing, error)
                 explore.imports[id] = .failed(f)
-                // The card says it when this model is the one on screen. When it is not — which is
-                // the whole point of a background import — nothing would say it at all, and a
-                // failure nobody is shown is the same lie as a control that silently does nothing.
-                if selectedId != id { model.toast = f.message }
+                // A failure nobody is shown is the same lie as a control that silently does nothing.
+                announce(f.message, for: id)
             }
         }
+    }
+
+    /// Put a finished import's outcome where the user will actually meet it.
+    ///
+    /// `explore.imports` keeps the receipt and the failure card, so the outcome is durable — but it
+    /// is only *reachable* while that model is the selected one. "Did the import finish?" and "will
+    /// anyone be told?" are two questions; this answers the second, and the window's toast
+    /// (`MacRoot`) is where an outcome goes when the panel that owns it is showing something else.
+    ///
+    /// Called from the import `Task`, which outlives this view on purpose — `⌥⌘I` unmounts the
+    /// inspector mid-download and the outcome still has to land. `selectedId` is therefore read
+    /// through the captured `@SceneStorage` wrapper; if that read ever went stale it would report
+    /// the selection as it was when Import was pressed, which is this model, and the outcome would
+    /// simply not be announced — the behaviour before this guard existed, never something worse.
+    private func announce(_ message: String, for id: Int) {
+        guard MacExploreCopy.announcesInToast(finished: id, selected: selectedId) else { return }
+        model.toast = .failure(message)
     }
 
     /// The status matters: a MakerWorld refusal arrives as a 502 wrapping the upstream status, and
@@ -642,6 +652,118 @@ struct MacExploreInspector: View {
         MakerWorld.failure(step: step,
                            status: (error as? BambuddyError)?.status ?? 0,
                            detail: uploadApiDetail(error))
+    }
+}
+
+// MARK: - The decisions, without a window
+
+/// Explore's Mac decisions about **what the user is told** — not about layout.
+///
+/// Pure, `nonisolated`, and in a namespace rather than as `private var`s on the view, for the reason
+/// `MacPrinterCopy` gives: a computed property on a `View` is unreachable from `SproutTests`, and
+/// doc 18's Testing section requires window-free Mac logic to be tested. `SproutTests` carries the
+/// macOS destination (`project.yml`), so everything here is directly callable from a test case.
+enum MacExploreCopy {
+
+    // MARK: Reporting a finished import
+
+    /// Must this import's outcome be announced, or will the user meet it where they already are?
+    ///
+    /// **Two questions that look like one:** "did the import finish?" and "will anyone be told?".
+    /// The receipt card and the failure card are both drawn under the model they belong to, and
+    /// `ExploreModel.imports` keeps them, so an outcome is durable — but it is only *reachable*
+    /// while that model is the selected one. A background import — which is what the line under the
+    /// button promises, and the reason `imports` is keyed by model at all — finishes by definition
+    /// with something else selected, and then the panel says nothing.
+    ///
+    /// The guard used to sit on the failure twin alone, so a *successful* background import was the
+    /// single outcome that reported nowhere: §4's promise is "reports where the file landed", and
+    /// reporting where it landed is the whole of it.
+    nonisolated static func announcesInToast(finished id: Int, selected: Int?) -> Bool {
+        selected != id
+    }
+
+    /// A landed import, in the one line a toast has.
+    ///
+    /// Says **where** it landed, because that is what the promise is about — the filename, falling
+    /// back to the library id when the server sends none (it is optional in the response, and a
+    /// receipt reading "Added to your library —" with nothing after it is worse than an id).
+    /// `wasExisting` is carried through because "nothing was downloaded twice" is the answer to the
+    /// question a second receipt for the same model raises.
+    nonisolated static func landedToast(filename: String?, libraryFileId: Int,
+                                        wasExisting: Bool) -> String {
+        let what = filename?.nonEmpty ?? "library file \(libraryFileId)"
+        return wasExisting
+            ? "Already in your library — \(what). Nothing was downloaded twice."
+            : "Added to your library — \(what)."
+    }
+
+    // MARK: Which version an import will take
+
+    /// Whose choice the pending import is about to act on.
+    ///
+    /// Named cases rather than a bare sentence so the distinction is testable and so the copy and
+    /// the decision can be edited apart. The one that matters is `.substituted`: `MakerWorld.preselect`
+    /// deliberately **rejects** MakerWorld's `defaultInstanceId` when that profile publishes no
+    /// details, because an undescribed profile is measurably the kind MakerWorld refuses to release
+    /// — on model 40146 their own pre-selection answers `400`. So in precisely the case the caption
+    /// exists for, crediting MakerWorld with the pick attributes the app's own substitution to them.
+    enum ImportPick: Equatable {
+        /// No rows at all: the resolve's own profile is everything there is.
+        case resolveProfile
+        /// MakerWorld named one, it publishes details, and Import takes it.
+        case recommended(String)
+        /// MakerWorld named one, it publishes no details, and Import takes it anyway — nothing else
+        /// published any either. Worth saying, because these are the ones that answer `400`.
+        case recommendedUndescribed(String)
+        /// MakerWorld named one and Import takes a different one, because theirs publishes nothing.
+        case substituted(String)
+        /// MakerWorld named one that is not among the versions it listed.
+        case recommendedMissing(String)
+        /// MakerWorld named none.
+        case unrecommended(String)
+    }
+
+    /// - Parameters:
+    ///   - pickedId/pickedTitle: `MakerWorld.preselect`'s answer — what Import will really use.
+    ///   - recommendedId: `design.defaultInstanceId`. An **instance** id, matching `rows[].id`; it
+    ///     is not a `profileId`, and reading it as one is a documented way to get this wrong.
+    ///   - recommendationIsListed: whether that instance is among the rows shown. "MakerWorld
+    ///     recommends something we rejected" and "MakerWorld recommends something it never listed"
+    ///     have different explanations, and only the first is a substitution.
+    nonisolated static func importPick(pickedId: Int?, pickedTitle: String?,
+                                       pickedPublishesDetail: Bool,
+                                       recommendedId: Int?,
+                                       recommendationIsListed: Bool) -> ImportPick {
+        guard let pickedId, let pickedTitle else { return .resolveProfile }
+        guard let recommendedId else { return .unrecommended(pickedTitle) }
+        if pickedId == recommendedId {
+            return pickedPublishesDetail ? .recommended(pickedTitle)
+                                         : .recommendedUndescribed(pickedTitle)
+        }
+        return recommendationIsListed ? .substituted(pickedTitle)
+                                      : .recommendedMissing(pickedTitle)
+    }
+
+    /// The caption under the (absent) version chooser. Every branch names **who chose**.
+    nonisolated static func importPlan(_ pick: ImportPick) -> String {
+        switch pick {
+        case .resolveProfile:
+            return "Import takes the one profile the resolve published."
+        case .recommended(let title):
+            return "Import uses MakerWorld’s recommended version, \(title)."
+        case .recommendedUndescribed(let title):
+            return "Import uses MakerWorld’s recommended version, \(title) — but it publishes no "
+                + "print details, and those are the ones MakerWorld most often refuses to release."
+        case .substituted(let title):
+            return "MakerWorld’s recommended version publishes no print details, and those are the "
+                + "ones it most often refuses to release — so Import uses \(title) instead."
+        case .recommendedMissing(let title):
+            return "MakerWorld’s recommended version isn’t among the ones it listed, so Import uses "
+                + "\(title)."
+        case .unrecommended(let title):
+            return "MakerWorld names no recommended version, so Import uses \(title)."
+        }
     }
 }
 #endif

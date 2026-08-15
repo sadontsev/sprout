@@ -43,7 +43,7 @@ final class LibraryUploader {
                     Task { @MainActor in self?.fraction = f }
                 }
                 onUploaded?()
-                model.toast = "\(name) added to your library"
+                model.toast = .success("\(name) added to your library")
             } catch {
                 self.error = "Upload failed — " + (uploadApiDetail(error) ?? error.localizedDescription)
             }

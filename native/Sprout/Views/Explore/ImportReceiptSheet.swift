@@ -56,7 +56,7 @@ struct ImportReceiptSheet: View {
                         defer { opening = false }
                         guard let file = try? await client.getFileDetail(receipt.response.libraryFileId)
                         else {
-                            model.toast = "Couldn’t open \(filename) — it is in your library."
+                            model.toast = .failure("Couldn’t open \(filename) — it is in your library.")
                             dismiss()
                             return
                         }

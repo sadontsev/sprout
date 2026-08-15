@@ -25,7 +25,7 @@ enum MacOpenRouter {
         // A file we were handed but cannot take is worth saying out loud: the user explicitly chose
         // "Open with Sprout", so silence would read as the app hanging.
         if importable.count < files.count {
-            model.toast = "Sprout takes .3mf, .gcode and .stl files."
+            model.toast = .failure("Sprout takes .3mf, .gcode and .stl files.")
         }
 
         for url in schemes { routeScheme(url, model: model) }
@@ -40,7 +40,7 @@ enum MacOpenRouter {
         case "file":
             let id = url.pathComponents.dropFirst().first.flatMap(Int.init)
             guard let id else {
-                model.toast = "That link doesn’t name a file."
+                model.toast = .failure("That link doesn’t name a file.")
                 return
             }
             // Routed through the model, NOT by writing the selection's storage directly.
@@ -53,7 +53,7 @@ enum MacOpenRouter {
         case "printer":
             model.pendingOpen = .section(.printer)
         default:
-            model.toast = "Sprout doesn’t know how to open that link."
+            model.toast = .failure("Sprout doesn’t know how to open that link.")
         }
     }
 }

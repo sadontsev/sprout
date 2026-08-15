@@ -998,7 +998,7 @@ struct MacFilesSection: View {
     private func requestPrint(_ f: LibraryFile) {
         select(f)
         if let reason = MacFilesPrint.unavailableReason {
-            model.toast = reason
+            model.toast = .failure(reason)
             return
         }
         // LAN Developer Mode off means the printer refuses `.startPrint` outright. The gate keeps

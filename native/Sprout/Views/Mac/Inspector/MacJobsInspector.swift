@@ -21,7 +21,6 @@ struct MacJobsInspector: View {
     @SceneStorage(MacJobsSelection.run) private var selectedId: Int?
 
     @State private var confirmReprint = false
-    @State private var notice: JobActionMessage?
     @State private var lanAlert = false
 
     private var store: JobsStore { model.jobs }
@@ -40,8 +39,10 @@ struct MacJobsInspector: View {
         }
     }
 
-    /// The LAN explanation is attached one level ABOVE the other two, as on iOS: SwiftUI presents
-    /// one alert per view, and three stacked on the same view fight over the slot.
+    /// The LAN explanation is attached one level ABOVE the reprint confirmation, as on iOS: SwiftUI
+    /// presents one alert per view, and stacking them on the same view makes them fight over the
+    /// slot. There are two left, on two views. The third was the command's own outcome, which now
+    /// goes where every other Mac command outcome goes — `model.toast`.
     var body: some View {
         column
             .lockedActionAlert($lanAlert)
@@ -63,29 +64,25 @@ struct MacJobsInspector: View {
         } message: { e in
             Text(verbatim: "“\(JobsStore.historyName(e))” goes back into the queue.")
         }
-        .alert(
-            notice?.title ?? "",
-            isPresented: macJobsPresented($notice),
-            presenting: notice
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { note in
-            Text(verbatim: note.message)
-        }
     }
 
     // MARK: - Nothing selected
 
     /// Names the surface AND says what fills it. A blank inspector reads as a broken pane.
     private var placeholder: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "clock.arrow.circlepath")
+        let state = MacJobsInspectorPlaceholder.of(
+            selectedId: selectedId,
+            entries: store.entries,
+            historyFailed: store.historyFailed
+        )
+        return VStack(spacing: 8) {
+            Image(systemName: state.symbol)
                 .font(.system(size: 22))
                 .foregroundStyle(c.t3)
-            Text("No run selected")
+            Text(verbatim: state.title)
                 .font(.system(size: m.cardTitle, weight: .semibold))
                 .foregroundStyle(c.t2)
-            Text(verbatim: placeholderHint)
+            Text(verbatim: state.hint)
                 .font(.system(size: 11.5, weight: .medium))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(c.t3)
@@ -93,16 +90,6 @@ struct MacJobsInspector: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, m.cardPadding)
         .padding(.top, 60)
-    }
-
-    /// A selection that no longer resolves is a different fact from never having chosen one: the
-    /// archive reloads every 15 s and only ever holds the newest 50, so a run you were reading can
-    /// genuinely age out from under you.
-    private var placeholderHint: String {
-        if selectedId != nil && store.entries != nil {
-            return "That run is no longer in the newest 50 archived. Pick another row in History."
-        }
-        return "Pick a row in History to see how the print went, and to send it back to the queue."
     }
 
     // MARK: - The selected run
@@ -270,8 +257,87 @@ struct MacJobsInspector: View {
 
     private func reprint(_ entry: PrintLogEntry) {
         Task {
-            let outcome = await store.reprint(entry, printerId: model.printerId)
-            if let outcome { notice = outcome }
+            // BOTH outcomes go to `model.toast`, which `MacRoot` renders — the rule
+            // `MacHardwareSection` states and Printer, Power and Files follow. This was a second
+            // `.alert` stacked on the same view as the confirmation above it (the hazard this
+            // file's own doc comment warns about), and on SUCCESS it was a modal "Queued" that
+            // stopped the window until the user dismissed it — a dialog to acknowledge a dialog.
+            if let outcome = await store.reprint(entry, printerId: model.printerId) {
+                model.toast = MacJobsToast.toast(outcome)
+            }
+        }
+    }
+}
+
+// MARK: - What the empty inspector says
+
+/// What the inspector says when no run resolves — and, crucially, whether it may claim the selected
+/// run AGED OUT of the archive.
+///
+/// Two questions, and one of them was standing in for the other:
+///
+///  - **"is `store.entries` non-nil?"** — what the old predicate asked. `JobsStore.loadHistory`
+///    falls back to `entries = entries ?? []` on failure, so after a COLD archive failure `entries`
+///    is a non-nil empty array that was never read from the server.
+///  - **"has the archive been read, and is this run not in it?"** — the only thing that licenses
+///    "no longer in the newest 50". `MacJobsHistoryBody` already asks exactly this, and the section
+///    stopped making the claim on its strength; the inspector kept making it.
+///
+/// The combination is reachable on a plain launch, not just in theory: `selectedId` is restored from
+/// `@SceneStorage` before anything has loaded, so the very first frame after a failed archive fetch
+/// told the user their run had aged out of an archive the app had never managed to read.
+enum MacJobsInspectorPlaceholder: Equatable {
+    /// Nothing was ever picked — the ordinary state.
+    case nothingSelected
+    /// A selection is held and the archive has not answered yet.
+    case archiveLoading
+    /// A selection is held and the archive request failed, so whether the run is still there is
+    /// genuinely UNKNOWN. Says so instead of guessing either way.
+    case archiveUnread
+    /// The archive answered and the run is not in it. The archive holds only the newest 50 and
+    /// reloads every 15 s, so a run you were reading can genuinely age out from under you.
+    case selectionAgedOut
+
+    static func of(selectedId: Int?, entries: [PrintLogEntry]?, historyFailed: Bool) -> Self {
+        guard selectedId != nil else { return .nothingSelected }
+        switch MacJobsHistoryBody.of(entries: entries, failed: historyFailed) {
+        case .rows, .empty: return .selectionAgedOut
+        case .loading: return .archiveLoading
+        case .unknown: return .archiveUnread
+        }
+    }
+
+    /// "No run selected" is only true in one of these. The other three DO hold a selection, and
+    /// saying otherwise contradicted the hint printed directly underneath it.
+    var title: String {
+        switch self {
+        case .nothingSelected: "No run selected"
+        case .archiveLoading: "Loading the archive"
+        case .archiveUnread: "Archive not loaded"
+        case .selectionAgedOut: "That run isn't listed"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .nothingSelected:
+            "Pick a row in History to see how the print went, and to send it back to the queue."
+        case .archiveLoading:
+            "The run you had selected will appear here if it's still among the newest 50 archived."
+        case .archiveUnread:
+            "The archive didn't load, so this app can't say whether the run you had selected is still there. History has a Retry."
+        case .selectionAgedOut:
+            "That run is no longer among the newest 50 archived. Pick another row in History."
+        }
+    }
+
+    /// The failed case borrows the retry banner's glyph rather than the clock: a clock-with-an-arrow
+    /// above "Archive not loaded" reads as "still working on it", which is the one thing this state
+    /// is not.
+    var symbol: String {
+        switch self {
+        case .nothingSelected, .archiveLoading, .selectionAgedOut: "clock.arrow.circlepath"
+        case .archiveUnread: "wifi.slash"
         }
     }
 }

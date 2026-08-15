@@ -178,7 +178,13 @@ final class AppModel {
 
     var tab: TabKey = .printer
     var overlay: Overlay?
-    var toast: String?
+    /// The transient message on screen, if any.
+    ///
+    /// A value rather than a bare `String` because the Mac banner decorates by outcome, and the two
+    /// were previously the same thing: every message got a warning triangle, including "added to
+    /// your library" and "Queued". Two separate properties — a string and a kind — would be the
+    /// drift this codebase keeps finding; one value cannot disagree with itself.
+    var toast: Toast?
 
     /// Live view-model for the selected printer. Recomputed on every status change, which is cheap:
     /// it is a pure function over a value type.
@@ -556,9 +562,9 @@ final class AppModel {
             do {
                 try await work(client, id)
             } catch let e as BambuddyError {
-                toast = "\(label) failed — \(e.detail)"
+                toast = .failure("\(label) failed — \(e.detail)")
             } catch {
-                toast = "\(label) failed — \(error.localizedDescription)"
+                toast = .failure("\(label) failed — \(error.localizedDescription)")
             }
         }
     }

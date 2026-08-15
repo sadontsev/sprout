@@ -43,7 +43,7 @@ struct Shell: View {
             // never plays and it cuts in and out.
             ZStack {
                 if let toast = model.toast {
-                    ToastBanner(text: toast) { model.toast = nil }
+                    ToastBanner(toast: toast) { model.toast = nil }
                 }
             }
             .animation(Motion.standard(0.28), value: model.toast)
@@ -132,9 +132,14 @@ struct OverlayHost: View {
     }
 }
 
-/// Transient failure message. Auto-dismisses; tapping clears it early.
+/// Transient message. Auto-dismisses; tapping clears it early.
+///
+/// Deliberately undecorated on iOS: it is a plain sentence on a neutral surface, so unlike the Mac
+/// banner it never claimed an outcome it did not know. It takes the whole `Toast` anyway so the two
+/// platforms read one value, and so a future tint has the fact to hand.
 struct ToastBanner: View {
-    let text: String
+    let toast: Toast
+    private var text: String { toast.text }
     let onDismiss: () -> Void
     @Environment(\.palette) private var c
 

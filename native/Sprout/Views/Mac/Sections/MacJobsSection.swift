@@ -29,8 +29,10 @@ enum MacJobsSelection {
 /// selection drives the inspector rather than pushing anything. That is the single most Mac-shaped
 /// thing in the port, and it is why the history half is not a `ForEach` of cards.
 ///
-/// Every fetch lives in `JobsStore`. This file is layout, selection and alert plumbing only, and
-/// deliberately holds no `@State` that a store already owns.
+/// Every fetch lives in `JobsStore`. This file is layout, selection and presentation plumbing only,
+/// and deliberately holds no `@State` that a store already owns. The only modal it raises is a
+/// confirmation for an irreversible action; every command OUTCOME goes to `model.toast`, which
+/// `MacRoot` renders — the rule `MacHardwareSection` states and Printer, Power and Files follow.
 ///
 /// **The three blocks are three views on purpose.** `model.vm` is recomputed from the live status
 /// store, so any body that reads it re-evaluates on every status frame. While all three blocks were
@@ -217,6 +219,8 @@ private struct MacJobsLifetime: View {
 
             switch MacJobsLifetimeBody.of(
                 stats: store.stats,
+                statsAsked: store.statsAsked,
+                statsFailed: store.statsFailed,
                 entries: store.entries,
                 historyFailed: store.historyFailed
             ) {
@@ -228,9 +232,11 @@ private struct MacJobsLifetime: View {
                 // Not a wall of zeroes: a fresh install has no archive, and "0 prints · 0.0 h"
                 // reads as a broken fetch rather than an empty one.
                 note("No prints archived yet")
-            case .unavailable:
+            case .unavailable(let why):
+                // The headline is the same either way — no number can be shown — but the reason is
+                // not, and one sentence for both cases asserted the wrong one half the time.
                 note("Lifetime totals unavailable")
-                    .help("The archive's summary is a separate request and it didn't answer. The runs listed below are unaffected — ⌘R retries.")
+                    .help(why.help)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -291,23 +297,27 @@ private struct MacJobsUpNext: View {
     @Environment(\.metrics) private var m
 
     @State private var confirmRemove: QueueItem?
-    @State private var notice: JobActionMessage?
 
     private var store: JobsStore { model.jobs }
 
-    /// The lane split lives in `JobsStore` because the iOS tab applies exactly the same rule, and
-    /// "which jobs are mine" is the kind of predicate that goes quietly wrong when it is written
-    /// twice.
-    private var upcoming: [QueueItem] { JobsStore.upNext(store.queue, printerId: model.printerId) }
-    private var elsewhere: [QueueItem] { JobsStore.queuedElsewhere(store.queue, printerId: model.printerId) }
-
-    private var state: MacJobsQueueBody {
-        MacJobsQueueBody.of(queue: store.queue, failed: store.queueFailed, printerId: model.printerId)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
+        // ONE lane split and ONE state decision per body pass, passed down — the same discipline
+        // the History block below keeps for its row projection. Read as computed properties these
+        // re-filtered the whole queue four times: the header count, the banner's padding, the
+        // content switch and the "queued elsewhere" line.
+        //
+        // The lane split lives in `JobsStore` because the iOS tab applies exactly the same rule,
+        // and "which jobs are mine" is the kind of predicate that goes quietly wrong when it is
+        // written twice.
+        let upcoming = JobsStore.upNext(store.queue, printerId: model.printerId)
+        let elsewhere = JobsStore.queuedElsewhere(store.queue, printerId: model.printerId)
+        let state = MacJobsQueueBody.of(
+            queue: store.queue,
+            failed: store.queueFailed,
+            printerId: model.printerId
+        )
+        return VStack(alignment: .leading, spacing: 0) {
+            header(state, count: upcoming.count)
             if store.queueFailed {
                 // A failed fetch is NOT an empty queue — the store keeps the last rows and raises
                 // this flag, so the banner sits ABOVE whatever is still on screen rather than
@@ -318,7 +328,7 @@ private struct MacJobsUpNext: View {
                 // Nothing follows the banner when the queue was never answered, so no gap either.
                 .padding(.bottom, state == .unknown ? 0 : 8)
             }
-            content
+            content(state, upcoming: upcoming)
             if !elsewhere.isEmpty {
                 let names = JobsStore.otherPrinterNames(elsewhere, printers: model.printers)
                 Text(verbatim: "\(elsewhere.count) more \(elsewhere.count == 1 ? "job" : "jobs") queued for \(names.joined(separator: ", ")).")
@@ -327,6 +337,10 @@ private struct MacJobsUpNext: View {
                     .padding(.top, 8)
             }
         }
+        // The ONE presentation this view raises: a confirmation for an irreversible action, which
+        // is what a modal is for. The removal's OUTCOME goes to `model.toast` (see `remove`) —
+        // there used to be a second `.alert` for it on this same view, and SwiftUI gives a view one
+        // presentation slot, so the two fought over it.
         .alert(
             "Remove from queue?",
             isPresented: macJobsPresented($confirmRemove),
@@ -337,20 +351,11 @@ private struct MacJobsUpNext: View {
         } message: { job in
             Text(verbatim: "“\(JobsStore.queueName(job))” won't print.")
         }
-        .alert(
-            notice?.title ?? "",
-            isPresented: macJobsPresented($notice),
-            presenting: notice
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { note in
-            Text(verbatim: note.message)
-        }
     }
 
-    private var header: some View {
+    private func header(_ state: MacJobsQueueBody, count: Int) -> some View {
         HStack(spacing: 10) {
-            Text(verbatim: "UP NEXT · \(upcoming.count)")
+            Text(verbatim: state.headerLabel(count: count))
                 .font(.mono(m.monoLabel, weight: .bold))
                 .tracking(1.1)
                 .foregroundStyle(c.t3)
@@ -359,22 +364,28 @@ private struct MacJobsUpNext: View {
             // `JobsStore` has no reorder method. A drag that reverted on the next 5 s poll is
             // precisely this codebase's recurring bug — an affordance gated on a capability nobody
             // checked — so the caption states the truth instead.
-            Text("server order · this app can't reorder the queue")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(c.t3)
-                .help("Bambuddy's queue API has no verified reorder route, so no drag is offered rather than one that silently snaps back.")
+            //
+            // Shown only when there is a list for it to be true OF, exactly as HISTORY's "newest
+            // 50" scope note is: a sentence about the ordering of the rows, printed above a block
+            // that is deliberately blank, describes a list that is not on screen.
+            if state == .rows {
+                Text("server order · this app can't reorder the queue")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(c.t3)
+                    .help("Bambuddy's queue API has no verified reorder route, so no drag is offered rather than one that silently snaps back.")
+            }
             Spacer(minLength: 0)
         }
         .padding(.bottom, 9)
     }
 
     @ViewBuilder
-    private var content: some View {
+    private func content(_ state: MacJobsQueueBody, upcoming: [QueueItem]) -> some View {
         switch state {
         case .loading:
             MacJobsLoadingRow()
         case .rows:
-            queueList
+            queueList(upcoming)
         case .unknown:
             // Deliberately nothing. The retry banner above has already said the only true thing
             // there is to say; a placeholder underneath it would be the app inventing an answer it
@@ -414,14 +425,14 @@ private struct MacJobsUpNext: View {
     private static let queueRowHeight: CGFloat = thumbSize + rowPadding * 2
     private static let queueRowGap: CGFloat = 8
 
-    private var queueListHeight: CGFloat {
-        let n = CGFloat(upcoming.count)
+    private func queueListHeight(_ count: Int) -> CGFloat {
+        let n = CGFloat(count)
         let content = n * Self.queueRowHeight + max(n - 1, 0) * Self.queueRowGap
         let cap = Self.queueRowHeight * 3.5 + Self.queueRowGap * 3
         return min(content, cap)
     }
 
-    private var queueList: some View {
+    private func queueList(_ upcoming: [QueueItem]) -> some View {
         ScrollView {
             VStack(spacing: Self.queueRowGap) {
                 ForEach(Array(upcoming.enumerated()), id: \.element.id) { index, job in
@@ -432,7 +443,7 @@ private struct MacJobsUpNext: View {
         .scrollIndicators(.automatic)
         // Every queued job stays reachable (each row carries the only Remove it has), which is why
         // this scrolls rather than truncating to "+3 more".
-        .frame(height: queueListHeight)
+        .frame(height: queueListHeight(upcoming.count))
     }
 
     private func queueRow(_ job: QueueItem, ordinal: Int) -> some View {
@@ -476,9 +487,12 @@ private struct MacJobsUpNext: View {
 
     private func remove(_ job: QueueItem) {
         Task {
-            let outcome = await store.remove(job)
-            // A successful removal says nothing: the row simply leaves the list.
-            if let outcome { notice = outcome }
+            // A successful removal says nothing: the row simply leaves the list. A failure goes to
+            // `model.toast`, which `MacRoot` renders — the rule `MacHardwareSection` states and
+            // Printer, Power and Files follow. It used to raise its own modal, so a queue removal
+            // that Bambuddy refused stopped the window until it was dismissed, while the identical
+            // refusal of Pause or Stop six inches away slid in and out on its own.
+            if let outcome = await store.remove(job) { model.toast = MacJobsToast.toast(outcome) }
         }
     }
 }
@@ -690,6 +704,28 @@ enum MacJobsQueueBody: Equatable {
             ? .emptyEverywhere
             : .elsewhereOnly
     }
+
+    /// The heading above the lane — with a count, or without one.
+    ///
+    /// Two questions, and the header was answering the wrong one:
+    ///
+    ///  - **"how many jobs are in this printer's lane?"** always has an `Int` answer, because
+    ///    `JobsStore.upNext` returns an empty array for a queue that never loaded exactly as
+    ///    readily as for one that is genuinely empty.
+    ///  - **"how many jobs is this block SHOWING?"** is what a number beside a heading claims, and
+    ///    in `.loading` and `.unknown` it has no answer at all.
+    ///
+    /// Rendering the first as the second put `UP NEXT · 0` above a retry banner and a deliberately
+    /// blank body — the heading asserting the empty lane that `content` had just refused to assert,
+    /// one line apart, on the same fetch failure. The two empty states drop the count too: the
+    /// placeholder card underneath says "Nothing queued…" in words, and `· 0` on top of it is the
+    /// same fact told twice (iOS omits the whole header there for the same reason).
+    func headerLabel(count: Int) -> String {
+        switch self {
+        case .rows: "UP NEXT · \(count)"
+        case .loading, .unknown, .emptyEverywhere, .elsewhereOnly: "UP NEXT"
+        }
+    }
 }
 
 /// What the HISTORY block shows under its heading — the same three-way distinction, for the same
@@ -708,25 +744,68 @@ enum MacJobsHistoryBody: Equatable {
 
 /// What the LIFETIME PRINTS card shows.
 ///
-/// `stats` is its OWN request (`getArchiveStats`), and `JobsStore.loadHistory` overwrites it with
-/// `nil` on any failure — so `stats == nil` answers "did the summary call come back?", NOT "is the
-/// archive empty?". Reading the first as the second put "No prints archived yet" on a card sitting
-/// directly above fifty archived runs, and made a card reading "213 · 94 % success" flip to it and
-/// back on every transient failure.
+/// `stats` is its OWN request (`getArchiveStats`), so three separate facts hide behind a nil one,
+/// and every pair of them that gets conflated produces a card asserting something it has not
+/// established:
 ///
-/// "The archive is empty" is therefore only said when BOTH requests answered and both were empty.
+///  - **"has the summary been ASKED yet?"** — `JobsStore.statsAsked`. `loadHistory` assigns
+///    `entries` and only THEN awaits the summary, so on every cold load there is a window whose
+///    observed state is `(stats: nil, entries: [...], historyFailed: false)`. Keyed on `stats == nil`
+///    this card fell through to "Lifetime totals unavailable · it didn't answer" about a request
+///    that had not answered *yet*. `statsAsked` is the only thing that tells in-flight from refused,
+///    because a nil `stats` is the same value in both.
+///  - **"did the ask FAIL?"** — `JobsStore.statsFailed`. Note that a failed refresh no longer clears
+///    the previous figures, so a card reading "213 · 94 % success" keeps them instead of flipping to
+///    a placeholder and back on every transient failure.
+///  - **"is the archive empty?"** — only the summary's own `totalPrints == 0` says that, and it is
+///    only repeated here when it will not contradict the table beside it (see below).
 enum MacJobsLifetimeBody: Equatable {
     case loading
     case figures(ArchiveStats)
-    /// The summary did not answer. Says so, rather than inventing a total.
-    case unavailable
+    /// No lifetime total can be stated — and *why*, because the two reasons need different words.
+    case unavailable(NoTotal)
     case empty
 
-    static func of(stats: ArchiveStats?, entries: [PrintLogEntry]?, historyFailed: Bool) -> MacJobsLifetimeBody {
+    /// Why the card has no number to show. The headline is identical for both; the explanation is
+    /// the part that was lying, by telling every case that the request "didn't answer".
+    enum NoTotal: Equatable {
+        /// The summary request itself did not come back.
+        case requestFailed
+        /// It came back, and nothing in it establishes a total this card can stand behind — no
+        /// count at all, or a zero contradicted by the runs listed below.
+        case answeredWithoutOne
+
+        var help: String {
+            switch self {
+            case .requestFailed:
+                "The archive's summary is a separate request and it didn't answer. The runs listed below are unaffected — ⌘R retries."
+            case .answeredWithoutOne:
+                "The archive's summary answered without a lifetime total in it. The runs listed below are unaffected — ⌘R retries."
+            }
+        }
+    }
+
+    static func of(
+        stats: ArchiveStats?,
+        statsAsked: Bool,
+        statsFailed: Bool,
+        entries: [PrintLogEntry]?,
+        historyFailed: Bool
+    ) -> MacJobsLifetimeBody {
+        // Figures whenever we have them, including a set kept through a failed refresh.
         if let stats, (stats.totalPrints ?? 0) > 0 { return .figures(stats) }
-        if let total = stats?.totalPrints, total == 0, entries?.isEmpty == true, !historyFailed { return .empty }
-        if stats == nil && entries == nil && !historyFailed { return .loading }
-        return .unavailable
+        // "Has it been asked?", NOT "did it come back?" — see the note above.
+        if !statsAsked { return .loading }
+        if statsFailed { return .unavailable(.requestFailed) }
+        // "Is the table beside this card listing runs?", NOT "did the archive list request
+        // succeed?". The corroboration this needs is only that the card will not read "No prints
+        // archived yet" above visible archived prints — and after a cold archive failure the block
+        // below renders NOTHING (`MacJobsHistoryBody.unknown`), so there is nothing to contradict.
+        // Asking `historyFailed` directly answered the nearby question and suppressed a true
+        // "empty" whenever the unrelated list request happened to fail.
+        let runsListed = MacJobsHistoryBody.of(entries: entries, failed: historyFailed) == .rows
+        if let total = stats?.totalPrints, total == 0, !runsListed { return .empty }
+        return .unavailable(.answeredWithoutOne)
     }
 }
 
@@ -927,6 +1006,35 @@ enum MacJobQueue {
     }
 }
 
+// MARK: - Command outcomes
+
+/// A `JobActionMessage` as the ONE line `model.toast` shows.
+///
+/// The store returns a title AND a message because it was written for an alert, which has a slot for
+/// each. The Mac tree reports every command outcome through the toast instead (`MacToast`, and the
+/// rule as `MacHardwareSection` states it), and a toast is one line — so the halves are joined the
+/// way every other Mac command failure already reads: `AppModel.perform` writes
+/// "Pause failed — AMS is busy". Neither half is dropped. The title is the only thing that names
+/// WHICH action spoke, and the message is the only thing carrying Bambuddy's own words for why —
+/// a 409's "AMS is busy" beats any transport description this app could substitute.
+enum MacJobsToast {
+    /// The whole message, with the outcome it belongs to.
+    ///
+    /// `JobActionMessage.succeeded` is the fact — not a guess from the copy. "Queued — the job is
+    /// back in the queue" was going through the failure banner and wearing a warning triangle.
+    static func toast(_ m: JobActionMessage) -> Toast {
+        m.succeeded ? .success(text(m)) : .failure(text(m))
+    }
+
+    static func text(_ outcome: JobActionMessage) -> String {
+        let title = outcome.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = outcome.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty { return message }
+        if message.isEmpty { return title }
+        return "\(title) — \(message)"
+    }
+}
+
 // MARK: - Shared chrome
 
 /// A fetch failed — deliberately distinct from an empty list, which would tell the user their queue
@@ -1001,9 +1109,11 @@ struct MacJobsChipButtonStyle: ButtonStyle {
     }
 }
 
-/// Drives an `isPresented:` alert from an optional payload, clearing it on dismiss. Shared with the
-/// Jobs inspector, which presents the reprint confirmation the same way; the iOS tab keeps its own
-/// copy because the two view trees duplicate layout plumbing and nothing else.
+/// Drives an `isPresented:` alert from an optional payload, clearing it on dismiss. Used by the ONE
+/// presentation Jobs still raises — the Remove confirmation, which needs the job it is asking about.
+/// (The reprint confirmation is a plain `Bool`, and command outcomes are toasts now, not alerts.)
+/// The iOS tab keeps its own copy because the two view trees duplicate layout plumbing and nothing
+/// else.
 /// `@MainActor` so the two closures inherit main-actor isolation: `Binding(get:set:)` takes
 /// `@Sendable` closures, and a `Binding` is not `Sendable`, so a nonisolated helper captures it into
 /// a concurrency warning under `SWIFT_STRICT_CONCURRENCY: complete`.

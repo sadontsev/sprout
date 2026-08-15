@@ -24,7 +24,7 @@ struct MacDropTarget: ViewModifier {
                 guard !accepted.isEmpty else {
                     // Rejected explicitly rather than silently. A drop that vanishes reads as a
                     // failed app; naming the four types it takes is the whole remedy.
-                    model.toast = "Sprout takes .3mf, .gcode and .stl files."
+                    model.toast = .failure("Sprout takes .3mf, .gcode and .stl files.")
                     return false
                 }
                 MacFileImport.ingest(accepted, model: model)

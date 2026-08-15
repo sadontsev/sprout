@@ -29,7 +29,7 @@ enum MacFileImport {
     @MainActor
     static func ingest(_ urls: [URL], model: AppModel) {
         guard let client = model.client else {
-            model.toast = "Connect to a server before adding files."
+            model.toast = .failure("Connect to a server before adding files.")
             return
         }
         // `LibraryUploader` runs one transfer at a time by design (`guard !busy` returns early), so
@@ -61,7 +61,7 @@ enum MacFileImport {
         guard let raw = NSPasteboard.general.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
         else {
-            model.toast = "There’s nothing on the clipboard to open."
+            model.toast = .failure("There’s nothing on the clipboard to open.")
             return false
         }
         explore.query = raw

@@ -50,13 +50,21 @@ enum MacHardwareSeverity: Hashable {
 
 // MARK: - Triage inputs
 
-/// The one triage call both Hardware surfaces make.
+/// The one triage call **every Mac surface** makes.
 ///
-/// The section's picker dots and the inspector's card have to be the same list — they are the same
-/// signal said loudly and quietly. Each building its own `HardwareTriage.items(...)` meant three
-/// arguments that had to be kept identical by hand across two files, and one of them (`nozzlesKnown`)
-/// had already drifted: the section parsed the whole nozzle rack for it while `MacPrinterInspector`
-/// passed the raw spec array. One function, one set of arguments, nothing to keep in sync.
+/// Three cards ask "what needs doing": the Hardware section's picker dots, the Hardware inspector's
+/// card, and the Printer inspector's triage block. They are the same signal said loudly and quietly,
+/// so they must be the same list.
+///
+/// Each used to build its own `HardwareTriage.items(...)` — three arguments kept identical by hand
+/// across three files — and one had already drifted. `nozzlesKnown` was `MacNozzleRack.reported(...)`
+/// here and `!(status?.nozzles ?? []).isEmpty` in `MacPrinterInspector`, which misses the H2's nozzle
+/// RACK entirely: on that machine one card could call the nozzles unknown while another, one click
+/// away, said the opposite.
+///
+/// It was harmless only because `HardwareTriage.items` currently discards the argument
+/// (`_ = nozzlesKnown`) — which is worse than a visible bug, not better: the drift was invisible and
+/// would have surfaced the moment that parameter started being used.
 enum MacHardwareTriage {
     @MainActor
     static func items(_ model: AppModel, dash: DashVM) -> [HardwareTriage.Item] {
@@ -84,21 +92,25 @@ struct MacHardwareSection: View {
     @Environment(\.metrics) private var m
 
     @State private var lanAlert = false
-    @State private var dryAlert: MacDryAlert?
     @State private var confirmStop: DryerVM?
     @State private var confirmDone: MaintenanceItem?
-    /// Units with a start in flight, and units with a stop in flight — two sets, not one slot.
+    /// The start RUNS in flight, and the units with a stop in flight — two collections keyed by unit,
+    /// not one slot.
     ///
     /// A single `busyDryer: Int?` answered "is SOMETHING busy, and which was it last", which is a
     /// different question from "is this unit's start in flight". Starting unit 0 and then unit 1
     /// cleared the first unit's spinner; stopping one cycle disabled the Start on another. Three
     /// AMS units are the owner's normal configuration, so this is the everyday case.
-    @State private var starting: Set<Int> = []
+    ///
+    /// A **run** is the whole start sequence as ONE task: the request, then the nine-second check
+    /// that the printer really entered drying (`dryRun`). One task rather than two because "the user
+    /// pressed Start on this unit and we do not yet know the outcome" is one question, and it is true
+    /// from the moment of the click. Splitting it — a `starting` flag set on click, a verification
+    /// handle created only once `dryingStart` had RETURNED — left a hole exactly the width of the
+    /// request: a Stop pressed during it cancelled nothing, and nine seconds later the app reported
+    /// that the cycle the user had just cancelled never began.
+    @State private var dryRuns: [Int: Task<Void, Never>] = [:]
     @State private var stopping: Set<Int> = []
-    /// Post-start check that the printer actually entered drying — see `verifyDrying`. Keyed by unit
-    /// for the same reason as above: one slot meant starting a second unit within 9 s cancelled the
-    /// first unit's verification, and its refusal was then never surfaced at all.
-    @State private var dryVerify: [Int: Task<Void, Never>] = [:]
     /// The printer the store has already been reloaded for — see the `.task` below.
     @State private var reloadedFor: Int?
 
@@ -107,6 +119,12 @@ struct MacHardwareSection: View {
     private var locked: LockedActions { LockedActions(mode: model.lanMode, explaining: $lanAlert) }
 
     private func nozzleRows(_ dash: DashVM) -> [MacNozzleRow] { MacNozzleRack.rows(status, dash: dash) }
+
+    /// "Has this unit's Start been pressed and not yet resolved?"
+    ///
+    /// The spinner, the disabled Start and the menu item all ask exactly this, and the answer IS "a
+    /// run is in flight" — so there is no second flag that can drift out of step with the task.
+    private func startingDrying(_ amsId: Int) -> Bool { dryRuns[amsId] != nil }
 
     var body: some View {
         // `model.vm` is a COMPUTED property: every read re-runs the whole dashboard presenter,
@@ -163,25 +181,18 @@ struct MacHardwareSection: View {
             let previous = reloadedFor
             reloadedFor = model.printerId
             guard let previous, previous != model.printerId else { return }
+            // The PRINTER changed, so any start still being checked on belongs to the machine we just
+            // left. AMS ids are not unique across machines — 0, 1 and 128 name a unit on every one of
+            // them — so both the spinner and the nine-second verdict would land on the wrong cards.
+            cancelDryRuns()
             await hw.reload()
         }
-        .onDisappear {
-            for task in dryVerify.values { task.cancel() }
-        }
+        // Deliberately NO `.onDisappear { cancel }`. Leaving Hardware must not discard a start we are
+        // still checking on: that cancel threw away the printer's refusal ("mqtt message verify
+        // failed") for anyone who pressed Start and hit ⌘2 within nine seconds — the exact message
+        // the check exists to catch. The verdict now goes to `model.toast`, which `MacRoot` renders
+        // above every section, so it survives the section being torn down.
         .lockedActionAlert($lanAlert)
-        // Command failures go to `model.toast` like every other printer command in the app (§1).
-        // This alert is for the ONE message that is not a reply to a click: the drying verification
-        // lands nine seconds later, unrequested, and carries instructions — a five-second toast is
-        // the wrong surface for a paragraph the user did not ask for.
-        .alert(
-            dryAlert?.title ?? "",
-            isPresented: Binding(get: { dryAlert != nil }, set: { if !$0 { dryAlert = nil } }),
-            presenting: dryAlert
-        ) { _ in
-            Button("OK", role: .cancel) {}
-        } message: { a in
-            Text(a.message)
-        }
     }
 
     // MARK: Chrome
@@ -349,55 +360,16 @@ struct MacHardwareSection: View {
         let all = Dryer.present(status)
         let active = all.filter(\.active)
         let idle = all.filter { !$0.active }
-        let damp = idle.filter { dampness($0) == .damp }
-        let dry = idle.filter { dampness($0) == .dry }
-        let unread = idle.filter { dampness($0) == .unknown }
-        let stranded = dampWithoutDryer(units, dryers: all)
+        let damp = idle.filter { MacDryingCopy.dampness(humidityPct: $0.humidityPct) == .damp }
+        let dry = idle.filter { MacDryingCopy.dampness(humidityPct: $0.humidityPct) == .dry }
+        let unread = idle.filter { MacDryingCopy.dampness(humidityPct: $0.humidityPct) == .unknown }
+        let stranded = MacDryingCopy.dampWithoutDryer(units, dryers: all)
 
         ForEach(active) { d in activeDryerCard(d, units) }
         ForEach(damp) { d in dampDryerCard(d, units) }
-        if !stranded.isEmpty { noDryerCard(stranded) }
+        if !stranded.isEmpty { noDryerCard(stranded: stranded, dryers: all, units: units) }
         if !dry.isEmpty { idleDryerRow(dry, units: units, reading: .known) }
         if !unread.isEmpty { idleDryerRow(unread, units: units, reading: .unknown) }
-    }
-
-    /// What a unit's humidity reading says — including "it hasn't said".
-    private enum Dampness { case damp, dry, unknown }
-
-    /// Three answers, because a single `isDamp` Bool conflated two questions: "is this unit above
-    /// the threshold?" and "did this unit report a reading at all?". `!isDamp` was answering the
-    /// first for units that had never answered the second, which is how a unit with no hygrometer
-    /// reading rendered "AMS 1 is dry · Nothing here needs a cycle" — the same claim-from-missing-data
-    /// the slot subtitle refuses two hundred lines down ("never 0 %"), and the same one the inspector
-    /// refuses when it prints "—" for this very reading.
-    ///
-    /// 0 counts as unknown deliberately: an AMS that has not taken a reading publishes 0, and
-    /// `MacHardwareInspector.humidityText` already treats `> 0` as the known test.
-    ///
-    /// The threshold is `HardwareTriage.dampRH`, the same constant the reason line quotes. A local
-    /// number here would let the card say "38 % is above the 30 % you'd want" while appearing at 45.
-    private func dampness(_ d: DryerVM) -> Dampness {
-        guard let rh = d.humidityPct, rh > 0 else { return .unknown }
-        return Double(rh) >= HardwareTriage.dampRH ? .damp : .dry
-    }
-
-    /// The units that are damp and have **no dryer at all**.
-    ///
-    /// Two predicates for what looks like one question. "Is this unit damp?" is answered from
-    /// `DashVM.amsUnits`, which is every attached unit — and that is what raises the amber dot on the
-    /// picker and the "AMS 1 at 38 % RH — Filament ›" row in the inspector. "Can this unit dry
-    /// itself?" is answered by `Dryer.present`, which returns nothing at all unless the printer
-    /// reports `supportsDrying` and the unit has a heater. Every card below used to come from the
-    /// second, so an AMS Lite at 38 % RH lit a warning that pointed at a pane which then said
-    /// nothing whatsoever about it. This is the missing sentence, and it says the honest thing: the
-    /// reading is real, and there is no control here that can fix it.
-    private func dampWithoutDryer(_ units: [AmsUnitVM], dryers: [DryerVM]) -> [AmsUnitVM] {
-        let dryable = Set(dryers.map(\.amsId))
-        return units.filter { unit in
-            guard !dryable.contains(unit.id) else { return false }
-            guard let rh = unit.humidity, rh.isFinite, rh > 0 else { return false }
-            return rh >= HardwareTriage.dampRH
-        }
     }
 
     private func unitLabel(_ amsId: Int, in units: [AmsUnitVM]) -> String {
@@ -463,7 +435,7 @@ struct MacHardwareSection: View {
     /// promises — see `MacQuickDry`.
     private func dampDryerCard(_ d: DryerVM, _ units: [AmsUnitVM]) -> some View {
         let rh = Double(d.humidityPct ?? 0)
-        let busy = starting.contains(d.amsId)
+        let busy = startingDrying(d.amsId)
         return HStack(spacing: 14) {
             ZStack {
                 RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.heatingDim)
@@ -527,19 +499,23 @@ struct MacHardwareSection: View {
 
     /// Damp, with nothing on this machine that can dry it. No button, because there is no request to
     /// send — and no silence either, because the picker dot and the inspector both point here.
-    private func noDryerCard(_ units: [AmsUnitVM]) -> some View {
+    ///
+    /// `dryers` and `units` are passed in rather than recomputed: WHY there is no cycle to offer, and
+    /// WHERE the spool could go instead, are two facts about the rest of the machine, and the card
+    /// used to answer both by assumption. See `MacDryingCopy.noDryerReason`.
+    private func noDryerCard(stranded: [AmsUnitVM], dryers: [DryerVM], units: [AmsUnitVM]) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "humidity")
                 .font(.system(size: 14))
                 .foregroundStyle(c.heating)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 5) {
-                Text(units.count == 1
-                     ? "\(units[0].label) is damp"
-                     : "\(units.count) units are damp")
+                Text(stranded.count == 1
+                     ? "\(stranded[0].label) is damp"
+                     : "\(stranded.count) units are damp")
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(c.t1)
-                Text(noDryerReason(units))
+                Text(noDryerReason(stranded: stranded, dryers: dryers, units: units))
                     .font(.system(size: 11))
                     .foregroundStyle(c.t2)
                     .monospacedDigit()
@@ -557,14 +533,20 @@ struct MacHardwareSection: View {
     /// The same threshold the drying copy quotes, and then the part that differs: there is no cycle
     /// to offer. Naming the reading matters — this is the only place the flagged number appears once
     /// the unit has no dryer card to carry it.
-    private func noDryerReason(_ units: [AmsUnitVM]) -> String {
-        let readings = units
-            .map { "\($0.label) at \(SafeInt.rounded($0.humidity)) % RH" }
-            .joined(separator: ", ")
-        let subject = units.count == 1 ? "This unit has no dryer" : "These units have no dryer"
-        return "\(readings) — above the \(Int(HardwareTriage.dampRH)) % you’d want for PETG. "
-             + "\(subject), so there is no cycle to start here. Dry the spool in a standalone "
-             + "filament dryer, or move it to a unit that can heat (AMS 2 Pro or HT)."
+    ///
+    /// The sentence itself is in `MacDryingCopy` so its two decisions can be tested: *why* there is
+    /// no dryer (the printer reports no drying support at all, versus this unit having no heater),
+    /// and *where else* the spool could go. This function's job is only to gather the facts those
+    /// decisions need — the unit kinds, the printer's own `supportsDrying`, and the labels of the
+    /// units that CAN dry.
+    private func noDryerReason(stranded: [AmsUnitVM], dryers: [DryerVM], units: [AmsUnitVM]) -> String {
+        MacDryingCopy.noDryerReason(
+            stranded.map {
+                MacDryingCopy.DampUnit(label: $0.label, rh: $0.humidity ?? 0, isHt: $0.kind == .ht)
+            },
+            cause: MacDryingCopy.noDryerCause(supportsDrying: status?.supportsDrying),
+            dryElsewhere: dryers.map { unitLabel($0.amsId, in: units) }
+        )
     }
 
     /// Whether an idle unit's humidity reading is something we have or something we lack.
@@ -599,7 +581,7 @@ struct MacHardwareSection: View {
                     Text(reading == .known ? "Dry anyway" : "Dry it")
                 }
                 .buttonStyle(MacSecondaryButtonStyle())
-                .disabled(starting.contains(ready[0].amsId) || !ready[0].blockers.isEmpty)
+                .disabled(startingDrying(ready[0].amsId) || !ready[0].blockers.isEmpty)
                 .locked(.dryStart, by: locked)
                 .help(dryHelp(ready[0]))
             } else {
@@ -608,7 +590,7 @@ struct MacHardwareSection: View {
                         Button("\(unitLabel(d.amsId, in: units)) — \(MacQuickDry.hours) h at \(MacQuickDry.temp(ceiling: d.maxTemp)) °C") {
                             locked.press(.dryStart) { startDrying(d) }()
                         }
-                        .disabled(starting.contains(d.amsId) || !d.blockers.isEmpty)
+                        .disabled(startingDrying(d.amsId) || !d.blockers.isEmpty)
                     }
                 }
                 .menuStyle(.borderlessButton)
@@ -1033,23 +1015,14 @@ struct MacHardwareSection: View {
         let amsId = d.amsId
         let temp = MacQuickDry.temp(ceiling: d.maxTemp)
         let hours = MacQuickDry.hours
-        starting.insert(amsId)
-        Task {
-            do {
-                // `filament: nil` on purpose. This button dries the UNIT at the generic cycle the
-                // reason line quotes; naming one of several loaded spools would make Bambuddy
-                // record a claim the user never made.
-                try await client.dryingStart(printerId, amsId: amsId, temp: temp, hours: hours,
-                                             filament: nil, rotate: true)
-                // `starting` deliberately stays set until the verification resolves: HTTP 200 means
-                // "the command was published", not "the cycle began", and clearing here put the
-                // button back to "Start drying" for a unit that had not started — re-pressable
-                // during exactly the nine seconds we are waiting to find out.
-                verifyDrying(client: client, printerId: printerId, amsId: amsId)
-            } catch {
-                starting.remove(amsId)
-                model.toast = "Start drying failed — \(macHwDetail(error))"
-            }
+        // A second press on the same unit supersedes the first. That keeps ONE invariant true, and
+        // `dryRun` leans on it: a run loses its slot in `dryRuns` only by being cancelled, so a run
+        // that has NOT been cancelled may safely clear the slot when it finishes. (The old code
+        // cleared unconditionally after its sleep, which threw away the newer run's handle — after
+        // which a Stop had nothing left to cancel.)
+        dryRuns[amsId]?.cancel()
+        dryRuns[amsId] = Task {
+            await dryRun(client: client, printerId: printerId, amsId: amsId, temp: temp, hours: hours)
         }
     }
 
@@ -1057,79 +1030,89 @@ struct MacHardwareSection: View {
         guard let client = model.client else { return }
         let printerId = model.printerId
         let amsId = d.amsId
-        // A stop supersedes a start we are still verifying — otherwise the alert fires nine seconds
-        // later to report that the cycle the user just cancelled never began.
-        dryVerify[amsId]?.cancel()
-        dryVerify[amsId] = nil
-        starting.remove(amsId)
+        // A stop supersedes a start we have not finished checking on — **including one whose request
+        // is still in flight**. That is the whole reason the run is stored before the request goes
+        // out: cancelling only what had already come back left the nine-second verdict running, and
+        // it then reported that the cycle the user had just cancelled never began.
+        dryRuns[amsId]?.cancel()
+        dryRuns[amsId] = nil
         stopping.insert(amsId)
         Task {
             do { try await client.dryingStop(printerId, amsId: amsId) } catch {
-                model.toast = "Stop drying failed — \(macHwDetail(error))"
+                model.toast = .failure("Stop drying failed — \(macHwDetail(error))")
             }
             stopping.remove(amsId)
         }
     }
 
+    /// Drop every start we are still checking on, spinner included.
+    private func cancelDryRuns() {
+        for run in dryRuns.values { run.cancel() }
+        dryRuns.removeAll()
+    }
+
+    /// One press of Start, from the request through to the verdict.
+    ///
     /// Bambuddy answers 200 as soon as the MQTT command is SENT — the printer can still refuse it
     /// (observed live: `result:'failed', reason:'mqtt message verify failed'` with LAN Developer Mode
-    /// off) and nothing would ever surface it. So verify that the AMS actually entered drying.
+    /// off) and nothing would ever surface it. So after `dryVerifyDelay` seconds this asks the printer
+    /// whether a cycle exists.
     ///
     /// If the cycle DID start, the unit moves to the active list and the card is replaced, which is
     /// exactly right: there is then nothing to warn about.
     ///
-    /// What this establishes is "the AMS has still not reported a cycle", NOT "the printer rejected
-    /// the command" — a slow AMS reports the same way a refused one does. The copy says the first
-    /// and offers the second as a cause only where it is still possible: `.dryStart` is in
-    /// `Lan.blocked`, so `locked.press` intercepts the click entirely when `lanMode == .off`, which
-    /// means this can only run with LAN mode `.on` or `.unknown`. Telling someone whose printer has
-    /// just reported Developer Mode ON to go and switch it on is advice the app already knows is
-    /// wrong — that is the recurring bug wearing a helpful voice.
-    private func verifyDrying(client: BambuddyClient, printerId: Int, amsId: Int) {
-        dryVerify[amsId]?.cancel()
-        dryVerify[amsId] = Task {
-            try? await Task.sleep(for: .seconds(Self.dryVerifyDelay))
-            // Clear the spinner whatever happened next — including cancellation, where the button
-            // must not be left saying "Starting…" forever.
-            starting.remove(amsId)
-            dryVerify[amsId] = nil
+    /// What that establishes is "the AMS has still not reported a cycle", NOT "the printer rejected
+    /// the command" — a slow AMS reports the same way a refused one does. `MacDryingCopy` says the
+    /// first and offers the second as a cause only where it is still possible.
+    ///
+    /// **The verdict goes to `model.toast`, not to an alert on this view.** An alert bound to this
+    /// view's `@State` dies with the view, so pressing Start and hitting ⌘2 within nine seconds threw
+    /// the printer's refusal away silently — the one message this whole check exists to produce.
+    /// `MacRoot` renders the toast above every section, so it survives leaving Hardware. The cost is
+    /// real (a five-second banner for two sentences nobody asked for, rather than a dismissible
+    /// alert) and it is the right trade: a message the user might miss beats one they cannot receive.
+    private func dryRun(client: BambuddyClient, printerId: Int, amsId: Int, temp: Int, hours: Int) async {
+        do {
+            // `filament: nil` on purpose. This button dries the UNIT at the generic cycle the reason
+            // line quotes; naming one of several loaded spools would make Bambuddy record a claim the
+            // user never made.
+            try await client.dryingStart(printerId, amsId: amsId, temp: temp, hours: hours,
+                                         filament: nil, rotate: true)
+        } catch {
+            // Cancelled ⇒ a Stop (or a second Start) superseded this press and now owns the slot. The
+            // "failure" is that cancellation, and reporting it would be reporting the user's own
+            // click back to them.
             guard !Task.isCancelled else { return }
-            // Status fetch failed — can't verify; stay quiet rather than cry wolf.
-            guard let s = try? await client.getStatus(printerId) else { return }
-            guard let unit = s.ams?.first(where: { $0.id == amsId }) else { return }
-            // dryTime (minutes remaining) > 0 is THE active signal; dryStatus is unreliable.
-            guard !((unit.dryTime?.double ?? 0) > 0) else { return }
-            dryAlert = MacDryAlert(
-                title: "Drying hasn’t started",
-                message: notStartedMessage
-            )
+            dryRuns[amsId] = nil
+            model.toast = .failure("Start drying failed — \(macHwDetail(error))")
+            return
         }
+        // The run stays in `dryRuns` across the wait on purpose: HTTP 200 means "the command was
+        // published", not "the cycle began", so the button keeps saying "Starting…" instead of
+        // becoming re-pressable during exactly the seconds we are waiting to find out.
+        try? await Task.sleep(for: .seconds(Self.dryVerifyDelay))
+        guard !Task.isCancelled else { return }
+        // Status fetch failed — can't verify; stay quiet rather than cry wolf. The spinner still has
+        // to clear, so the slot is released either way.
+        let unit = (try? await client.getStatus(printerId))?.ams?.first { $0.id == amsId }
+        guard !Task.isCancelled else { return }
+        dryRuns[amsId] = nil
+        guard let unit else { return }
+        // dryTime (minutes remaining) > 0 is THE active signal; dryStatus is unreliable.
+        guard !((unit.dryTime?.double ?? 0) > 0) else { return }
+        model.toast = .failure(MacDryingCopy.notStarted(afterSeconds: Self.dryVerifyDelay, lanMode: model.lanMode))
     }
 
     /// How long to wait before asking whether the cycle actually began. Quoted verbatim in the
-    /// message below, so the number the user reads and the number we waited cannot drift apart.
+    /// message, so the number the user reads and the number we waited cannot drift apart.
     private static let dryVerifyDelay = 9
-
-    private var notStartedMessage: String {
-        let observed = "\(Self.dryVerifyDelay) seconds after the command the AMS still reports no "
-                     + "drying cycle."
-        switch model.lanMode {
-        case .on:
-            // The app has SEEN Developer Mode on, so the usual advice would be wrong here.
-            return observed + " The printer may have refused it — check its screen for a message, "
-                 + "then try again."
-        case .off, .unknown:
-            return observed + " If the printer refused it, that is usually LAN Developer Mode: on "
-                 + "the printer’s screen, Settings → Network → Developer Mode, then try again."
-        }
-    }
 
     /// The fetch, the busy flag and the re-sort all live in `HardwareStore`; only the message is the
     /// screen's, and it goes where every other command failure on Mac goes.
     private func markDone(_ item: MaintenanceItem) {
         Task {
             if let message = await hw.markDone(item) {
-                model.toast = "Mark done failed — \(message)"
+                model.toast = .failure("Mark done failed — \(message)")
             }
         }
     }
@@ -1533,16 +1516,217 @@ private enum MacQuickDry {
     static func temp(ceiling: Int) -> Int { min(55, ceiling) }
 }
 
-/// The one message here that is not a reply to a click.
+// MARK: - Drying copy
+
+/// The sentences the drying UI says, and the decisions behind them — out of the view so the
+/// decisions can be tested without a window.
 ///
-/// Everything the user asked for reports through `model.toast`, like every other printer command on
-/// Mac (`MacToast`). This is the drying verification: it arrives nine seconds later, unrequested,
-/// and carries instructions — a toast that clears itself after five seconds is the wrong surface for
-/// a paragraph nobody was waiting for.
-private struct MacDryAlert: Identifiable, Sendable {
-    let id = UUID()
-    var title: String
-    var message: String
+/// Each one of these used to be composed inline from a predicate that answered a NEARBY question:
+///
+/// - **"Why is there no dryer here?"** was never asked at all. The stranded-unit card advised moving
+///   the spool "to a unit that can heat (AMS 2 Pro or HT)" without consulting the unit's `kind` or
+///   the printer's own `supportsDrying` — so an AMS HT on a printer that reports no drying support
+///   was told to move its spool into an AMS HT, and a machine whose ONLY units are heaterless was
+///   told to move it somewhere that does not exist.
+/// - **"Did the printer refuse the command?"** is not what a status read nine seconds later
+///   establishes. What it establishes is "the AMS has still not reported a cycle".
+/// - **"Is this unit dry?"** is not "did this unit report a humidity reading?" — hence three answers
+///   from `dampness`, not a Bool.
+enum MacDryingCopy {
+
+    // MARK: Dampness
+
+    /// What a unit's humidity reading says — including "it hasn't said".
+    enum Dampness: Hashable, Sendable { case damp, dry, unknown }
+
+    /// Three answers, because a single `isDamp` Bool conflated two questions: "is this unit above the
+    /// threshold?" and "did this unit report a reading at all?". `!isDamp` was answering the first
+    /// for units that had never answered the second, which is how a unit with no hygrometer reading
+    /// rendered "AMS 1 is dry · Nothing here needs a cycle" — the same claim-from-missing-data the
+    /// slot subtitle refuses ("never 0 %"), and the same one the inspector refuses when it prints "—"
+    /// for this very reading.
+    ///
+    /// 0 counts as unknown deliberately: an AMS that has not taken a reading publishes 0, and
+    /// `MacHardwareInspector.humidityText` already treats `> 0` as the known test.
+    ///
+    /// The threshold is `HardwareTriage.dampRH`, the same constant the reason line quotes. A local
+    /// number here would let the card say "38 % is above the 30 % you'd want" while appearing at 45.
+    static func dampness(humidityPct: Int?) -> Dampness {
+        guard let rh = humidityPct, rh > 0 else { return .unknown }
+        return Double(rh) >= HardwareTriage.dampRH ? .damp : .dry
+    }
+
+    /// The units that are damp and have **no dryer at all**.
+    ///
+    /// Two predicates for what looks like one question. "Is this unit damp?" is answered from
+    /// `DashVM.amsUnits`, which is every attached unit — and that is what raises the amber dot on the
+    /// picker and the "AMS 1 at 38 % RH — Filament ›" row in the inspector. "Can this unit dry
+    /// itself?" is answered by `Dryer.present`, which returns nothing at all unless the printer
+    /// reports `supportsDrying` and the unit has a heater. Every drying card used to come from the
+    /// second, so an AMS Lite at 38 % RH lit a warning that pointed at a pane which then said nothing
+    /// whatsoever about it. This is the missing sentence's input, and it says the honest thing: the
+    /// reading is real, and there is no control here that can fix it.
+    static func dampWithoutDryer(_ units: [AmsUnitVM], dryers: [DryerVM]) -> [AmsUnitVM] {
+        let dryable = Set(dryers.map(\.amsId))
+        return units.filter { unit in
+            guard !dryable.contains(unit.id) else { return false }
+            guard let rh = unit.humidity, rh.isFinite, rh > 0 else { return false }
+            return rh >= HardwareTriage.dampRH
+        }
+    }
+
+    // MARK: No dryer
+
+    /// One damp unit, reduced to what the copy needs. `isHt` is `AmsUnitVM.kind == .ht`, which is the
+    /// fact the advice turned out to hinge on and the one the old sentence never read.
+    struct DampUnit: Hashable, Sendable {
+        var label: String
+        var rh: Double
+        var isHt: Bool
+    }
+
+    /// WHY a damp unit has no drying control. Two different absences that read identically on screen
+    /// and have opposite remedies.
+    enum NoDryerCause: Hashable, Sendable {
+        /// The printer does not report drying support, so `Dryer.present` returns nothing for ANY
+        /// unit — heated ones included. Moving the spool to another unit cannot help, because no unit
+        /// on this machine has a cycle to offer.
+        case printerReportsNoDrying
+        /// The printer can dry, and this unit is not one of the units it can dry.
+        case unitHasNoHeater
+    }
+
+    /// Mirrors `Dryer.present`'s own printer-level gate (`status.supportsDrying == true`), because
+    /// that gate is the reason the unit is missing from its output. `supportsDrying` is `Bool?`, and
+    /// `nil` is not `false` — a printer that never reports the field strands every unit it has,
+    /// which is exactly the case the old copy mis-described.
+    ///
+    /// It belongs beside that gate in `Domain/Dryer.swift`, which is not this pass's to edit —
+    /// **reported**. Until then, changing the gate means changing this too.
+    static func noDryerCause(supportsDrying: Bool?) -> NoDryerCause {
+        supportsDrying == true ? .unitHasNoHeater : .printerReportsNoDrying
+    }
+
+    /// The reading, the threshold, and then the part that differs from every other drying card: there
+    /// is no cycle to start, and what to do instead.
+    ///
+    /// `dryElsewhere` is the labels of the units that CAN dry — the affordance the advice needs, not
+    /// a guess about what hardware the owner might have. With none, the sentence does not offer a
+    /// move it cannot deliver.
+    static func noDryerReason(_ damp: [DampUnit], cause: NoDryerCause, dryElsewhere: [String]) -> String {
+        guard !damp.isEmpty else { return "" }
+        let readings = damp
+            .map { "\($0.label) at \(SafeInt.rounded($0.rh)) % RH" }
+            .joined(separator: ", ")
+        let lead = "\(readings) — above the \(Int(HardwareTriage.dampRH)) % you’d want for PETG. "
+
+        switch cause {
+        case .printerReportsNoDrying:
+            // Note what is NOT said: nothing about moving the spool. On this branch no unit on the
+            // machine has a cycle to offer, so every "move it to…" would be a dead end — and an HT is
+            // in this branch precisely because the printer is silent, not because it lacks a heater.
+            let heater = damp.contains(where: \.isHt)
+                ? ", even though an AMS HT has a heater built in"
+                : ""
+            return lead
+                + "This printer isn’t reporting drying support, so there’s no cycle to start from "
+                + "here\(heater). Dry the spool in a standalone filament dryer, or start a cycle on "
+                + "the printer’s own screen."
+        case .unitHasNoHeater:
+            return lead + subject(damp) + ", so there’s no cycle to start here. " + remedy(dryElsewhere)
+        }
+    }
+
+    /// What is missing, said without claiming more than the unit kind supports. An AMS HT always has
+    /// a heater, so "this unit has no dryer" is a statement about the HARDWARE that would be false —
+    /// what is true is that the printer is not reporting a dryer for it.
+    private static func subject(_ damp: [DampUnit]) -> String {
+        let plural = damp.count > 1
+        if damp.allSatisfy(\.isHt) {
+            return plural
+                ? "The printer isn’t reporting a dryer for these units, though an AMS HT has one built in"
+                : "The printer isn’t reporting a dryer for this unit, though an AMS HT has one built in"
+        }
+        if damp.contains(where: \.isHt) {
+            // Mixed kinds, so necessarily more than one unit: neither sentence above is true of all
+            // of them, and the one thing that is true of all of them is the printer's silence.
+            return "The printer isn’t reporting a dryer for these units"
+        }
+        return plural ? "These units have no dryer" : "This unit has no dryer"
+    }
+
+    private static func remedy(_ dryElsewhere: [String]) -> String {
+        guard !dryElsewhere.isEmpty else {
+            return "Dry the spool in a standalone filament dryer — no other unit on this printer can "
+                 + "heat either."
+        }
+        return "Dry the spool in a standalone filament dryer, or move it to \(list(dryElsewhere)), "
+             + "which can heat."
+    }
+
+    /// "AMS 2", "AMS 2 or AMS HT", "AMS 1, AMS 2 or AMS HT".
+    private static func list(_ names: [String]) -> String {
+        guard names.count > 1 else { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " or " + (names.last ?? "")
+    }
+
+    // MARK: The inspector's one-line reading
+
+    /// "Drying · 5h 44m", "Idle", "Not supported" — or "Not reported", which is the case the fourth
+    /// answer exists for.
+    ///
+    /// Two nearby questions, both of which this line got wrong in turn. `dryingMinLeft == 0` answers
+    /// "is a cycle running?", not "does this unit have a dryer?", so an AMS Lite read as "Idle" —
+    /// describing a heater it does not contain. Falling back to `Dryer.present` fixed that and
+    /// introduced the mirror image: `Dryer.present` is empty for EVERY unit when the printer does not
+    /// report `supportsDrying`, so an AMS HT — a unit that is nothing but a dryer — read as "Not
+    /// supported". "This unit has no heater" and "this printer hasn't said" are two claims, and only
+    /// the second is available when the field is missing.
+    static func dryerLine(_ dryer: DryerVM?, cause: NoDryerCause) -> String {
+        if let dryer { return dryer.active ? "Drying · \(dryer.remainingText)" : "Idle" }
+        switch cause {
+        case .unitHasNoHeater: return "Not supported"
+        case .printerReportsNoDrying: return "Not reported"
+        }
+    }
+
+    /// The tooltip under that reading — the room the reading itself does not have.
+    static func dryerNote(_ dryer: DryerVM?, cause: NoDryerCause) -> String {
+        if let dryer {
+            return dryer.active
+                ? "A drying cycle is running on this unit."
+                : "This unit has a dryer and isn’t using it. Start a cycle in the Filament pane."
+        }
+        switch cause {
+        case .unitHasNoHeater:
+            return "This printer can dry, but not this unit — it has no heater."
+        case .printerReportsNoDrying:
+            return "This printer isn’t reporting drying support, so no unit shows a cycle here — "
+                 + "including one with a heater of its own."
+        }
+    }
+
+    // MARK: Verification
+
+    /// The one message here that is not a reply to a click: it arrives `afterSeconds` later,
+    /// unrequested.
+    ///
+    /// It states what was OBSERVED first, then offers a cause only where that cause is still
+    /// possible. `.dryStart` is in `Lan.blocked`, so `LockedActions.press` intercepts the click
+    /// entirely when `lanMode == .off` — which means this can only be reached with LAN mode `.on` or
+    /// `.unknown`. Telling someone whose printer has just reported Developer Mode ON to go and switch
+    /// it on is advice the app already knows is wrong: the recurring bug wearing a helpful voice.
+    static func notStarted(afterSeconds: Int, lanMode: LanMode) -> String {
+        let observed = "Drying hasn’t started — \(afterSeconds) seconds after the command the AMS "
+                     + "still reports no cycle."
+        switch lanMode {
+        case .on:
+            return observed + " The printer may have refused it; check its screen, then try again."
+        case .off, .unknown:
+            return observed + " If the printer refused it, that is usually LAN Developer Mode: on "
+                 + "the printer’s screen, Settings → Network → Developer Mode."
+        }
+    }
 }
 
 /// Bambuddy's own message ("AMS is busy" from a 409), not the transport noise around it.

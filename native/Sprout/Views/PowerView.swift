@@ -400,7 +400,7 @@ struct PowerView: View {
 
     private func apply(_ next: Bool) {
         Task {
-            do { try await hero.set(next) } catch { model.toast = PowerStore.failureMessage(error) }
+            do { try await hero.set(next) } catch { model.toast = .failure(PowerStore.failureMessage(error)) }
         }
     }
 }
@@ -512,7 +512,7 @@ struct PlugRow: View {
 
     private func apply(_ next: Bool) {
         Task {
-            do { try await poller.set(next) } catch { model.toast = PowerStore.failureMessage(error) }
+            do { try await poller.set(next) } catch { model.toast = .failure(PowerStore.failureMessage(error)) }
         }
     }
 }

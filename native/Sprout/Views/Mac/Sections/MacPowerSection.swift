@@ -669,7 +669,7 @@ struct MacPowerSection: View {
 
     private func apply(_ next: Bool, on poller: PlugPoller) {
         Task {
-            do { try await poller.set(next) } catch { model.toast = PowerStore.failureMessage(error) }
+            do { try await poller.set(next) } catch { model.toast = .failure(PowerStore.failureMessage(error)) }
         }
     }
 

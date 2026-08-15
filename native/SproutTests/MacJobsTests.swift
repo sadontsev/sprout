@@ -324,42 +324,258 @@ final class MacJobsHistoryBodyTests: XCTestCase {
 
 final class MacJobsLifetimeBodyTests: XCTestCase {
 
+    private func lifetime(
+        stats: ArchiveStats?,
+        statsAsked: Bool = true,
+        statsFailed: Bool = false,
+        entries: [PrintLogEntry]?,
+        historyFailed: Bool = false
+    ) -> MacJobsLifetimeBody {
+        MacJobsLifetimeBody.of(
+            stats: stats,
+            statsAsked: statsAsked,
+            statsFailed: statsFailed,
+            entries: entries,
+            historyFailed: historyFailed
+        )
+    }
+
     func testShowsTheFiguresWheneverTheSummaryAnsweredWithPrintsInIt() {
+        XCTAssertEqual(lifetime(stats: makeStats(), entries: [makeEntry()]), .figures(makeStats()))
+    }
+
+    /// **The regression this signature exists for.** `JobsStore.loadHistory` assigns `entries` and
+    /// only THEN awaits the summary, so on every cold load the observed state is exactly this —
+    /// runs on screen, `stats` still nil, nothing failed. Keyed on `stats == nil` the card fell
+    /// through to "Lifetime totals unavailable · it didn't answer" about a request that had not
+    /// answered YET. Only `statsAsked` tells in-flight from refused; the nil is identical in both.
+    func testDoesNotCallTheSummaryUnavailableWhileItIsStillInFlight() {
+        XCTAssertEqual(lifetime(stats: nil, statsAsked: false, entries: [makeEntry()]), .loading)
+        XCTAssertEqual(lifetime(stats: nil, statsAsked: false, entries: []), .loading)
+        // Mid-load after the LIST itself failed: the summary is still in flight all the same.
         XCTAssertEqual(
-            MacJobsLifetimeBody.of(stats: makeStats(), entries: [makeEntry()], historyFailed: false),
+            lifetime(stats: nil, statsAsked: false, entries: [], historyFailed: true),
+            .loading
+        )
+    }
+
+    /// Once it HAS been asked and refused, the card says so — and says which of the two things went
+    /// wrong, because the help text names a request that did not answer.
+    func testSaysUnavailableOnlyOnceTheSummaryHasActuallyBeenRefused() {
+        XCTAssertEqual(
+            lifetime(stats: nil, statsFailed: true, entries: [makeEntry()]),
+            .unavailable(.requestFailed)
+        )
+        XCTAssertEqual(lifetime(stats: nil, statsFailed: true, entries: nil), .unavailable(.requestFailed))
+    }
+
+    /// A failed refresh no longer clears the previous summary, so a card reading "213 · 94 %
+    /// success" keeps its figures instead of flipping to a placeholder and back on every transient
+    /// failure.
+    func testKeepsTheLastKnownFiguresThroughAFailedRefresh() {
+        XCTAssertEqual(
+            lifetime(stats: makeStats(), statsFailed: true, entries: [makeEntry()]),
             .figures(makeStats())
         )
     }
 
-    /// `stats` is its own request and is nil'd on any failure, so `stats == nil` answers "did the
-    /// summary come back?" — never "is the archive empty?". With runs on screen it plainly is not.
-    func testNeverClaimsAnEmptyArchiveWhileArchivedRunsAreOnScreen() {
+    func testOnlySaysEmptyWhenTheSummaryItselfAnsweredZero() {
         XCTAssertEqual(
-            MacJobsLifetimeBody.of(stats: nil, entries: [makeEntry()], historyFailed: false),
-            .unavailable
-        )
-    }
-
-    func testOnlySaysEmptyWhenBothRequestsAnsweredAndBothWereEmpty() {
-        XCTAssertEqual(
-            MacJobsLifetimeBody.of(stats: makeStats(totalPrints: 0, successfulPrints: 0), entries: [], historyFailed: false),
+            lifetime(stats: makeStats(totalPrints: 0, successfulPrints: 0), entries: []),
             .empty
-        )
-        // The archive list failed, so its emptiness proves nothing.
-        XCTAssertEqual(
-            MacJobsLifetimeBody.of(stats: makeStats(totalPrints: 0, successfulPrints: 0), entries: [], historyFailed: true),
-            .unavailable
         )
         // A summary with no count in it is not a summary saying zero.
         XCTAssertEqual(
-            MacJobsLifetimeBody.of(stats: makeStats(totalPrints: nil), entries: [], historyFailed: false),
-            .unavailable
+            lifetime(stats: makeStats(totalPrints: nil), entries: []),
+            .unavailable(.answeredWithoutOne)
         )
     }
 
-    func testSpinsOnlyWhileNothingHasAnsweredYet() {
-        XCTAssertEqual(MacJobsLifetimeBody.of(stats: nil, entries: nil, historyFailed: false), .loading)
-        XCTAssertEqual(MacJobsLifetimeBody.of(stats: nil, entries: nil, historyFailed: true), .unavailable)
+    /// The corroboration this card needs is "will I contradict the table beside me?", NOT "did the
+    /// archive list request succeed?".
+    ///
+    /// A cold archive failure leaves `entries == []` and renders NOTHING below (the History block's
+    /// `.unknown`), so there is no list for "No prints archived yet" to contradict — and the
+    /// summary answering zero is the authority on the question anyway. Reading `historyFailed`
+    /// directly suppressed a true "empty" whenever the unrelated list request happened to fail.
+    func testRepeatsTheSummarysZeroWhenNothingOnScreenContradictsIt() {
+        XCTAssertEqual(
+            lifetime(stats: makeStats(totalPrints: 0, successfulPrints: 0), entries: [], historyFailed: true),
+            .empty
+        )
+        // But never above visible archived runs: server figures that disagree with the rows are
+        // not a lifetime total this card can stand behind.
+        XCTAssertEqual(
+            lifetime(stats: makeStats(totalPrints: 0, successfulPrints: 0), entries: [makeEntry()]),
+            .unavailable(.answeredWithoutOne)
+        )
+    }
+
+    func testSpinsOnlyWhileTheSummaryHasNotBeenAskedYet() {
+        // Cold launch, and the same state `JobsStore.attach` resets to on a session swap.
+        XCTAssertEqual(lifetime(stats: nil, statsAsked: false, entries: nil), .loading)
+        XCTAssertEqual(lifetime(stats: nil, statsAsked: true, entries: nil), .unavailable(.answeredWithoutOne))
+    }
+
+    /// The two reasons exist to be told apart in words; identical help text would make the split
+    /// pointless, and one sentence for both is what asserted "it didn't answer" about a summary
+    /// that had.
+    func testTheTwoReasonsExplainThemselvesDifferently() {
+        XCTAssertNotEqual(
+            MacJobsLifetimeBody.NoTotal.requestFailed.help,
+            MacJobsLifetimeBody.NoTotal.answeredWithoutOne.help
+        )
+        XCTAssertTrue(MacJobsLifetimeBody.NoTotal.requestFailed.help.contains("didn't answer"))
+        XCTAssertFalse(MacJobsLifetimeBody.NoTotal.answeredWithoutOne.help.contains("didn't answer"))
+    }
+}
+
+// MARK: - The UP NEXT heading
+
+final class MacJobsQueueHeaderTests: XCTestCase {
+
+    /// **The regression.** A cold queue failure renders a retry banner and a deliberately BLANK
+    /// body, because we do not know what is queued — and the heading printed `UP NEXT · 0` directly
+    /// above it, asserting the empty lane `content` had just refused to assert.
+    func testShowsNoCountWhileTheQueueIsUnknown() {
+        XCTAssertEqual(MacJobsQueueBody.unknown.headerLabel(count: 0), "UP NEXT")
+        XCTAssertEqual(MacJobsQueueBody.loading.headerLabel(count: 0), "UP NEXT")
+    }
+
+    /// End to end from the store's own failure shape: `loadQueue` falls back to `queue ?? []`, so
+    /// the count computed from it is a truthful `0` about an array nobody was ever sent.
+    func testTheCountIsSuppressedForTheStoresOwnColdFailureState() {
+        let state = MacJobsQueueBody.of(queue: [], failed: true, printerId: 1)
+        let lane = JobsStore.upNext([], printerId: 1)
+        XCTAssertEqual(lane.count, 0)
+        XCTAssertEqual(state.headerLabel(count: lane.count), "UP NEXT")
+    }
+
+    func testCountsWhatTheBlockIsActuallyShowing() {
+        XCTAssertEqual(MacJobsQueueBody.rows.headerLabel(count: 3), "UP NEXT · 3")
+        XCTAssertEqual(MacJobsQueueBody.rows.headerLabel(count: 1), "UP NEXT · 1")
+    }
+
+    /// The placeholder card underneath says "Nothing queued…" in words; `· 0` on top of it is the
+    /// same fact told twice, which is why iOS omits the whole header there.
+    func testDropsTheCountWhenAPlaceholderAlreadySaysItInWords() {
+        XCTAssertEqual(MacJobsQueueBody.emptyEverywhere.headerLabel(count: 0), "UP NEXT")
+        XCTAssertEqual(MacJobsQueueBody.elsewhereOnly.headerLabel(count: 0), "UP NEXT")
+    }
+}
+
+// MARK: - Command outcomes
+
+final class MacJobsToastTests: XCTestCase {
+
+    /// Reads like every other Mac command failure — `AppModel.perform` writes
+    /// "Pause failed — AMS is busy" — and keeps Bambuddy's own words, which a 409 puts in `detail`.
+    func testJoinsTheAlertsTwoHalvesIntoOneLine() {
+        XCTAssertEqual(
+            MacJobsToast.text(JobActionMessage.failed("Couldn’t remove", "AMS is busy")),
+            "Couldn’t remove — AMS is busy"
+        )
+        XCTAssertEqual(
+            MacJobsToast.text(JobActionMessage.ok("Queued", "The job is back in the queue.")),
+            "Queued — The job is back in the queue."
+        )
+    }
+
+    /// Neither half may be dropped when it is the only one there — a toast reading " — " or a bare
+    /// dash is worse than either sentence alone.
+    func testNeverRendersALoneSeparator() {
+        XCTAssertEqual(MacJobsToast.text(JobActionMessage.failed("", "AMS is busy")), "AMS is busy")
+        XCTAssertEqual(MacJobsToast.text(JobActionMessage.failed("Couldn’t reprint", "")), "Couldn’t reprint")
+        XCTAssertEqual(MacJobsToast.text(JobActionMessage.failed("  ", " \n")), "")
+        XCTAssertEqual(
+            MacJobsToast.text(JobActionMessage.failed(" Couldn’t reprint ", " 409 ")),
+            "Couldn’t reprint — 409"
+        )
+    }
+}
+
+// MARK: - The empty inspector
+
+final class MacJobsInspectorPlaceholderTests: XCTestCase {
+
+    private func place(
+        selectedId: Int?,
+        entries: [PrintLogEntry]?,
+        historyFailed: Bool = false
+    ) -> MacJobsInspectorPlaceholder {
+        MacJobsInspectorPlaceholder.of(selectedId: selectedId, entries: entries, historyFailed: historyFailed)
+    }
+
+    /// **The regression.** `entries != nil` answers "has the array been assigned?"; `loadHistory`
+    /// falls back to `entries = entries ?? []`, so a cold failure assigns a non-nil array that was
+    /// never read from the server. `selectedId` is restored from `@SceneStorage` before anything
+    /// loads, so the first frame after a failed fetch told the user their run had aged out of an
+    /// archive the app had never managed to read.
+    func testNeverClaimsARunAgedOutOfAnArchiveItCouldNotRead() {
+        XCTAssertEqual(place(selectedId: 7, entries: [], historyFailed: true), .archiveUnread)
+        XCTAssertEqual(place(selectedId: 7, entries: nil, historyFailed: true), .archiveUnread)
+    }
+
+    func testSpinsRatherThanAccusingWhileTheArchiveHasNotAnsweredYet() {
+        XCTAssertEqual(place(selectedId: 7, entries: nil), .archiveLoading)
+    }
+
+    /// The claim is licensed only once the archive HAS answered and the run is not in what it sent.
+    func testSaysAgedOutOnlyOnceTheArchiveAnsweredWithoutTheRun() {
+        XCTAssertEqual(place(selectedId: 7, entries: [makeEntry(id: 9)]), .selectionAgedOut)
+        XCTAssertEqual(place(selectedId: 7, entries: []), .selectionAgedOut)
+    }
+
+    func testHoldsNoOpinionWhenNothingWasEverSelected() {
+        XCTAssertEqual(place(selectedId: nil, entries: nil), .nothingSelected)
+        XCTAssertEqual(place(selectedId: nil, entries: [], historyFailed: true), .nothingSelected)
+        XCTAssertEqual(place(selectedId: nil, entries: [makeEntry()]), .nothingSelected)
+    }
+
+    /// "No run selected" is true in exactly one of the four, and the other three DO hold a
+    /// selection — a title saying otherwise contradicted the hint printed under it.
+    func testOnlyTheUnselectedStateSaysNoRunSelected() {
+        XCTAssertEqual(MacJobsInspectorPlaceholder.nothingSelected.title, "No run selected")
+        for state: MacJobsInspectorPlaceholder in [.archiveLoading, .archiveUnread, .selectionAgedOut] {
+            XCTAssertNotEqual(state.title, "No run selected")
+            XCTAssertFalse(state.hint.isEmpty)
+        }
+    }
+
+    /// A clock-with-an-arrow over "Archive not loaded" reads as "still working on it", which is the
+    /// one thing that state is not; it borrows the retry banner's glyph instead.
+    func testTheFailedStateDoesNotWearALoadingGlyph() {
+        XCTAssertEqual(MacJobsInspectorPlaceholder.archiveUnread.symbol, "wifi.slash")
+        XCTAssertEqual(MacJobsInspectorPlaceholder.archiveLoading.symbol, "clock.arrow.circlepath")
+        XCTAssertEqual(MacJobsInspectorPlaceholder.nothingSelected.symbol, "clock.arrow.circlepath")
+    }
+}
+#endif
+
+/// The toast's KIND comes from the outcome, never from the copy.
+///
+/// `JobActionMessage` carried no success flag, so `MacJobsToast` had nothing to decide on and every
+/// message went through the failure banner — putting a warning triangle over "Queued — the job is
+/// back in the queue".
+#if os(macOS)
+final class MacJobsToastKindTests: XCTestCase {
+
+    func testASuccessIsNotDressedAsAFailure() {
+        let toast = MacJobsToast.toast(.ok("Queued", "The job is back in the queue."))
+        XCTAssertEqual(toast.kind, .success)
+        XCTAssertEqual(toast.text, "Queued — The job is back in the queue.")
+    }
+
+    func testAFailureStaysAFailure() {
+        let toast = MacJobsToast.toast(.failed("Couldn’t remove", "AMS is busy"))
+        XCTAssertEqual(toast.kind, .failure)
+    }
+
+    /// The kind is read off the flag, not inferred from words. A refusal whose copy happens to read
+    /// cheerfully is still a refusal.
+    func testTheKindDoesNotDependOnTheWording() {
+        XCTAssertEqual(MacJobsToast.toast(.failed("Queued", "…actually it wasn’t")).kind, .failure)
+        XCTAssertEqual(MacJobsToast.toast(.ok("Couldn’t", "…but it did")).kind, .success)
     }
 }
 #endif

@@ -523,7 +523,7 @@ struct MacPrinterSection: View {
                 if speedOverride == index { speedOverride = nil }
             } catch {
                 speedOverride = nil
-                model.toast = "Speed failed — \(JobsStore.failureText(error))"
+                model.toast = .failure("Speed failed — \(JobsStore.failureText(error))")
             }
         }
     }

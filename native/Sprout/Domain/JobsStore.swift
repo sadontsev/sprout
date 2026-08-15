@@ -9,6 +9,20 @@ import Observation
 struct JobActionMessage: Equatable, Sendable {
     let title: String
     let message: String
+    /// Did the action WORK?
+    ///
+    /// It was implied by which string was built and by nothing else, so every consumer had to infer
+    /// it from the copy — and the Mac toast, which decorates by outcome, had no way to. "Queued —
+    /// the job is back in the queue" was rendered under a warning triangle.
+    let succeeded: Bool
+
+    static func ok(_ title: String, _ message: String) -> JobActionMessage {
+        JobActionMessage(title: title, message: message, succeeded: true)
+    }
+
+    static func failed(_ title: String, _ message: String) -> JobActionMessage {
+        JobActionMessage(title: title, message: message, succeeded: false)
+    }
 }
 
 /// The Jobs section's data layer: the live queue, the print-history archive, and the two mutating
@@ -218,7 +232,7 @@ final class JobsStore {
             await loadQueue()
             return nil
         } catch {
-            return JobActionMessage(title: "Couldn't remove", message: Self.failureText(error))
+            return .failed("Couldn't remove", Self.failureText(error))
         }
     }
 
@@ -235,9 +249,9 @@ final class JobsStore {
             // queue GET first would hold the alert behind a whole extra round-trip. `remove` awaits
             // its reload because it has nothing to say and the caller's await IS the completion.
             Task { await self.loadQueue() }
-            return JobActionMessage(title: "Queued", message: "The job is back in the queue.")
+            return .ok("Queued", "The job is back in the queue.")
         } catch {
-            return JobActionMessage(title: "Couldn't reprint", message: Self.failureText(error))
+            return .failed("Couldn't reprint", Self.failureText(error))
         }
     }
 

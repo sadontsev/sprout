@@ -295,7 +295,7 @@ struct MacPrinterInspector: View {
         guard let jpeg = cam.renderer?.frameStash.latest() else {
             // Reachable despite the button's gate: the stream can be torn down between the render
             // that enabled it and the click.
-            model.toast = "There's no frame to save yet."
+            model.toast = .failure("There's no frame to save yet.")
             return
         }
         let panel = NSSavePanel()
@@ -315,7 +315,7 @@ struct MacPrinterInspector: View {
             do {
                 try jpeg.write(to: url)
             } catch {
-                model.toast = "Couldn’t save the snapshot — \(error.localizedDescription)"
+                model.toast = .failure("Couldn’t save the snapshot — \(error.localizedDescription)")
             }
         }
         if let window = NSApp.keyWindow {
@@ -338,12 +338,16 @@ struct MacPrinterInspector: View {
     /// What the machine's hardware wants doing. `HardwareStore` already holds the maintenance load,
     /// and `maintenanceItems` is `[]` while it is loading or after a failure — the card counts
     /// problems it can prove, so an unknown state reads as "nothing to say", never "nothing wrong".
+    /// Through `MacHardwareTriage`, the one the Hardware section uses — NOT a second call to
+    /// `HardwareTriage.items` with its own arguments.
+    ///
+    /// This built its own, answering `nozzlesKnown` with `!(status?.nozzles ?? []).isEmpty`. That
+    /// misses the H2's nozzle RACK, where the machine reports its nozzles somewhere else entirely —
+    /// so this card could say the nozzles were unknown about a printer that had just reported them,
+    /// while the Hardware section one click away said the opposite. Two callers, two answers, one
+    /// question.
     private var triage: [HardwareTriage.Item] {
-        HardwareTriage.items(
-            maintenance: model.hardware.maintenanceItems,
-            humidities: vm.amsUnits.map { (label: $0.label, rh: $0.humidity) },
-            nozzlesKnown: !(status?.nozzles ?? []).isEmpty
-        )
+        MacHardwareTriage.items(model, dash: vm)
     }
 
     /// The iOS dashboard's maintenance chip AND its alert chip, merged into the one card §4 puts

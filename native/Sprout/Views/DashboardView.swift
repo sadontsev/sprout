@@ -678,7 +678,7 @@ struct DashboardView: View {
                 if speedOverride == i { speedOverride = nil }
             } catch {
                 speedOverride = nil
-                model.toast = "Speed failed – \((error as? BambuddyError)?.detail ?? error.localizedDescription)"
+                model.toast = .failure("Speed failed – \((error as? BambuddyError)?.detail ?? error.localizedDescription)")
             }
         }
     }

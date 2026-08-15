@@ -88,7 +88,7 @@ private final class MacQuickLookController: NSObject, @preconcurrency QLPreviewP
     func toggle(file: LibraryFile?, model: AppModel, unavailable: String) {
         guard let panel = QLPreviewPanel.shared() else { return }
         guard let file else {
-            model.toast = unavailable
+            model.toast = .failure(unavailable)
             return
         }
         if panel.isVisible, showingFileId == file.id {

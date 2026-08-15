@@ -12,17 +12,31 @@ import SwiftUI
 ///
 /// `MacFileImport` and the Explore import path write here too.
 struct MacToast: View {
-    let text: String
+    let toast: Toast
     let onDismiss: () -> Void
+
+    private var text: String { toast.text }
+
+    /// The glyph and its colour come from the toast's OWN kind, never from reading the copy.
+    ///
+    /// Every message used to get `exclamationmark.triangle.fill` in `c.heating`, which put a warning
+    /// over "planter.3mf added to your library" and over "Queued — the job is back in the queue".
+    /// Both are successes, and both went through here.
+    private var symbol: String {
+        switch toast.kind {
+        case .failure: "exclamationmark.triangle.fill"
+        case .success: "checkmark.circle.fill"
+        }
+    }
 
     @Environment(\.palette) private var c
     @Environment(\.metrics) private var m
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(systemName: symbol)
                 .font(.system(size: 13))
-                .foregroundStyle(c.heating)
+                .foregroundStyle(toast.kind == .success ? c.running : c.heating)
             Text(text)
                 .font(.system(size: m.body, weight: .medium))
                 .foregroundStyle(c.t1)

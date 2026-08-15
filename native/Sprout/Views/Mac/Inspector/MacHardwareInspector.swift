@@ -34,12 +34,18 @@ struct MacHardwareInspector: View {
         let items = MacHardwareTriage.items(model, dash: dash)
         let dryers = Dryer.present(status)
 
+        // WHY a unit has no dryer, asked once for the machine. It is a machine-level fact — the
+        // printer either reports drying support or it does not — and `Dryer.present`'s empty answer
+        // means something different in each case. See `MacDryingCopy.noDryerCause`.
+        let noDryerCause = MacDryingCopy.noDryerCause(supportsDrying: status?.supportsDrying)
+
         return ScrollView {
             VStack(alignment: .leading, spacing: m.cardGap) {
                 triageCard(items, units: units)
                 ForEach(units) { unit in
                     unitCard(unit,
                              dryer: dryers.first { $0.amsId == unit.id },
+                             noDryerCause: noDryerCause,
                              multiUnit: units.count > 1)
                 }
                 if units.isEmpty { noUnitsCard }
@@ -141,7 +147,8 @@ struct MacHardwareInspector: View {
     /// Per unit rather than one machine-wide reading: an AMS 2 Pro and an AMS HT sit at very
     /// different humidity and temperature, and the RN app's single `ams[0]` figure was actively
     /// misleading on a three-unit machine.
-    private func unitCard(_ unit: AmsUnitVM, dryer: DryerVM?, multiUnit: Bool) -> some View {
+    private func unitCard(_ unit: AmsUnitVM, dryer: DryerVM?,
+                          noDryerCause: MacDryingCopy.NoDryerCause, multiUnit: Bool) -> some View {
         HwCard {
             VStack(alignment: .leading, spacing: 0) {
                 Text(unitHeading(unit, multiUnit: multiUnit))
@@ -152,7 +159,11 @@ struct MacHardwareInspector: View {
                 VStack(spacing: 9) {
                     reading("Humidity", humidityText(unit), ink: humidityInk(unit))
                     reading("Temperature", tempText(unit))
-                    reading("Dryer", dryerText(dryer), mono: false)
+                    reading("Dryer", MacDryingCopy.dryerLine(dryer, cause: noDryerCause), mono: false)
+                        // A four-word reading cannot carry the distinction on its own, and this one
+                        // is the difference between "buy nothing, the printer just isn't saying" and
+                        // "this unit will never dry a spool".
+                        .help(MacDryingCopy.dryerNote(dryer, cause: noDryerCause))
                     reading("Slots loaded", "\(unit.loaded) of \(unit.capacity)")
                 }
                 .padding(.top, 11)
@@ -196,18 +207,6 @@ struct MacHardwareInspector: View {
     private func tempText(_ unit: AmsUnitVM) -> String {
         guard let t = unit.tempC, t.isFinite, t > 0 else { return "—" }
         return String(format: "%.1f °C", t)
-    }
-
-    /// "Drying · 5h 44m", "Idle", or "Not supported".
-    ///
-    /// The third case is the point. `dryingMinLeft == 0` answers "is a cycle running?", which is a
-    /// NEARBY question to "does this unit have a dryer?" — reporting an AMS Lite as "Idle" describes
-    /// a heater it does not contain. `Dryer.present` is the predicate that answers the real one, and
-    /// the Filament pane now carries the matching sentence for a unit that is damp AND has no dryer.
-    private func dryerText(_ dryer: DryerVM?) -> String {
-        guard let dryer else { return "Not supported" }
-        guard dryer.active else { return "Idle" }
-        return "Drying · \(dryer.remainingText)"
     }
 
     private var noUnitsCard: some View {
