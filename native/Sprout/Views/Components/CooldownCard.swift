@@ -87,6 +87,7 @@ final class CooldownStore {
 struct CooldownCard: View {
     let vm: CooldownVM
     @Environment(\.palette) private var c
+    @Environment(\.metrics) private var m
 
     private var tint: Color {
         switch vm.tone {
@@ -100,14 +101,14 @@ struct CooldownCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 9) {
                 Image(systemName: vm.phase == .ready ? "hand.raised.fill" : "thermometer.medium")
-                    .font(.system(size: 14))
+                    .font(.system(size: m.body - 1))
                     .foregroundStyle(tint)
                 Text(vm.label)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: m.body - 1, weight: .semibold))
                     .foregroundStyle(c.t1)
                 Spacer()
                 Text("\(Int(vm.bedC.rounded()))°")
-                    .font(.mono(15))
+                    .font(.mono(m.body))
                     .foregroundStyle(tint)
             }
 
@@ -123,27 +124,29 @@ struct CooldownCard: View {
             .animation(Motion.outQuad(0.6), value: vm.progress)
 
             Text(vm.detail)
-                .font(.system(size: 12))
+                .font(.system(size: m.body - 3))
                 .foregroundStyle(c.t2)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let caution = vm.caution {
                 HStack(spacing: 7) {
                     Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 11))
+                        .font(.system(size: m.body - 4))
                         .foregroundStyle(c.heating)
                     Text(caution)
-                        .font(.system(size: 11))
+                        .font(.system(size: m.body - 4))
                         .foregroundStyle(c.heating)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
-        .padding(14)
+        .padding(m.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(c.s2))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(c.line))
-        .padding(.horizontal, 20)
-        .padding(.top, 14)
+        .background(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous).fill(c.s2))
+        .overlay(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous).stroke(c.line))
+        // NO outer margins. A shared card does not get to decide where it sits on someone else's
+        // screen: these were `.padding(.horizontal, 20).padding(.top, 14)`, which are the iOS
+        // gutter and section gap, and the macOS Printer section had to cancel them with NEGATIVE
+        // padding to place the card in its own layout. Callers own their margins.
     }
 }

@@ -55,7 +55,14 @@ struct DashboardView: View {
                 hero
                 if showCamera { cameraTile } else if model.isDemo { demoCameraNote }
                 // Only after a print, and only when the model is willing to say something honest.
-                if let cool = model.cooldown?.vm, cool.phase != .none { CooldownCard(vm: cool) }
+                // The card no longer carries its own margins — it is shared with macOS, whose
+                // Printer section places it in a different layout and had to cancel these with
+                // negative padding. These two are the iOS gutter and section gap it used to bake in.
+                if let cool = model.cooldown?.vm, cool.phase != .none {
+                    CooldownCard(vm: cool)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 14)
+                }
 
                 switch vm.kind {
                 case .live: liveBlock

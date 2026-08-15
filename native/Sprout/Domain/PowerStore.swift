@@ -19,6 +19,26 @@ final class PlugPoller {
     /// from a repeat of the one already running.
     private(set) var plugId: Int?
 
+    /// Is anything currently refreshing these numbers?
+    ///
+    /// `stop()` deliberately does NOT clear `watts`/`kwh` — returning to Power should not flash an
+    /// empty card while the first poll lands. The cost of that choice is that a stopped poller looks
+    /// exactly like a running one to anybody reading the values, which is how a frozen wattage came
+    /// to be rendered under the words "W drawing now" on a screen whose poller had been cancelled.
+    var isPolling: Bool { task != nil }
+
+    /// May `watts` and `kwh` be shown as CURRENT?
+    ///
+    /// Three different questions hide here and only the third is the one a live readout is asking:
+    ///
+    ///  - `watts != nil` — "has this plug ever reported?" A stale value satisfies it forever.
+    ///  - `reachable` — "did the LAST poll succeed?" True on a poller that stopped an hour ago.
+    ///  - `readingIsCurrent` — "is this number being kept up to date, and is it real?"
+    ///
+    /// A failed poll leaves `watts` at its last successful value on purpose (a momentary blip
+    /// should not blank the card), so `reachable` alone cannot carry this.
+    var readingIsCurrent: Bool { isPolling && reachable }
+
     private let period: Duration
     private var client: BambuddyClient?
     private var task: Task<Void, Never>?
