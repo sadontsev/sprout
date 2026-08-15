@@ -98,6 +98,22 @@ final class AppModel {
     /// Which surface owns each printer's camera stream (§5.2). App-level because the camera window
     /// and the Printer inspector are separate SCENES on macOS and neither can see the other.
     let cameraOwnership = MacCameraOwnership()
+
+    /// A file drag is currently over the window (§5.3).
+    ///
+    /// Published here because the drop target is on the WINDOW — a drop is accepted anywhere — while
+    /// the dashed strip that acknowledges it is drawn by the Files section. Two views, one fact. It
+    /// is also what keeps that strip from being permanently visible, which would advertise a drop
+    /// target on sections that have nothing to do with files.
+    var isDropping = false
+
+    /// A request from outside the view tree to show something — a Spotlight hit, a `bambu:` URL, a
+    /// file just imported from a Dock drop.
+    ///
+    /// A one-shot request rather than a piece of state: the views CONSUME it (set it back to nil)
+    /// once they have acted. Left as state it would re-navigate on every redraw, which is the
+    /// difference between "open this file" and "always be showing this file".
+    var pendingOpen: MacOpenRequest?
     #endif
 
     /// The library upload in flight, if any.

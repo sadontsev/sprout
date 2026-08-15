@@ -65,6 +65,18 @@ struct MacWindow: View {
         .onChange(of: collapse.sidebarFitsAsColumn) { _, fits in
             columnVisibility = fits ? .all : .detailOnly
         }
+        // Navigate for a Spotlight hit / `bambu:` URL / Dock-opened file (§5.4). Only the SECTION
+        // half is consumed here — the request itself stays set so the section that lands can act on
+        // the rest of it (selecting the file) and clear it. Splitting the consumption this way is
+        // what lets one request cross two views without either needing to know the other.
+        .onChange(of: model.pendingOpen) { _, request in
+            if let request { section = request.section }
+        }
+        .task {
+            // Also handle a request that arrived BEFORE this window existed — launching by
+            // double-clicking a .3mf in Finder delivers the URL before the first scene appears.
+            if let request = model.pendingOpen { section = request.section }
+        }
         .toolbar {
             MacToolbar(
                 model: model,

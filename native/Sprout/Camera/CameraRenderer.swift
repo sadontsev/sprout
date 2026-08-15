@@ -269,6 +269,14 @@ final class CameraRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientDele
 
     func stop() { teardown(clearImage: true) }
 
+    /// Stop streaming but LEAVE the last frame on the display layer.
+    ///
+    /// The macOS inspector tile needs exactly this when the camera window takes the claim (§5.2):
+    /// it is supposed to show its last frame under a `PLAYING IN WINDOW` label. Calling `stop()`
+    /// there ran `flushAndRemoveImage` and left a black tile under a label promising a picture —
+    /// the label was true about where the video went and false about what the tile was showing.
+    func pauseHoldingLastFrame() { teardown(clearImage: false) }
+
     /// `clearImage: false` is for a PiP *pause*: the floating window is expected to hold its last
     /// frame there, and `flushAndRemoveImage` would leave it black.
     private func teardown(clearImage: Bool) {

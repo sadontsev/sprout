@@ -62,10 +62,18 @@ final class CameraNSView: NSView {
         if active { restart() }
     }
 
-    func setActive(_ next: Bool) {
+    /// `holdLastFrame` distinguishes "this view is going away" from "something else took the
+    /// stream". Only the second wants the picture left behind.
+    func setActive(_ next: Bool, holdLastFrame: Bool = false) {
         guard next != active else { return }
         active = next
-        if next { restart() } else { renderer.stop() }
+        if next {
+            restart()
+        } else if holdLastFrame {
+            renderer.pauseHoldingLastFrame()
+        } else {
+            renderer.stop()
+        }
     }
 
     private func restart() {
@@ -87,20 +95,23 @@ struct CameraStreamView: NSViewRepresentable {
     let url: URL?
     var active: Bool
     var model: CameraStreamModel
+    /// When `active` goes false, keep the last frame on screen rather than blanking. The inspector
+    /// tile sets this so handing the claim to the camera window leaves a still, not a black box.
+    var holdLastFrameWhenInactive = false
 
     func makeNSView(context: Context) -> CameraNSView {
         let view = CameraNSView(frame: .zero)
         model.renderer = view.renderer
         view.onEvent = { event in model.apply(event) }
         view.setURL(url)
-        view.setActive(active)
+        view.setActive(active, holdLastFrame: holdLastFrameWhenInactive)
         return view
     }
 
     func updateNSView(_ view: CameraNSView, context: Context) {
         model.renderer = view.renderer
         view.setURL(url)
-        view.setActive(active)
+        view.setActive(active, holdLastFrame: holdLastFrameWhenInactive)
     }
 
     static func dismantleNSView(_ view: CameraNSView, coordinator: ()) {

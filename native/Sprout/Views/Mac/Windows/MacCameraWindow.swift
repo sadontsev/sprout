@@ -39,12 +39,17 @@ struct MacCameraWindow: View {
         .environment(\.palette, Palette.forScheme(model.theme.colorScheme ?? scheme))
         .environment(\.metrics, .mac)
         .navigationTitle("Chamber camera — \(printer?.name ?? "Printer")")
-        .onAppear { model.cameraOwnership.windowOpened(printerId: printerId) }
+        .onAppear { model.cameraOwnership.setWindowStreaming(!paused, printerId: printerId) }
+        // Pausing hands the claim BACK. The window keeps its last frame and stops using the
+        // upstream, so the inspector tile can have it — one printer, one live stream, and the
+        // claim follows what is actually streaming rather than what is merely on screen.
+        .onChange(of: paused) { _, isPaused in
+            model.cameraOwnership.setWindowStreaming(!isPaused, printerId: printerId)
+        }
         .onDisappear {
-            model.cameraOwnership.windowClosed(printerId: printerId)
             // Explicit rather than relying on `dismantleNSView`: the claim must be handed back the
-            // moment the window goes, or the inspector tile sits on its last frame forever.
-            paused = true
+            // moment the window goes, or the inspector tile never resumes.
+            model.cameraOwnership.setWindowStreaming(false, printerId: printerId)
         }
         .alert("Couldn’t save the frame", isPresented: Binding(
             get: { saveError != nil }, set: { if !$0 { saveError = nil } }

@@ -25,26 +25,29 @@ import Observation
 @Observable
 @MainActor
 final class MacCameraOwnership {
-    /// Printers whose camera window is currently open.
-    private(set) var windowsOpen: Set<Int> = []
+    /// Printers whose camera window is **currently streaming**.
+    ///
+    /// Streaming, not open. An open-but-PAUSED window holds no claim: it is not using the upstream,
+    /// so there is nothing for the tile to collide with, and leaving it claimed would caption the
+    /// tile `PLAYING IN WINDOW` while neither surface showed video. "A window exists" and "a window
+    /// is using the camera" are two questions, and only the second one is this type's business.
+    private(set) var windowsStreaming: Set<Int> = []
 
-    /// Called by the camera window when it appears.
-    func windowOpened(printerId: Int) {
-        windowsOpen.insert(printerId)
-    }
-
-    /// Called by the camera window when it goes away. Idempotent: SwiftUI may run `onDisappear`
-    /// for a window that is being replaced rather than closed, and double-releasing must not leave
-    /// a printer marked as claimed by a window that no longer exists.
-    func windowClosed(printerId: Int) {
-        windowsOpen.remove(printerId)
+    /// The camera window's single report. Called when it appears, when it is paused or resumed, and
+    /// when it goes away — one entry point so the three cannot answer differently.
+    ///
+    /// Idempotent: SwiftUI may run `onDisappear` for a window being replaced rather than closed,
+    /// and a double release must not leave a printer claimed by a window that no longer exists.
+    func setWindowStreaming(_ streaming: Bool, printerId: Int) {
+        if streaming { windowsStreaming.insert(printerId) }
+        else { windowsStreaming.remove(printerId) }
     }
 
     /// May the **inspector tile** stream this printer?
     ///
     /// The window never asks — it always may, because it is the owner by definition.
     func inspectorMayStream(printerId: Int) -> Bool {
-        !windowsOpen.contains(printerId)
+        !windowsStreaming.contains(printerId)
     }
 }
 #endif
