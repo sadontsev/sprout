@@ -114,6 +114,47 @@ configuration for them — and precisely when collections must keep working.
 
 Ask `filament-requirements` **per plate** (`?plate_id=`) for the exact `(file, plate)` pair that will be enqueued — unfiltered it reports every slot in the file, and on a Sprout-sliced output the plate ids other than the one sliced return stale data. Slicing N filaments works today (`filament_presets` plural, **compacted** to used slots in ascending order — measured); the wizard's UI is still single-filament and refuses multi-material with a stated reason.
 
+### `native/` is TWO destinations now — iOS and macOS, one target
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
+  xcodebuild -project native/Sprout.xcodeproj -scheme Sprout \
+  -destination 'platform=macOS,name=My Mac' CODE_SIGNING_ALLOWED=NO test   # ~934 tests
+```
+
+Not Catalyst, not "Designed for iPad". `Api/`, `Domain/`, `Config/`, `Realtime/` and `Theme.swift`
+are shared; **only the view layer forks**. iOS views live where they always did, each wrapped in
+`#if os(iOS)`; the Mac tree is `Sprout/Views/Mac/`. Density differs through `Metrics` (§8); the
+**palette does not change**. Full architecture and the whole trap list:
+`docs/native-rewrite/18-mac-port-architecture.md`. The UI spec is the design project's
+`design_handoff_bambu_mac/README.md`.
+
+**iOS runs more tests than macOS (958 vs 934) and that is correct** — the Live Activity and push
+suites are iOS-only because their subject is. A smaller macOS number is not a regression; a smaller
+*iOS* number is.
+
+Four things here fail **silently** — they compile, run, and pass the suite:
+
+- **`platformFilter: iOS`, never `platforms: [iOS]`, on the widget dependency.** The latter does not
+  filter an embed, it deletes the embed phase on *every* platform: the iOS app then ships with no
+  `PlugIns/` and no Live Activity. Verify by checking the appex is PRESENT on iOS, not merely absent
+  on macOS.
+- **You cannot see a Mac app's windows from the shell.** `System Events` needs Accessibility and
+  returns `0 windows` for every app (including Finder) without it; `CGWindowList` needs Screen
+  Recording. A healthy app reports as having none. Run
+  `SPROUT_WINDOW_PROBE=1 Sprout.app/Contents/MacOS/Sprout` and let the app answer.
+- **Stores are read off `AppModel`, never `@Environment`.** An unsatisfied `@Environment` object is a
+  runtime trap, not a type error, so it survives a green suite until someone opens the screen.
+- **Polling is started by whoever can see the section** — `.task` on iOS, `MacSectionContent` on
+  macOS. `AppModel` has no `startStores()`, deliberately.
+
+And one that is destructive rather than silent: **a store outliving its session must clear in
+`attach`.** "A refresh should not blank the list" and "this is a different server now" are different
+questions; conflating them let one library's multi-select delete ids reach a different Bambuddy.
+
+Distribution needs the App ID enabled for **macOS** on the developer portal — there is no Mac
+provisioning profile, so signed builds fail. Unsigned local builds are unaffected.
+
 ## The push relay (`canopy/`)
 
 ```bash
