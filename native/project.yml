@@ -36,10 +36,24 @@ targets:
       - path: Shared
     dependencies:
       # The Live Activity extension is iOS-only: macOS has no ActivityKit, and its Mac equivalent
-      # is the menu bar extra. Without this filter the Mac app tries to embed an iOS appex.
+      # is the menu bar extra (§6). Without a filter the macOS build FAILS trying to build an
+      # iOS-only target.
+      #
+      # `platformFilter:`, NOT `platforms:`. §0 of the handoff specifies `platforms: [iOS]`; that key
+      # does not filter an embed, it removes the embed phase ENTIRELY — the iOS app then builds and
+      # installs perfectly with no PlugIns directory and no Live Activity at all. Measured on both
+      # destinations:
+      #
+      #     platforms: [iOS]      iOS appex MISSING   macOS build ok
+      #     platformFilter: iOS   iOS appex PRESENT   macOS build ok     <- correct
+      #     (no filter)           iOS appex PRESENT   macOS build FAILS
+      #
+      # Worth stating how this got through once: it was "verified" by checking the appex was absent
+      # from the MAC bundle, which it was — and also absent from the iOS one. Confirming the
+      # negative is not confirming the positive.
       - target: SproutWidget
         embed: true
-        platforms: [iOS]
+        platformFilter: iOS
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu

@@ -35,6 +35,8 @@ final class JobsStore {
     /// Currency comes from server settings, read once — it only changes when the user edits it on
     /// the server.
     private(set) var currency: String?
+    /// Whether this session's server settings have been requested yet. See `loadQueue`.
+    private var settingsAsked = false
 
     /// The symbol every money figure in this section is rendered with.
     var currencySymbol: String { Money.symbol(currency) }
@@ -74,6 +76,7 @@ final class JobsStore {
         historyFailed = false
         stats = nil
         currency = nil
+        settingsAsked = false
     }
 
     // MARK: - Polling
@@ -138,6 +141,12 @@ final class JobsStore {
 
     func loadQueue() async {
         guard let client else { return }
+        // Self-healing, rather than relying on a view to ask again. `attach` clears `currency` on a
+        // session change, but the iOS view's `.task { loadSettings() }` is un-keyed and does not
+        // re-run when the client is swapped underneath it — so after Settings -> Save with Jobs on
+        // screen, every cost in the archive would have rendered with the default "$" for the rest
+        // of the session. Costs are money; a wrong symbol is a wrong number.
+        if !settingsAsked { await loadSettings() }
         do {
             queue = try await client.listQueue()
             queueFailed = false
@@ -164,6 +173,10 @@ final class JobsStore {
     func loadSettings() async {
         guard let client else { return }
         currency = (try? await client.getSettings())?.currency
+        // Set even when the read failed or the server has no currency configured. It records
+        // "we have asked", not "we got an answer" — otherwise a server with no currency set would
+        // be re-asked on every 5 s poll forever.
+        settingsAsked = true
     }
 
     /// What pull-to-refresh and ⌘R call. Settings are not refetched: the currency changes only when

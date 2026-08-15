@@ -19,8 +19,14 @@ import SwiftUI
 struct AmsView: View {
     let model: AppModel
 
-    /// Injected above the tab bar (and above `MacWindow`) — see `HardwareStore`.
-    @Environment(HardwareStore.self) private var hw
+    /// Read straight off `AppModel`, exactly as every sibling section does
+    /// (`JobsView` → `model.jobs`, `LibraryView` → `model.library`, `PowerView` → `model.power`).
+    ///
+    /// This was `@Environment(HardwareStore.self)` and nothing ever injected it, so opening
+    /// Hardware died on SwiftUI's "No Observable object of type HardwareStore found". It compiled
+    /// and the whole suite passed — an unsatisfied `@Environment` object is a runtime trap, not a
+    /// type error, and no test mounts this view.
+    private var hw: HardwareStore { model.hardware }
     @Environment(\.palette) private var c
 
     @State private var notice: HwNotice?

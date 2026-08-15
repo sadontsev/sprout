@@ -158,11 +158,44 @@ enum CameraEvent: Sendable {
 //    in place.
 //  * `builder` and every `displayLayer` sample-buffer call belong to `decodeQueue`. The two
 //    AVSampleBufferDisplayLayer notifications arrive on an unspecified thread and hop there.
-//  * `gate` is the one deliberately shared object, and it is internally locked.
+//  * `gate` and `frameStash` are the deliberately shared objects, and both are internally locked.
 //
 // The rule is unchanged by the macOS build: the guarded members simply do not exist there, and every
 // shared member keeps the same confinement.
+/// The most recent frame's JPEG bytes, so a snapshot needs no network round trip.
+///
+/// Written on `decodeQueue` and read on the main queue, hence the lock — the second of the two
+/// deliberately-shared, internally-locked objects named in the rule above.
+///
+/// Holds the **compressed bytes**, not a decoded image, and that is the point. The fast path
+/// (`passthroughBuffer`) hands the JPEG to the display layer without ever decoding it in-process —
+/// the hardware decoder does that downstream. Stashing a `CGImage` would therefore force a full
+/// decode of every frame on the streaming path to serve a button the user presses approximately
+/// never. Decoding once, on demand, costs nothing until it is asked for.
+final class CameraFrameStash: @unchecked Sendable {
+    private let lock = NSLock()
+    private var jpeg: Data?
+
+    func store(_ next: Data) {
+        lock.lock(); defer { lock.unlock() }
+        jpeg = next
+    }
+
+    func latest() -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        return jpeg
+    }
+
+    func clear() {
+        lock.lock(); defer { lock.unlock() }
+        jpeg = nil
+    }
+}
+
 final class CameraRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientDelegate {
+    /// The last frame that reached the display layer. See `CameraFrameStash`.
+    let frameStash = CameraFrameStash()
+
 
     let displayLayer = AVSampleBufferDisplayLayer()
     private let rateWindowStart = Date()
@@ -251,6 +284,10 @@ final class CameraRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientDele
             // serialised API, and flushing from main while a frame was mid-decode left the layer
             // holding the very frame the teardown existed to remove.
             decodeQueue.async { [weak self] in self?.displayLayer.flushAndRemoveImage() }
+            // The stash follows the picture. `clearImage` means "there is no longer a frame on
+            // screen", and a Snapshot button that kept working after the stream was torn down
+            // would silently hand back a frame from the previous session.
+            frameStash.clear()
         }
     }
 
@@ -407,6 +444,10 @@ final class CameraRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientDele
     // ---- decode + enqueue (decode queue) ----
 
     private func decodeAndEnqueue(_ jpeg: Data) {
+        // Stashed before the backpressure guards below: a frame we chose to DROP for the display
+        // layer is still the most recent picture of the plate, and a Snapshot taken during a
+        // stall should hand back the newest frame rather than the last one that happened to render.
+        frameStash.store(jpeg)
         // A layer whose decoder was reclaimed must be flushed before it will accept anything.
         if displayLayer.requiresFlushToResumeDecoding { displayLayer.flush() }
         guard displayLayer.isReadyForMoreMediaData else { return }   // backpressure: drop, never block

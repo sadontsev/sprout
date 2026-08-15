@@ -93,9 +93,40 @@ final class LibraryStore {
     /// Settings → Save today, and a store that blanked here would leave the Files section spinning
     /// instead: the view's `.task` does not re-fire on a reconnect, because the view's identity
     /// never changed, so nothing would call `load` until the tab was left and re-entered.
+    /// Point the store at a session. Clears whatever the PREVIOUS session put on screen.
+    ///
+    /// This used to record and clear nothing, on the reasoning that a refresh should not blank the
+    /// list. That is true of a refresh and false of a session change, and the two are different
+    /// questions — the classic nearby-predicate mistake this codebase keeps rediscovering.
+    ///
+    /// It mattered destructively. `selecting`/`selected` were `@State` on `LibraryView`, and
+    /// `Shell` tears the whole tab host down whenever `client == nil`, so signing out reset them.
+    /// The store is owned by `AppModel` and outlives that. Enter multi-select, tick three files,
+    /// sign out, connect to a DIFFERENT Bambuddy: Files reopened with "3 selected" still showing
+    /// and Delete issued `DELETE` for the previous library's ids against the new one. Library ids
+    /// are small integers, so they collide with real files.
     func attach(client: BambuddyClient?, printerId: Int) {
+        let newSession = client !== self.client
+        let newPrinter = printerId != self.printerId
         self.client = client
         self.printerId = printerId
+
+        if newSession {
+            // Everything here is derived from the server that just went away.
+            files = nil                 // back to "never loaded", so the spinner is reachable again
+            loadFailed = false
+            selecting = false
+            selected = []
+            shareItem = nil
+            problem = nil
+        }
+        if newSession || newPrinter {
+            // Onboard storage is per-MACHINE. `source` is a UI preference and survives; clearing
+            // the listing is what makes `loadPrinterIfNeeded` re-list from the root instead of
+            // early-returning on a listing that belongs to another printer.
+            printerList = nil
+            printerPath = "/"
+        }
     }
 
     /// The first fetch, for a caller that has no `.task` to hang it on — the macOS window drives its

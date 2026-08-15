@@ -222,8 +222,20 @@ final class PowerStore {
     /// and blanking first makes a switch read as slower than it is.
     func attach(client: BambuddyClient?, printerId: Int) {
         guard client !== self.client || printerId != self.printerId else { return }
+        let newSession = client !== self.client
         self.client = client
         self.printerId = printerId
+
+        // Plugs belong to a server. Leaving them meant `exitDemo()` resumed the socket pollers
+        // against the DEMO's plug ids on the real server until the next `reload()` landed — and
+        // showed the demo's wattages as the real printer's in the meantime.
+        if newSession {
+            allPlugs = []
+            sockets = []
+            settings = nil
+        }
+        // The hero plug is per-printer even within one server.
+        plug = .loading
         syncPollers()
     }
 

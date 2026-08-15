@@ -94,6 +94,12 @@ final class AppModel {
     let power = PowerStore()
     let hardware = HardwareStore()
 
+    #if os(macOS)
+    /// Which surface owns each printer's camera stream (§5.2). App-level because the camera window
+    /// and the Printer inspector are separate SCENES on macOS and neither can see the other.
+    let cameraOwnership = MacCameraOwnership()
+    #endif
+
     /// The library upload in flight, if any.
     ///
     /// App-level rather than owned by the Files section, because on macOS a drop is accepted
@@ -111,12 +117,18 @@ final class AppModel {
         hardware.attach(client: client, printerId: printerId)
     }
 
-    private func startStores() {
-        jobs.start()
-        power.start()
-        hardware.start()
-    }
-
+    /// Stop every store's polling. Called on teardown only.
+    ///
+    /// There is deliberately **no `startStores()`**. Polling is started by whoever is LOOKING at a
+    /// section, on both platforms — `.task` on iOS, and the Mac sections' own lifecycle — because
+    /// the lifetime of a poll is "while someone can see it", and only the view knows that.
+    ///
+    /// Starting them here instead was wrong twice over. The iOS views already drive their own
+    /// polls, so Jobs fetched the queue twice every 5 s and the history twice every 15 s, with two
+    /// concurrent loads racing to set and clear the same `queueFailed` flag. And an
+    /// `AppModel`-owned loop has no view to be cancelled by, so leaving the tab no longer stopped
+    /// the traffic — `.task` cancellation was the entire mechanism. Power was worse again: its
+    /// pollers resumed on every reconnect with the Power tab nowhere on screen.
     private func stopStores() {
         jobs.stop()
         power.stop()
@@ -208,7 +220,6 @@ final class AppModel {
         cool.start(printerId: printerId)
 
         attachStores(client: c)
-        startStores()
 
         #if os(iOS)
         liveActivity = LiveActivityController(config: cfg)
@@ -273,7 +284,6 @@ final class AppModel {
         // which is the point of the demo: it exercises the app's real code paths, not a parallel
         // set of fixtures.
         attachStores(client: c)
-        startStores()
 
         printers = (try? await c.listPrinters()) ?? []
     }

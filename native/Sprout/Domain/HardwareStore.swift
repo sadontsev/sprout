@@ -68,9 +68,22 @@ final class HardwareStore {
     /// printer's cards stay on screen until the replacement lands, which is the same
     /// keep-what-is-there rule the failure paths follow — a blank pane reads as slower than the
     /// request is.
+    /// Point the store at a session/printer, clearing what the previous one loaded.
+    ///
+    /// Every field here belongs to ONE machine on ONE server — spools in its trays, reminders
+    /// against its hours. Recording without clearing left the previous session's spool names and
+    /// service reminders on screen for a round trip after signing into a different server, and the
+    /// demo boundary made it sharpest: real printer data sitting under a "DEMO · sample data" strip.
+    ///
+    /// `segment` deliberately survives: which of Filament/Nozzles/Service you were looking at is a
+    /// UI preference, not the previous server's data.
     func attach(client: BambuddyClient?, printerId: Int) {
+        guard client !== self.client || printerId != self.printerId else { return }
         self.client = client
         self.printerId = printerId
+        assigns = nil
+        maint = .loading
+        maintBusy = nil
     }
 
     /// The one-shot load this section needs.
