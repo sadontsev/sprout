@@ -1,3 +1,6 @@
+#if os(iOS)
+// ActivityKit does not exist on macOS. The menu bar extra (1b) is the Mac answer (§6).
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import ActivityKit
 import Foundation
 import Observation
@@ -138,7 +141,7 @@ final class LiveActivityController {
     /// challenge lives fifteen minutes to honour Apple's retry guidance, an assertion challenge two,
     /// and letting one satisfy the other would stretch the assertion replay window sevenfold.
     private func fetchChallenge(attesting: Bool) async -> String? {
-        guard let url = Self.endpoint(pushUrl, "/challenge") else { return nil }
+        guard let url = ConfigRules.trellisEndpoint(pushUrl, "/challenge") else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "POST"
         req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
@@ -816,14 +819,6 @@ final class LiveActivityController {
         }
     }
 
-    /// Trellis endpoint for `path`, or nil when push is off. Trailing slashes are stripped because
-    /// `…/` + `/register` is `//register`, which the server 404s.
-    nonisolated static func endpoint(_ base: String?, _ path: String) -> URL? {
-        guard var base = base else { return nil }
-        while base.hasSuffix("/") { base.removeLast() }
-        guard !base.isEmpty else { return nil }
-        return URL(string: base + path)
-    }
 
     /// The JSON shape Trellis's pydantic models expect: snake_case, nil optionals omitted.
     nonisolated static func encode(_ body: some Encodable) -> Data? {
@@ -861,7 +856,7 @@ final class LiveActivityController {
     /// request failed, and none of them logged, which is how a server returning 500 to every
     /// registration stayed invisible on the phone for an entire print.
     private func send(_ path: String, body: some Encodable) async -> (outcome: PostOutcome, payload: Data?) {
-        guard let url = Self.endpoint(pushUrl, path), let data = Self.encode(body) else {
+        guard let url = ConfigRules.trellisEndpoint(pushUrl, path), let data = Self.encode(body) else {
             return (.misconfigured, nil)
         }
         var req = URLRequest(url: url, timeoutInterval: 10)
@@ -907,3 +902,4 @@ final class LiveActivityController {
         await postWithReason(path, body: body).ok
     }
 }
+#endif

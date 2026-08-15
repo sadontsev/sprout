@@ -1,3 +1,6 @@
+#if os(iOS)
+// Overlays are a fullScreenCover idiom. macOS uses sheets and windows (§7).
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import Foundation
 import SwiftUI
 
@@ -598,3 +601,4 @@ struct CameraOverlay: View {
         }
     }
 }
+#endif

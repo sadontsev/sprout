@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacExploreSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// What just happened, and where the file went.
@@ -98,3 +101,4 @@ struct ImportReceiptSheet: View {
         }
     }
 }
+#endif

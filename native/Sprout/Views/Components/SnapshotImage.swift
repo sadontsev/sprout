@@ -18,13 +18,13 @@ struct SnapshotImage: View {
     /// Called the first time a frame decodes, so callers can stop claiming the camera is waking.
     var onFirstFrame: () -> Void = {}
 
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
     @State private var loadedOnce = false
 
     var body: some View {
         ZStack {
             if let image {
-                Image(uiImage: image)
+                Image(platform: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     // Deliberately NO .id(image): keying on the frame gives every update a fresh
@@ -60,7 +60,7 @@ struct SnapshotImage: View {
         let ok = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? true
         // A warming camera answers with a non-image body; keep the last good frame rather than
         // flashing an error into a tile that is about to work.
-        guard ok, let decoded = UIImage(data: data) else { return }
+        guard ok, let decoded = PlatformImage.decoded(from: data) else { return }
 
         image = decoded
         if !loadedOnce {

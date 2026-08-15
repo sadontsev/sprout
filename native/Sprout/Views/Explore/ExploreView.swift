@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacExploreSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// MakerWorld, as a page.
@@ -500,3 +503,4 @@ struct ExploreMessage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+#endif

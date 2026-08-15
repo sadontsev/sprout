@@ -1,3 +1,7 @@
+#if os(iOS)
+// Exercises LiveActivityController's claim construction.
+// The subject is iOS-only (§6), so the tests are too — see
+// docs/native-rewrite/18-mac-port-architecture.md for the count this removes on macOS.
 import XCTest
 @testable import Sprout
 
@@ -242,3 +246,4 @@ final class SyncReplyTests: XCTestCase {
         XCTAssertEqual(json?["deviceId"] as? String, "dev-1")
     }
 }
+#endif

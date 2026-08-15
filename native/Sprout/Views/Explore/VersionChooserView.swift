@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacExploreSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// Choosing which of a model's versions to import.
@@ -373,3 +376,4 @@ struct VersionFilterSheet: View {
         }
     }
 }
+#endif

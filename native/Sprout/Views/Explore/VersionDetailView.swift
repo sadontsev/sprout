@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacExploreSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// One version, in full: its photos, the maker's own notes, its three numbers, and which of your
@@ -195,3 +198,4 @@ struct VersionDetailView: View {
         .background(.ultraThinMaterial)
     }
 }
+#endif

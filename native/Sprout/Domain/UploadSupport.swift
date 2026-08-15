@@ -1,15 +1,19 @@
-import SwiftUI
+import Foundation
 import UniformTypeIdentifiers
 
 // The surviving pieces of the old UploadSheet.
 //
 // The sheet itself is gone: Explore became a page and `+` became a native Menu, which left the
 // "Add a file" modal with nothing to present and `MakerWorldPanel` with nothing to present it.
-// These four outlived it because they were never about the sheet — they are about files and about
+// These outlived it because they were never about the sheet — they are about files and about
 // reporting a failed request, and both jobs still exist.
+//
+// They live in Domain/ rather than beside a view because nothing here is a view or a platform:
+// `LibraryUploader` calls `stageUploadCopy` from the shared layer, and `UploadFileKind.all` is also
+// the exact UTI list the macOS drop target and file promises are declared against (§5.3).
 
 enum UploadFileKind {
-    /// What the document browser will let you pick.
+    /// What a file picker — or a drop target — will accept.
     ///
     /// Built with `UTType(tag:tagClass:conformingTo:)` rather than `UTType(filenameExtension:)`
     /// because `gcode` (and, on most systems, `3mf`) is not a registered type: the extension
@@ -28,8 +32,11 @@ enum UploadFileKind {
 /// copy has to keep the original basename — hence the per-upload subdirectory instead of a unique
 /// filename.
 ///
+/// The security scope matters more on macOS, not less: the app is sandboxed there too, and a URL
+/// arriving from a drop or from `application(_:open:)` is scoped exactly like a picked one.
+///
 /// Free function, not a method, so it can run off the main actor: copying tens of megabytes is not
-/// something to do while the sheet is trying to animate.
+/// something to do while the UI is trying to animate.
 func stageUploadCopy(_ picked: URL) throws -> URL {
     let scoped = picked.startAccessingSecurityScopedResource()
     defer { if scoped { picked.stopAccessingSecurityScopedResource() } }
@@ -55,25 +62,4 @@ func uploadApiDetail(_ error: Error) -> String? {
           !d.isEmpty
     else { return nil }
     return d
-}
-
-/// The one failure card used by both panels.
-struct UploadErrorCard: View {
-    let text: String
-    @Environment(\.palette) private var c
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Image(systemName: "xmark.circle")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(c.error)
-            Text(text)
-                .font(.system(size: 12.5, weight: .medium))
-                .lineSpacing(3)
-                .foregroundStyle(c.t2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(c.errorDim))
-    }
 }

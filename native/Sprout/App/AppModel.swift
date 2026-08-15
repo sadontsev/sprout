@@ -1,4 +1,6 @@
+#if os(iOS)
 import ActivityKit
+#endif
 import Foundation
 import Observation
 import SwiftUI
@@ -66,7 +68,11 @@ final class AppModel {
     // MARK: Derived surfaces
 
     private(set) var cooldown: CooldownStore?
+    /// iOS only. macOS has no ActivityKit; its equivalent surface is the menu bar extra (§5.1),
+    /// which reads `status` directly rather than pushing a card.
+    #if os(iOS)
     private(set) var liveActivity: LiveActivityController?
+    #endif
 
     /// Appearance preference. Applied at the root, so a change re-themes the whole tree at once.
     var theme: ThemePreference = .system {
@@ -93,7 +99,16 @@ final class AppModel {
 
     // MARK: - Lifecycle
 
+    /// Set the first time `load()` runs. Now that `AppModel` is owned by the App rather than by one
+    /// view, `load()` is no longer reachable exactly once: on macOS several scenes can appear and
+    /// disappear over a session, and a window reopening would otherwise re-enter here and call
+    /// `connect` on an already-live session — tearing down a working socket to rebuild the same one.
+    private var hasLoaded = false
+
     func load() async {
+        guard !hasLoaded else { return }
+        hasLoaded = true
+
         var stored = SecureConfig.load()
         // Belt and braces: a demo config must never come back as a real one. `persist` is guarded,
         // but a build that already wrote one (or a future path that forgets) would otherwise strand
@@ -143,6 +158,7 @@ final class AppModel {
         cooldown = cool
         cool.start(printerId: printerId)
 
+        #if os(iOS)
         liveActivity = LiveActivityController(config: cfg)
 
         // Remote notifications: the device token feeds the alert banners this app has never been
@@ -159,6 +175,7 @@ final class AppModel {
             }
         }
         Task { await PushRegistrar().start() }
+        #endif
 
         startFleetRefresh()
         startCameraTokenRefresh()
@@ -225,9 +242,13 @@ final class AppModel {
     func signOut() {
         isDemo = false
 
+        #if os(iOS)
         endLiveActivities()
+        #endif
         teardownSession()
+        #if os(iOS)
         liveActivity = nil
+        #endif
         client = nil
         printers = []
         cameraToken = nil
@@ -262,6 +283,7 @@ final class AppModel {
     /// Enumerating ActivityKit rather than the printers we happen to have synced is deliberate: a
     /// card can outlive the fleet entry that created it, and the attributes it carries are exactly
     /// what `end` keys on.
+    #if os(iOS)
     private func endLiveActivities() {
         guard let la = liveActivity else { return }
         let cards = Activity<PrintActivityAttributes>.activities
@@ -273,6 +295,7 @@ final class AppModel {
             }
         }
     }
+    #endif
 
     // MARK: - Fleet
 
@@ -330,6 +353,7 @@ final class AppModel {
                 // that will ever call `sync` for one. Reconciling the selection alone froze the other
                 // machine's card the moment the user switched — and left it up for good, since
                 // nothing would then be called with that printer's id to end it.
+                #if os(iOS)
                 for (id, s) in self.status?.statuses ?? [:] {
                     await self.liveActivity?.sync(
                         printerId: id,
@@ -338,6 +362,7 @@ final class AppModel {
                         status: s
                     )
                 }
+                #endif
                 try? await Task.sleep(for: .seconds(4))
             }
         }

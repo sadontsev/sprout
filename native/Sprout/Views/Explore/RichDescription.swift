@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacExploreSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// An uploader's description, with its formatting intact.
@@ -67,3 +70,4 @@ struct RichDescription: View {
         return parsed
     }
 }
+#endif

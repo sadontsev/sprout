@@ -1,3 +1,8 @@
+#if os(iOS)
+// ActivityAttributes does not exist on macOS, and neither does the surface it describes:
+// §6 keeps Live Activities and SproutWidget on iOS, with the menu bar extra (1b) as the Mac
+// equivalent. LAColors travels with it because it exists only to match what Trellis pushes
+// into a card — there is no card on macOS to match.
 import ActivityKit
 import Foundation
 
@@ -129,3 +134,4 @@ enum LiveActivityCountdown: Equatable, Sendable {
     /// Reads as the countdown it replaces, run out.
     static let overdueLabelCompact = "0:00"
 }
+#endif

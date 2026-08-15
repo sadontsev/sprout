@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacExploreSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// One MakerWorld model: what it is, who made it, what you may do with it, and the way to a version.
@@ -326,3 +329,4 @@ struct ImportReceipt: Identifiable {
     let response: MakerWorldImportResponse
     var id: Int { response.libraryFileId }
 }
+#endif

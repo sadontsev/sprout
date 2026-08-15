@@ -35,6 +35,31 @@ final class SecureConfigAccessibilityTests: XCTestCase {
         return attrs[kSecAttrAccessible] as? String
     }
 
+    // MARK: - Accessibility class — iOS only
+    //
+    // Not a port gap; the attribute has no meaning on macOS and asserting it there would be
+    // asserting a fiction.
+    //
+    // macOS `SecItem*` uses the LEGACY file-based keychain unless an app opts into the
+    // data-protection keychain with `kSecUseDataProtectionKeychain`. The legacy keychain predates
+    // data protection and does not store `kSecAttrAccessible` at all, so these reads come back nil
+    // there — which is exactly what the first macOS test run showed.
+    //
+    // Opting in was tried and reverted. It needs a `keychain-access-groups`/`application-identifier`
+    // entitlement, which needs a Mac provisioning profile, which needs this App ID enabled for
+    // macOS on the developer portal. Without it every keychain call fails `errSecMissingEntitlement`
+    // (-34018) — the app cannot store credentials AT ALL, which is far worse than an unread
+    // attribute.
+    //
+    // And the attribute is not what protects a Mac. The whole reason this app wants
+    // `AfterFirstUnlock` is the LOCKED-DEVICE BACKGROUND WAKE-UP: a push-to-start, and the relay's
+    // silent vouch push. §6 puts both on iOS only. A Mac app runs when its user is logged in, which
+    // is precisely when the login keychain is unlocked, and the item is non-synchronizable either
+    // way so it never reaches iCloud.
+    //
+    // What macOS DOES need — that the config round-trips, and that the migration never costs
+    // someone their key — is covered by the unguarded cases below, and they pass there.
+    #if os(iOS)
     func testAFreshlySavedConfigIsReadableWhileLocked() throws {
         SecureConfig.save(config)
 
@@ -43,6 +68,7 @@ final class SecureConfigAccessibilityTests: XCTestCase {
             "WhenUnlocked makes the app unusable in exactly the background wake-ups it depends on"
         )
     }
+    #endif
 
     func testTheConfigStillRoundTrips() throws {
         SecureConfig.save(config)
@@ -52,6 +78,7 @@ final class SecureConfigAccessibilityTests: XCTestCase {
         XCTAssertEqual(loaded.apiKey, config.apiKey)
     }
 
+    #if os(iOS)
     func testAnAlreadyOnboardedInstallIsMigrated() throws {
         // The population the change is for. Writing the constant only affects the ADD branch, so
         // without a migration every existing install keeps WhenUnlocked forever — and those are
@@ -69,6 +96,7 @@ final class SecureConfigAccessibilityTests: XCTestCase {
 
         XCTAssertEqual(storedAccessibility(), kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
     }
+    #endif
 
     func testMigrationPreservesTheStoredValue() throws {
         // A delete-then-add would briefly leave the device with no credentials at all, which is why

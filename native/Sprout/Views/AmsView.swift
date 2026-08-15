@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacHardwareSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import Foundation
 import SwiftUI
 
@@ -1758,3 +1761,4 @@ private struct FlowLayout: Layout {
         return rows
     }
 }
+#endif

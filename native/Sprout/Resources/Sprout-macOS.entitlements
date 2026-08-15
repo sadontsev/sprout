@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+
+	<!-- Outbound to Bambuddy, which the owner self-hosts. Every request in the app goes through it. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Inbound. Bambuddy is usually on the LAN, and reaching a .local name needs Bonjour
+	     resolution, which the sandbox treats as a server capability. Without this a hostname that
+	     resolves fine in Safari fails inside the app, which reads as "the server is down". -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+
+	<!-- File import and export: the Add file… panel, Save frame…, and dragging a .3mf out of the
+	     Files grid into Finder or a slicer. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<!-- Imports that land in the library folder without a panel — a MakerWorld import, or a file
+	     dropped on the Dock icon. -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+
+	<!-- Shared with the iOS build and the widget. Kept on macOS because the camera snapshot path
+	     writes frames into the group container. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.mvks5.bambu</string>
+	</array>
+
+	<!-- Remote notifications. The Mac app registers for APNs the same way iOS does; what it does
+	     NOT have is ActivityKit, so there is no time-sensitive entitlement here — the menu bar
+	     extra is the Mac answer to the Live Activity. -->
+	<key>aps-environment</key>
+	<string>development</string>
+
+	<!-- Same reasoning as the iOS entitlements: this declares which of Apple's ATTESTATION
+	     environments a locally-built app talks to, and is unrelated to the APNs environment above.
+	     Canopy's CANOPY_ALLOW_DEVELOPMENT_ATTEST is what accepts the result. -->
+	<key>com.apple.developer.devicecheck.appattest-environment</key>
+	<string>development</string>
+</dict>
+</plist>

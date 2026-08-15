@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacExploreSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// What Explore shows before anything has been asked for.
@@ -102,3 +105,4 @@ struct ExploreShelves: View {
         .contentShape(.rect)
     }
 }
+#endif

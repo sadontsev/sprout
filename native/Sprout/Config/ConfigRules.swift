@@ -134,6 +134,21 @@ enum ConfigRules {
         return nil
     }
 
+    /// A Trellis URL for `path`, or nil when there is no Trellis. Trailing slashes are stripped
+    /// because `…/` + `/register` is `//register`, which the server 404s.
+    ///
+    /// This lived on `LiveActivityController` and moved here because it is not about Live
+    /// Activities: it is the same "where is Trellis" question `laPushUrl` answers, and its other
+    /// caller is `CollectionsClient` — plain authenticated HTTP with no APNs in it. Leaving it on
+    /// an ActivityKit type made collections un-buildable on a platform that has no ActivityKit,
+    /// which is the same shape as the bug that made switching push off remove the Collections tab.
+    static func trellisEndpoint(_ base: String?, _ path: String) -> URL? {
+        guard let base else { return nil }
+        let trimmed = trimTrailingSlashes(base)
+        guard !trimmed.isEmpty else { return nil }
+        return URL(string: trimmed + path)
+    }
+
     private static func trimTrailingSlashes(_ s: String) -> String {
         var t = s.trimmingCharacters(in: .whitespaces)
         while t.hasSuffix("/") { t.removeLast() }

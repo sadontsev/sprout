@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacPowerSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 // MARK: - Live plug state
@@ -809,3 +812,4 @@ private extension View {
             )
     }
 }
+#endif

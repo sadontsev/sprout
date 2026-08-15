@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacExploreSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// Every photo of every version, in one pager.
@@ -219,3 +222,4 @@ struct VersionPhotoStrip: View {
         }
     }
 }
+#endif

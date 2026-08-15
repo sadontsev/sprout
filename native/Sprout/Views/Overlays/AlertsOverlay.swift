@@ -1,3 +1,6 @@
+#if os(iOS)
+// Overlays are a fullScreenCover idiom. macOS uses sheets and windows (§7).
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// The full alert list, opened from the dashboard's single summary row.
@@ -467,3 +470,4 @@ private struct ActionFlow: Layout {
         return rows
     }
 }
+#endif

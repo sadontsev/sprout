@@ -1,3 +1,7 @@
+#if os(iOS)
+// Live Activity reconcile/sync behaviour.
+// The subject is iOS-only (§6), so the tests are too — see
+// docs/native-rewrite/18-mac-port-architecture.md for the count this removes on macOS.
 import XCTest
 @testable import Sprout
 
@@ -243,3 +247,4 @@ final class WsFrameTests: XCTestCase {
         XCTAssertNil(WsFrame.status(from: raw, printerId: 3))
     }
 }
+#endif

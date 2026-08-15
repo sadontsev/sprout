@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS layout. macOS: Views/Mac/Sections/MacJobsSection.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 // The Jobs tab reads top-to-bottom as the printer's job timeline: what is printing NOW, what is UP
@@ -1053,3 +1056,4 @@ enum PrintTime {
         return f
     }()
 }
+#endif

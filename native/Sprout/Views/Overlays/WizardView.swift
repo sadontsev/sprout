@@ -1,3 +1,6 @@
+#if os(iOS)
+// Overlays are a fullScreenCover idiom. macOS uses sheets and windows (§7).
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// The 7-step print wizard: File → Printer → Material → Slicing → Review → Map filament → Start.
@@ -2020,3 +2023,4 @@ private struct PStat: View {
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(c.s2))
     }
 }
+#endif

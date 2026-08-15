@@ -1,3 +1,6 @@
+#if os(iOS)
+// PiP is iOS-only (§6). Also holds the near-silent audio session, which has no macOS meaning.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import Foundation
 import AVFoundation
 import AVKit
@@ -87,7 +90,7 @@ final class PiPBackgroundKeepAlive: @unchecked Sendable {
             if !engine.isRunning { try engine.start() }
             player.play()
         } catch {
-            pipLog.error("could not resume keep-alive audio session: \(error.localizedDescription, privacy: .public)")
+            cameraLog.error("could not resume keep-alive audio session: \(error.localizedDescription, privacy: .public)")
         }
     }
 }
@@ -127,28 +130,6 @@ enum CameraEvent: Sendable {
     case audio(ok: Bool, message: String?)
 }
 
-/// The reconnect cadence, as pure arithmetic so the ceiling is covered by a test rather than by a
-/// comment. It is not a tuning knob: a tight retry loop once piled up six subscribers on the
-/// on-demand camera and starved it for every other client on the network, so the calm cadence after
-/// a run of frameless attempts is the thing that stops a client-side fault taking the camera down
-/// for everything else.
-enum CameraReconnectPolicy {
-    /// Attempts up to and including this one use the fast exponential cadence.
-    static let fastAttempts = 5
-    static let firstDelay: TimeInterval = 0.4
-    static let growth = 1.6
-    static let fastCeiling: TimeInterval = 5.0
-    static let calmDelay: TimeInterval = 20.0
-
-    /// `attempt` is 1-based: 1 is the first reconnect after a failure.
-    static func delay(forAttempt attempt: Int) -> TimeInterval {
-        let n = max(1, attempt)
-        // Fast at first, because the camera self-terminates ~7 s after its last viewer and a slow
-        // retry guarantees paying the cold warm-up again.
-        guard n <= fastAttempts else { return calmDelay }
-        return min(firstDelay * pow(growth, Double(n - 1)), fastCeiling)
-    }
-}
 
 // `@unchecked Sendable`, on one rule: THE RENDERER'S CONTROL STATE IS MAIN-QUEUE ONLY.
 //
@@ -263,7 +244,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
         } catch {
             // Not fatal for STARTING PiP, but without it the app suspends when backgrounded and the
             // window freezes on its last frame.
-            pipLog.error("keep-alive audio session failed: \(error.localizedDescription, privacy: .public)")
+            cameraLog.error("keep-alive audio session failed: \(error.localizedDescription, privacy: .public)")
             emit(.audio(ok: false, message: error.localizedDescription))
         }
         let source = AVPictureInPictureController.ContentSource(
@@ -301,7 +282,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
                     self.probeDeadline = Date().addingTimeInterval(1.5)   // passthrough self-check window
                     self.client.start(url: url)
                 case .failure(let e):
-                    pipLog.error("could not build stream URL: \(e.message, privacy: .public)")
+                    cameraLog.error("could not build stream URL: \(e.message, privacy: .public)")
                     self.scheduleReconnect()
                 }
             }
@@ -348,7 +329,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
         // "frames arrive and nothing renders" — the two look identical on screen.
         if frameCount == 1 || frameCount % 100 == 0 {
             let dt = Date().timeIntervalSince(rateWindowStart)
-            pipLog.info("camera frames=\(self.frameCount, privacy: .public) rate=\(String(format: "%.1f", Double(self.frameCount) / max(dt, 0.001)), privacy: .public)/s")
+            cameraLog.info("camera frames=\(self.frameCount, privacy: .public) rate=\(String(format: "%.1f", Double(self.frameCount) / max(dt, 0.001)), privacy: .public)/s")
         }
         if frameCount % 20 == 0 {
             deliver(.stats(frames: frameCount, pipActive: pip?.isPictureInPictureActive == true))
@@ -356,7 +337,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
     }
 
     func streamDidBecomeLive() {
-        pipLog.info("camera stream live")
+        cameraLog.info("camera stream live")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.retryAttempt = 0
@@ -372,7 +353,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
     }
 
     func streamDidFail(_ error: MJPEGStreamError) {
-        pipLog.error("camera stream failed: \(error.localizedDescription, privacy: .public)")
+        cameraLog.error("camera stream failed: \(error.localizedDescription, privacy: .public)")
         // Typed, not just a string: the native client can see what WebKit hid — notably a 401 from
         // an expired token, which the WebView could not distinguish from "still warming up".
         let message = error.localizedDescription
@@ -414,7 +395,7 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
             if self.builder.strategy == .passthrough {
                 self.builder.demoteToImageIO(reason: reason)
             } else {
-                pipLog.error("display layer decode failure: \(reason, privacy: .public)")
+                cameraLog.error("display layer decode failure: \(reason, privacy: .public)")
             }
             self.displayLayer.flush()
         }
@@ -478,13 +459,13 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
     // ---- AVPictureInPictureControllerDelegate ----
 
     func pictureInPictureControllerDidStartPictureInPicture(_ c: AVPictureInPictureController) {
-        pipLog.info("PiP started")
+        cameraLog.info("PiP started")
         emit(.pipStart)
     }
 
     func pictureInPictureController(_ c: AVPictureInPictureController,
                                     failedToStartPictureInPictureWithError error: Error) {
-        pipLog.error("PiP failed to start: \(error.localizedDescription, privacy: .public)")
+        cameraLog.error("PiP failed to start: \(error.localizedDescription, privacy: .public)")
         keepAlive.deactivate()
         emit(.pipStop(error: error.localizedDescription))
     }
@@ -498,3 +479,4 @@ final class CameraPiPRenderer: NSObject, @unchecked Sendable, MJPEGStreamClientD
 }
 
 // ============================================================================
+#endif

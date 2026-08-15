@@ -1,3 +1,7 @@
+#if os(iOS)
+// Live Activity token registration.
+// The subject is iOS-only (§6), so the tests are too — see
+// docs/native-rewrite/18-mac-port-architecture.md for the count this removes on macOS.
 import XCTest
 @testable import Sprout
 
@@ -12,29 +16,6 @@ final class LiveActivityRegistrationTests: XCTestCase {
     private func decode(_ data: Data?) throws -> [String: Any] {
         let raw = try XCTUnwrap(data)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: raw) as? [String: Any])
-    }
-
-    // MARK: - Endpoint
-
-    func testEndpointIsBuiltOffThePushUrl() throws {
-        XCTAssertEqual(
-            LiveActivityController.endpoint("https://push.example.com", "/register")?.absoluteString,
-            "https://push.example.com/register"
-        )
-    }
-
-    /// `…/` + `/register` is `//register`, which the server answers 404 — and a swallowed 404 is
-    /// indistinguishable from a working registration.
-    func testEndpointStripsTrailingSlashes() {
-        XCTAssertEqual(
-            LiveActivityController.endpoint("https://push.example.com//", "/register-start")?.absoluteString,
-            "https://push.example.com/register-start"
-        )
-    }
-
-    func testEndpointIsNilWithoutAPushUrl() {
-        XCTAssertNil(LiveActivityController.endpoint(nil, "/register"))
-        XCTAssertNil(LiveActivityController.endpoint("", "/register"))
     }
 
     // MARK: - Token encoding
@@ -150,3 +131,4 @@ final class LiveActivityRegistrationTests: XCTestCase {
         XCTAssertTrue(LiveActivityController.meaningfulChange(from: base, to: glyph))
     }
 }
+#endif

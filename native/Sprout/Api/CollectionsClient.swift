@@ -66,7 +66,7 @@ struct CollectionsClient: Sendable {
     }
 
     private func send<T: Decodable>(_ path: String, method: String, as type: T.Type) async throws -> T {
-        guard let url = LiveActivityController.endpoint(baseUrl, path) else {
+        guard let url = ConfigRules.trellisEndpoint(baseUrl, path) else {
             throw SproutError("Collections need a push server. Set one in Settings, or leave this off.")
         }
         var req = URLRequest(url: url, timeoutInterval: 30)

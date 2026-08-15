@@ -1,3 +1,7 @@
+#if os(iOS)
+// UIApplication-based remote-notification registration.
+// The subject is iOS-only (§6), so the tests are too — see
+// docs/native-rewrite/18-mac-port-architecture.md for the count this removes on macOS.
 import XCTest
 @testable import Sprout
 
@@ -69,3 +73,4 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertEqual(registrar.pendingVouchNonce, "nonce-1")
     }
 }
+#endif

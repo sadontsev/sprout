@@ -1,3 +1,6 @@
+#if os(iOS)
+// PiP is iOS-only (§6).
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import AVFoundation
 import AVKit
 import SwiftUI
@@ -147,3 +150,4 @@ struct CameraPiPView: UIViewRepresentable {
         view.setActive(false)
     }
 }
+#endif

@@ -1,3 +1,6 @@
+#if os(iOS)
+// UIApplication-based registration. macOS registers through NSApplicationDelegate instead (§0).
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import Foundation
 import UserNotifications
 
@@ -108,4 +111,5 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
         return .newData
     }
 }
+#endif
 #endif

@@ -4,7 +4,6 @@ import AVKit
 import CoreMedia
 import CoreVideo
 import ImageIO
-import UIKit
 import os
 
 // MARK: - 3. Frame gate — the backpressure policy
@@ -106,7 +105,7 @@ final class JPEGFrameBuilder {
         guard strategy == .passthrough else { return }
         strategy = .imageIO
         formatDescription = nil
-        pipLog.warning("JPEG passthrough rejected by AVSampleBufferDisplayLayer (\(reason, privacy: .public)); falling back to ImageIO decode")
+        cameraLog.warning("JPEG passthrough rejected by AVSampleBufferDisplayLayer (\(reason, privacy: .public)); falling back to ImageIO decode")
     }
 
     /// Called on the decode queue. Returns a buffer ready to enqueue, or nil.
@@ -391,7 +390,7 @@ final class MJPEGStreamClient: NSObject, @unchecked Sendable, URLSessionDataDele
         let t = session.dataTask(with: req)
         task = t
         armFirstFrameWatchdog()
-        pipLog.info("MJPEG connect \(Self.redact(url), privacy: .public)")
+        cameraLog.info("MJPEG connect \(Self.redact(url), privacy: .public)")
         t.resume()
     }
 
@@ -581,7 +580,7 @@ final class MJPEGStreamClient: NSObject, @unchecked Sendable, URLSessionDataDele
                 // THE WARM-UP CHECK. HTTP 200, well-formed multipart, one text/plain part.
                 let msg = String(decoding: body.prefix(512), as: UTF8.self)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                pipLog.warning("camera stream sent \(ct, privacy: .public) instead of a frame: \(msg, privacy: .public)")
+                cameraLog.warning("camera stream sent \(ct, privacy: .public) instead of a frame: \(msg, privacy: .public)")
                 if !sawFirstFrame {
                     fail(.backendMessage(msg.isEmpty ? "camera unavailable (\(ct))" : msg))
                     return
@@ -589,7 +588,7 @@ final class MJPEGStreamClient: NSObject, @unchecked Sendable, URLSessionDataDele
                 // Mid-stream: one bad part is not fatal; the idle timeout will catch a real stall.
 
             case .endOfStream:
-                pipLog.info("camera closed the multipart stream")
+                cameraLog.info("camera closed the multipart stream")
                 fail(sawFirstFrame ? .transport(URLError(.networkConnectionLost)) : .backendMessage("camera closed the stream before sending a frame"))
                 return
             }
@@ -606,7 +605,7 @@ final class MJPEGStreamClient: NSObject, @unchecked Sendable, URLSessionDataDele
                     completionHandler: @escaping (URLRequest?) -> Void) {
         guard let old = task.originalRequest?.url, let new = request.url,
               old.scheme == new.scheme, old.host == new.host, old.port == new.port else {
-            pipLog.error("refusing cross-origin redirect from the camera stream")
+            cameraLog.error("refusing cross-origin redirect from the camera stream")
             completionHandler(nil)          // deliver the 3xx body instead of following it
             return
         }

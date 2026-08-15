@@ -7,7 +7,7 @@ import SwiftUI
 /// each cover through the Bambuddy proxy and re-decoded the JPEG, so the grid got slower the more of
 /// it you had seen.
 ///
-/// Two layers, because they answer different questions. `NSCache` holds decoded `UIImage`s so a
+/// Two layers, because they answer different questions. `NSCache` holds decoded `PlatformImage`s so a
 /// re-appearing tile costs nothing at all; `URLCache` holds the bytes so a cold decode still avoids
 /// the network. `NSCache` also evicts itself under memory pressure, which a plain dictionary would
 /// not — this is a grid of photographs, and holding every one of them is how a browse session ends
@@ -19,8 +19,8 @@ import SwiftUI
 actor ThumbCache {
     static let shared = ThumbCache()
 
-    private let memory: NSCache<NSURL, UIImage> = {
-        let c = NSCache<NSURL, UIImage>()
+    private let memory: NSCache<NSURL, PlatformImage> = {
+        let c = NSCache<NSURL, PlatformImage>()
         c.totalCostLimit = 60 * 1024 * 1024
         return c
     }()
@@ -38,13 +38,13 @@ actor ThumbCache {
 
     /// In-flight loads, so twenty tiles appearing at once make one request per URL rather than
     /// twenty. Without this, a fast scroll issues the same fetch repeatedly before any completes.
-    private var inFlight: [URL: Task<UIImage?, Never>] = [:]
+    private var inFlight: [URL: Task<PlatformImage?, Never>] = [:]
 
-    func image(for url: URL, headers: [String: String] = [:]) async -> UIImage? {
+    func image(for url: URL, headers: [String: String] = [:]) async -> PlatformImage? {
         if let hit = memory.object(forKey: url as NSURL) { return hit }
         if let running = inFlight[url] { return await running.value }
 
-        let task = Task<UIImage?, Never> { [session] in
+        let task = Task<PlatformImage?, Never> { [session] in
             var req = URLRequest(url: url)
             for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
             guard let (data, response) = try? await session.data(for: req) else { return nil }
@@ -52,7 +52,7 @@ actor ThumbCache {
             // A 401 here means the camera stream token has expired — the thumbnail endpoint is
             // token-gated, not X-API-Key-gated. Caching that body would pin an error image in place
             // for the rest of the session.
-            guard (200..<300).contains(status), let image = UIImage(data: data) else { return nil }
+            guard (200..<300).contains(status), let image = PlatformImage.decoded(from: data) else { return nil }
             return image
         }
         inFlight[url] = task
@@ -60,8 +60,7 @@ actor ThumbCache {
         inFlight[url] = nil
         if let image {
             // Cost in bytes, so the limit means what it says rather than counting images.
-            let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
-            memory.setObject(image, forKey: url as NSURL, cost: cost)
+            memory.setObject(image, forKey: url as NSURL, cost: image.decodedByteCost)
         }
         return image
     }
@@ -86,7 +85,7 @@ struct CachedThumb: View {
     var contentMode: ContentMode = .fill
 
     @Environment(\.palette) private var c
-    @State private var image: UIImage?
+    @State private var image: PlatformImage?
     @State private var failed = false
 
     var body: some View {
@@ -96,7 +95,7 @@ struct CachedThumb: View {
             .frame(width: size?.width, height: size?.height)
             .overlay {
                 if let image {
-                    Image(uiImage: image)
+                    Image(platform: image)
                         .resizable()
                         .aspectRatio(contentMode: contentMode)
                         // A `.fill` image is flexible, so it must be clipped by the composite rather

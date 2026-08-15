@@ -1,20 +1,12 @@
+#if os(iOS)
+// TabView + tabBarMinimizeBehavior. macOS navigates with NavigationSplitView (§7).
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
-enum TabKey: String, CaseIterable, Hashable, Sendable {
-    case printer, library, jobs, ams, power
-
-    var label: String {
-        switch self {
-        case .printer: "Printer"
-        case .library: "Files"
-        case .jobs: "Jobs"        // queue + history merged into one print timeline
-        case .ams: "Hardware"
-        case .power: "Power"
-        }
-    }
-}
-
 /// The app's five top-level sections, hosted by the SYSTEM tab bar.
+///
+/// `TabKey` itself lives in `Domain/` — it is shared with the macOS sidebar, which shows all six
+/// cases. The five listed below are `TabKey.iosTabs`; Explore is not among them.
 ///
 /// This used to be a hand-rolled `HStack` inside a `GlassEffectContainer`, with
 /// `.glassEffect(.regular.tint(…).interactive())` on the selected item. It was replaced because
@@ -68,3 +60,4 @@ struct MainTabs: View {
         .tint(c.accent)
     }
 }
+#endif

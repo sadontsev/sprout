@@ -1,3 +1,6 @@
+#if os(iOS)
+// iOS sheet. macOS uses a Settings scene (1d).
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// Onboarding when there is no config, and the settings sheet afterwards. One screen for both,
@@ -541,3 +544,4 @@ struct SettingsView: View {
         }
     }
 }
+#endif

@@ -272,4 +272,44 @@ final class TrellisDerivationTests: XCTestCase {
     func testTheDerivedPortIsTrellisOwn() {
         XCTAssertEqual(ConfigRules.trellisPort, 8911, "Bambuddy is 8910; a shared box puts Trellis at 8911")
     }
+
+    // MARK: - trellisEndpoint
+    //
+    // Moved here from LiveActivityRegistrationTests along with the function itself. It was a static
+    // member of LiveActivityController, which made a plain URL builder unreachable on a platform
+    // with no ActivityKit — and its other caller is CollectionsClient, which has nothing to do with
+    // push. These now run on macOS too, which is the point.
+
+    func testEndpointIsBuiltOffThePushUrl() throws {
+        XCTAssertEqual(
+            ConfigRules.trellisEndpoint("https://push.example.com", "/register")?.absoluteString,
+            "https://push.example.com/register"
+        )
+    }
+
+    /// `…/` + `/register` is `//register`, which the server answers 404 — and a swallowed 404 is
+    /// indistinguishable from a working registration.
+    func testEndpointStripsTrailingSlashes() {
+        XCTAssertEqual(
+            ConfigRules.trellisEndpoint("https://push.example.com//", "/register-start")?.absoluteString,
+            "https://push.example.com/register-start"
+        )
+    }
+
+    func testEndpointIsNilWithoutAPushUrl() {
+        XCTAssertNil(ConfigRules.trellisEndpoint(nil, "/register"))
+        XCTAssertNil(ConfigRules.trellisEndpoint("", "/register"))
+    }
+
+    /// Behaviour the old implementation did NOT have. It stripped trailing slashes only, so a URL
+    /// pasted with a stray space produced `URL(string:)` = nil and push silently did nothing.
+    /// Routing through the shared `trimTrailingSlashes` also trims whitespace. Pinned because it is
+    /// a deliberate widening, not an accident of the move.
+    func testEndpointToleratesSurroundingWhitespace() {
+        XCTAssertEqual(
+            ConfigRules.trellisEndpoint("  https://push.example.com/  ", "/register")?.absoluteString,
+            "https://push.example.com/register"
+        )
+        XCTAssertNil(ConfigRules.trellisEndpoint("   ", "/register"), "whitespace only is still no server")
+    }
 }

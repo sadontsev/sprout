@@ -1,3 +1,6 @@
+#if os(iOS)
+// The iOS tab host. macOS enters through MacRoot instead.
+// Compiled for iOS only — see docs/native-rewrite/18-mac-port-architecture.md.
 import SwiftUI
 
 /// Config gate → tab host → overlays. The single place that decides what the app is showing.
@@ -5,12 +8,11 @@ struct Shell: View {
     @Environment(\.palette) private var c
     /// The device's scheme, used only when the preference is `system`.
     @Environment(\.colorScheme) private var scheme
-    @State private var model = AppModel()
+    /// Both are owned by `SproutApp` now, not by this view. On iOS that is the same single instance
+    /// it always was; the move exists so macOS's four scenes can share one. See `SproutApp`.
+    let model: AppModel
+    let explore: ExploreModel
     @State private var showSettings = false
-    /// The MakerWorld browse session. Owned here rather than by the Explore page, because the page
-    /// is mounted by a `fullScreenCover` and dying with it is exactly the bug (F2) — leaving and
-    /// re-entering must return to the results, the query and the scroll position you left behind.
-    @State private var explore = ExploreModel()
 
     var body: some View {
         ZStack {
@@ -161,3 +163,4 @@ struct ToastBanner: View {
             }
     }
 }
+#endif

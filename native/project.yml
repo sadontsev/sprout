@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.mvks5
   deploymentTarget:
     iOS: "26.0"
+    macOS: "26.0"
   createIntermediateGroups: true
   groupSortPosition: top
   generateEmptyDirectories: false
@@ -17,34 +18,53 @@ settings:
     MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "21"
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
-    TARGETED_DEVICE_FAMILY: "1"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    # Conditioned, not project-wide. As a bare "1" this also reached the macOS build, where the
+    # setting has no meaning — harmless, but it reads as a claim that the Mac app is an iPhone app.
+    "TARGETED_DEVICE_FAMILY[sdk=iphone*]": "1"
     ENABLE_MODULE_VERIFIER: NO
 
 targets:
   Sprout:
     type: application
-    platform: iOS
+    # One target, two destinations — NOT Mac Catalyst, and not "Designed for iPad". The Mac build
+    # is a native AppKit-backed SwiftUI app that shares Api/, Domain/, Config/ and Theme with iOS
+    # and forks only at the view layer. See docs/native-rewrite/18-mac-port-architecture.md.
+    supportedDestinations: [iOS, macOS]
     sources:
       - path: Sprout
       - path: Shared
     dependencies:
+      # The Live Activity extension is iOS-only: macOS has no ActivityKit, and its Mac equivalent
+      # is the menu bar extra. Without this filter the Mac app tries to embed an iOS appex.
       - target: SproutWidget
         embed: true
+        platforms: [iOS]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu
         PRODUCT_NAME: Sprout
         INFOPLIST_FILE: Sprout/Resources/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Sprout/Resources/Sprout.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: Sprout
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
+        SDKROOT: auto
+        SUPPORTS_MACCATALYST: NO
+        # Xcode build-setting conditionals, NOT a `macos:` key beside `base:`. xcodegen has no such
+        # key for a multiplatform target and drops the whole block WITHOUT AN ERROR — which silently
+        # ships a Mac app with no sandbox and no hardened runtime while the build stays green.
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]": Sprout/Resources/Sprout.entitlements
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Sprout/Resources/Sprout-macOS.entitlements
+        "ENABLE_HARDENED_RUNTIME[sdk=macosx*]": YES
     info:
       path: Sprout/Resources/Info.plist
       properties:
         CFBundleDisplayName: Sprout
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Read on macOS (Finder, the App Store category, Launchpad grouping); ignored on iOS, where
+        # the category comes from App Store Connect.
+        LSApplicationCategoryType: public.app-category.utilities
         UILaunchScreen:
           UIColorName: LaunchBackground
         # Portrait-locked, like the RN build: every screen is laid out for it, and the fullscreen
@@ -60,7 +80,14 @@ targets:
         UIBackgroundModes:
           - audio
         ITSAppUsesNonExemptEncryption: false
-        LSSupportsOpeningDocumentsInPlace: false
+        # LSSupportsOpeningDocumentsInPlace is deliberately ABSENT rather than `false`.
+        #
+        # §0 lists the iOS-only keys macOS ignores; this one is not among them and is not ignored —
+        # macOS fails the build outright ("'LSSupportsOpeningDocumentsInPlace = NO' is not supported
+        # on macOS"). Absent means exactly what `false` meant on iOS (the app copies the document
+        # into its own storage rather than editing the user's file in place), which is what Sprout
+        # does: an import lands in the library. So dropping the key changes no iOS behaviour, and
+        # setting it to YES for macOS would claim an in-place editing model the app does not have.
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
         NSPhotoLibraryAddUsageDescription: Save printed-model snapshots and timelapses to your photo library.
@@ -124,7 +151,10 @@ targets:
 
   SproutTests:
     type: bundle.unit-test
-    platform: iOS
+    # Both destinations, so the domain layer is proven on the platform it actually runs on rather
+    # than assumed to port. The suite is pure logic over Domain/ and the decoders, so every case
+    # is meaningful on macOS too.
+    supportedDestinations: [iOS, macOS]
     sources:
       - path: SproutTests
     # Hosted by the app rather than recompiling its sources, so `@testable import Sprout` sees the
@@ -135,6 +165,13 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu.tests
         GENERATE_INFOPLIST_FILE: YES
+        # xcodegen writes ONE TEST_HOST, in the iOS bundle layout (`Sprout.app/Sprout`). A macOS
+        # app keeps its binary at `Sprout.app/Contents/MacOS/Sprout`, so the unconditional value
+        # points at a path that does not exist and the Mac test action fails before running a
+        # single case ("Could not find test host for SproutTests"). Conditionals win over the
+        # unconditional setting, so naming both layouts fixes macOS without touching iOS.
+        "TEST_HOST[sdk=macosx*]": "$(BUILT_PRODUCTS_DIR)/Sprout.app/Contents/MacOS/Sprout"
+        "BUNDLE_LOADER[sdk=macosx*]": "$(BUILT_PRODUCTS_DIR)/Sprout.app/Contents/MacOS/Sprout"
 
 schemes:
   Sprout:
