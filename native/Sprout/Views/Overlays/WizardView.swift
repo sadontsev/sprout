@@ -62,8 +62,13 @@ struct WizardView: View {
     /// What the file about to be printed asks for, once known. `nil` while unasked or unanswerable.
     ///
     /// Two different questions come off this, and conflating them is how the mapping goes wrong:
-    /// *how many* slots the plate needs (more than one is a capability the enqueue cannot express),
+    /// *how many* slots the plate needs (which decides whether the slot selector appears at all),
     /// and *which* slot it needs (which decides where the tray id sits in `ams_mapping`).
+    ///
+    /// This once read "more than one is a capability the enqueue cannot express". That is no longer
+    /// true and had not been for a while: `amsMapping()` below builds an N-element array through
+    /// `AmsMapping.build`. The capability the enqueue genuinely cannot express is which NOZZLE runs
+    /// which material — `nozzle_mapping` is absent from the queue item's create shape.
     @State private var requirements: FilamentRequirements?
     @State private var viewLayers: LayerTarget?
     @State private var show3D = false

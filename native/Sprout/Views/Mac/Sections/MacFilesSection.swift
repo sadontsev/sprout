@@ -282,10 +282,11 @@ enum MacFileBrowse {
 /// the sentence, which is exactly what `LockedActions.press` does for LAN-blocked controls and for
 /// the same reason.
 ///
-/// TODO(1f): build the Mac print sheet, point `start` at it, and flip `isBuilt` to true. Nothing
-/// else has to change.
+/// 1f is built: `MacPrintSheet`. `start` raises `AppModel.pendingPrint`, which `MacWindow`
+/// presents — `start` is static and has no view to present from, and routing through the model is
+/// what lets the grid and the inspector share one sheet instead of owning one each.
 enum MacFilesPrint {
-    static let isBuilt = false
+    static let isBuilt = true
 
     /// nil when printing is available. Non-nil is the sentence the UI shows the user.
     static var unavailableReason: String? {
@@ -296,8 +297,7 @@ enum MacFilesPrint {
     @MainActor
     static func start(_ file: LibraryFile, model: AppModel) {
         guard isBuilt else { return }
-        // TODO(1f): present the Mac print sheet for `file`.
-        _ = (file, model)
+        model.pendingPrint = file
     }
 }
 
@@ -428,6 +428,22 @@ struct MacFilesSection: View {
         // already selected issued two identical listings.
         .onChange(of: store.source) { Task { await store.loadPrinterIfNeeded() } }
         .onDeleteCommand { deleteSelection() }
+        // §5.4. `QLPreviewPanel` is a SYSTEM panel, not a SwiftUI presentation, so unlike the print
+        // sheet there is nothing for `MacWindow` to host and no model property to route through.
+        //
+        // Library only: the panel previews a file the app can render facts for, and an SD entry has
+        // no library id — so it gets a sentence naming that rather than an empty panel.
+        .onKeyPress(.space) {
+            if store.source == .library {
+                MacQuickLook.toggle(file: shown.first { $0.id == selectedId }, model: model)
+            } else {
+                MacQuickLook.toggle(
+                    file: nil, model: model,
+                    unavailable: "Quick Look reads library files. The printer's own storage carries no preview."
+                )
+            }
+            return .handled
+        }
         .modifier(FilesPresentations(
             model: model,
             pendingDelete: $pendingDelete,
@@ -1004,10 +1020,12 @@ struct MacFilesSection: View {
     /// carried as the opening segment. `AppModel.overlay` is the iOS mechanism and would be inert
     /// here, so the window is still the right shape.
     private func openViewer(_ f: LibraryFile, mode: MacViewerRequest.Mode) {
-        openWindow(
-            id: "viewer",
-            value: MacViewerRequest(fileId: f.id, name: MacFileBrowse.displayName(f), mode: mode)
-        )
+        // `MacViewer.open`, not a raw `openWindow`. `MacViewerRequest` hashes on `fileId` ALONE, so
+        // that "View in 3D" then "View layers" reuses one window instead of opening two — but equal
+        // values also mean SwiftUI delivers no new `mode`, so the second click would merely raise the
+        // window. `MacViewer.open` carries the mode through `MacViewerRoute` alongside, which is the
+        // only path that makes the segment actually change.
+        MacViewer.open(f, mode: mode, using: openWindow)
     }
 
     /// The Delete key on the focused file surface. Routes to the same confirmation the menu raises —

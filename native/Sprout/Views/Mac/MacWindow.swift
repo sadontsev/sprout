@@ -31,9 +31,17 @@ struct MacWindow: View {
 
     private var collapse: MacCollapse { .forWidth(windowWidth) }
 
-    /// The user's preference AND the room to honour it. Below the threshold the inspector is still
-    /// reachable — `.inspector` presents it as an overlay — so the toggle never becomes a dead
-    /// control, which is the failure mode §Recurring-bug warns about.
+    /// What the user's preference was before the window got too narrow to honour it, so widening
+    /// again restores what they had rather than leaving the inspector off for good.
+    @State private var inspectorPreferredWhenWide: Bool?
+
+    /// The inspector's visibility.
+    ///
+    /// Deliberately still just the preference: the toggle must keep working at any width, because a
+    /// control that silently does nothing is the failure mode this codebase keeps rediscovering.
+    /// The WIDTH rule is applied as a transition in `onChange` below — auto-hide on the way down,
+    /// restore on the way up — rather than as a condition here, which would have made `⌥⌘I` dead
+    /// below 1180.
     private var inspectorShown: Binding<Bool> {
         Binding(get: { inspectorPreferred }, set: { inspectorPreferred = $0 })
     }
@@ -65,6 +73,25 @@ struct MacWindow: View {
         .onChange(of: collapse.sidebarFitsAsColumn) { _, fits in
             columnVisibility = fits ? .all : .detailOnly
         }
+        // §1's first collapse rule. Without this `MacCollapse.inspectorFitsAsColumn` had no consumer
+        // at all — the predicate was written, documented and tested, and the inspector never
+        // actually hid. Found by looking at a screenshot of the running app, not by reading.
+        //
+        // A transition rather than a condition on `inspectorShown`: making the binding false below
+        // the threshold would leave `⌥⌘I` looking live and doing nothing, which is the exact bug
+        // §Recurring-bug is about.
+        .onChange(of: collapse.inspectorFitsAsColumn) { _, fits in
+            if fits {
+                // Restore what they had before it was taken away — but only if it WAS taken away.
+                if let remembered = inspectorPreferredWhenWide {
+                    inspectorPreferred = remembered
+                    inspectorPreferredWhenWide = nil
+                }
+            } else if inspectorPreferred {
+                inspectorPreferredWhenWide = true
+                inspectorPreferred = false
+            }
+        }
         // Navigate for a Spotlight hit / `bambu:` URL / Dock-opened file (§5.4). Only the SECTION
         // half is consumed here — the request itself stays set so the section that lands can act on
         // the rest of it (selecting the file) and clear it. Splitting the consumption this way is
@@ -76,6 +103,13 @@ struct MacWindow: View {
             // Also handle a request that arrived BEFORE this window existed — launching by
             // double-clicking a .3mf in Finder delivers the URL before the first scene appears.
             if let request = model.pendingOpen { section = request.section }
+            #if DEBUG
+            // Open on a named section, for headless UI verification. See `MacWindowProbe`.
+            if let raw = ProcessInfo.processInfo.environment["SPROUT_SECTION"],
+               let key = TabKey(rawValue: raw) {
+                section = key
+            }
+            #endif
         }
         .toolbar {
             MacToolbar(
@@ -93,6 +127,11 @@ struct MacWindow: View {
         // §7 swaps `fullScreenCover` for a sheet with an explicit frame. Presented from the window
         // rather than from the inspector that raises it: a sheet attaches to a window, and the
         // inspector is a column inside one.
+        // 1f. The helper owns the 640 pt frame §1f specifies, so no call site can forget it.
+        .macPrintSheet(Binding(
+            get: { model.pendingPrint },
+            set: { model.pendingPrint = $0 }
+        ), model: model)
         .sheet(isPresented: Binding(
             get: { model.showAlerts },
             set: { model.showAlerts = $0 }

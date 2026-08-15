@@ -39,6 +39,21 @@ final class PlugPoller {
     /// should not blank the card), so `reachable` alone cannot carry this.
     var readingIsCurrent: Bool { isPolling && reachable }
 
+    /// The live draw, or nil when what is held is a RETAINED value rather than a current one.
+    ///
+    /// Every consumer should read these rather than `watts`/`kwh` directly. The raw properties are
+    /// deliberately sticky — a momentary blip must not blank the card — which makes them exactly the
+    /// wrong thing to render under the words "drawing now".
+    ///
+    /// This closes a case `reachable` alone does not: when Bambuddy stops reporting a plug,
+    /// `reload` sets `.unlinked` and `syncPollers` binds nil, which STOPS the poller — and
+    /// `reachable` is left `true` for ever because the last poll it ever made did succeed. Only
+    /// `isPolling` distinguishes "the reading is fine" from "nothing is measuring".
+    var liveWatts: Double? { readingIsCurrent ? watts : nil }
+
+    /// Today's total, under the same rule as `liveWatts`.
+    var liveKwh: Double? { readingIsCurrent ? kwh : nil }
+
     private let period: Duration
     private var client: BambuddyClient?
     private var task: Task<Void, Never>?

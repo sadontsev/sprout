@@ -112,7 +112,11 @@ configuration for them — and precisely when collections must keep working.
 
 `ams_mapping` is **indexed by the 3MF's filament slot and valued by global tray id** — index 0 addresses slot 1. `Domain/AmsMapping.swift` owns the array and is the tested boundary; a plate whose lone filament is slot 3 needs `[-1, -1, tray]`, and `usedSlotCount == 1` is *not* the same question as "expressible as a one-element array".
 
-Ask `filament-requirements` **per plate** (`?plate_id=`) for the exact `(file, plate)` pair that will be enqueued — unfiltered it reports every slot in the file, and on a Sprout-sliced output the plate ids other than the one sliced return stale data. Slicing N filaments works today (`filament_presets` plural, **compacted** to used slots in ascending order — measured); the wizard's UI is still single-filament and refuses multi-material with a stated reason.
+Ask `filament-requirements` **per plate** (`?plate_id=`) for the exact `(file, plate)` pair that will be enqueued — unfiltered it reports every slot in the file, and on a Sprout-sliced output the plate ids other than the one sliced return stale data.
+
+**Multi-filament works on both paths now** — this line used to say the wizard was single-filament and it is no longer true. Slicing sends `filament_presets` plural, **compacted** to used slots in ascending order (measured), falling back to singular `filament_preset` for one so the common path stays byte-identical to what is proven against the server. Printing maps N slots through `AmsMapping.build`, with `slotSelector`/`mapSlotSelector` in `WizardView` and one row per slot in `MacPrintSheet`.
+
+What still **cannot** be expressed is which NOZZLE runs which material: `nozzle_mapping` exists on the queue item's `…Response`/`…Update` but not on `…Create`. Say that, rather than offering a control for it.
 
 ### `native/` is TWO destinations now — iOS and macOS, one target
 

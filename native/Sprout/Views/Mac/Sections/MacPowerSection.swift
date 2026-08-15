@@ -733,28 +733,6 @@ struct MacPowerSessionKey: Equatable {
     }
 }
 
-/// **"Do we have a number" is not "is the number current".**
-///
-/// `PlugPoller.poll` sets only `reachable = false` when a status read fails; `watts` and `kwh` keep
-/// their last successful values, deliberately — a single dropped poll should not blank the screen.
-/// Every caller that asked `watts != nil` therefore rendered a frozen reading as a live one: a hero
-/// captioned "W drawing now" under the word "Unreachable", a table cell in the live colour, a
-/// projected print cost extrapolated from a wattage the plug stopped reporting, and a chart of
-/// confident bars with a peak. The unreachable branches those callers *did* have became dead code
-/// the moment any poll had ever succeeded.
-///
-/// A reading is current exactly when the poll that produced it succeeded, and `reachable` is what
-/// records that. Both view files in this section read through these rather than the raw properties.
-///
-/// These belong on `PlugPoller` itself in `Domain/PowerStore.swift`, next to the values they guard,
-/// so the iOS tree gets them too; they live here because this section owns them today.
-extension PlugPoller {
-    /// The live draw, or nil when the last poll failed and this is a retained value.
-    var liveWatts: Double? { reachable ? watts : nil }
-
-    /// Today's total, or nil when the last poll failed and this is a retained value.
-    var liveKwh: Double? { reachable ? kwh : nil }
-}
 
 private extension View {
     /// The section's one card treatment: `s1` fill with a hairline inside the corner radius.

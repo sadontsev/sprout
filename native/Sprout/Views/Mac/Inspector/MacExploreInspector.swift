@@ -25,7 +25,7 @@ struct MacExploreInspector: View {
     /// remembering to. Making the rows part of the value means one resolve's rows can never sit
     /// under another resolve's design, and there is nothing left to keep in step by hand.
     @State private var loaded: Loaded?
-    /// A RESOLVE failure. Kept apart from the import outcome in `runs` on purpose: "MakerWorld
+    /// A RESOLVE failure. Kept apart from the import outcome in `explore.imports` on purpose: "MakerWorld
     /// wouldn't describe this model" and "MakerWorld wouldn't release this file" are different
     /// questions with different remedies, and collapsing them is how this codebase's recurring bug
     /// arrives.
@@ -40,7 +40,6 @@ struct MacExploreInspector: View {
     /// whichever finished last had its receipt shown under whichever model happened to be selected.
     /// The key *is* the tag here; as a field beside the state it was free to name a different model
     /// than the state it guarded.
-    @State private var runs: [Int: ImportState] = [:]
 
     /// A resolve, with everything derived from it that the panel needs more than once.
     private struct Loaded {
@@ -55,12 +54,6 @@ struct MacExploreInspector: View {
 
     /// Where one model's import has got to. Three states, because "running" and "finished" and
     /// "refused" want three different things on screen.
-    private enum ImportState {
-        case running
-        case landed(MakerWorldImportResponse)
-        case failed(MWFailure)
-    }
-
     private var resolved: MakerWorldResolved? { loaded?.resolved }
     private var rows: [MWProfileRow] { loaded?.rows ?? [] }
     private var design: MWDesign? { resolved?.design }
@@ -423,7 +416,7 @@ struct MacExploreInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            switch runs[id] {
+            switch explore.imports[id] {
             case .landed(let res): receiptCard(res)
             case .failed(let f):   failureCard(f, id: id)
             case .running, .none:  EmptyView()
@@ -563,19 +556,15 @@ struct MacExploreInspector: View {
         MakerWorld.preselect(rows, defaultInstanceId: design?.defaultInstanceId)
     }
 
-    /// Is **this** model downloading? Not "is an import running" — with `runs` keyed by model those
-    /// are different questions, and only this one may disable this model's button.
+    /// Is **this** model downloading? Not "is an import running" — with `explore.imports` keyed by
+    /// model those are different questions, and only this one may disable this model's button.
     private func importing(_ id: Int) -> Bool {
-        if case .running = runs[id] { return true }
-        return false
+        explore.imports[id]?.isRunning ?? false
     }
 
     /// How many other models are mid-download.
     private func elsewhereRunning(besides id: Int) -> Int {
-        runs.filter { key, state in
-            if case .running = state { return key != id }
-            return false
-        }.count
+        explore.imports.filter { key, state in state.isRunning && key != id }.count
     }
 
     // MARK: Actions
@@ -624,18 +613,18 @@ struct MacExploreInspector: View {
                                               profileId: picked.map(\.profileId) ?? r.profileId,
                                               instanceId: picked?.id,
                                               folderId: nil)
-        runs[id] = .running
+        explore.imports[id] = .running
         Task {
             do {
                 let res = try await client.importMakerWorld(request)
-                runs[id] = .landed(res)
+                explore.imports[id] = .landed(res)
                 // Files may well be on screen in another window, and the cold shelf here lists what
                 // has been imported — both are now stale.
                 await model.library.load()
                 explore.recent = await client.recentMakerWorldImports()
             } catch {
                 let f = mwFailure(.importing, error)
-                runs[id] = .failed(f)
+                explore.imports[id] = .failed(f)
                 // The card says it when this model is the one on screen. When it is not — which is
                 // the whole point of a background import — nothing would say it at all, and a
                 // failure nobody is shown is the same lie as a control that silently does nothing.

@@ -32,12 +32,28 @@ struct MacSectionContent: View {
         // is the only thing in the app that knows which section is on screen. The body above is a
         // ViewBuilder switch, so exactly one section exists at a time — starting a store here and
         // stopping it on the way out is the same lifetime `.task` gives iOS.
-        .task(id: section) {
+        // Keyed on the section AND the session.
+        //
+        // `section` alone is not enough: `connect()` tears every store down (`stopStores`) and
+        // clears what they hold, but `MacRoot` keeps this window mounted throughout — `model.client`
+        // is never nil across a reconnect — so nothing re-ran this and the polls stayed dead. The
+        // symptom was the exact one this whole modifier exists to prevent: Settings → "Save and
+        // reconnect" with Jobs on screen, and UP NEXT sat on "Loading…" for ever. Entering or
+        // leaving demo mode did the same.
+        //
+        // `ObjectIdentifier` because `BambuddyClient` is a class and a new session IS a new
+        // instance; that is the same identity `attach` compares on.
+        .task(id: SectionLifetime(section: section, client: model.client.map(ObjectIdentifier.init))) {
             startStores(for: section)
-            // Cancellation is the stop: `.task(id:)` cancels when `section` changes or the window
-            // goes away, which is precisely when the section stops being visible.
+            // Cancellation is the stop, and cancellation is the ONLY thing that should stop it:
+            // this suspends for ever rather than for a long time. It was a 24-hour sleep, which
+            // meant `defer` fired a day in and silently killed polling on a window nobody had
+            // touched — the kind of bug that only ever reproduces for someone who left the app
+            // open over a weekend.
             defer { stopStores(for: section) }
-            try? await Task.sleep(for: .seconds(60 * 60 * 24))
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3600))
+            }
         }
     }
 
@@ -53,6 +69,13 @@ struct MacSectionContent: View {
         case .power:   model.power.start()
         case .explore: break        // ExploreModel fetches on demand; it has no poll loop.
         }
+    }
+
+    /// What a store's polling lifetime is keyed on: which section is visible, and which session it
+    /// belongs to. Either changing means "start again".
+    private struct SectionLifetime: Equatable {
+        let section: TabKey
+        let client: ObjectIdentifier?
     }
 
     private func stopStores(for section: TabKey) {

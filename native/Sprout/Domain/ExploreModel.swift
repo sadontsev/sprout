@@ -211,6 +211,18 @@ final class ExploreModel {
         }
     }
 
+    /// Imports in flight, and how the last one for each model ended.
+    ///
+    /// On the MODEL, not on the inspector, for exactly the reason the doc comment at the top of this
+    /// file gives about `hits`. The inspector is rebuilt whenever the section changes and unmounted
+    /// whenever `.inspector(isPresented:)` closes — which `⌥⌘I` does — so as `@State` this was
+    /// destroyed mid-download. The button then read "Import to Library" and was enabled while the
+    /// same import was still running, so pressing it started a second one.
+    ///
+    /// Keyed by model id because several can be in flight: the copy says browsing continues, and
+    /// a single in-flight slot would make that a lie the moment someone clicked another model.
+    var imports: [Int: MakerWorldImportState] = [:]
+
     /// The owner's own collections, from their Trellis.
     ///
     /// `laPushUrl`, **not** `resolvePushUrl`: collections are plain authenticated HTTP with no APNs

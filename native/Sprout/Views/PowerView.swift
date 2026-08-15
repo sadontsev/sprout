@@ -159,14 +159,19 @@ struct PowerView: View {
                         .foregroundStyle(c.t3)
                     Spacer(minLength: 4)
                     // Below a few watts the plug is reporting its own standby draw, not the printer.
-                    if (hero.watts ?? 0) > 5 {
+                    // `liveWatts`: a spark animating "it is drawing" off a frozen reading claims
+                    // activity from a plug nothing is measuring.
+                    if (hero.liveWatts ?? 0) > 5 {
                         Circle()
                             .fill(c.accent)
                             .frame(width: 5, height: 5)
                             .overlay { PowerSpark(color: c.accent, count: 6, size: 3, spread: 14) }
                     }
                 }
-                bigValue(hero.watts.map { RollingNumber(
+                // `liveWatts`, not `watts`: the raw value is deliberately sticky so a momentary
+                // blip does not blank the card, which makes it the wrong thing to render under the
+                // word "NOW". See `PlugPoller.readingIsCurrent`.
+                bigValue(hero.liveWatts.map { RollingNumber(
                     value: Int($0.rounded()),
                     font: .system(size: 28, weight: .bold),
                     color: c.t1
@@ -183,7 +188,7 @@ struct PowerView: View {
                     .foregroundStyle(c.t3)
                 // RollingNumber rolls whole digits only; kWh keeps two decimals, so this one is
                 // plain tabular text rather than a roll.
-                bigValue(hero.kwh.map { kwh in
+                bigValue(hero.liveKwh.map { kwh in
                     Text(String(format: "%.2f", kwh))
                         .font(.system(size: 28, weight: .bold))
                         .monospacedDigit()
@@ -283,7 +288,8 @@ struct PowerView: View {
 
     private var projectionFootnote: String {
         guard price != nil else { return "Set an electricity price in Bambuddy to see cost." }
-        let draw = hero.watts.map { String(Int($0.rounded())) } ?? "—"
+        // The sentence says "live draw", so the number has to be one.
+        let draw = hero.liveWatts.map { String(Int($0.rounded())) } ?? "—"
         let left = remainMin.map { String(Int($0)) } ?? "—"
         return "Estimate from \(draw) W live draw · \(left) min left"
     }

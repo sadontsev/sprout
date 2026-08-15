@@ -122,6 +122,13 @@ final class AppModel {
     /// PRESENTS it (`MacWindow`, which owns the window a sheet attaches to) are different views with
     /// no ancestor between them but this.
     var showAlerts = false
+
+    /// The file the print sheet (1f) is open for, if any.
+    ///
+    /// Here for the same reason as `showAlerts`: the two surfaces that RAISE it — the Files grid's
+    /// double-click and the Files inspector's `Print…` — are sibling views with no ancestor between
+    /// them but this, and a sheet attaches to a window rather than to a column.
+    var pendingPrint: LibraryFile?
     #endif
 
     /// The library upload in flight, if any.
@@ -193,6 +200,23 @@ final class AppModel {
     func load() async {
         guard !hasLoaded else { return }
         hasLoaded = true
+
+        #if DEBUG
+        // Start straight in demo mode, for headless UI verification.
+        //
+        // Same idiom as `AttestCapture.runIfRequested()`: DEBUG-only and opt-in through the
+        // environment, so it cannot affect a shipped build or a normal run. It exists because
+        // reaching any screen on macOS otherwise needs a click, and clicking needs an Accessibility
+        // permission a terminal usually lacks — see `MacWindowProbe` for the whole story.
+        //
+        // Deliberately BEFORE the Keychain read, and `startDemo` never persists, so this cannot
+        // touch a real configuration.
+        if ProcessInfo.processInfo.environment["SPROUT_DEMO"] != nil {
+            await startDemo()
+            configLoaded = true
+            return
+        }
+        #endif
 
         var stored = SecureConfig.load()
         // Belt and braces: a demo config must never come back as a real one. `persist` is guarded,

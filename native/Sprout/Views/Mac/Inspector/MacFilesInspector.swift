@@ -488,10 +488,12 @@ struct MacFilesInspector: View {
     /// carrying `mode` as the opening segment. `Windows/MacViewerWindow.swift` is not a file this
     /// pass owns.
     private func openViewer(_ f: LibraryFile, mode: MacViewerRequest.Mode) {
-        openWindow(
-            id: "viewer",
-            value: MacViewerRequest(fileId: f.id, name: MacFileBrowse.displayName(f), mode: mode)
-        )
+        // `MacViewer.open`, not a raw `openWindow`. `MacViewerRequest` hashes on `fileId` ALONE, so
+        // that "View in 3D" then "View layers" reuses one window instead of opening two — but equal
+        // values also mean SwiftUI delivers no new `mode`, so the second click would merely raise the
+        // window. `MacViewer.open` carries the mode through `MacViewerRoute` alongside, which is the
+        // only path that makes the segment actually change.
+        MacViewer.open(f, mode: mode, using: openWindow)
     }
 
     /// `LibraryStore.share` carries no re-entrancy guard of its own, and two shares in flight race on

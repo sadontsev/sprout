@@ -226,3 +226,46 @@ final class MacShellTests: XCTestCase {
 
     #endif
 }
+
+/// `PlugPoller`'s freshness rule.
+///
+/// Not macOS-specific — it guards every wattage on both platforms — but it belongs with the other
+/// "nearby predicate" pins. The bug it exists to prevent shipped twice: a retained reading rendered
+/// under the words "W drawing now", and again under "kWh · nothing is measuring".
+final class PlugFreshnessTests: XCTestCase {
+
+    /// An unbound poller is not measuring anything, whatever its last poll said.
+    ///
+    /// This is the case `reachable` alone cannot see. When Bambuddy stops reporting a plug,
+    /// `PowerStore` binds nil, which STOPS the poller — and `reachable` stays `true` for ever,
+    /// because the last poll it ever made did succeed.
+    @MainActor
+    func testAnUnboundPollerIsNeverCurrent() {
+        let poller = PlugPoller(period: .seconds(5))
+        XCTAssertFalse(poller.isPolling, "nothing bound, so nothing is polling")
+        XCTAssertTrue(poller.reachable, "reachable defaults true — which is exactly the trap")
+        XCTAssertFalse(poller.readingIsCurrent)
+        XCTAssertNil(poller.liveWatts)
+        XCTAssertNil(poller.liveKwh)
+    }
+
+    /// `start()` does nothing without a binding, so a poller cannot report itself as live by being
+    /// asked to run.
+    @MainActor
+    func testStartWithoutABindingDoesNotClaimToBePolling() {
+        let poller = PlugPoller(period: .seconds(5))
+        poller.start()
+        XCTAssertFalse(poller.isPolling)
+        XCTAssertFalse(poller.readingIsCurrent)
+    }
+
+    /// The raw values stay deliberately sticky — blanking on a blip is the behaviour this guard
+    /// exists to preserve, not remove. Only the *presentation* accessors go nil.
+    @MainActor
+    func testTheRawValuesAreStillRetained() {
+        let poller = PlugPoller(period: .seconds(5))
+        poller.stop()
+        XCTAssertNil(poller.watts, "no poll has run, so there is nothing retained yet")
+        XCTAssertFalse(poller.readingIsCurrent)
+    }
+}
