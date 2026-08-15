@@ -238,27 +238,6 @@ private struct PendingConfirm: Identifiable {
     var id: String { "\(alert.id)-\(action.id.rawValue)" }
 }
 
-// MARK: - Probe
-
-/// The first of `urls` that answers 2xx to a HEAD, or the last entry as the guaranteed fallback.
-///
-/// A thrown request (offline, DNS blocked, captive portal) stops the walk immediately rather than
-/// burning one timeout per family — the index page is the right answer in that state anyway.
-private func firstResolvingURL(_ urls: [String]) async -> URL? {
-    for candidate in urls.dropLast() {
-        guard let url = URL(string: candidate) else { continue }
-        var request = URLRequest(url: url, timeoutInterval: 6)
-        request.httpMethod = "HEAD"
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) { return url }
-        } catch {
-            break
-        }
-    }
-    return urls.last.flatMap { URL(string: $0) }
-}
-
 // MARK: - Card
 
 /// One alert: severity glyph, title, Bambu's own description, the code, and the actions that are

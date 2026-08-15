@@ -114,6 +114,14 @@ final class AppModel {
     /// once they have acted. Left as state it would re-navigate on every redraw, which is the
     /// difference between "open this file" and "always be showing this file".
     var pendingOpen: MacOpenRequest?
+
+    /// The alerts sheet is up.
+    ///
+    /// On the model rather than in a view because the thing that RAISES it (the Printer inspector's
+    /// triage card, in a 320 pt column that cannot hold an alert's actions) and the thing that
+    /// PRESENTS it (`MacWindow`, which owns the window a sheet attaches to) are different views with
+    /// no ancestor between them but this.
+    var showAlerts = false
     #endif
 
     /// The library upload in flight, if any.

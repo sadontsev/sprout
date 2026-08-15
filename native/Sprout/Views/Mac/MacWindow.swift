@@ -90,6 +90,18 @@ struct MacWindow: View {
         }
         .toolbarRole(.editor)
         .navigationTitle(section.label)
+        // §7 swaps `fullScreenCover` for a sheet with an explicit frame. Presented from the window
+        // rather than from the inspector that raises it: a sheet attaches to a window, and the
+        // inspector is a column inside one.
+        .sheet(isPresented: Binding(
+            get: { model.showAlerts },
+            set: { model.showAlerts = $0 }
+        )) {
+            MacAlertsSheet(model: model, isPresented: Binding(
+                get: { model.showAlerts },
+                set: { model.showAlerts = $0 }
+            ))
+        }
         // §10: ⌘R refetches the CURRENT section and nothing else.
         .focusedSceneValue(\.refreshSection, RefreshAction { await MacSectionRefresh.run(section, model: model, explore: explore) })
         .focusedSceneValue(\.selectedSection, sectionBinding)
