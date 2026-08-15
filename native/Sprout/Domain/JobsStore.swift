@@ -32,6 +32,16 @@ final class JobsStore {
     private(set) var entries: [PrintLogEntry]?
     private(set) var historyFailed = false
     private(set) var stats: ArchiveStats?
+    /// Whether the archive summary has been ASKED for since this session began, and whether the last
+    /// ask failed.
+    ///
+    /// Three states hide behind a nil `stats` and a card that renders them as one will lie in two of
+    /// them: not asked yet, asked and refused, asked and the server has nothing. `loadHistory`
+    /// fetches the list and the summary in sequence, so between the two responses `stats` is nil on
+    /// every cold load — and a card keyed on nil alone announced "Lifetime totals unavailable · it
+    /// didn't answer" about a request that had not answered YET.
+    private(set) var statsAsked = false
+    private(set) var statsFailed = false
     /// Currency comes from server settings, read once — it only changes when the user edits it on
     /// the server.
     private(set) var currency: String?
@@ -75,6 +85,8 @@ final class JobsStore {
         entries = nil
         historyFailed = false
         stats = nil
+        statsAsked = false
+        statsFailed = false
         currency = nil
         settingsAsked = false
     }
@@ -165,9 +177,16 @@ final class JobsStore {
             entries = entries ?? []
             historyFailed = true
         }
-        // Stats are decoration on top of the list: losing them silently drops the banner rather than
-        // claiming the whole archive failed to load.
-        stats = try? await client.getArchiveStats()
+        // Stats are decoration on top of the list: losing them silently drops the banner rather
+        // than claiming the whole archive failed to load. But "dropped" has to be distinguishable
+        // from "not fetched yet" — see `statsAsked`.
+        do {
+            stats = try await client.getArchiveStats()
+            statsFailed = false
+        } catch {
+            statsFailed = true
+        }
+        statsAsked = true
     }
 
     func loadSettings() async {

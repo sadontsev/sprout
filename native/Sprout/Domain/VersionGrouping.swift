@@ -78,17 +78,37 @@ enum VersionGrouping {
     /// know what's loaded" — and then **nothing** is marked unprintable, because an empty AMS
     /// reading and a genuinely missing material are different facts and only one of them justifies
     /// greying a row out.
+    /// - Parameter trays: what the AMS actually holds, from `trays(in:)`. **Trays, not a set of
+    ///   materials.** This took a `Set<String>` and computed `missing` by set subtraction, which is
+    ///   tray-count blind: a version needing three PLA slots was called printable by a machine with
+    ///   one PLA spool, under the words "N fit your filament". `assignTrays` is the tested answer to
+    ///   the question those words ask, and its own doc comment describes this bug — it was fixed
+    ///   there and left standing here.
+    ///
+    ///   Empty still means "we don't know", not "you have nothing": no row is greyed out when the
+    ///   status has not arrived.
     static func place(_ rows: [MWProfileRow],
                       defaultInstanceId: Int?,
-                      printableMaterials: Set<String>) -> [Placed] {
+                      trays: [Tray]) -> [Placed] {
         rows.map { row in
             guard let detail = row.detail else {
                 return Placed(row: row, group: .unlabelled)
             }
-            let materials = Set(detail.slots.compactMap { $0.type?.uppercased() }.filter { !$0.isEmpty })
-            let missing = printableMaterials.isEmpty
-                ? []
-                : materials.subtracting(printableMaterials).subtracting(["UNIVERSAL"]).sorted()
+            let missing: [String]
+            if trays.isEmpty {
+                missing = []
+            } else {
+                let assigned = assignTrays(slots: detail.slots, trays: trays)
+                // A slot that asked for a material and got no tray. Universal asks for nothing, so
+                // `assignTrays` returns nil for it too — hence the filter rather than a bare zip.
+                missing = zip(detail.slots, assigned).compactMap { slot, tray -> String? in
+                    guard tray == nil,
+                          let want = slot.type?.uppercased(),
+                          !want.isEmpty, want != "UNIVERSAL"
+                    else { return nil }
+                    return want
+                }.sorted()
+            }
 
             if !missing.isEmpty {
                 return Placed(row: row, group: .needsFilament,
@@ -235,6 +255,21 @@ enum VersionGrouping {
         var unit: Int      // 0-based AMS unit
         var slot: Int      // 0-based slot within the unit
         var type: String   // upper-cased material
+    }
+
+    /// The AMS, flattened into trays. **One builder**, because three views had their own copy and
+    /// two of them collapsed it to a `Set<String>` on the way — which is exactly how the tray COUNT
+    /// got lost. A set answers "is this material loaded"; the question the UI asks is "can this
+    /// version's slots each get a tray".
+    static func trays(in status: PrinterStatus?) -> [Tray] {
+        var out: [Tray] = []
+        for unit in status?.ams ?? [] {
+            for tray in unit.tray ?? [] {
+                guard let t = tray.trayType?.uppercased(), !t.isEmpty else { continue }
+                out.append(Tray(unit: unit.id, slot: tray.id, type: t))
+            }
+        }
+        return out
     }
 
     /// Assign a distinct tray to each of a version's filament slots.

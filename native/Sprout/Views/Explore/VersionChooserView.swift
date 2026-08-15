@@ -30,19 +30,21 @@ struct VersionChooserView: View {
     /// What the AMS can currently supply. Empty when nothing is loaded or the status has not
     /// arrived — and then no row is called unprintable, because "we don't know" and "you don't have
     /// it" are different facts and only one of them justifies greying a row out.
-    private var printableMaterials: Set<String> {
-        var out = Set<String>()
-        for unit in model.status?.status?.ams ?? [] {
-            for tray in unit.tray ?? [] {
-                if let t = tray.trayType?.uppercased(), !t.isEmpty { out.insert(t) }
-            }
-        }
-        return out
+    /// What the AMS holds, as TRAYS. One builder in `VersionGrouping` — three views had their own
+    /// copy, and two collapsed it to a set of materials on the way, losing the tray count.
+    ///
+    /// Empty means "we don't know", not "you have nothing": no row is greyed out on a status that
+    /// has not arrived.
+    private var loadedTrays: [VersionGrouping.Tray] {
+        VersionGrouping.trays(in: model.status?.status)
     }
+
+    /// The materials on hand, for copy that lists them. Derived from the trays so it cannot drift.
+    private var printableMaterials: Set<String> { Set(loadedTrays.map(\.type)) }
 
     private var placed: [VersionGrouping.Placed] {
         VersionGrouping.place(rows, defaultInstanceId: design?.defaultInstanceId,
-                              printableMaterials: printableMaterials)
+                              trays: loadedTrays)
     }
 
     private var visible: [VersionGrouping.Placed] {

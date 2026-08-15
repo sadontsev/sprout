@@ -33,7 +33,7 @@ final class VersionGroupingTests: XCTestCase {
                     row(2),                                   // no settings
                     row(3, detail: detail(seconds: 60)),
                     row(4)]                                   // no settings
-        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: [])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: [])
 
         for sort in VersionGrouping.Sort.allCases {
             let out = VersionGrouping.sorted(placed, by: sort)
@@ -46,7 +46,7 @@ final class VersionGroupingTests: XCTestCase {
     /// The failure mode this prevents: a missing time defaulting to 0 and ranking "fastest".
     func testAVersionWithNoTimeNeverOutranksOneThatPublishesIt() {
         let rows = [row(1), row(2, detail: detail(seconds: 7200))]
-        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: [])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: [])
         let out = VersionGrouping.sorted(placed, by: .fastest)
         XCTAssertEqual(out.map(\.id), [2, 1])
         XCTAssertFalse(out[0].marks.contains("FASTEST"),
@@ -70,7 +70,7 @@ final class VersionGroupingTests: XCTestCase {
 
     func testUnlabelledRowsAreDroppedByAnyFilterUnlessExplicitlyIncluded() {
         let rows = [row(1, detail: detail(materials: ["PLA"])), row(2)]
-        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: [])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: [])
 
         var f = VersionGrouping.Filter()
         XCTAssertEqual(VersionGrouping.apply(f, to: placed).map(\.id), [1, 2],
@@ -90,7 +90,7 @@ final class VersionGroupingTests: XCTestCase {
     func testUniversalPassesEveryMaterialFilter() {
         let rows = [row(1, detail: detail(materials: ["Universal"])),
                     row(2, detail: detail(materials: ["ABS"]))]
-        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: [])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: [])
         var f = VersionGrouping.Filter()
         f.materials = ["PETG"]
         XCTAssertEqual(VersionGrouping.apply(f, to: placed).map(\.id), [1],
@@ -105,9 +105,17 @@ final class VersionGroupingTests: XCTestCase {
 
     // MARK: Rule 5/6 — unprintable is shown with the remedy, and only when actually known
 
+    /// One tray per material named, in order. `place` takes TRAYS now, not a set of materials —
+    /// because a set cannot answer "does each slot get its own spool".
+    private func trays(_ materials: String...) -> [VersionGrouping.Tray] {
+        materials.enumerated().map { i, m in
+            VersionGrouping.Tray(unit: 0, slot: i, type: m.uppercased())
+        }
+    }
+
     func testAVersionNeedingAMaterialYouLackIsGroupedWithItsRemedy() {
         let rows = [row(1, detail: detail(materials: ["ABS"]))]
-        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: ["PLA"])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: trays("PLA"))
         XCTAssertEqual(placed[0].group, .needsFilament)
         XCTAssertEqual(placed[0].remedy, "load ABS to print")
     }
@@ -116,25 +124,31 @@ final class VersionGroupingTests: XCTestCase {
     /// justifies greying a row out — an empty AMS reading must not condemn every version.
     func testNothingIsCalledUnprintableWhenTheAmsReadingIsUnknown() {
         let rows = [row(1, detail: detail(materials: ["ABS"]))]
-        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: [])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: [])
         XCTAssertEqual(placed[0].group, .oneColour)
         XCTAssertNil(placed[0].remedy)
     }
 
     func testUniversalNeverCountsAsAMaterialYouAreMissing() {
         let rows = [row(1, detail: detail(materials: ["Universal"]))]
-        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: ["PLA"])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: trays("PLA"))
         XCTAssertEqual(placed[0].group, .oneColour)
     }
 
     // MARK: Grouping
 
+    /// TWO PLA trays, for a row that needs two PLA slots.
+    ///
+    /// This supplied one, and asserted the two-slot row was `.multiColour` — which is what the old
+    /// set-subtraction `place` returned, because it asked "is PLA loaded" rather than "does each
+    /// slot get a spool". The test was pinning the bug. This case is about GROUPING, so it now
+    /// supplies enough filament for grouping to be the only thing under test.
     func testGroupsSplitOnColourCountAndMakerWorldsOwnPick() {
         let rows = [row(1, detail: detail()),
                     row(2, detail: detail(materials: ["PLA", "PLA"])),
                     row(3, detail: detail()),
                     row(4)]
-        let placed = VersionGrouping.place(rows, defaultInstanceId: 3, printableMaterials: ["PLA"])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: 3, trays: trays("PLA", "PLA"))
         XCTAssertEqual(placed.first { $0.id == 3 }?.group, .recommended)
         XCTAssertEqual(placed.first { $0.id == 1 }?.group, .oneColour)
         XCTAssertEqual(placed.first { $0.id == 2 }?.group, .multiColour)
@@ -144,7 +158,7 @@ final class VersionGroupingTests: XCTestCase {
     /// MakerWorld's own pre-selection is frequently one of the undescribed rows. It must land in the
     /// trailing group like any other, not be promoted to RECOMMENDED on the strength of a flag.
     func testMakerWorldsPickIsNotPromotedWhenItPublishesNoSettings() {
-        let placed = VersionGrouping.place([row(1)], defaultInstanceId: 1, printableMaterials: [])
+        let placed = VersionGrouping.place([row(1)], defaultInstanceId: 1, trays: [])
         XCTAssertEqual(placed[0].group, .unlabelled)
     }
 
@@ -155,7 +169,7 @@ final class VersionGroupingTests: XCTestCase {
                     row(2, detail: detail(seconds: 900, grams: 10)),
                     row(3, detail: detail(seconds: 500, grams: 50))]
         let out = VersionGrouping.sorted(
-            VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: []), by: .recommended)
+            VersionGrouping.place(rows, defaultInstanceId: nil, trays: []), by: .recommended)
         XCTAssertTrue(out.first { $0.id == 1 }!.marks.contains("FASTEST"))
         XCTAssertTrue(out.first { $0.id == 2 }!.marks.contains("LIGHTEST"))
         XCTAssertTrue(out.first { $0.id == 3 }!.marks.isEmpty)
@@ -167,7 +181,7 @@ final class VersionGroupingTests: XCTestCase {
         let rows = [row(1, detail: detail(), summary: "0.2mm"),
                     row(2, detail: detail(), pictures: ["a.png"]),
                     row(3, detail: detail())]
-        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: [])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: [])
         var f = VersionGrouping.Filter()
         f.onlyWithPhotosOrNotes = true
         XCTAssertEqual(VersionGrouping.apply(f, to: placed).map(\.id), [1, 2])
@@ -176,7 +190,7 @@ final class VersionGroupingTests: XCTestCase {
     func testTimeAndWeightCapsFilterOnPublishedValues() {
         let rows = [row(1, detail: detail(seconds: 600, grams: 10)),
                     row(2, detail: detail(seconds: 7200, grams: 200))]
-        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, printableMaterials: [])
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: [])
         var f = VersionGrouping.Filter()
         f.maxSeconds = 1800
         XCTAssertEqual(VersionGrouping.apply(f, to: placed).map(\.id), [1])
@@ -242,4 +256,63 @@ final class VersionGroupingTests: XCTestCase {
         XCTAssertTrue(VersionGrouping.shortfall(slots: [slot("Universal")], trays: []).isEmpty)
     }
 
+}
+
+/// The tray-COUNT rule, which `place` used to be blind to.
+///
+/// It computed `missing` by set subtraction — "is this material loaded?" — so a version needing
+/// three PLA slots was reported as printable by a machine holding one PLA spool, under the words
+/// "N fit your filament". `assignTrays` already answered this correctly and its own doc comment
+/// describes the bug; `place` was the copy that never got the fix.
+final class VersionGroupingTrayCountTests: XCTestCase {
+
+    private func trays(_ materials: String...) -> [VersionGrouping.Tray] {
+        materials.enumerated().map { i, m in
+            VersionGrouping.Tray(unit: 0, slot: i, type: m.uppercased())
+        }
+    }
+
+    private func row(_ id: Int, materials: [String]) -> MWProfileRow {
+        MWProfileRow(
+            id: id,
+            title: "v\(id)",
+            detail: MWProfileDetail(slots: materials.map { MWSlot(type: $0) })
+        )
+    }
+
+    func testAVersionNeedingMoreSpoolsThanYouHaveDoesNotFit() {
+        let rows = [row(1, materials: ["PLA", "PLA", "PLA"])]
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: trays("PLA"))
+        XCTAssertEqual(placed[0].group, .needsFilament, "one spool cannot serve three PLA slots")
+        XCTAssertNotNil(placed[0].remedy)
+    }
+
+    func testEnoughSpoolsForEverySlotDoesFit() {
+        let rows = [row(1, materials: ["PLA", "PLA", "PLA"])]
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: trays("PLA", "PLA", "PLA"))
+        XCTAssertEqual(placed[0].group, .multiColour)
+        XCTAssertNil(placed[0].remedy)
+    }
+
+    /// A partial shortfall names only what is actually short.
+    func testTheRemedyNamesOnlyTheSlotsThatWentUnserved() {
+        let rows = [row(1, materials: ["PLA", "PETG", "PETG"])]
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: trays("PLA", "PETG"))
+        XCTAssertEqual(placed[0].group, .needsFilament)
+        XCTAssertEqual(placed[0].remedy, "load PETG to print", "one PETG slot is served, the second is not")
+    }
+
+    /// Unchanged by the fix: no trays means "we don't know", never "you have nothing".
+    func testAnUnknownAmsStillCondemnsNothing() {
+        let rows = [row(1, materials: ["PLA", "PLA", "PLA"])]
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: [])
+        XCTAssertNotEqual(placed[0].group, .needsFilament)
+    }
+
+    /// Universal claims no tray, so it can never be the reason a version does not fit.
+    func testUniversalClaimsNoTray() {
+        let rows = [row(1, materials: ["Universal", "PLA"])]
+        let placed = VersionGrouping.place(rows, defaultInstanceId: nil, trays: trays("PLA"))
+        XCTAssertNotEqual(placed[0].group, .needsFilament)
+    }
 }

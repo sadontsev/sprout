@@ -163,16 +163,9 @@ struct VersionDetailView: View {
         }
     }
 
-    /// The AMS, flattened. Reads the same status the rest of the app does.
+    /// The AMS, flattened. The builder is `VersionGrouping.trays(in:)` — this was the third copy.
     private var loadedTrays: [VersionGrouping.Tray] {
-        var out: [VersionGrouping.Tray] = []
-        for unit in model.status?.status?.ams ?? [] {
-            for tray in unit.tray ?? [] {
-                guard let t = tray.trayType?.uppercased(), !t.isEmpty else { continue }
-                out.append(VersionGrouping.Tray(unit: unit.id, slot: tray.id, type: t))
-            }
-        }
-        return out
+        VersionGrouping.trays(in: model.status?.status)
     }
 
     // MARK: Use

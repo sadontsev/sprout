@@ -485,15 +485,17 @@ struct MacExploreInspector: View {
     ///
     /// Read from live status exactly as the iOS `VersionChooserView` does, so the two screens cannot
     /// disagree about what is loaded. **Empty means "we don't know"**, not "you have nothing".
-    private var printableMaterials: Set<String> {
-        var out = Set<String>()
-        for unit in model.status?.status?.ams ?? [] {
-            for tray in unit.tray ?? [] {
-                if let t = tray.trayType?.uppercased(), !t.isEmpty { out.insert(t) }
-            }
-        }
-        return out
+    /// What the AMS holds, as TRAYS. One builder in `VersionGrouping` — three views had their own
+    /// copy, and two collapsed it to a set of materials on the way, losing the tray count.
+    ///
+    /// Empty means "we don't know", not "you have nothing": no row is greyed out on a status that
+    /// has not arrived.
+    private var loadedTrays: [VersionGrouping.Tray] {
+        VersionGrouping.trays(in: model.status?.status)
     }
+
+    /// The materials on hand, for copy that lists them. Derived from the trays so it cannot drift.
+    private var printableMaterials: Set<String> { Set(loadedTrays.map(\.type)) }
 
     private var knowsFilament: Bool { !printableMaterials.isEmpty }
 
@@ -518,7 +520,7 @@ struct MacExploreInspector: View {
     private var versionCounts: VersionCounts {
         let placed = VersionGrouping.place(rows,
                                            defaultInstanceId: design?.defaultInstanceId,
-                                           printableMaterials: printableMaterials)
+                                           trays: loadedTrays)
         var counts = VersionCounts(total: rows.count)
         for item in placed {
             if item.isUnlabelled {
