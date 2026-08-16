@@ -13,10 +13,26 @@ struct MacWindow: View {
     @Environment(\.palette) private var c
     @Environment(\.metrics) private var m
 
-    /// Persisted per scene, so a relaunch opens on the section you left rather than on Printer (§1).
+    /// `@AppStorage`, NOT `@SceneStorage` — and this is a deliberate departure from §1.
+    ///
+    /// §1 specifies `@SceneStorage` for the section and the inspector; §10 requires that "launching
+    /// opens on the section you last used, with the inspector where you left it". Those two cannot
+    /// both be satisfied, because `@SceneStorage` is written through macOS's **window restoration**,
+    /// which only runs when `NSQuitAlwaysKeepsWindows` is on — and it is off by default ("Close
+    /// windows when quitting an application"). Measured on a clean quit: the section was left on
+    /// Jobs and the next launch opened on Printer, with no saved-state directory ever created for
+    /// the bundle.
+    ///
+    /// The behaviour is the requirement and the mechanism was the suggestion, so the mechanism gave
+    /// way. `UserDefaults` also costs nothing here: §Fleet keeps this app to one window, so there is
+    /// no second scene that would want its own section.
+    ///
+    /// Per-ITEM selections stay `@SceneStorage` on purpose — restoring "file 412 is selected" across
+    /// a relaunch would point the inspector at something the server may no longer have.
+    ///
     /// Stored as the raw string because `TabKey`'s raw values are already the persisted format.
-    @SceneStorage("mac.section") private var sectionRaw = TabKey.printer.rawValue
-    @SceneStorage("mac.inspector") private var inspectorPreferred = true
+    @AppStorage("mac.section") private var sectionRaw = TabKey.printer.rawValue
+    @AppStorage("mac.inspector") private var inspectorPreferred = true
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var windowWidth: CGFloat = 1440
 

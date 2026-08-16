@@ -70,8 +70,17 @@ enum MacWindowProbe {
             if wantsReport { report() }
             if env["SPROUT_TREE"] != nil { tree() }
             if let shotPrefix { shoot(prefix: shotPrefix) }
-            // Exits so a caller can collect the output without leaving a GUI app running.
-            exit(0)
+            // `NSApp.terminate`, NOT `exit(0)`.
+            //
+            // `@SceneStorage` is written through SwiftUI's state restoration, which only runs on a
+            // NORMAL termination. Exiting abruptly skips it — so a probe run would never persist the
+            // section it was told to open, and the next run would look as though restoration was
+            // broken. It very nearly got recorded that way.
+            //
+            // The hard exit stays as a backstop: `terminate` is cooperative and can be refused, and
+            // a probe that hangs is worse than one that skips a save.
+            NSApp.terminate(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { exit(0) }
         }
     }
 

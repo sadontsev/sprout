@@ -433,6 +433,18 @@ struct MacFilesSection: View {
         //
         // Library only: the panel previews a file the app can render facts for, and an SD entry has
         // no library id — so it gets a sentence naming that rather than an empty panel.
+        // §10: "a Spotlight hit for a library file opens Sprout with that file selected".
+        //
+        // `MacWindow` consumes only the SECTION half of the request — it navigates here — and the
+        // rest is ours: the id means nothing to a window and everything to this view, which owns
+        // the selection. Consuming it (setting it back to nil) is what makes it a one-shot request
+        // rather than a piece of state that would re-select on every redraw and pin the user to one
+        // file.
+        //
+        // Also handled on `.task`, not just `.onChange`: a hit that LAUNCHES the app delivers its
+        // URL before this view exists, so there is no change to observe.
+        .onChange(of: model.pendingOpen) { _, request in consumePendingOpen(request) }
+        .task { consumePendingOpen(model.pendingOpen) }
         .onKeyPress(.space) {
             if store.source == .library {
                 MacQuickLook.toggle(file: shown.first { $0.id == selectedId }, model: model)
@@ -962,6 +974,18 @@ struct MacFilesSection: View {
             // pill for exactly as long as this is grey.
             .disabled(store.downloadBusy)
         Button(role: .destructive) { pendingDelete = f } label: { Label("Delete", systemImage: "trash") }
+    }
+
+    /// Honour a `.file` request from outside the view tree, then clear it.
+    ///
+    /// Switches the segment too: the id names a LIBRARY file, and arriving on the Printer SD segment
+    /// would select something the visible list does not contain — the inspector would show a file
+    /// the grid beside it is not showing.
+    private func consumePendingOpen(_ request: MacOpenRequest?) {
+        guard case .file(let id) = request else { return }
+        store.source = .library
+        selectedId = id
+        model.pendingOpen = nil
     }
 
     private func select(_ f: LibraryFile) {
