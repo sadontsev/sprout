@@ -78,6 +78,14 @@ struct MacCameraWindow: View {
         .onChange(of: paused) { _, isPaused in
             model.cameraOwnership.setWindowStreaming(!isPaused, printerId: printerId)
         }
+        // The latch also resets when the STREAM changes, not only on mount.
+        //
+        // `frames.mount()` alone assumed a cleared stash always means a fresh view, and it does not:
+        // `cameraToken` is nilled on reconnect and sign-out, so `streamURL` goes nil, `setURL(nil)`
+        // stops the renderer, and `teardown(clearImage: true)` clears the stash — all without this
+        // view remounting, because `CameraStreamView` is unconditional here. Snapshot and Save frame
+        // stayed lit and undimmed over a blanked window, then answered "there is no frame to save".
+        .onChange(of: streamURL) { _, _ in frames.mount() }
         .onChange(of: cam.isLive) { _, live in frames.note(isLive: live) }
         .onDisappear {
             // Explicit rather than relying on `dismantleNSView`: the claim must be handed back the
@@ -130,8 +138,19 @@ struct MacCameraWindow: View {
         .padding(14)
     }
 
+    /// This window's OWN printer, not the app's selection.
+    ///
+    /// `model.vm` is `Dash.present(status?.status)` for the printer the MAIN WINDOW has selected.
+    /// This window is bound to `printerId` — its title, its stream and its camera claim all use it —
+    /// so reading `model.vm` meant opening the camera for printer B and then selecting printer A in
+    /// the main window put A's layer count and state word over B's video, under a title naming B.
+    /// `statuses` is keyed by printer for exactly this.
+    private var windowVM: DashVM {
+        Dash.present(model.status?.statuses[printerId])
+    }
+
     private var layerBadge: some View {
-        let vm = model.vm
+        let vm = windowVM
         return Text(verbatim: vm.kind == .live
                     ? "LAYER \(vm.layer) · \(vm.progressInt) %"
                     : vm.stateLabel.uppercased())

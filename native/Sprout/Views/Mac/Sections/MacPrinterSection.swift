@@ -1054,7 +1054,13 @@ struct MacPrinterCameraTile: View {
         // A cold camera takes seconds to produce a frame and the badge must not claim LIVE over a
         // blank tile. Clearing the flag is the load-bearing half: the renderer only ever sets
         // `isLive` true, so this reset is what lets the NEXT connection's first frame register.
-        .onChange(of: streamURL) { _, _ in cam.isLive = false }
+        .onChange(of: streamURL) { _, _ in
+            cam.isLive = false
+            // The frame latch resets WITH the stream. It is what lights Snapshot, and the renderer's
+            // stash is cleared on teardown — so leaving it set across a printer switch or a token
+            // refresh left Snapshot enabled over a blank tile, answering "there is no frame".
+            tileHasFrame = false
+        }
         // Take the rate when streaming starts, so a path update can never rewrite the URL of a live
         // connection. `initial: true` because NWPathMonitor's first callback routinely lands AFTER
         // the tile is already active, leaving the latch empty with nothing else due to fill it.
