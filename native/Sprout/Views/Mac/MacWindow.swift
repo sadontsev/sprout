@@ -62,6 +62,22 @@ struct MacWindow: View {
         Binding(get: { inspectorPreferred }, set: { inspectorPreferred = $0 })
     }
 
+    /// Navigate for a request from outside the view tree, and clear the ones nothing else will.
+    ///
+    /// A `.section` request is fully served by arriving there, so this consumes it. A `.file`
+    /// request is only HALF served — the Files section still has to select the id — so it is left
+    /// set for `MacFilesSection.consumePendingOpen` to finish and clear.
+    ///
+    /// Clearing matters because `onChange` fires on a CHANGE. `.section(.printer)` was consumed and
+    /// never cleared, so a second identical request assigned the value already held, `onChange` did
+    /// not fire, and nothing happened — the reason `MacPrintSheet` documents for not navigating to
+    /// Jobs after a send.
+    private func consumePendingOpen(_ request: MacOpenRequest?) {
+        guard let request else { return }
+        section = request.section
+        if case .section = request { model.pendingOpen = nil }
+    }
+
     /// Mirror the inspector's visibility onto the model, so a section can compensate for what the
     /// inspector was carrying — see `AppModel.inspectorVisible`.
     private func publishInspectorVisibility() {
@@ -121,12 +137,12 @@ struct MacWindow: View {
         // the rest of it (selecting the file) and clear it. Splitting the consumption this way is
         // what lets one request cross two views without either needing to know the other.
         .onChange(of: model.pendingOpen) { _, request in
-            if let request { section = request.section }
+            consumePendingOpen(request)
         }
         .task {
             // Also handle a request that arrived BEFORE this window existed — launching by
             // double-clicking a .3mf in Finder delivers the URL before the first scene appears.
-            if let request = model.pendingOpen { section = request.section }
+            consumePendingOpen(model.pendingOpen)
             #if DEBUG
             // Open on a named section, for headless UI verification. See `MacWindowProbe`.
             if let raw = ProcessInfo.processInfo.environment["SPROUT_SECTION"],
@@ -143,7 +159,13 @@ struct MacWindow: View {
                 needsSectionPopup: collapse.needsToolbarSectionPopup,
                 onOpenCamera: { openWindow(id: "camera", value: model.printerId) },
                 onAddFromFiles: { MacFileImport.present(model: model) },
-                onPasteLink: { MacFileImport.pasteLink(model: model, explore: explore) }
+                // `pasteLink` returns "did we start something worth looking at", and that is the
+                // only value it produces the caller needs. Discarding it left the search running in
+                // a section the user was not on — the sibling item ("From MakerWorld") navigates,
+                // this one silently did not.
+                onPasteLink: {
+                    if MacFileImport.pasteLink(model: model, explore: explore) { section = .explore }
+                }
             )
         }
         .toolbarRole(.editor)
@@ -169,6 +191,7 @@ struct MacWindow: View {
         .focusedSceneValue(\.refreshSection, RefreshAction { await MacSectionRefresh.run(section, model: model, explore: explore) })
         .focusedSceneValue(\.selectedSection, sectionBinding)
         .focusedSceneValue(\.inspectorToggle, inspectorShown)
+        .focusedSceneValue(\.cameraPrinterId, model.printerId)
     }
 
     @Environment(\.openWindow) private var openWindow

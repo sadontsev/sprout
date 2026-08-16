@@ -14,6 +14,7 @@ struct MacCommands: Commands {
     @FocusedValue(\.refreshSection) private var refresh
     @FocusedValue(\.selectedSection) private var selectedSection
     @FocusedValue(\.inspectorToggle) private var inspectorToggle
+    @FocusedValue(\.cameraPrinterId) private var cameraPrinterId
 
     @Environment(\.openWindow) private var openWindow
 
@@ -47,8 +48,17 @@ struct MacCommands: Commands {
         }
 
         CommandGroup(after: .windowArrangement) {
-            Button("Camera Window") { openWindow(id: "camera", value: 0) }
-                .keyboardShortcut("0", modifiers: .command)
+            // `model.printerId`, NOT a literal 0. Zero is `AppModel`'s sentinel for "no printer
+            // confirmed yet" (`reconcileSelection` keys on it), so this opened a SECOND window —
+            // window identity is the value — titled "Chamber camera — Printer", streaming
+            // `streamUrl(0, …)`, stuck on CONNECTING for ever. Every other camera call site passes
+            // the real id; this was the one hard-coded literal, and it is the one the on-screen
+            // "⌘0" labels point at.
+            Button("Camera Window") {
+                if let cameraPrinterId { openWindow(id: "camera", value: cameraPrinterId) }
+            }
+            .keyboardShortcut("0", modifiers: .command)
+            .disabled(cameraPrinterId == nil)
         }
     }
 }

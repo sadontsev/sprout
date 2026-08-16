@@ -39,6 +39,7 @@ struct MacMenuBarLabel: View {
 ///  - It must keep working with the main window closed. Nothing here reaches for a window, and
 ///    `MacAppDelegate` returns false from `applicationShouldTerminateAfterLastWindowClosed`.
 struct MacMenuBarPanel: View {
+    @Environment(\.openSettings) private var openSettings
     let model: AppModel
 
     @Environment(\.openWindow) private var openWindow
@@ -183,7 +184,12 @@ struct MacMenuBarPanel: View {
             row("Camera window", "⌘0") { openWindow(id: "camera", value: model.printerId) }
             row("Settings…", "⌘,") {
                 NSApp.activate(ignoringOtherApps: true)
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                // `openSettings`, not the private `showSettingsWindow:` selector — the same bug the
+                // toolbar had, and WORSE here: a `MenuBarExtra(.window)` panel is not in the main
+                // window's responder chain, and §5.1 requires this to work with no window open at
+                // all, where there is certainly nothing to answer a `sendAction`. The `activate`
+                // above still fronted the app, so it read as "it blinked and did nothing".
+                openSettings()
             }
             row("Quit Sprout", "⌘Q") { NSApp.terminate(nil) }
         }
