@@ -1009,7 +1009,7 @@ attestation tests need real-device artefacts, so the harness comes first.
   envelope still cannot be encrypted (§7).
 - Alert banners end-to-end encrypted via a notification service extension.
 - Android/FCM — a `platform` field on `/register-device` and a second sender in Trellis
-  (`docs/guides/android.md`); Canopy would gain an FCM credential and a topic-table entry, with
+  (`archive/docs/guides/android.md`); Canopy would gain an FCM credential and a topic-table entry, with
   Play Integrity replacing App Attest as the device anchor.
 - A payload-scrubbing knob (user opts filenames out of push payloads at the Trellis level).
 - Operator tooling beyond manual unbind, which **is** in scope as the support backstop for a

@@ -267,9 +267,9 @@ publishes signed commands would not have to displace Bambuddy's connection.
 
 ### The app
 
-`mobile/src/capabilities/lanMode.ts` and `native/Sprout/Domain/LanMode.swift` are the two
+`archive/mobile/src/capabilities/lanMode.ts` and `native/Sprout/Domain/LanMode.swift` are the two
 implementations of the gate; `native/SproutTests/LanModeTests.swift` and
-`mobile/src/capabilities/__tests__/lanMode.test.ts` are their tests. Nothing else in the repo knows
+`archive/mobile/src/capabilities/__tests__/lanMode.test.ts` are their tests. Nothing else in the repo knows
 about transports.
 
 ### The ecosystem, and what each project had to do
@@ -609,7 +609,7 @@ itself, against the owner's printer, on the owner's account.
 - bambulab — [BambuStudio Command Line Usage wiki](https://github.com/bambulab/BambuStudio/wiki/Command-Line-Usage); plus `BambuStudio-02.07.01.57 --help` run in the owner's `bambu-studio-api` sidecar, 2026-08-10
 - 3DPrinterOS — [Bambu Lab 3D Printers Troubleshooting Guide](https://intercom.help/3DPrinterOS/en/articles/11382779-bambu-lab-3d-printers-troubleshooting-guide)
 - Bambu Lab forum — [Bambu Lab Region Lock (China)](https://forum.bambulab.com/t/bambu-lab-region-lock-china/6602)
-- This repo — `docs/phase0-results.md`, `native/Sprout/Domain/LanMode.swift`, `mobile/src/capabilities/lanMode.ts`
+- This repo — `docs/phase0-results.md`, `native/Sprout/Domain/LanMode.swift`, `archive/mobile/src/capabilities/lanMode.ts`
 
 ---
 
@@ -753,7 +753,7 @@ it exists.** `GET /api/v1/printers/developer-mode-warnings` returns, live, right
 
 Grepping the repo: no `.swift`, `.ts` or `.tsx` outside tests references it; both apps read
 `developer_mode` from REST status only (`native/Sprout/Api/Models.swift:192`,
-`mobile/src/api/types.ts:116`). This is a second, server-authored signal that already answers "does
+`archive/mobile/src/api/types.ts:116`). This is a second, server-authored signal that already answers "does
 this printer need Developer Mode?" as a first-class question rather than as a bitfield inference. It
 does not replace the flag and it has its own provenance question — but the brief's "check whether
 Bambuddy already exposes an endpoint for part of this" turns up a hit that §5 misses, and §5 is the

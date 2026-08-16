@@ -7,11 +7,11 @@ The network layer is two React-free client classes plus one shared type module. 
 
 | File | Lines | Role |
 |---|---|---|
-| `/Users/max/ai-projects/bambu-app/mobile/src/api/bambuddyClient.ts` | 556 | `BambuddyClient` — every Bambuddy (FastAPI) endpoint the app uses |
-| `/Users/max/ai-projects/bambu-app/mobile/src/api/types.ts` | 485 | Response/request shapes (pure types + one helper fn) |
-| `/Users/max/ai-projects/bambu-app/mobile/src/api/texturizeClient.ts` | 136 | `TexturizeClient` — optional `stl-texturize` sidecar |
-| `/Users/max/ai-projects/bambu-app/mobile/src/api/__tests__/bambuddyClient.test.ts` | 315 | Behavioural contract — port these assertions verbatim |
-| `/Users/max/ai-projects/bambu-app/mobile/src/api/__tests__/texturizeClient.test.ts` | 88 | Sidecar contract |
+| `archive/mobile/src/api/bambuddyClient.ts` | 556 | `BambuddyClient` — every Bambuddy (FastAPI) endpoint the app uses |
+| `archive/mobile/src/api/types.ts` | 485 | Response/request shapes (pure types + one helper fn) |
+| `archive/mobile/src/api/texturizeClient.ts` | 136 | `TexturizeClient` — optional `stl-texturize` sidecar |
+| `archive/mobile/src/api/__tests__/bambuddyClient.test.ts` | 315 | Behavioural contract — port these assertions verbatim |
+| `archive/mobile/src/api/__tests__/texturizeClient.test.ts` | 88 | Sidecar contract |
 
 All Bambuddy paths are prefixed `/api/v1`. Base URL is a self-hosted host, e.g. `https://bambuddy.example.com` (placeholder — the real host is never in code).
 
@@ -49,7 +49,7 @@ Computed properties:
 
 Plus two one-off tokens: the **WS token** (`POST /api/v1/auth/ws-token`, used as `?token=` on the socket) and the **slicer/download token** (`POST /api/v1/library/files/{id}/slicer-token`, embedded in the download *path*, not a query).
 
-Config is persisted in the iOS Keychain via `expo-secure-store` under key `bambu.config`, with `keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY` (`/Users/max/ai-projects/bambu-app/mobile/src/config/secureConfig.ts`). Stored fields: `baseUrl`, `apiKey`, `cameraToken?`, `theme?`, `printerId?`, `printerName?`, `pushUrl?`, `serverPush?`, `texturizeUrl?`, `texturize?`, `adminUsername?`, `adminPassword?`.
+Config is persisted in the iOS Keychain via `expo-secure-store` under key `bambu.config`, with `keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY` (`archive/mobile/src/config/secureConfig.ts`). Stored fields: `baseUrl`, `apiKey`, `cameraToken?`, `theme?`, `printerId?`, `printerName?`, `pushUrl?`, `serverPush?`, `texturizeUrl?`, `texturize?`, `adminUsername?`, `adminPassword?`.
 
 ---
 
@@ -332,7 +332,7 @@ async upsertLocalPreset(name, presetType: 'process' | 'filament', setting: Recor
 
 Note the **read leg uses the API key** (`listLocalPresets` via `req`) while only the **writes** go through `adminReq`.
 
-Actual `slice()` body the Print Wizard sends (`/Users/max/ai-projects/bambu-app/mobile/src/components/Overlays.tsx:1027`):
+Actual `slice()` body the Print Wizard sends (`archive/mobile/src/components/Overlays.tsx:1027`):
 
 ```ts
 const { job_id } = await client.slice(file.id, {
@@ -537,7 +537,7 @@ MakerWorld: `MakerWorldStatus { has_cloud_token, can_download }`. `MWFilament { 
 
 Separate host (`texturize.*`), **same `X-API-Key`** (the sidecar checks it against its own `BAMBUDDY_API_KEY`). Same trailing-slash strip. Its `req()` is identical to Bambuddy's except the error prefix is `texturize` instead of `Bambuddy` and it sends **only** `X-API-Key` (no `extraHeaders` support).
 
-URL resolution (`/Users/max/ai-projects/bambu-app/mobile/src/config/texturizeConfig.ts`): `texturize === false` forces OFF → `null`; an explicit `texturizeUrl` wins (trimmed, trailing slashes stripped, must match `/^https?:\/\/[^\s]+$/i`); else derive by string-replacing `bambuddy.` → `texturize.` in `baseUrl`; else `null`.
+URL resolution (`archive/mobile/src/config/texturizeConfig.ts`): `texturize === false` forces OFF → `null`; an explicit `texturizeUrl` wins (trimmed, trailing slashes stripped, must match `/^https?:\/\/[^\s]+$/i`); else derive by string-replacing `bambuddy.` → `texturize.` in `baseUrl`; else `null`.
 
 | Member | Method/Path | Auth | Notes |
 |---|---|---|---|

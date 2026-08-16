@@ -34,7 +34,7 @@ and the probe is quoted so the next person can re-run it.
 | `native/Sprout/Api/BambuddyClient.swift:604-623` | `makerWorldStatus()`, `resolveMakerWorld(_:)`, `importMakerWorld(_:)`, `makerworldThumbUrl(_:)`. |
 | `native/Sprout/Api/Models.swift:512-586` | `MakerWorldStatus`, `MWFilament`, `MWInstance`, `MWDesign`, `MakerWorldResolved`, `MakerWorldImportRequest`, `MakerWorldImportResponse`. |
 | `native/Sprout/Views/Overlays/UploadSheet.swift:308-760` | `MakerWorldPanel` — the whole feature: link field, cover, byline, "Already in your library" badge, profile list, import button. Reached from the Add-file sheet's *From MakerWorld* row (`:207`). |
-| `docs/native-rewrite/06-overlays.md:230-300` | The ported RN spec for the same panel. |
+| `archive/docs/06-overlays.md:230-300` | The ported RN spec for the same panel. |
 
 Flow: `MakerWorldPanel.task` calls `makerWorldStatus()` once and latches `canDownload`; `resolve()`
 posts the URL and shows the design; tapping a row sets `picked`; `doImport()` posts
@@ -747,7 +747,7 @@ unauthenticated `/makerworld/thumbnail` proxy so the phone's IP stays out of Mak
 - [MakerWorld Standard Digital File License explained](https://modelrover.com/g/makerworld-standard-digital-file-license)
 - [3Druck — Bambu Lab dispute is about cloud access, not open source](https://3druck.com/en/programs/dispute-over-orcaslicer-fork-bambu-lab-is-about-cloud-access-not-open-source-customization-16157098/)
 - [Consumer Rights Wiki — Bambu Lab cease and desist against OrcaSlicer fork developer](https://consumerrights.wiki/w/Bambu_Lab_cease_and_desist_against_OrcaSlicer_fork_developer)
-- In-repo: `docs/native-rewrite/06-overlays.md` (§230–300), `docs/phase0-results.md`, `CLAUDE.md`
+- In-repo: `archive/docs/06-overlays.md` (§230–300), `docs/phase0-results.md`, `CLAUDE.md`
   ("The recurring bug in this codebase: offering what the backend will refuse").
 
 ---

@@ -1,3 +1,9 @@
+> [!WARNING]
+> **Archived — not maintained.** This is the original Expo/React Native Sprout, replaced by the
+> SwiftUI app in [`native/`](../../native/). It last shipped as TestFlight build 21. Nothing here
+> is built, tested or released any more, and the commands below are recorded as history rather
+> than as instructions. See [`../README.md`](../README.md) for why it is kept.
+
 # Sprout — the iOS app
 
 The Expo (SDK 56) / React Native app. Start with the [root README](../README.md) for the

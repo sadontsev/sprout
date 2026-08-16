@@ -12,7 +12,7 @@ service polls Bambuddy for each registered printer and pushes the ContentState t
 Bambu Cloud bearer, that bearer must not go on a phone, and this is the machine that already has one.
 
 The pushed ContentState must match `PrintActivityProps` in
-`mobile/src/liveactivity/PrintActivity.tsx`; the state/colour mapping mirrors `present.ts`.
+`archive/mobile/src/liveactivity/PrintActivity.tsx`; the state/colour mapping mirrors `present.ts`.
 
 ## Two features, two sets of requirements
 
@@ -253,7 +253,7 @@ APNs key and your Trellis all belong to you and everything above turns green.
 
 ## Two clients
 
-The RN app (`mobile/`) and the native SwiftUI app (`native/`) ship as different TestFlight builds of
+The RN app (`archive/mobile/`) and the native SwiftUI app (`native/`) ship as different TestFlight builds of
 the same bundle id and both register here. Their Live-Activity wire shapes are incompatible — a
 wrapped `{name, props}` content state and `LiveActivityAttributes` for expo-widgets, a flat content
 state and `PrintActivityAttributes{printerId, amsId}` for the native app — and a mismatch is
