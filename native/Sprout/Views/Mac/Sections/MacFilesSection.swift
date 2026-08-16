@@ -747,7 +747,11 @@ struct MacFilesSection: View {
             // edge on three sides, so its corner has to be the card's radius MINUS that inset or the
             // two arcs do not share a centre and the corner reads as a mistake. This is why it is
             // not simply `chipRadius` — the number is a consequence of the layout, not a token pick.
-            CachedThumb(url: thumbUrl(f), aspect: 4.0 / 3.0)
+            // `LibraryThumb`, not `CachedThumb`: most of these images are Bambuddy's own unshaded
+            // silhouette rather than a picture of the model, and a sliced file can borrow the render
+            // of the model it came from. Same rules as iOS — see `PlateImageProbe`.
+            macThumb(f)
+                .aspectRatio(4.0 / 3.0, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: Metrics.concentric(inside: m.cardRadius, inset: inset),
                                             style: .continuous))
                 .overlay(alignment: .topLeading) { typeChip(f) }
@@ -1115,6 +1119,17 @@ struct MacFilesSection: View {
 
     private func thumbUrl(_ f: LibraryFile) -> URL? {
         model.client?.fileThumbUrl(f.id, token: model.cameraToken, thumbnailPath: f.thumbnailPath)
+    }
+
+    /// The probing thumbnail, or the plain well when there is no client/token to fetch with.
+    @ViewBuilder
+    private func macThumb(_ f: LibraryFile) -> some View {
+        if let client = model.client, let token = model.cameraToken {
+            LibraryThumb(file: f, library: store.files ?? [], client: client, token: token,
+                         glyphSize: 22)
+        } else {
+            Rectangle().fill(c.thumb)
+        }
     }
 
     // MARK: Chrome

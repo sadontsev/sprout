@@ -558,7 +558,7 @@ struct LibraryView: View {
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .fill(c.thumb)
                                 .frame(width: 44, height: 44)
-                                .overlay { libraryThumb(f, glyphSize: 18) }
+                                .overlay { libraryThumb(f, glyphSize: 18, showsProvenance: false) }
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                             VStack(alignment: .leading, spacing: 2) {
@@ -614,18 +614,17 @@ struct LibraryView: View {
         return "\(type)\(sliced) · \(LibraryFormat.bytes(f.fileSize?.double))"
     }
 
-    /// Library thumbnails carry the camera stream token in the query — `AsyncImage` can fetch them
-    /// as-is because no header is involved.
+    /// Library thumbnails carry the camera stream token in the query, so no header is involved.
+    ///
+    /// Goes through `LibraryThumb` rather than a bare `AsyncImage` because most of these images are
+    /// not pictures of the model — see `PlateImageProbe`. The library list is passed in so a sliced
+    /// file can borrow the render of the model it was sliced from.
     @ViewBuilder
-    private func libraryThumb(_ f: LibraryFile, glyphSize: CGFloat) -> some View {
-        if let url = model.client?.fileThumbUrl(f.id, token: model.cameraToken, thumbnailPath: f.thumbnailPath) {
-            AsyncImage(url: url, transaction: Transaction(animation: .easeInOut(duration: 0.12))) { phase in
-                if let image = phase.image {
-                    image.resizable().aspectRatio(contentMode: .fill)
-                } else {
-                    Color.clear
-                }
-            }
+    private func libraryThumb(_ f: LibraryFile, glyphSize: CGFloat,
+                              showsProvenance: Bool = true) -> some View {
+        if let client = model.client, let token = model.cameraToken {
+            LibraryThumb(file: f, library: store.files ?? [], client: client, token: token,
+                         glyphSize: glyphSize, showsProvenance: showsProvenance)
         } else {
             Image(systemName: LibraryFileCaps.hasGcode(f) ? "shippingbox" : "doc")
                 .font(.system(size: glyphSize))

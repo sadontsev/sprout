@@ -59,6 +59,35 @@ extension PlatformImage {
         #endif
     }
 
+    /// A small RGBA downsample, for `PlateImageProbe`.
+    ///
+    /// 32x32 is enough to tell a shaded render from a solid fill and costs ~4 KB of scratch, so this
+    /// can run once per thumbnail without being felt. Drawn through an explicit `CGContext` rather
+    /// than read off the source bitmap, because the two platforms disagree about what a source
+    /// bitmap even is — `NSImage` may hold several representations at different pixel sizes, and its
+    /// `size` is a drawing size in points (the same asymmetry `decodedByteCost` documents).
+    func rgbaProbe(side: Int = 32) -> [UInt8]? {
+        #if os(macOS)
+        guard let cg = cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        #else
+        guard let cg = cgImage else { return nil }
+        #endif
+        var buffer = [UInt8](repeating: 0, count: side * side * 4)
+        let ok: Bool = buffer.withUnsafeMutableBytes { raw -> Bool in
+            guard let base = raw.baseAddress,
+                  let ctx = CGContext(data: base, width: side, height: side,
+                                      bitsPerComponent: 8, bytesPerRow: side * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            // The probe counts tones, so interpolation must not invent them along the fill's edge.
+            ctx.interpolationQuality = .none
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        return ok ? buffer : nil
+    }
+
     /// PNG bytes, for snapshots written to the App Group container.
     func pngRepresentationData() -> Data? {
         #if os(macOS)

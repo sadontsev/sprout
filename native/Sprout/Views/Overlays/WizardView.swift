@@ -1916,13 +1916,17 @@ private struct WizardPlateReview: View {
     private var thumbnail: some View {
         ZStack {
             c.thumb
-            // Render the toolpaths rather than trusting the slicer's PNG.
+            // Render the toolpaths rather than trusting the server's PNG.
             //
-            // A headless Bambu Studio cannot produce that PNG: `glfwInit` fails (no GPU, no display,
-            // and its GLFW build asks for Wayland), so it fills the plate silhouette flat and every
-            // sliced file carries a shapeless blob in the filament colour. Measured on this server —
-            // the blob in the app IS `Metadata/plate_1.png` from the file. The app already parses
-            // the G-code for the full-screen viewer, so the preview may as well be the truth.
+            // That PNG is not the slicer's. A headless Bambu Studio never renders plate thumbnails
+            // at all — Bambuddy's own docstring calls it "a GUI-side action that only fires in the
+            // desktop Studio" — so Bambuddy substitutes its own trimesh + matplotlib render, and
+            // that one passes `facecolors="#00AE42"` with no `shade=` and no light source. The
+            // result is a flat silhouette, which is why every server-sliced file showed a green
+            // blob. See `PlateImageProbe` for the full chain and how the grid detects it.
+            //
+            // (An earlier version of this comment blamed `glfwInit` failing under Wayland. That was
+            // wrong: the GL error is real but incidental, because the render is never attempted.)
             //
             // Unsliced models have always rendered live here (`StlModelView`); this makes the sliced
             // half behave the same way.

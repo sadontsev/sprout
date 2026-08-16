@@ -40,6 +40,23 @@ actor ThumbCache {
     /// twenty. Without this, a fast scroll issues the same fetch repeatedly before any completes.
     private var inFlight: [URL: Task<PlatformImage?, Never>] = [:]
 
+    /// `PlateImageProbe`'s answer per URL, computed once on decode.
+    ///
+    /// Separate from `memory` because the two have different lifetimes on purpose: `NSCache` evicts
+    /// under pressure, and re-deciding "is this a silhouette?" after an eviction would make a tile
+    /// visibly change its mind. The verdict is a few bytes; the bitmap is megabytes.
+    private var verdicts: [URL: PlateImageProbe.Verdict] = [:]
+
+    /// The image plus what it turned out to be. Library callers want both; MakerWorld callers, whose
+    /// covers are photographs, keep using `image(for:)` and never pay for the probe.
+    func classified(for url: URL) async -> (image: PlatformImage, verdict: PlateImageProbe.Verdict)? {
+        guard let image = await image(for: url) else { return nil }
+        if let known = verdicts[url] { return (image, known) }
+        let verdict = PlateImageProbe.classify(rgba: image.rgbaProbe() ?? [], side: 32)
+        verdicts[url] = verdict
+        return (image, verdict)
+    }
+
     func image(for url: URL, headers: [String: String] = [:]) async -> PlatformImage? {
         if let hit = memory.object(forKey: url as NSURL) { return hit }
         if let running = inFlight[url] { return await running.value }
