@@ -191,7 +191,6 @@ struct MacWindow: View {
         .focusedSceneValue(\.refreshSection, RefreshAction { await MacSectionRefresh.run(section, model: model, explore: explore) })
         .focusedSceneValue(\.selectedSection, sectionBinding)
         .focusedSceneValue(\.inspectorToggle, inspectorShown)
-        .focusedSceneValue(\.cameraPrinterId, model.printerId)
     }
 
     @Environment(\.openWindow) private var openWindow

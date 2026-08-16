@@ -257,7 +257,27 @@ final class AppModel {
         teardownSession()
 
         config = cfg
-        SecureConfig.save(cfg)
+        // The SECOND half of the demo chokepoint. `persist` refuses to write a demo session to the
+        // Keychain and documents itself as "the only place that may enforce it" — but this line
+        // calls `SecureConfig.save` directly and so was never subject to it, and `teardownSession`
+        // does not clear `isDemo`.
+        //
+        // That was reachable: Settings → Advanced → Save reads `model.config`, which during a demo
+        // is `AppConfig(baseUrl: "https://demo.invalid", apiKey: "demo")`, and hands it straight to
+        // this method. One click wrote the sentinel over the owner's real base URL and API key, and
+        // the next launch restored `demo.invalid` as a genuine server and sat on Connecting for
+        // ever — the exact failure `persist`'s guard exists to prevent, through the one door it did
+        // not cover.
+        //
+        // Keyed on the URL rather than on `isDemo` deliberately: `connect` is also the legitimate
+        // way to LEAVE demo mode, and at that point the caller is handing over a real config while
+        // `isDemo` is still true. "Is this a real configuration?" and "is a demo running?" are
+        // different questions, and only the first one may decide what reaches the Keychain.
+        if cfg.baseUrl != AppModel.demoBaseUrl {
+            SecureConfig.save(cfg)
+        }
+        // A real session from here on; the demo one is gone with `teardownSession`.
+        isDemo = false
 
         let c = BambuddyClient(
             baseUrl: cfg.baseUrl,

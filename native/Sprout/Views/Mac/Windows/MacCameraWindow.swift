@@ -55,16 +55,10 @@ struct MacCameraWindow: View {
         }
         .background(c.bg)
         .background { MacHostWindowReader(host: host) }
-        .environment(\.palette, c)
-        .environment(\.metrics, .mac)
-        // The load-bearing half of the palette fix. `.environment(\.palette,…)` retints what Sprout
-        // draws; it does not touch what **AppKit** draws, and this window has two switches, a focus
-        // ring and a save panel in that category. Without this the window keeps the *system*
-        // appearance, so a dark-theme Sprout on a light-appearance Mac drew a white switch capsule
-        // and near-black system label text on `c.s1` — the stray white oval and the invisible text.
-        // Same modifier, same argument, as `MacRoot`: nil means "follow the Mac", which is exactly
-        // what `ThemePreference.system` means.
-        .preferredColorScheme(model.theme.colorScheme)
+        // Palette + density + appearance, together and inseparably — see `macSceneChrome`. This
+        // window is where the missing appearance half was first caught: it drew a white switch
+        // capsule and invisible near-black label text on `c.s1`.
+        .macSceneChrome(model, systemScheme: scheme)
         .navigationTitle("Chamber camera — \(printer?.name ?? "Printer")")
         .onAppear {
             model.cameraOwnership.setWindowStreaming(!paused, printerId: printerId)

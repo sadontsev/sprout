@@ -820,23 +820,19 @@ struct MacHardwareSection: View {
         .safeAreaPadding(.vertical, m.gutter)
     }
 
-    /// Three different sentences, because `serviceItems.isEmpty` answers a NEARBY question.
+    /// The root fix landed, so the workaround is gone.
     ///
-    /// `HardwareStore.serviceItems` filters `enabled ?? false`, so it is "reminders Bambuddy says are
-    /// switched ON" — not "reminders this printer has". Rendering "No reminders set up · Add service
-    /// intervals in Bambuddy" over the top of five existing ones is the same silent lie as reading a
-    /// MakerWorld `total: 0` as "you have none".
-    ///
-    /// Worse, the two predicates disagree in a way the user can see: `HardwareTriage` counts an item
-    /// overdue when `enabled != false` (so a nil counts), while this list drops nil. An item with no
-    /// `enabled` field and a negative `hoursUntilDue` therefore produces a red dot, a "1 thing needs
-    /// you" row in the inspector, and a Service pane with nothing in it. **The root fix belongs in
-    /// `HardwareStore.serviceItems` (`enabled != false`) — reported.** Until then this pane says out
-    /// loud what it is not showing, rather than asserting an absence.
+    /// This used to carry a third sentence and an "eye.slash" note listing what it was NOT showing,
+    /// because `serviceItems` filtered `enabled ?? false` while `HardwareTriage` counted
+    /// `enabled != false` — so an item Bambuddy returned with no `enabled` field produced a red dot,
+    /// a "1 thing needs you" row, and an empty pane. Saying that out loud was the honest thing to do
+    /// while the predicates disagreed; making them agree is better than describing the disagreement.
+    /// Both now read "tracked unless explicitly switched off", so `listed` is the whole set and an
+    /// empty `listed` genuinely means there are no reminders.
     @ViewBuilder
     private var serviceList: some View {
         let listed = hw.serviceItems
-        let untracked = hw.maintenanceItems.filter { !($0.enabled ?? false) }
+        let untracked = hw.maintenanceItems.filter { $0.enabled == false }
 
         if listed.isEmpty && untracked.isEmpty {
             ContentUnavailableView(

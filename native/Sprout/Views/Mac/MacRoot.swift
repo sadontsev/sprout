@@ -38,9 +38,7 @@ struct MacRoot: View {
             }
             .animation(Motion.standard(0.28), value: model.toast)
         }
-        .environment(\.palette, palette)
-        .environment(\.metrics, .mac)
-        .preferredColorScheme(model.theme.colorScheme)
+        .macSceneChrome(model, systemScheme: scheme)
         // §5.3, on the ROOT so a drop is accepted anywhere in the window.
         .macDropTarget(model: model)
         .task { await model.load() }

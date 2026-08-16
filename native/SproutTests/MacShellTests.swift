@@ -271,6 +271,11 @@ final class PlugFreshnessTests: XCTestCase {
 
     // MARK: - Who finishes an open request
 
+    // macOS-only: `MacOpenRequest` lives behind `#if os(macOS)`, so without this guard the whole
+    // iOS target fails to compile. That is exactly what happened — these were added and only the
+    // macOS suite was re-run, so a green 1088 hid a broken iOS build.
+    #if os(macOS)
+
     /// The handover rule between the request's two consumers. `MacWindow` navigates and then either
     /// clears the request or leaves it for the section that landed; getting this backwards breaks
     /// one of the two in a way nothing else catches.
@@ -299,4 +304,6 @@ final class PlugFreshnessTests: XCTestCase {
         pending = .section(.jobs); consume(pending)
         XCTAssertEqual(arrivedAt, [.jobs, .jobs], "the second print must navigate too")
     }
+
+    #endif
 }

@@ -60,9 +60,17 @@ struct MacSectionContent: View {
     /// Jobs' queue and archive back BOTH the Jobs section and the Printer section's UP NEXT and
     /// recent-prints cards, so both start it. The two are never on screen together — the switch
     /// above builds one — so neither can stop the other's polling out from under it.
+    ///
+    /// Printer starts `hardware` for the same reason, and it was missing: `MacPrinterInspector`'s
+    /// triage card reads `model.hardware.maintenanceItems`, so on a launch that opened straight onto
+    /// Printer — which is the DEFAULT section — that store had never been started and the card was
+    /// permanently empty. It only ever filled after a visit to AMS, which made it look intermittent
+    /// rather than absent. Whoever can SEE a store's data starts it; that is the whole rule here.
     private func startStores(for section: TabKey) {
         switch section {
-        case .printer: model.jobs.start()
+        case .printer:
+            model.jobs.start()
+            model.hardware.start()
         case .library: model.library.start()
         case .jobs:    model.jobs.start()
         case .ams:     model.hardware.start()
@@ -80,7 +88,10 @@ struct MacSectionContent: View {
 
     private func stopStores(for section: TabKey) {
         switch section {
-        case .printer, .jobs: model.jobs.stop()
+        case .printer:
+            model.jobs.stop()
+            model.hardware.stop()
+        case .jobs:           model.jobs.stop()
         case .library:        model.library.stop()
         case .ams:            model.hardware.stop()
         case .power:          model.power.stop()

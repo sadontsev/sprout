@@ -23,7 +23,13 @@ struct MacMenuBarLabel: View {
 
     private var percent: Int? {
         let vm = model.vm
-        guard vm.kind == .live || (showWhenIdle && vm.kind == .complete) else { return nil }
+        // The switch is labelled "Show the percentage when idle" and its footer says "Off, an idle
+        // printer shows just the glyph" — so the question it asks is about IDLE. The guard asked
+        // about `.complete`, which is a different state: a finished print that nobody has cleared.
+        // An actually-idle printer therefore showed no percentage however the switch was set, and
+        // the one state it did govern was not the one named on the control.
+        guard vm.kind == .live
+                || (showWhenIdle && (vm.kind == .idle || vm.kind == .complete)) else { return nil }
         return vm.progressInt
     }
 }
@@ -45,8 +51,15 @@ struct MacMenuBarPanel: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var scheme
 
+    /// Raised when a LAN-locked control is clicked. The panel owns the flag and attaches the alert
+    /// once, which is the contract `LockedActions` documents.
+    @State private var explainingLock = false
+
     private var c: Palette { Palette.forScheme(model.theme.colorScheme ?? scheme) }
     private var vm: DashVM { model.vm }
+    private var lock: LockedActions {
+        LockedActions(mode: model.lanMode, explaining: $explainingLock)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -65,8 +78,8 @@ struct MacMenuBarPanel: View {
         .padding(14)
         .frame(width: 300)
         .background(c.sheet)
-        .environment(\.palette, c)
-        .environment(\.metrics, .mac)
+        .macSceneChrome(model, systemScheme: scheme)
+        .lockedActionAlert($explainingLock)
     }
 
     private var header: some View {
@@ -126,20 +139,37 @@ struct MacMenuBarPanel: View {
             .padding(.top, 12)
 
             if vm.kind == .live {
+                // `vm.kind == .live` answers "is a print running?". It does NOT answer "will the
+                // printer accept a pause?" — in LAN developer mode Bambuddy refuses all three of
+                // these, and this panel was the last surface still asking only the first question.
+                // Live-looking buttons that silently do nothing is precisely what `LockedActions`
+                // exists to prevent, and every other control in the app already routes through it.
+                //
+                // `press` keeps the button CLICKABLE while locked on purpose: the click is what
+                // raises the explanation. A `.disabled` button swallows it and leaves a dead grey
+                // square with no reason attached.
                 HStack(spacing: 7) {
-                    Button(vm.isPaused ? "Resume" : "Pause") {
+                    Button(action: lock.press(.pause) {
                         if vm.isPaused {
                             model.perform("Resume") { try await $0.resume($1) }
                         } else {
                             model.perform("Pause") { try await $0.pause($1) }
                         }
+                    }) {
+                        Text(vm.isPaused ? "Resume" : "Pause")
                     }
                     .buttonStyle(MacPrimaryButtonStyle())
                     .frame(maxWidth: .infinity)
+                    .locked(.pause, by: lock)
 
-                    Button("Stop") { model.perform("Stop") { try await $0.stop($1) } }
-                        .buttonStyle(MacSecondaryButtonStyle(role: .destructive))
-                        .frame(maxWidth: .infinity)
+                    Button(action: lock.press(.stop) {
+                        model.perform("Stop") { try await $0.stop($1) }
+                    }) {
+                        Text("Stop")
+                    }
+                    .buttonStyle(MacSecondaryButtonStyle(role: .destructive))
+                    .frame(maxWidth: .infinity)
+                    .locked(.stop, by: lock)
                 }
                 .padding(.top, 13)
             }
@@ -177,10 +207,14 @@ struct MacMenuBarPanel: View {
 
     private var actions: some View {
         VStack(spacing: 2) {
+            // The hint said "⌘↩" and nothing bound it — the row was click-only, while
+            // `MacAppDelegate` states as fact that "⌘↩ from its panel reopens the window". The other
+            // three hints on this panel all resolve to real shortcuts; this one was decoration.
             row("Open Sprout", "⌘↩") {
                 NSApp.activate(ignoringOtherApps: true)
                 openWindow(id: "main")
             }
+            .keyboardShortcut(.return, modifiers: .command)
             row("Camera window", "⌘0") { openWindow(id: "camera", value: model.printerId) }
             row("Settings…", "⌘,") {
                 NSApp.activate(ignoringOtherApps: true)

@@ -32,7 +32,7 @@ for arg in "$@"; do
     --upload) upload=1 ;;
     --macos|--mac) platform=macos ;;
     --ios) platform=ios ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $arg (try --help)" >&2; exit 2 ;;
   esac
 done

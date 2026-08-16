@@ -746,7 +746,15 @@ final class MacNotificationController {
         guard let model else { return }
         // A demo print completing must never post a notification: it would be a true-looking
         // statement about a printer that does not exist.
-        guard !model.isDemo else { return }
+        //
+        // Clear the counter on the way out. It is what `watchingLine` reports in the Notifications
+        // pane, and returning early left it holding whatever the last REAL session put there — so
+        // entering demo mode showed "watching 3 printers" while this watcher was in fact doing
+        // nothing at all. Zero is the honest answer: nothing here is being watched.
+        guard !model.isDemo else {
+            watchedPrinters = 0
+            return
+        }
 
         // A reconnect — Settings → Save, or leaving demo mode — builds a NEW `PrinterStatusStore`
         // while keeping the SAME `AppModel`, so `attach` never sees it and the edge state would

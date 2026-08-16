@@ -169,9 +169,26 @@ final class HardwareStore {
     }
 
     /// Due first, then warnings, then by how soon each falls due.
-    var serviceItems: [MaintenanceItem] {
-        maintenanceItems
-            .filter { $0.enabled ?? false }
+    var serviceItems: [MaintenanceItem] { HardwareStore.serviceItems(from: maintenanceItems) }
+
+    /// The pure half, so the one invariant that matters here can actually be asserted.
+    ///
+    /// That invariant is **`HardwareTriage` and this list must answer the same question**, and they
+    /// did not: this filtered `enabled ?? false` ("did Bambuddy say enabled == true?") while
+    /// `HardwareTriage.items` counts overdue rows with `enabled != false` ("is it not switched
+    /// off?"). They differ on exactly one input — an item Bambuddy returns with no `enabled` field —
+    /// and the user could see the gap: a red dot and "1 thing needs you" in the inspector, over a
+    /// Service pane showing nothing. The Hardware pane had grown a whole "untracked" note to
+    /// describe the disagreement rather than fix it.
+    ///
+    /// A store's computed property cannot be tested — `maint` is `private(set)` — so the predicate
+    /// lived where nothing could reach it. Same reasoning as `AmsMapping`: put the rule in a pure
+    /// function and test the rule.
+    /// `nonisolated` because it is pure — it touches no store state, and the whole point is that a
+    /// test can call it without a main-actor hop.
+    nonisolated static func serviceItems(from items: [MaintenanceItem]) -> [MaintenanceItem] {
+        items
+            .filter { $0.enabled != false }
             .sorted { a, b in
                 if (a.isDue ?? false) != (b.isDue ?? false) { return a.isDue ?? false }
                 if (a.isWarning ?? false) != (b.isWarning ?? false) { return a.isWarning ?? false }

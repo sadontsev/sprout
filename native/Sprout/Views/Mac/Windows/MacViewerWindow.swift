@@ -247,8 +247,7 @@ struct MacViewerWindow: View {
                 .frame(width: 236)
         }
         .background(c.bg)
-        .environment(\.palette, c)
-        .environment(\.metrics, .mac)
+        .macSceneChrome(model, systemScheme: scheme)
         .navigationTitle(windowTitle)
         .toolbar {
             ToolbarItem(placement: .primaryAction) { modeSegment }

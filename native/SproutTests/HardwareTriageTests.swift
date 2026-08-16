@@ -141,3 +141,53 @@ final class HardwareTriageTests: XCTestCase {
     }
 
 }
+
+/// The Service list and the triage count must answer the SAME question.
+///
+/// They did not, and the gap was visible: an item Bambuddy returns with no `enabled` field counted
+/// as overdue in `HardwareTriage` (`enabled != false`) and was dropped from the list
+/// (`enabled ?? false`). The result was a red dot, a "1 thing needs you" row in the inspector, and a
+/// Service pane with nothing in it — the codebase's signature bug, two predicates one word apart.
+final class ServiceListAgreesWithTriageTests: XCTestCase {
+
+    private func item(_ name: String, hoursUntilDue: Double?, enabled: Bool? = nil) -> MaintenanceItem {
+        var m = MaintenanceItem(id: Int.random(in: 1...9999), maintenanceTypeName: name)
+        m.hoursUntilDue = hoursUntilDue.map { LooseNumber($0) }
+        m.enabled = enabled
+        return m
+    }
+
+    /// The exact input the two predicates disagreed on.
+    func testAnItemWithNoEnabledFieldIsListed() {
+        let unstated = item("Belt", hoursUntilDue: -5, enabled: nil)
+        XCTAssertEqual(HardwareStore.serviceItems(from: [unstated]).count, 1,
+                       "a nil `enabled` means Bambuddy did not say, not that it is off")
+    }
+
+    /// Explicitly off is the ONLY thing that hides a row.
+    func testOnlyAnExplicitFalseIsHidden() {
+        XCTAssertTrue(HardwareStore.serviceItems(from: [item("Belt", hoursUntilDue: -5, enabled: false)]).isEmpty)
+        XCTAssertEqual(HardwareStore.serviceItems(from: [item("Belt", hoursUntilDue: -5, enabled: true)]).count, 1)
+    }
+
+    /// The invariant itself: anything triage counts as needing attention must be reachable in the
+    /// list the user is sent to. Asserted over every combination of the field's three states.
+    func testEverythingTriageFlagsIsAlsoListed() {
+        for enabled in [nil, true, false] as [Bool?] {
+            let row = item("Belt", hoursUntilDue: -5, enabled: enabled)
+            let flagged = HardwareTriage.items(maintenance: [row], humidities: [], nozzlesKnown: true)
+            let listed = HardwareStore.serviceItems(from: [row])
+            XCTAssertEqual(!flagged.isEmpty, !listed.isEmpty,
+                           "enabled: \(String(describing: enabled)) — triage and the list disagree")
+        }
+    }
+
+    /// The sort is the reason this is a function and not a filter: due first, then warnings.
+    func testDueSortsAboveWarningSortsAboveTheRest() {
+        var due = item("Due", hoursUntilDue: -10); due.isDue = true
+        var warn = item("Warn", hoursUntilDue: 5); warn.isWarning = true
+        let calm = item("Calm", hoursUntilDue: 900)
+        let order = HardwareStore.serviceItems(from: [calm, warn, due]).map(\.maintenanceTypeName)
+        XCTAssertEqual(order, ["Due", "Warn", "Calm"])
+    }
+}

@@ -24,8 +24,7 @@ struct MacSettingsView: View {
             Tab("Advanced", systemImage: "wrench.and.screwdriver") { MacSettingsAdvanced(model: model) }
         }
         .frame(width: 700, height: 520)
-        .environment(\.palette, Palette.forScheme(model.theme.colorScheme ?? scheme))
-        .environment(\.metrics, .mac)
+        .macSceneChrome(model, systemScheme: scheme)
         // Deliberately NOT the place the print-alert watcher is attached — `MacRoot` is, because
         // this window may never be opened and the toggles below default to ON. A pane that had to
         // be visited before its own switches meant anything would promise alerts to everyone who
@@ -456,17 +455,25 @@ struct MacSettingsAdvanced: View {
                 // "add the admin username and password in Settings" directly under credentials that
                 // had just been added, and library rename/delete/move kept 403ing, until relaunch.
                 // iOS routes the same two fields through `connect` for exactly this reason.
+                // Disabled in demo, and it says so below. The demo has no Bambuddy to hold
+                // credentials, and `connect` now refuses to persist the sentinel config anyway — but
+                // a button that runs and changes nothing is the failure this codebase keeps
+                // rediscovering, so the reason is on screen rather than discovered by clicking.
                 Button("Save") {
-                    guard var cfg = model.config else { return }
+                    guard var cfg = model.config, !model.isDemo else { return }
                     cfg.adminUsername = adminUsername.isEmpty ? nil : adminUsername
                     cfg.adminPassword = adminPassword.isEmpty ? nil : adminPassword
                     Task { await model.connect(cfg) }
                 }
+                .disabled(model.isDemo)
             } header: {
                 Text("BAMBUDDY ADMIN")
             } footer: {
-                Text("Optional. Settings writes and library file operations are admin-only — a "
-                   + "scoped API key gets 403 for those, and reads work without this.")
+                Text(model.isDemo
+                     ? "Not available in the demo — there is no server to sign in to. Connect to "
+                     + "your Bambuddy first."
+                     : "Optional. Settings writes and library file operations are admin-only — a "
+                     + "scoped API key gets 403 for those, and reads work without this.")
             }
 
             Section {

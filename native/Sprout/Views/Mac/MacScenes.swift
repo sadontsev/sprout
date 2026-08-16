@@ -24,7 +24,7 @@ extension SproutApp {
         .defaultSize(width: 1440, height: 900)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unified)
-        .commands { MacCommands() }
+        .commands { MacCommands(model: model) }
 
         // §5.2. One window per printer, keyed by printer id, so `openWindow(id:value:)` reuses the
         // existing window for the same machine instead of stacking duplicates.
