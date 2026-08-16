@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
-# Archive the native app and export an .ipa for TestFlight.
+# Archive the native app and export it for TestFlight.
 #
-#   ./scripts-archive.sh              archive + export, stop there
-#   ./scripts-archive.sh --upload     …then validate and upload to TestFlight
+#   ./scripts-archive.sh                    archive + export iOS, stop there
+#   ./scripts-archive.sh --macos            …the Mac build instead
+#   ./scripts-archive.sh --upload           …then validate and upload to TestFlight
+#   ./scripts-archive.sh --macos --upload
+#
+# One app record carries both platforms, so the two ship as separate TestFlight builds of one app
+# and share its testers. They are separate uploads and can hold the same build number.
+#
+# The Mac half used to be done by hand, off a copy of this file's iOS command with the destination
+# swapped. Six things differ between the two and every one of them fails at a different stage —
+# the destination, the SDK the archive is checked against, whether there is a widget profile to
+# name, the exported artifact (.ipa vs .pkg), how the build number is read back out of it, and
+# altool's -t. Doing that from memory each time is how a platform ships with an unverified build
+# number.
 #
 # Uploading is opt-in because it is the irreversible half: a build number, once accepted by App
 # Store Connect, is spent forever — re-uploading the same one is rejected, so a stray upload costs
@@ -14,10 +26,13 @@
 set -euo pipefail
 
 upload=0
+platform=ios
 for arg in "$@"; do
   case "$arg" in
     --upload) upload=1 ;;
-    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --macos|--mac) platform=macos ;;
+    --ios) platform=ios ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -30,6 +45,29 @@ export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode-26.3.0.app/Contents/De
 # rejected only after a full upload. The absolute path is the one selector that cannot be overridden.
 XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
 cd "$(dirname "$0")"
+
+# Everything that differs between the two platforms, in ONE place. Scattered `if macos` branches
+# through the body is how the hand-run Mac archive drifted from this file in the first place.
+if [ "$platform" = macos ]; then
+  dest='generic/platform=macOS'
+  archive=/tmp/SproutNative-macOS.xcarchive
+  exportdir=/tmp/sprout-export-macos
+  sdk_pattern='macosx[0-9.]+'
+  altool_type=macos
+  artifact_glob='*.pkg'
+  # No widget on macOS: the SproutWidget dependency is `platformFilter: iOS`, so the Mac app embeds
+  # no appex and naming a profile for one would fail the export.
+  has_widget=0
+else
+  dest='generic/platform=iOS'
+  archive=/tmp/SproutNative.xcarchive
+  exportdir=/tmp/sprout-export
+  sdk_pattern='iphoneos[0-9.]+'
+  altool_type=ios
+  artifact_glob='*.ipa'
+  has_widget=1
+fi
+echo "archiving for $platform"
 
 # Your Apple Developer team id. Kept OUT of the repo: put it in native/.env-local (gitignored) as
 #   DEVELOPMENT_TEAM=XXXXXXXXXX
@@ -82,8 +120,11 @@ fi
 # this plist", not "can this machine sign", and it read empty on a machine that was signed in — so
 # it blocked a legitimate build. The same near-synonym predicate this project keeps writing. A
 # warning states the risk without pretending to know the answer.
+# App Attest is an iOS-only entitlement here — the Mac profile grants none, deliberately (see
+# MacNotificationController). So this whole check is iOS's, and running it for macOS would print a
+# warning about a capability that build never asks for.
 profiles=~/Library/Developer/Xcode/UserData/Provisioning\ Profiles
-have_profile=0
+have_profile=$([ "$platform" = macos ] && echo 1 || echo 0)
 if compgen -G "$profiles/*.mobileprovision" > /dev/null 2>&1; then
   for p in "$profiles"/*.mobileprovision; do
     plist=$(security cms -D -i "$p" 2>/dev/null) || continue
@@ -103,7 +144,7 @@ fi
 xcodegen generate --spec project.yml
 
 "$XCODEBUILD" -project Sprout.xcodeproj -scheme Sprout -configuration Release \
-  -destination 'generic/platform=iOS' -archivePath /tmp/SproutNative.xcarchive \
+  -destination "$dest" -archivePath "$archive" \
   -allowProvisioningUpdates ${asc_auth[@]+"${asc_auth[@]}"} \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" CODE_SIGN_STYLE=Automatic \
   ENABLE_USER_SCRIPT_SANDBOXING=NO archive 2>&1 | tail -30 || true
@@ -111,16 +152,16 @@ xcodegen generate --spec project.yml
 # Trust the artifact, not the exit code: a nested -quiet xcodebuild in a script phase can print
 # "error: ... exit code 0 but produced no further output" and fail the action while the archive is
 # perfectly good.
-test -d /tmp/SproutNative.xcarchive/Products/Applications/Sprout.app \
+test -d "$archive/Products/Applications/Sprout.app" \
   || { echo "no app in the archive — the failure was real"; exit 1; }
 
 # …but do check the archive was built with the SDK we selected, not a beta the shim substituted.
 # App Store Connect rejects an unsupported/beta SDK, so catch a mismatch in a second here rather
 # than after a ten-minute upload. Compare the SDK baked into the app to the one DEVELOPER_DIR
 # advertises; if they differ, the wrong xcodebuild ran (see the XCODEBUILD note above).
-want_sdk=$("$XCODEBUILD" -showsdks 2>/dev/null | grep -oE 'iphoneos[0-9.]+' | head -1)
+want_sdk=$("$XCODEBUILD" -showsdks 2>/dev/null | grep -oE "$sdk_pattern" | head -1)
 got_sdk=$(/usr/libexec/PlistBuddy -c "Print :DTSDKName" \
-  /tmp/SproutNative.xcarchive/Products/Applications/Sprout.app/Info.plist 2>/dev/null)
+  "$archive/Products/Applications/Sprout.app/Info.plist" 2>/dev/null)
 if [ -n "$want_sdk" ] && [ "$want_sdk" != "$got_sdk" ]; then
   echo "archive was built with '$got_sdk' but $DEVELOPER_DIR advertises '$want_sdk' — the wrong" >&2
   echo "xcodebuild ran (a beta shim override). App Store Connect rejects a beta SDK, so not" >&2
@@ -134,7 +175,12 @@ fi
 # instead. Those profiles must already carry every entitlement the app requests (App Attest
 # included) — regenerating them after adding a capability is a prerequisite of this script, not a
 # step it performs; a stale profile fails here with "doesn't include the … entitlement".
-rm -rf /tmp/sprout-export
+widget_profile_line=""
+if [ "$has_widget" = 1 ]; then
+  widget_profile_line="    <key>com.mvks5.bambu.LiveActivity</key><string>${DIST_PROFILE_WIDGET:-}</string>"
+fi
+
+rm -rf "$exportdir"
 if [ -n "${DIST_CERT:-}" ] && [ -n "${DIST_PROFILE_APP:-}" ] && [ -n "${DIST_PROFILE_WIDGET:-}" ]; then
   cat > /tmp/sprout-ExportOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -148,7 +194,7 @@ if [ -n "${DIST_CERT:-}" ] && [ -n "${DIST_PROFILE_APP:-}" ] && [ -n "${DIST_PRO
   <key>provisioningProfiles</key>
   <dict>
     <key>com.mvks5.bambu</key><string>${DIST_PROFILE_APP}</string>
-    <key>com.mvks5.bambu.LiveActivity</key><string>${DIST_PROFILE_WIDGET}</string>
+${widget_profile_line}
   </dict>
   <key>destination</key><string>export</string>
   <key>uploadSymbols</key><true/>
@@ -168,21 +214,31 @@ else
   sed "s|\${DEVELOPMENT_TEAM}|$DEVELOPMENT_TEAM|" ExportOptions.template.plist > /tmp/sprout-ExportOptions.plist
 fi
 
-"$XCODEBUILD" -exportArchive -archivePath /tmp/SproutNative.xcarchive \
-  -exportOptionsPlist /tmp/sprout-ExportOptions.plist -exportPath /tmp/sprout-export \
+"$XCODEBUILD" -exportArchive -archivePath "$archive" \
+  -exportOptionsPlist /tmp/sprout-ExportOptions.plist -exportPath "$exportdir" \
   -allowProvisioningUpdates ${asc_auth[@]+"${asc_auth[@]}"}
 
-ipa=$(ls /tmp/sprout-export/*.ipa)
+ipa=$(ls $exportdir/$artifact_glob)
 echo "exported: $ipa"
 
 # Read the version back out of the .ipa rather than from project.yml. Build 13 was archived with a
 # bump that silently did nothing and shipped as another 12 — the only thing that would have caught
 # it is asking the artifact what it actually says.
 rm -rf /tmp/sprout-ipa-check && mkdir -p /tmp/sprout-ipa-check
-(cd /tmp/sprout-ipa-check && unzip -q "$ipa")
-app=$(ls -d /tmp/sprout-ipa-check/Payload/*.app)
-version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Info.plist")
-build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$app/Info.plist")
+if [ "$platform" = macos ]; then
+  # A Mac app-store export is a .pkg — an installer archive, not a zip, so `unzip` does not read it
+  # and the iOS `Payload/*.app` path does not exist. Expanding it is the only way to ask the thing
+  # that will actually be uploaded what build it says it is, which is the entire point of this check.
+  pkgutil --expand-full "$ipa" /tmp/sprout-ipa-check/pkg >/dev/null
+  app=$(find /tmp/sprout-ipa-check/pkg -maxdepth 4 -name 'Sprout.app' -type d | head -1)
+  plist="$app/Contents/Info.plist"
+else
+  (cd /tmp/sprout-ipa-check && unzip -q "$ipa")
+  app=$(ls -d /tmp/sprout-ipa-check/Payload/*.app)
+  plist="$app/Info.plist"
+fi
+version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$plist")
+build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$plist")
 echo "contains: $version ($build)"
 
 if [ "$upload" = 0 ]; then
@@ -192,9 +248,9 @@ fi
 
 # Validate first: it catches the beta-SDK rejection and most signing problems in seconds, where the
 # upload would surface the same error only after transferring the whole build.
-echo "validating $version ($build)…"
-xcrun altool --validate-app -f "$ipa" -t ios --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+echo "validating $platform $version ($build)…"
+xcrun altool --validate-app -f "$ipa" -t "$altool_type" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
 
-echo "uploading $version ($build)…"
-xcrun altool --upload-app -f "$ipa" -t ios --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
-echo "uploaded $version ($build). App Store Connect takes a few minutes to process it."
+echo "uploading $platform $version ($build)…"
+xcrun altool --upload-app -f "$ipa" -t "$altool_type" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+echo "uploaded $platform $version ($build). App Store Connect takes a few minutes to process it."
