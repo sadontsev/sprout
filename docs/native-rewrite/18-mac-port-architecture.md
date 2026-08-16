@@ -297,9 +297,35 @@ That is not a credentials problem. The same API key had uploaded an iOS build mi
 record simply had no macOS platform to attach the build to. **Always `--validate-app` first** — this
 cost a validation call instead of a spent build number.
 
-`scripts-archive.sh` is still iOS-only (`generic/platform=iOS`, `altool -t ios`). The macOS path is
-the same four steps with `generic/platform=macOS`, an export plist whose `method` is
-`app-store-connect`, and `-t macos`; it produces a `.pkg` rather than an `.ipa`.
+`scripts-archive.sh --macos` does the Mac half now; it was iOS-only, and the Mac build was archived
+by hand off a copy of the iOS command. That is worth not going back to, because the two paths differ
+in more places than the destination and **each one fails at a different stage**:
+
+| | iOS | macOS |
+|---|---|---|
+| destination | `generic/platform=iOS` | `generic/platform=macOS` |
+| SDK checked against | `iphoneos*` | `macosx*` |
+| app's own plist | `Sprout.app/Info.plist` | `Sprout.app/Contents/Info.plist` |
+| artifact | `.ipa` (a zip) | `.pkg` (needs `pkgutil --expand-full`) |
+| widget profile | named | none — no appex is embedded |
+| `altool -t` | `ios` | `macos` |
+| signing | manual, against `DIST_*` | automatic, cloud-signed |
+
+Three of those were found by RUNNING it, not reading it, and two failed in ways that pointed
+somewhere else:
+
+- The SDK guard read the iOS plist path. PlistBuddy failed, and under `set -e` a failing command
+  substitution kills the script with no message — so the run ended at exit 1 with `** ARCHIVE
+  SUCCEEDED **` as its last line, which reads as the archive having failed when the archive was
+  perfect and the *checker* was broken.
+- **The ASC key must not be passed to the macOS export.** `-authenticationKey*` does not add an
+  authority, it selects one: cloud signing then runs as the key rather than as the Apple ID signed
+  into Xcode. The key's role cannot create distribution certificates, and macOS needs two that are
+  not in the keychain — `Mac App Distribution` and `Mac Installer Distribution` (the artifact is a
+  signed installer, so there is an identity iOS never asks for). It fails as `Cloud signing
+  permission error` plus `No signing certificate … found`, twice over, none of which names the key.
+  Dropping it exports the same archive first time. iOS keeps it, because that path signs manually
+  and asks Apple for nothing.
 
 ### The macOS push entitlement is spelled differently, and the wrong one vanishes
 
