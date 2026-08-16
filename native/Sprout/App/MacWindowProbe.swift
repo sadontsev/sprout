@@ -28,8 +28,14 @@ import AppKit
 /// empty inspector, and it was read that way once. `SPROUT_TREE` is the answer: it dumps the AppKit
 /// hierarchy, where both panes are plainly present at their spec widths (220 and 320).
 ///
-/// So: use `SPROUT_SHOT` to check the CONTENT column, and `SPROUT_TREE` to check the panes. A
-/// screenshot alone cannot settle a question about either of them.
+/// **`SPROUT_SHOT` also cannot photograph the TOOLBAR.** `cacheDisplay` renders a window's
+/// `contentView`, and the toolbar lives in the window FRAME above it — so every capture begins at
+/// the demo strip and the titlebar simply is not in the image. That is not a bug to fix here: there
+/// is no content-view route to it. Toolbar work has to be checked on a real screen, and saying so is
+/// better than measuring the one thing the picture leaves out.
+///
+/// So: use `SPROUT_SHOT` to check the CONTENT column, `SPROUT_TREE` to check the panes, and neither
+/// for the toolbar. A screenshot alone cannot settle a question about any of the three.
 ///
 /// Same shape as `AttestCapture.runIfRequested()` — DEBUG-only and opt-in through the environment,
 /// so it costs nothing when it is not wanted:

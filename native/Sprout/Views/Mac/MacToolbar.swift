@@ -33,10 +33,23 @@ struct MacToolbar: ToolbarContent {
             // SECOND time, so the window read "Printer … Printer · H2C · PRINTING 13 %". The
             // prototype shows one title, and the window title is the one the system also uses for
             // the Window menu and Mission Control, so this is the copy that goes.
+            // Insets, because macOS sizes the glass capsule to this item's CONTENT and the content
+            // had almost none of its own.
+            //
+            // Measured off the shipped build: 14 pt from the capsule's left edge to the "H" of the
+            // printer name, and 10 pt from the final "%" to its right edge — so the text was very
+            // nearly touching the bubble at both ends and read as having outgrown it.
+            //
+            // Asymmetric on purpose. `printerPopup` is a `Menu` and carries a borderless button's
+            // own leading inset; `MacStatusPillView` is a bare `Text` and carries nothing. Equal
+            // padding here would preserve the imbalance rather than correct it, so the trailing side
+            // gets the larger share and the two ends come out level at roughly 20 pt.
             HStack(spacing: 14) {
                 printerPopup
                 MacStatusPillView(vm: model.vm)
             }
+            .padding(.leading, 6)
+            .padding(.trailing, 12)
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
