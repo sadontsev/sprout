@@ -1226,8 +1226,10 @@ struct WizardView: View {
         selectable: Bool = true
     ) -> some View {
         WizardPlateReview(
+            model: model,
             client: model.client,
             fileId: fileId,
+            gcodeFileId: layerFileId,
             camToken: model.cameraToken,
             plateIndex: selectedPlate,
             selections: selections,
@@ -1763,8 +1765,14 @@ private struct FlowLayout: Layout {
 /// Two endpoints describe the same file and neither is complete on its own, so both are fetched and
 /// merged by `PlateReview.build` — and either may fail without the block being useless.
 private struct WizardPlateReview: View {
+    let model: AppModel
     let client: BambuddyClient?
     let fileId: Int
+    /// The id whose G-CODE exists — after a slice that is a new record, not `fileId`. Reusing the
+    /// same value the "View layers" button is gated on means the preview and that button cannot
+    /// disagree about whether toolpaths are there. "Is it sliced" and "does it have G-code" are the
+    /// nearby-question pair this codebase has shipped wrong four times.
+    let gcodeFileId: Int?
     let camToken: String?
     let plateIndex: Int
     /// The filament the print is mapped to, when the user has chosen one. nil describes the file as
@@ -1908,7 +1916,19 @@ private struct WizardPlateReview: View {
     private var thumbnail: some View {
         ZStack {
             c.thumb
-            if let url = thumbURL {
+            // Render the toolpaths rather than trusting the slicer's PNG.
+            //
+            // A headless Bambu Studio cannot produce that PNG: `glfwInit` fails (no GPU, no display,
+            // and its GLFW build asks for Wayland), so it fills the plate silhouette flat and every
+            // sliced file carries a shapeless blob in the filament colour. Measured on this server —
+            // the blob in the app IS `Metadata/plate_1.png` from the file. The app already parses
+            // the G-code for the full-screen viewer, so the preview may as well be the truth.
+            //
+            // Unsliced models have always rendered live here (`StlModelView`); this makes the sliced
+            // half behave the same way.
+            if let gcodeFileId {
+                LayerModelView(model: model, fileId: gcodeFileId, placeholder: thumbURL)
+            } else if let url = thumbURL {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):

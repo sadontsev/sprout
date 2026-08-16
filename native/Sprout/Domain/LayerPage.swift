@@ -127,7 +127,13 @@ enum LayerPage {
     ///     request at all.
     ///   - headers: `X-API-Key`. G-code endpoints take the API key, NOT the camera stream token.
     ///   - plate: the machine's physical bed footprint in mm, from `PrinterProfile`.
-    static func html(url: String, headers: [String: String], plate: PlateSize) -> String {
+    /// - Parameter compact: inline embed (the print wizard's preview) — hides the page's own
+    ///   control card and reset button, exactly as `StlPage` does. The model still renders in full;
+    ///   only the chrome goes, so the preview and the full-screen viewer cannot disagree about what
+    ///   the print looks like.
+    static func html(url: String, headers: [String: String], plate: PlateSize,
+                     compact: Bool = false) -> String {
+        let compactCss = compact ? "<style>#bar,#reset{display:none}</style>" : ""
         let urlLit = ViewerJS.literal(url)
         let hdrLit = ViewerJS.object(headers)
         let plateLit = "{w:\(ViewerJS.number(plate.w)),d:\(ViewerJS.number(plate.d))}"
@@ -152,7 +158,7 @@ enum LayerPage {
           .chip{flex:1;text-align:center;padding:8px 0;border-radius:10px;background:#2A2E33;color:#c8cdd4;font:600 12px -apple-system;border:1px solid transparent}
           .chip.on{background:rgba(43,212,192,0.16);color:#2BD4C0;border-color:rgba(43,212,192,0.35)}
           #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:#6b7177;font-size:14px;padding:36px;text-align:center;line-height:1.5}
-        </style></head>
+        </style>\#(compactCss)</head>
         <body>
         <canvas id="c"></canvas>
         <canvas id="cg"></canvas>
@@ -191,7 +197,11 @@ enum LayerPage {
             var bw=(b.maxX-b.minX)||1, bh=(b.maxY-b.minY)||1, bd=(b.maxZ-b.minZ)||1;
             var radius=0.5*Math.sqrt(bw*bw+bh*bh+bd*bd)||1, zspan=(b.maxZ-b.minZ)||1;
             var segTotal=0; for(var k0=0;k0<layers.length;k0++) segTotal+=layers[k0].length>>2;
-            var RESERVE=150; // px kept clear at the bottom for the control card
+            // px kept clear at the bottom for the control card. Compact mode HIDES that card, and
+            // reserving 150px of a ~310pt preview tile spent half the canvas on nothing — the model
+            // came out small and pushed high. The fill factor opens up for the same reason: the
+            // full-screen value is conservative because the card overlaps the lower third.
+            var RESERVE=\#(compact ? 0 : 150), FILL=\#(compact ? "0.46" : "0.33");
 
             var cv=document.getElementById('c'), ctx=cv.getContext('2d'), dpr=window.devicePixelRatio||2, W=0,Hh=0;
             var DEF={yaw:-0.62,pitch:1.02,zoom:1};
@@ -199,7 +209,7 @@ enum LayerPage {
             var vyaw=0, vpitch=0, inertiaOn=false; // rotate inertia
             // Clamp positive: a zero-size canvas on the first layout pass would give a NEGATIVE scale and
             // crash createRadialGradient ("r1 < 0" — caught rendering a real file headlessly).
-            function fit(){ baseScale=Math.max((Math.min(W,Hh-RESERVE)*0.33)/radius, 1e-6); ox=W/2; oy=(Hh-RESERVE)/2; }
+            function fit(){ baseScale=Math.max((Math.min(W,Hh-RESERVE)*FILL)/radius, 1e-6); ox=W/2; oy=(Hh-RESERVE)/2; }
             function resetView(){ yaw=DEF.yaw; pitch=DEF.pitch; zoom=DEF.zoom; px=0; py=0; vyaw=0; vpitch=0; schedule(); }
 
             // Project world (x,y,z in mm, plate-origin) -> screen px through the orbit camera.

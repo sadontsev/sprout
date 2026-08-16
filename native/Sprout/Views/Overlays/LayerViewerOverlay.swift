@@ -24,6 +24,76 @@ enum LayerSource: Equatable {
     case printerFile(printerId: Int, path: String)
 }
 
+/// The toolpath renderer without chrome, so it can be embedded inline.
+///
+/// **Why the wizard uses this instead of the plate thumbnail.** A sliced file carries a PNG the
+/// SLICER rendered, and a headless Bambu Studio cannot render one: `glfwInit` fails (no GPU, no
+/// display, and its GLFW build wants Wayland), so it falls back to filling the plate silhouette
+/// flat. Every sliced file therefore shows a shapeless blob in the filament colour. The app already
+/// parses the G-code and draws real toolpaths for the full-screen viewer, so the preview may as well
+/// be the truth rather than the slicer's best guess.
+///
+/// The unsliced path has worked this way all along — `StlModelView(compact:)` renders the mesh live.
+/// This is the same idea for the sliced half, and the same page as the full-screen viewer, so the
+/// two cannot disagree about what the print looks like.
+struct LayerModelView: View {
+    let model: AppModel
+    let fileId: Int
+    /// Shown until the page reports `ready`. The slicer's thumbnail is wrong but it is instant, and
+    /// something recognisable beats an empty rectangle while the G-code downloads.
+    var placeholder: URL?
+
+    @State private var page: String?
+    @State private var ready = false
+    @State private var failure: String?
+    @State private var attempt = 0
+
+    var body: some View {
+        ZStack {
+            Palette.dark.bg
+            if let placeholder, !ready, failure == nil {
+                AsyncImage(url: placeholder) { image in
+                    image.resizable().aspectRatio(contentMode: .fill).opacity(0.35)
+                } placeholder: {
+                    Color.clear
+                }
+            }
+            if let page, failure == nil {
+                ViewerWebView(html: page, baseURL: documentBase, onEvent: handle)
+                    .id(attempt)
+                    .opacity(ready ? 1 : 0)
+            }
+            if failure != nil {
+                // No error card here: a preview that cannot render is not a failure worth shouting
+                // about, and the placeholder underneath still says what the object is. The
+                // full-screen viewer reports properly when the user actually asks for it.
+                Color.clear
+            } else if !ready {
+                ViewerLoading(label: "READING TOOLPATHS…", compact: true)
+            }
+        }
+        .task(id: attempt) { build() }
+    }
+
+    private var documentBase: URL { ViewerJS.documentBase(of: model.client?.baseUrl ?? "") }
+
+    private func build() {
+        guard page == nil, failure == nil, let client = model.client else { return }
+        page = LayerPage.html(url: client.baseUrl + client.gcodePath(fileId),
+                              headers: client.authHeaders(),
+                              plate: PrinterProfile.forPrinter(model.printer).plate,
+                              compact: true)
+    }
+
+    private func handle(_ event: ViewerEvent) {
+        switch event {
+        case .ready: ready = true
+        case .loaded: break
+        case .failed(let message, _): failure = message
+        }
+    }
+}
+
 /// Full-screen layer-by-layer preview of a sliced print: a real build plate with a 10 mm grid, an
 /// orbitable toolpath model shaded bottom-to-top, amber supports, and a slider that scrubs layers.
 ///
