@@ -55,6 +55,9 @@ if [ "$platform" = macos ]; then
   sdk_pattern='macosx[0-9.]+'
   altool_type=macos
   artifact_glob='*.pkg'
+  # A Mac app keeps its Info.plist in Contents/; an iOS app keeps it at the bundle root. Reading the
+  # wrong one does not report a missing file — see the guard below for what it cost.
+  app_plist='Contents/Info.plist'
   # No widget on macOS: the SproutWidget dependency is `platformFilter: iOS`, so the Mac app embeds
   # no appex and naming a profile for one would fail the export.
   has_widget=0
@@ -65,6 +68,7 @@ else
   sdk_pattern='iphoneos[0-9.]+'
   altool_type=ios
   artifact_glob='*.ipa'
+  app_plist='Info.plist'
   has_widget=1
 fi
 echo "archiving for $platform"
@@ -159,9 +163,24 @@ test -d "$archive/Products/Applications/Sprout.app" \
 # App Store Connect rejects an unsupported/beta SDK, so catch a mismatch in a second here rather
 # than after a ten-minute upload. Compare the SDK baked into the app to the one DEVELOPER_DIR
 # advertises; if they differ, the wrong xcodebuild ran (see the XCODEBUILD note above).
-want_sdk=$("$XCODEBUILD" -showsdks 2>/dev/null | grep -oE "$sdk_pattern" | head -1)
+# `|| true` on both, and an explicit empty check after.
+#
+# Without it this guard ABORTS THE SCRIPT SILENTLY rather than reporting anything. Under `set -e` a
+# command substitution that exits non-zero kills the shell, and both of these can: `grep` exits 1 on
+# no match, and PlistBuddy exits 1 on a missing file — with `2>/dev/null` swallowing the one message
+# that would have said so. That is not hypothetical. The first Mac run of this script read the iOS
+# plist path (a Mac app keeps Info.plist in `Contents/`), PlistBuddy failed, and the script exited 1
+# with its last line of output being "** ARCHIVE SUCCEEDED **" — which reads as the archive having
+# failed, when in fact the archive was perfect and the CHECK was broken. A verifier whose failure is
+# indistinguishable from the failure it verifies is worse than no verifier.
+want_sdk=$("$XCODEBUILD" -showsdks 2>/dev/null | grep -oE "$sdk_pattern" | head -1 || true)
 got_sdk=$(/usr/libexec/PlistBuddy -c "Print :DTSDKName" \
-  "$archive/Products/Applications/Sprout.app/Info.plist" 2>/dev/null)
+  "$archive/Products/Applications/Sprout.app/$app_plist" 2>/dev/null || true)
+if [ -z "$got_sdk" ]; then
+  echo "could not read DTSDKName from the archived app — the SDK check could not run." >&2
+  echo "The archive itself is at $archive and may well be fine; this is the checker failing." >&2
+  exit 1
+fi
 if [ -n "$want_sdk" ] && [ "$want_sdk" != "$got_sdk" ]; then
   echo "archive was built with '$got_sdk' but $DEVELOPER_DIR advertises '$want_sdk' — the wrong" >&2
   echo "xcodebuild ran (a beta shim override). App Store Connect rejects a beta SDK, so not" >&2
@@ -180,8 +199,21 @@ if [ "$has_widget" = 1 ]; then
   widget_profile_line="    <key>com.mvks5.bambu.LiveActivity</key><string>${DIST_PROFILE_WIDGET:-}</string>"
 fi
 
+# The manual branch is **iOS's**, and gating it on the platform is not a simplification — every
+# variable it reads names an iOS artefact. DIST_CERT is an "iPhone Distribution" identity;
+# DIST_PROFILE_APP is the iOS profile for com.mvks5.bambu, which is a DIFFERENT profile from the Mac
+# one despite the identical bundle id; DIST_PROFILE_WIDGET names an appex the Mac build does not
+# embed at all. Handing any of them to a macOS export fails, and two of the three fail with an error
+# naming the profile rather than the platform.
+#
+# A Mac App Store export also needs something iOS never asks for: a **Mac Installer Distribution**
+# identity, because the artefact is a signed .pkg rather than an .ipa. There is no such identity in
+# this keychain. Automatic signing is what supplies it — `-allowProvisioningUpdates` with the ASC key
+# has Apple mint the certificate and the profile on demand, which is how the first Mac builds were
+# uploaded. So macOS takes the template path deliberately, not as a fallback.
 rm -rf "$exportdir"
-if [ -n "${DIST_CERT:-}" ] && [ -n "${DIST_PROFILE_APP:-}" ] && [ -n "${DIST_PROFILE_WIDGET:-}" ]; then
+if [ "$platform" = ios ] \
+   && [ -n "${DIST_CERT:-}" ] && [ -n "${DIST_PROFILE_APP:-}" ] && [ -n "${DIST_PROFILE_WIDGET:-}" ]; then
   cat > /tmp/sprout-ExportOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -214,9 +246,32 @@ else
   sed "s|\${DEVELOPMENT_TEAM}|$DEVELOPMENT_TEAM|" ExportOptions.template.plist > /tmp/sprout-ExportOptions.plist
 fi
 
+# The ASC key is deliberately NOT passed to the macOS export, and this is the opposite of an
+# oversight — passing it is what breaks that export.
+#
+# `-authenticationKey*` does not ADD an authority, it SELECTS one: xcodebuild then does cloud signing
+# as the KEY rather than as the Apple ID signed into Xcode. The key's role does not include creating
+# distribution certificates, and macOS app-store signing needs two this keychain does not hold —
+# "Mac App Distribution" and "Mac Installer Distribution" (the artefact is a signed .pkg, so there is
+# an installer identity iOS never asks for). The result is four errors, none of which names the
+# cause:
+#     Cloud signing permission error
+#     No signing certificate "Mac Installer Distribution" found
+#     Cloud signing permission error
+#     No signing certificate "Mac App Distribution" found
+# Drop the key and the same archive exports first time, because the Apple ID has the provisioning
+# rights the key lacks and Apple mints both certificates on demand.
+#
+# iOS keeps the key: that path signs MANUALLY against DIST_CERT and the named profiles, so it asks
+# Apple for nothing, and the key is still what lets a headless run avoid the "No Accounts" failure.
+# The ARCHIVE step above keeps it on both platforms — there it is doing provisioning updates, which
+# the key can do.
+export_auth=()
+if [ "$platform" = ios ]; then export_auth=(${asc_auth[@]+"${asc_auth[@]}"}); fi
+
 "$XCODEBUILD" -exportArchive -archivePath "$archive" \
   -exportOptionsPlist /tmp/sprout-ExportOptions.plist -exportPath "$exportdir" \
-  -allowProvisioningUpdates ${asc_auth[@]+"${asc_auth[@]}"}
+  -allowProvisioningUpdates ${export_auth[@]+"${export_auth[@]}"}
 
 ipa=$(ls $exportdir/$artifact_glob)
 echo "exported: $ipa"
@@ -230,13 +285,12 @@ if [ "$platform" = macos ]; then
   # and the iOS `Payload/*.app` path does not exist. Expanding it is the only way to ask the thing
   # that will actually be uploaded what build it says it is, which is the entire point of this check.
   pkgutil --expand-full "$ipa" /tmp/sprout-ipa-check/pkg >/dev/null
-  app=$(find /tmp/sprout-ipa-check/pkg -maxdepth 4 -name 'Sprout.app' -type d | head -1)
-  plist="$app/Contents/Info.plist"
+  app=$(find /tmp/sprout-ipa-check/pkg -maxdepth 6 -name 'Sprout.app' -type d | head -1)
 else
   (cd /tmp/sprout-ipa-check && unzip -q "$ipa")
   app=$(ls -d /tmp/sprout-ipa-check/Payload/*.app)
-  plist="$app/Info.plist"
 fi
+plist="$app/$app_plist"
 version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$plist")
 build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$plist")
 echo "contains: $version ($build)"
