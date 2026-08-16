@@ -236,7 +236,7 @@ struct MacFilesInspector: View {
             // thing, and identifying swatches by their contents would collapse them.
             HStack(spacing: 5) {
                 ForEach(slots.indices, id: \.self) { i in
-                    Swatch(value: FilamentColor.norm(slots[i].color), size: 14, radius: 4)
+                    Swatch(value: FilamentColor.norm(slots[i].color), size: 14, radius: Metrics.swatchRadius(14))
                 }
             }
         }

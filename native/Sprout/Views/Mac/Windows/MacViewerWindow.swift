@@ -349,7 +349,7 @@ struct MacViewerWindow: View {
             .foregroundStyle(Palette.dark.t2)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Palette.dark.bg.opacity(0.7)))
+            .background(RoundedRectangle(cornerRadius: m.chipRadius, style: .continuous).fill(Palette.dark.bg.opacity(0.7)))
             .padding(14)
     }
 
@@ -500,7 +500,7 @@ struct MacViewerWindow: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(c.t2)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.s3))
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s3))
         .disabled(!canScrub)
         .keyboardShortcut(key, modifiers: [])
         .help(delta < 0 ? "Down one layer — ← (⇧← for ten)" : "Up one layer — → (⇧→ for ten)")
@@ -564,6 +564,11 @@ struct MacViewerWindow: View {
     /// the four are actually distinguishable. Drawing Walls teal and Infill blue would have been the
     /// recurring bug in its purest form: a control whose appearance asserts a capability the thing
     /// behind it does not have.
+    /// The legend keys are colour swatches, so their corner comes from `Metrics.swatchRadius` — the
+    /// same ratio the filament swatches use — rather than from the card/control/chip scale. At 12 pt
+    /// a fixed `chipRadius` would round them into lozenges.
+    private var legendSwatch: CGFloat { 12 }
+
     private var showSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("SHOW")
@@ -574,9 +579,9 @@ struct MacViewerWindow: View {
                 legendRow(
                     "Supports",
                     swatch: AnyView(
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        RoundedRectangle(cornerRadius: Metrics.swatchRadius(legendSwatch), style: .continuous)
                             .fill(hasSupport == false ? c.s4 : c.supports)
-                            .frame(width: 12, height: 12)
+                            .frame(width: legendSwatch, height: legendSwatch)
                     ),
                     dim: hasSupport == false,
                     trailing: hasSupport == false ? "none" : nil
@@ -584,9 +589,9 @@ struct MacViewerWindow: View {
                 legendRow(
                     "Travel moves",
                     swatch: AnyView(
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        RoundedRectangle(cornerRadius: Metrics.swatchRadius(legendSwatch), style: .continuous)
                             .strokeBorder(c.line2)
-                            .frame(width: 12, height: 12)
+                            .frame(width: legendSwatch, height: legendSwatch)
                     ),
                     dim: true,
                     trailing: "not drawn"
@@ -618,9 +623,9 @@ struct MacViewerWindow: View {
             ? (Color(hex: 0x857866), Color(hex: 0xEDE6D4))
             : (Color(hex: 0x54617A), Color(hex: 0xC7CFDE))
         return AnyView(
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
+            RoundedRectangle(cornerRadius: Metrics.swatchRadius(legendSwatch), style: .continuous)
                 .fill(LinearGradient(colors: [pair.0, pair.1], startPoint: .bottom, endPoint: .top))
-                .frame(width: 12, height: 12)
+                .frame(width: legendSwatch, height: legendSwatch)
         )
     }
 
@@ -984,6 +989,9 @@ private struct MacViewerSegment<Value: Hashable>: View {
     @Environment(\.palette) private var c
     @Environment(\.metrics) private var m
 
+    /// The trough. Named because the thumb's radius is derived from it below.
+    private let trackInset: CGFloat = 2
+
     var body: some View {
         HStack(spacing: 0) {
             ForEach(options, id: \.self) { option in
@@ -996,8 +1004,12 @@ private struct MacViewerSegment<Value: Hashable>: View {
                         .opacity(live ? 1 : 0.45)
                         .padding(.horizontal, 12)
                         .frame(height: m.controlHeight - 4)
+                        // CONCENTRIC with the track: the thumb is inset `trackInset` inside it, so
+                        // its corner is the track's minus that inset.
                         .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            RoundedRectangle(cornerRadius: Metrics.concentric(inside: m.controlRadius,
+                                                                             inset: trackInset),
+                                             style: .continuous)
                                 .fill(on ? c.s4 : .clear)
                         )
                         .contentShape(.rect)
@@ -1008,9 +1020,9 @@ private struct MacViewerSegment<Value: Hashable>: View {
                 .accessibilityAddTraits(on ? [.isSelected] : [])
             }
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(c.s2))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(c.line))
+        .padding(trackInset)
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
+        .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).stroke(c.line))
         .animation(Motion.standard(0.14), value: selection)
     }
 }

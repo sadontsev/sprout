@@ -94,8 +94,8 @@ struct MacSidebar: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(11)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.s2))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(c.line))
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
+        .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).stroke(c.line))
         .padding(8)
     }
 

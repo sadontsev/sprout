@@ -445,6 +445,11 @@ struct MacFilesSection: View {
         // URL before this view exists, so there is no change to observe.
         .onChange(of: model.pendingOpen) { _, request in consumePendingOpen(request) }
         .task { consumePendingOpen(model.pendingOpen) }
+        // Quick Look is a SYSTEM panel: it floats above the app and outlives the view that opened
+        // it. Leaving Files left it showing a file the app was no longer displaying — and after a
+        // delete, a file that no longer exists. `MacQuickLook.dismiss()` was written for exactly
+        // this and had no callers.
+        .onDisappear { MacQuickLook.dismiss() }
         .onKeyPress(.space) {
             if store.source == .library {
                 MacQuickLook.toggle(file: shown.first { $0.id == selectedId }, model: model)
@@ -465,7 +470,13 @@ struct MacFilesSection: View {
                 // card does not move the selection, so clearing it unconditionally meant deleting
                 // file B left the inspector saying "No file selected" about file A, which still
                 // exists.
-                if selectedId == deleted.id { selectedId = nil }
+                if selectedId == deleted.id {
+                    selectedId = nil
+                    // Quick Look floats ABOVE the app and does not close with the thing it shows.
+                    // Deleting the previewed file left a panel describing a file that no longer
+                    // exists. Same "only if it is this one" test as the selection above.
+                    MacQuickLook.dismiss()
+                }
             },
             onConfirmedPrinterDelete: { deleted in
                 if selectedSdPath == deleted.path { selectedSdPath = nil }
@@ -524,8 +535,8 @@ struct MacFilesSection: View {
         }
         .padding(.horizontal, 11)
         .frame(width: 250, height: m.controlHeight)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(c.s2))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(c.line))
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
+        .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).stroke(c.line))
     }
 
     private var sortMenu: some View {
@@ -723,13 +734,22 @@ struct MacFilesSection: View {
 
     private func card(_ f: LibraryFile) -> some View {
         let on = selectedId == f.id
+        // Named once because it is used TWICE and the two must agree: it is both the card's inset
+        // and the term in the thumbnail's concentric radius below.
+        let inset: CGFloat = 9
         return VStack(alignment: .leading, spacing: 0) {
             // Library thumbnails are gated by the camera STREAM token in `?token=`, never by
             // `X-API-Key` (which 401s here), so `CachedThumb` needs no headers at all. The token
             // rotates hourly and is part of the URL, so a rotation costs one re-fetch per visible
             // tile — correct, and far cheaper than a cache key that could serve a 401'd image.
+            //
+            // CONCENTRIC with the card that holds it: the thumbnail is inset `inset` from the card's
+            // edge on three sides, so its corner has to be the card's radius MINUS that inset or the
+            // two arcs do not share a centre and the corner reads as a mistake. This is why it is
+            // not simply `chipRadius` — the number is a consequence of the layout, not a token pick.
             CachedThumb(url: thumbUrl(f), aspect: 4.0 / 3.0)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Metrics.concentric(inside: m.cardRadius, inset: inset),
+                                            style: .continuous))
                 .overlay(alignment: .topLeading) { typeChip(f) }
                 .overlay(alignment: .topTrailing) { if LibraryFileCaps.isSliced(f) { slicedTick } }
 
@@ -746,7 +766,7 @@ struct MacFilesSection: View {
                 .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(9)
+        .padding(inset)
         .background(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous).fill(c.s1))
         .overlay(
             RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous)
@@ -784,7 +804,10 @@ struct MacFilesSection: View {
             .foregroundStyle(Color.white.opacity(0.85))
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
-            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.black.opacity(0.5)))
+            // A badge FLOATING on the thumbnail, not nested inside it — it has its own background
+            // and is not clipped by the image's corner — so the concentric rule does not apply and
+            // it takes the plain chip token, the same one every other small tag in the app draws.
+            .background(RoundedRectangle(cornerRadius: m.chipRadius, style: .continuous).fill(Color.black.opacity(0.5)))
             .padding(6)
     }
 
@@ -806,7 +829,7 @@ struct MacFilesSection: View {
             TableColumn("Name") { f in
                 HStack(spacing: 8) {
                     CachedThumb(url: thumbUrl(f), size: CGSize(width: 22, height: 22))
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: m.chipRadius, style: .continuous))
                     Text(verbatim: MacFileBrowse.displayName(f))
                         .foregroundStyle(c.t1)
                         .lineLimit(1)
@@ -1369,6 +1392,9 @@ private struct MacSegmented<Value: Hashable>: View {
     @Environment(\.palette) private var c
     @Environment(\.metrics) private var m
 
+    /// The trough. Named because the thumb's radius is derived from it — see the concentric note.
+    private let trackInset: CGFloat = 2
+
     var body: some View {
         HStack(spacing: 0) {
             ForEach(options, id: \.self) { option in
@@ -1379,8 +1405,14 @@ private struct MacSegmented<Value: Hashable>: View {
                         .foregroundStyle(on ? c.t1 : c.t3)
                         .padding(.horizontal, compact ? 11 : 14)
                         .frame(height: m.controlHeight - 4)
+                        // CONCENTRIC with the track below: the selected thumb sits `trackInset`
+                        // inside the track, so its corner is the track's minus that inset. Equal
+                        // radii here would leave a visible sliver of track showing round the thumb's
+                        // corners while the straight edges touched.
                         .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            RoundedRectangle(cornerRadius: Metrics.concentric(inside: m.controlRadius,
+                                                                             inset: trackInset),
+                                             style: .continuous)
                                 .fill(on ? c.s4 : .clear)
                         )
                         .contentShape(.rect)
@@ -1389,9 +1421,9 @@ private struct MacSegmented<Value: Hashable>: View {
                 .accessibilityAddTraits(on ? [.isSelected] : [])
             }
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(c.s2))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(c.line))
+        .padding(trackInset)
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
+        .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).stroke(c.line))
         .animation(Motion.standard(0.14), value: selection)
     }
 }

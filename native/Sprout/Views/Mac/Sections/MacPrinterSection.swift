@@ -1,5 +1,7 @@
 #if os(macOS)
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The **Printer** section (§4, prototype `1a` lines 114–218): hero card → four temperature tiles →
 /// the AMS strip → an `UP NEXT` line that links to Jobs.
@@ -18,6 +20,12 @@ import SwiftUI
 /// What it keeps, unchanged in meaning: the `LockedActions` gating and its one explaining alert,
 /// `CooldownCard`, and `TempCard` as the temperature DATA. `DashVM` remains the single source of
 /// print-state classification — nothing here re-reads `status.state`.
+///
+/// What it gained back: **the camera, but only when the inspector is not carrying it.** §4 moves the
+/// chamber cam to the inspector, and §1 auto-hides the inspector below 1180 pt — so the two rules
+/// together deleted the live picture from a window that had merely been narrowed. See
+/// `MacCameraPlacement` for the two questions that keeps apart, and `MacPrinterCameraTile` for the
+/// one tile both surfaces render.
 ///
 /// Polling is **not** started here. `MacSectionContent` owns every store's lifetime for whichever
 /// section is on screen, including `model.jobs`, which backs `UP NEXT` and the inspector's archive
@@ -68,6 +76,26 @@ struct MacPrinterSection: View {
                 }
 
                 if model.lanMode == .off { lanBanner }
+
+                // The camera, when the inspector is not on screen to hold it.
+                //
+                // Asked through `MacCameraPlacement.owner` rather than by reading
+                // `model.inspectorVisible` a second time here: this decides whether the tile is
+                // DRAWN and the tile itself decides whether it may STREAM, and if those two ever
+                // read the fact separately they can disagree — which is two live tiles for one
+                // printer, the exact thing `MacCameraOwnership` exists to prevent.
+                //
+                // Below the two warning blocks rather than directly under the hero: the cooldown
+                // card and the LAN banner are things the user has to act on, and a 350 pt picture
+                // pushing them down the page would be a fallback promoting itself over the blocks
+                // it was inserted beneath.
+                if MacCameraPlacement.owner(inspectorVisible: model.inspectorVisible) == .section {
+                    MacPrinterCameraTile(
+                        model: model,
+                        surface: .section,
+                        maxWidth: MacPrinterCameraTile.contentColumnWidth
+                    )
+                }
 
                 temperatures
                 amsCard
@@ -786,6 +814,358 @@ struct MacPrinterCard<Content: View>: View {
     }
 }
 
+/// The chamber-camera tile, rendered by **whichever surface currently holds the camera**.
+///
+/// This lived inside `MacPrinterInspector`, and that is the bug the owner reported as "the camera
+/// simply disappears": §1 auto-hides the inspector below 1180 pt — split screen, Stage Manager, a
+/// small external display — and the app's only live picture went with it. Nothing said where it had
+/// gone, and the way back was a keystroke there was no reason to try. So the tile became a view of
+/// its own that the section can render too, and `MacCameraPlacement` decides which surface does.
+///
+/// Every behaviour the inspector's version had is here unchanged, because each one was a fix:
+///
+///  - the **fps latch**, so a `NWPathMonitor` update cannot rewrite the URL of a live connection;
+///  - the `MacCameraOwnership` claim, so the camera **window** wins (§5.2) — Bambuddy runs one
+///    ffmpeg per printer and the second viewer silently inherits the first's rate;
+///  - `holdLastFrameWhenInactive`, so handing that claim over leaves the last decoded frame under
+///    `PLAYING IN WINDOW` rather than a black rectangle;
+///  - the three notes — demo, no camera in this state, no stream token — which name what is missing
+///    instead of showing an empty tile.
+///
+/// The two surfaces draw the **same** tile on purpose. The camera should read as having moved, not
+/// as having been replaced by something smaller.
+struct MacPrinterCameraTile: View {
+    let model: AppModel
+
+    /// Which of the two in-window tiles this is. It drives the streaming claim only — nothing about
+    /// the drawing branches on it.
+    let surface: MacCameraTileSurface
+
+    /// A cap on the tile's width, or nil to fill.
+    ///
+    /// The inspector column is 280–400 pt and wants all of it. The content column does not: at
+    /// 16:10, a picture spanning 1200 pt of content is 750 pt tall and pushes the temperatures, the
+    /// AMS strip and `UP NEXT` off the screen — a fallback that took over the section it was
+    /// rescuing.
+    var maxWidth: CGFloat?
+
+    /// The cap the content column uses. 560 pt is 350 pt tall at 16:10 — near enough the hero's own
+    /// height — and it still fits inside the 640 pt minimum content width less §8's gutters, so the
+    /// narrowest window the app allows shows the whole picture rather than a cropped one.
+    ///
+    /// Not a `Metrics` token because §8's tokens are DENSITY — type sizes, padding, radii, control
+    /// heights — and this is a layout budget for one piece of media on one section. Named here
+    /// rather than left as a literal at the call site so it has one home and one explanation.
+    static let contentColumnWidth: CGFloat = 560
+
+    /// Spelled out because the `@State` properties below are private stored properties with
+    /// defaults, which makes the synthesised memberwise initialiser private too.
+    init(model: AppModel, surface: MacCameraTileSurface, maxWidth: CGFloat? = nil) {
+        self.model = model
+        self.surface = surface
+        self.maxWidth = maxWidth
+    }
+
+    @Environment(\.palette) private var c
+    @Environment(\.metrics) private var m
+    @Environment(\.openWindow) private var openWindow
+
+    @State private var cam = CameraStreamModel()
+    @State private var latchedFps: Int?
+    /// Whether this tile's renderer has a frame stashed. See `saveSnapshot`.
+    @State private var tileHasFrame = false
+
+    private var vm: DashVM { model.vm }
+    private var caption: CGFloat { MacPrinterType.caption(m) }
+
+    var body: some View {
+        block.frame(maxWidth: maxWidth ?? .infinity, alignment: .leading)
+    }
+
+    /// The states that can produce a picture at all. Deliberately not `vm.kind != .offline`: a
+    /// printer that is still connecting has no camera either, and a tile that sits on "WAKING…"
+    /// forever is the lie this list prevents.
+    private var cameraPossible: Bool {
+        MacPrinterCopy.cameraPossible(kind: vm.kind, isDemo: model.isDemo)
+    }
+
+    /// Does the camera **window** hold the upstream claim? `MacCameraOwnership` is the arbiter and
+    /// this is the only question either tile may ask it.
+    ///
+    /// (Its method is still named `inspectorMayStream` from when the inspector was the only tile.
+    /// What it actually answers is "no camera window is streaming this printer", which is the right
+    /// question for both.)
+    private var windowHasClaim: Bool {
+        !model.cameraOwnership.inspectorMayStream(printerId: model.printerId)
+    }
+
+    /// May THIS tile open an upstream stream right now? See `MacCameraPlacement` for why placement
+    /// and permission are two predicates rather than one.
+    private var tileActive: Bool {
+        MacCameraPlacement.mayStream(
+            surface: surface,
+            cameraPossible: cameraPossible,
+            windowHasClaim: windowHasClaim,
+            inspectorVisible: model.inspectorVisible
+        )
+    }
+
+    /// True when the live picture has moved to the camera window rather than simply stopping.
+    ///
+    /// `MacCameraOwnership` tracks windows that are **streaming**, not windows that are open — a
+    /// paused camera window releases the claim, because "a window exists" and "a window is using the
+    /// camera" are two questions and only the second one collides with this tile. So this is exact:
+    /// while it is true, the live picture genuinely is in the window.
+    ///
+    /// The distinction is the whole point of the badge: the tile keeps its last decoded frame, and
+    /// "PAUSED" over a still image invites a click on Retry that would take the claim back.
+    private var claimedByWindow: Bool {
+        cameraPossible && windowHasClaim
+    }
+
+    /// The rate the next connection will ask for — nil until `NWPathMonitor` reports, because the
+    /// number goes INTO the URL and a guess corrected a moment later restarts the stream.
+    private var pathFps: Int? {
+        let path = model.networkPath
+        guard path.resolved else { return nil }
+        return CameraRate.tile(isExpensive: path.isExpensive, isConstrained: path.isConstrained)
+    }
+
+    private var streamURL: URL? {
+        guard let client = model.client, let token = model.cameraToken, let fps = latchedFps else { return nil }
+        return client.streamUrl(model.printerId, token: token, fps: fps)
+    }
+
+    /// Fills an EMPTY latch only. Never overwriting a live one is the whole point: a changed URL is a
+    /// dropped socket, and the tile is usually the camera's only viewer, so it also pays the
+    /// printer's cold start again.
+    private func latchFpsIfIdle() {
+        guard tileActive, latchedFps == nil else { return }
+        latchedFps = pathFps
+    }
+
+    @ViewBuilder
+    private var block: some View {
+        if model.isDemo {
+            // Named for what it is rather than dressed up as a feed that is about to arrive.
+            note(icon: "video.slash",
+                 text: "The chamber camera streams from the printer, so it isn’t part of the demo.")
+        } else if !cameraPossible {
+            note(icon: "video.slash",
+                 text: vm.kind == .connecting
+                     ? "The camera appears once the printer answers."
+                     : "The camera needs the printer online.")
+        } else if model.cameraToken == nil {
+            // The stream and every thumbnail are gated by a camera STREAM token in `?token=`, not by
+            // the API key. Without one there is nothing to show, and saying so beats a black tile.
+            note(icon: "key.slash",
+                 text: "Waiting for a camera token from the server.")
+        } else {
+            tile
+        }
+    }
+
+    private var tile: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                c.thumb
+                if let url = streamURL {
+                    // `holdLastFrameWhenInactive` is what makes `PLAYING IN WINDOW` true. Without
+                    // it, going inactive runs `renderer.stop()` → `flushAndRemoveImage()`, and the
+                    // badge promising "the last frame the tile decoded" sat over a black rectangle.
+                    CameraStreamView(
+                        url: url,
+                        active: tileActive,
+                        model: cam,
+                        holdLastFrameWhenInactive: true
+                    )
+                }
+
+                HStack(spacing: 5) {
+                    if tileActive && cam.isLive {
+                        PulseDot(color: c.error, size: 5, period: 2.0)
+                    } else {
+                        Circle().fill(c.t3).frame(width: 5, height: 5)
+                    }
+                    Text(MacPrinterCopy.cameraBadge(
+                        claimedByWindow: claimedByWindow,
+                        tileActive: tileActive,
+                        isLive: cam.isLive,
+                        fps: latchedFps
+                    ))
+                        .font(.mono(m.monoLabel, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.black.opacity(0.72)))
+                .padding(10)
+                .help(claimedByWindow
+                      ? "The camera window has the live stream. This is the last frame the tile decoded."
+                      : "The chamber camera, at the rate this window asked for.")
+
+                MacPrinterMonoLabel("CHAMBER CAM")
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .topTrailing)
+            }
+            .aspectRatio(16.0 / 10.0, contentMode: .fit)
+
+            HStack(spacing: 8) {
+                // `WindowGroup(id:"camera", for: Int.self)` is keyed by printer, so this re-fronts an
+                // already-open window rather than stacking a second one — the action is the same
+                // either way. Only the LABEL branches, and on a claim that is a sufficient condition
+                // for the window existing: while the window is streaming, "Show window" is exact;
+                // otherwise the window may be closed or merely paused, and "Open in window" is true
+                // of both because opening one that exists just fronts it.
+                tileButton(claimedByWindow ? "Show window" : "Open in window",
+                           help: "The chamber camera in its own window (⌘0)") {
+                    openWindow(id: "camera", value: model.printerId)
+                }
+                // Gated on the EXACT capability: a decoded frame in the renderer's stash. Not on
+                // `cam.isLive` — the tile deliberately holds its last frame while the camera window
+                // owns the stream, and that frame is perfectly saveable — and not on a camera token,
+                // which was the gate when this fetched `/camera/snapshot` over HTTP.
+                tileButton(
+                    "Snapshot",
+                    enabled: tileHasFrame,
+                    help: tileHasFrame
+                        ? "Save the frame on screen"
+                        : "Nothing has been decoded yet — the frame appears a few seconds after the camera wakes.",
+                    action: saveSnapshot
+                )
+                Spacer(minLength: 0)
+                Text(verbatim: "⌘0")
+                    .font(.mono(m.monoLabel + 0.5, weight: .medium))
+                    .foregroundStyle(c.t3)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 10)
+        }
+        .background(c.s1)
+        .clipShape(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous).stroke(c.line))
+        // A fresh mount is a fresh `CameraNSView`, hence a fresh `CameraRenderer` with an empty
+        // stash. Tracking it here rather than reading `frameStash.latest()` in the body: the stash
+        // is lock-guarded plain state, not `@Observable`, so a view that read it would never
+        // re-render when the first frame landed and the button would stay dimmed over a live picture.
+        .onAppear { tileHasFrame = false }
+        .onChange(of: cam.isLive) { _, live in if live { tileHasFrame = true } }
+        // A cold camera takes seconds to produce a frame and the badge must not claim LIVE over a
+        // blank tile. Clearing the flag is the load-bearing half: the renderer only ever sets
+        // `isLive` true, so this reset is what lets the NEXT connection's first frame register.
+        .onChange(of: streamURL) { _, _ in cam.isLive = false }
+        // Take the rate when streaming starts, so a path update can never rewrite the URL of a live
+        // connection. `initial: true` because NWPathMonitor's first callback routinely lands AFTER
+        // the tile is already active, leaving the latch empty with nothing else due to fill it.
+        .onChange(of: tileActive, initial: true) { _, active in
+            cam.isLive = false
+            if active { latchFpsIfIdle() }
+        }
+        .onChange(of: pathFps, initial: true) { _, _ in latchFpsIfIdle() }
+        // The latch is deliberately NOT released when the camera window takes the claim: clearing it
+        // nils `streamURL`, which unmounts the host view and takes the last decoded frame with it —
+        // and the last frame under `PLAYING IN WINDOW` is the whole of §5.2's fallback. Releasing it
+        // here is safe because the tile has already been replaced by a note, so there is no frame
+        // left to lose and the path is worth re-reading.
+        .onChange(of: cameraPossible) { _, possible in
+            if !possible { latchedFps = nil }
+        }
+    }
+
+    /// `enabled` dims as well as disabling. `.buttonStyle(.plain)` draws nothing of its own, so a
+    /// `.disabled` chip is pixel-identical to a live one — a control that looks pressable and is not
+    /// is the exact failure this codebase keeps re-learning.
+    ///
+    /// `MacDim.unavailable`, not `Lan.lockedOpacity`: nothing here is refused by the printer, and the
+    /// LAN dim is documented as the one treatment for that specific fact.
+    private func tileButton(
+        _ title: String,
+        enabled: Bool = true,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: caption, weight: .semibold))
+                .padding(.horizontal, 11)
+                .frame(height: m.minControlHeight)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(c.s3))
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : MacDim.unavailable)
+        .help(help)
+    }
+
+    /// Save the frame that is on screen.
+    ///
+    /// The renderer's stash, not a `/camera/snapshot` fetch, and that is a correctness change rather
+    /// than a shortcut. The snapshot endpoint only produces a fresh frame while the camera is
+    /// actually streaming; cold, it replays the last cached frame forever with no way to tell
+    /// (`DashboardView` carries the same note, which is why the tile streams instead of polling
+    /// stills). So the HTTP version could hand back a *different* picture from the one the user was
+    /// looking at, and a stale one at that. It is also the second implementation of a feature
+    /// `MacCameraWindow.saveFrame` already had, with its own gate, its own file extension and its
+    /// own failure copy.
+    ///
+    /// The bytes are written straight through: `frameStash` holds the compressed JPEG, so there is
+    /// no decode and no re-encode, and `.jpg` is what the file actually is.
+    ///
+    /// Failures go to `model.toast`, which `MacRoot` renders. A modal alert for "there is no frame
+    /// yet" would be the heavier of two answers to the smaller of two problems.
+    private func saveSnapshot() {
+        guard let jpeg = cam.renderer?.frameStash.latest() else {
+            // Reachable despite the button's gate: the stream can be torn down between the render
+            // that enabled it and the click.
+            model.toast = .failure("There's no frame to save yet.")
+            return
+        }
+        let panel = NSSavePanel()
+        // A fixed pattern, not a locale style: this is a FILENAME, and a locale that formats a date
+        // with slashes writes path separators into it.
+        let stampFormatter = DateFormatter()
+        stampFormatter.dateFormat = "yyyy-MM-dd HH-mm-ss"
+        panel.nameFieldStringValue =
+            "\(model.printer?.name ?? "printer") \(stampFormatter.string(from: Date())).jpg"
+        panel.allowedContentTypes = [.jpeg]
+
+        // `beginSheetModal`/`begin`, never `runModal()`. This is main-actor code, and a modal session
+        // holds the main actor's executor for as long as the panel is open — the status store, the
+        // poll loops and every other `@MainActor` hop stall behind a file dialog nobody has answered.
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try jpeg.write(to: url)
+            } catch {
+                model.toast = .failure("Couldn’t save the snapshot — \(error.localizedDescription)")
+            }
+        }
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            panel.begin(completionHandler: finish)
+        }
+    }
+
+    /// The stated absence. A named reason beats an empty rectangle — §Recurring-bug's second half.
+    private func note(icon: String, text: String) -> some View {
+        MacPrinterCard(padding: 13, fill: c.s2) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: icon)
+                    .font(.system(size: m.body))
+                    .foregroundStyle(c.t3)
+                Text(text)
+                    .font(.system(size: caption))
+                    .foregroundStyle(c.t3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+        }
+    }
+}
+
 /// The small tracked monospace heading — `UP NEXT`, `THIS JOB`, `RECENT` (§8's `monoLabel`).
 struct MacPrinterMonoLabel: View {
     let text: String
@@ -918,6 +1298,69 @@ struct MacSectionLink: View {
 }
 
 // MARK: - Window-free logic
+
+/// One of the two **in-window** camera surfaces. The camera *window* is deliberately not a case
+/// here: it is not a placement this decides, it is the outranking claim `MacCameraOwnership` holds,
+/// and giving it a case would invite code to ask this type a question it cannot answer.
+enum MacCameraTileSurface: Equatable, Sendable {
+    /// The Printer inspector's tile — where §4 puts the camera when the inspector is on screen.
+    case inspector
+    /// The Printer section's content column — where it falls back to when the inspector is not.
+    case section
+}
+
+/// Where the chamber camera lives right now, and who is allowed to stream it.
+///
+/// **Two questions, and merging them is how you get two live tiles for one printer:**
+///
+///  - **"Which surface should be SHOWING the camera?"** — a layout question, answered by whether the
+///    inspector column is on screen (`owner`). The Printer section renders its fallback tile only
+///    when the answer is `.section`.
+///  - **"May this surface open an upstream STREAM?"** — an exclusion question (`mayStream`),
+///    answered by the layout answer *and* the camera window's claim *and* whether the printer can
+///    produce a picture at all.
+///
+/// The second is not "is my view on screen". SwiftUI keeps the inspector mounted while the column
+/// animates away, and the camera window is a separate scene that outranks both tiles — so a tile
+/// that streamed whenever it was rendered would collide with one of the other two. Bambuddy runs
+/// ONE ffmpeg per printer and fixes its rate from whichever viewer created the broadcaster
+/// (`CameraUpstreamClaim`), so two claims does not mean two pictures: it means the second viewer
+/// silently inherits the first's frame rate and the app pays for two HTTP streams to get one.
+///
+/// Pure and `nonisolated` because it is the part a test can drive without a window — `SproutTests`
+/// carries the macOS destination, and doc 18 requires window-free Mac logic to be tested.
+enum MacCameraPlacement {
+
+    /// Which tile the camera belongs to. **This is the placement question, not the streaming one.**
+    ///
+    /// §4 gives the camera to the inspector; §1 auto-hides the inspector below 1180 pt (and `⌥⌘I`
+    /// hides it at any width). Together those took the picture away with no explanation — the owner
+    /// reported it as "the camera simply disappears". The fallback is stated here, once, so the
+    /// section's `if` and the tile's streaming gate cannot end up reading `inspectorVisible`
+    /// differently.
+    nonisolated static func owner(inspectorVisible: Bool) -> MacCameraTileSurface {
+        inspectorVisible ? .inspector : .section
+    }
+
+    /// May this tile hold a live upstream stream?
+    ///
+    /// Three independent gates, deliberately not collapsed:
+    ///
+    ///  - `cameraPossible` — the printer can produce a picture at all (`MacPrinterCopy`).
+    ///  - `windowHasClaim` — the camera WINDOW is streaming, and §5.2 says the window wins. The tile
+    ///    keeps its last frame under `PLAYING IN WINDOW` rather than going black.
+    ///  - placement — exactly one of the two tiles, so the fallback and the inspector can never both
+    ///    be live during the inspector's collapse animation.
+    nonisolated static func mayStream(
+        surface: MacCameraTileSurface,
+        cameraPossible: Bool,
+        windowHasClaim: Bool,
+        inspectorVisible: Bool
+    ) -> Bool {
+        guard cameraPossible, !windowHasClaim else { return false }
+        return surface == owner(inspectorVisible: inspectorVisible)
+    }
+}
 
 /// Why the hero's plate tile is empty.
 ///

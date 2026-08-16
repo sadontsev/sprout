@@ -11,6 +11,9 @@ import SwiftUI
 /// The height difference is deliberate and is §8's last line: 28 pt is the standard control, but
 /// **the primary action in any view stays 34** so it still reads as the primary action. Anything
 /// below 24 pt is out of bounds.
+///
+/// The corner is `Metrics.controlRadius` — the same one every field, picker and segmented control
+/// in the app draws, so a button beside a search field reads as one control family rather than two.
 struct MacPrimaryButtonStyle: ButtonStyle {
     @Environment(\.palette) private var c
     @Environment(\.metrics) private var m
@@ -23,7 +26,7 @@ struct MacPrimaryButtonStyle: ButtonStyle {
             .padding(.horizontal, 20)
             .frame(height: m.primaryControlHeight)
             .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                     .fill(c.accent)
             )
             .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.4)
@@ -48,11 +51,11 @@ struct MacSecondaryButtonStyle: ButtonStyle {
             .padding(.horizontal, 18)
             .frame(height: m.primaryControlHeight)
             .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                     .fill(c.s3)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                     .stroke(c.line2)
             )
             .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.4)

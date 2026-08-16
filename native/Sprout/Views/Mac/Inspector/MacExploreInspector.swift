@@ -223,9 +223,14 @@ struct MacExploreInspector: View {
             VStack(alignment: .leading, spacing: 8) {
                 sectionLabel("READING VERSIONS…")
                 ForEach(0..<2, id: \.self) { _ in
-                    RoundedRectangle(cornerRadius: 6).fill(c.s2).frame(height: 11)
+                    // Capsules, not a radius: these are lines of TEXT, and at 11 pt tall anything
+                    // over ~5 already is a capsule. See the same shape in Explore's skeleton grid.
+                    Capsule().fill(c.s2).frame(height: 11)
                 }
-                RoundedRectangle(cornerRadius: 9).fill(c.s2).frame(height: m.primaryControlHeight)
+                // The button-shaped one keeps the button's own corner, so the skeleton and the
+                // control that replaces it are the same silhouette — the point of a skeleton.
+                RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
+                    .fill(c.s2).frame(height: m.primaryControlHeight)
             }
             .redacted(reason: .placeholder)
             .padding(m.cardPadding)

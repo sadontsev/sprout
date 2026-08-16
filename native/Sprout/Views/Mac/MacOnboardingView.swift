@@ -103,9 +103,9 @@ struct MacOnboardingView: View {
             .padding(.horizontal, 12)
             .frame(height: 32)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(c.s2))
+            .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                     .stroke(focus == field ? c.accent : c.line2)
             )
             .disableAutocorrection(true)
@@ -117,7 +117,7 @@ struct MacOnboardingView: View {
             .foregroundStyle(c.t2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(11)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.errorDim))
+            .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.errorDim))
     }
 
     /// Not resizable until a server answers (§1e). Done through AppKit because

@@ -78,6 +78,8 @@
 	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Sprout talks to your self-hosted Bambuddy server, which may be on your local network.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

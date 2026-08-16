@@ -44,6 +44,17 @@ struct MacRoot: View {
         // §5.3, on the ROOT so a drop is accepted anywhere in the window.
         .macDropTarget(model: model)
         .task { await model.load() }
+        // Notifications attach HERE, not from the Settings pane.
+        //
+        // `MacSettingsView.onAppear` was the only caller, so print alerts existed only for someone
+        // who had opened Settings at least once this launch — and the toggles in that pane were on
+        // by DEFAULT, promising alerts to everyone who never went looking. `MacRoot` is mounted for
+        // the app's whole life, which is the lifetime this watcher actually has.
+        //
+        // `attach` is idempotent on the same model, so running it here and on every reconnect is
+        // free; it re-arms deliberately when the model changes, because edge state from one
+        // Bambuddy must not decide what the next one's printers just did.
+        .task(id: ObjectIdentifier(model)) { MacNotificationController.shared.attach(model: model) }
         // Files opened from the Dock, from Finder's "Open with", and `bambu:` URLs all arrive
         // through `application(_:open:)` and land in the same place a drop does. The handler is
         // installed here rather than in the delegate because it needs the model; the delegate

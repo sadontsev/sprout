@@ -219,7 +219,9 @@ struct MacHardwareSection: View {
     /// `Picker` renders its labels in the system's own tint. iOS spells the same signal as a "•"
     /// inside the label for exactly that reason; a Mac window has the room to do it properly.
     private func segmentPicker(_ items: [HardwareTriage.Item]) -> some View {
-        HStack(spacing: 2) {
+        // The trough. Named because the thumb's radius is derived from it below.
+        let trackInset: CGFloat = 2
+        return HStack(spacing: 2) {
             ForEach(HardwareSegment.allCases) { seg in
                 let on = hw.segment == seg
                 let severity = MacHardwareSeverity.worst(items, in: seg)
@@ -238,8 +240,13 @@ struct MacHardwareSection: View {
                     }
                     .padding(.horizontal, 15)
                     .frame(height: m.minControlHeight)
+                    // CONCENTRIC with the track: the thumb sits `trackInset` inside it, so its
+                    // corner is the track's minus that inset. Equal radii would leave a sliver of
+                    // track visible at the thumb's corners while the straight edges touched.
                     .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        RoundedRectangle(cornerRadius: Metrics.concentric(inside: m.controlRadius,
+                                                                         inset: trackInset),
+                                         style: .continuous)
                             .fill(on ? c.s4 : .clear)
                     )
                     .contentShape(.rect)
@@ -250,9 +257,9 @@ struct MacHardwareSection: View {
                 .help(severity == nil ? seg.label : "\(seg.label) — something here needs you")
             }
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(c.s2))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(c.line))
+        .padding(trackInset)
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
+        .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).stroke(c.line))
     }
 
     /// "AMS 2 Pro · 3 units · 7 of 9 slots loaded".
@@ -438,7 +445,7 @@ struct MacHardwareSection: View {
         let busy = startingDrying(d.amsId)
         return HStack(spacing: 14) {
             ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.heatingDim)
+                RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.heatingDim)
                 Circle().stroke(c.heating, lineWidth: 2).frame(width: 11, height: 11)
             }
             .frame(width: 34, height: 34)
@@ -747,7 +754,7 @@ struct MacHardwareSection: View {
                 .frame(width: NozzleColumn.material, alignment: .leading)
 
             HStack(spacing: 7) {
-                Swatch(value: r.filamentHex, size: 14, radius: 4, empty: r.filamentHex == nil)
+                Swatch(value: r.filamentHex, size: 14, radius: Metrics.swatchRadius(14), empty: r.filamentHex == nil)
                 Text(r.filamentType ?? (r.filamentHex == nil ? "None recorded" : "Unnamed"))
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(c.t2)
@@ -761,7 +768,7 @@ struct MacHardwareSection: View {
                 .foregroundStyle(state.ink)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 3)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(state.fill))
+                .background(RoundedRectangle(cornerRadius: m.chipRadius, style: .continuous).fill(state.fill))
                 .frame(width: NozzleColumn.state, alignment: .trailing)
         }
         .padding(.horizontal, 15)
@@ -788,7 +795,7 @@ struct MacHardwareSection: View {
             .foregroundStyle(ink)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(fill))
+            .background(RoundedRectangle(cornerRadius: m.chipRadius, style: .continuous).fill(fill))
     }
 
     // MARK: - Service
@@ -1138,7 +1145,7 @@ private struct MacSlotCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Swatch(value: swatch, size: 30, radius: 8, empty: slot.empty)
+                Swatch(value: swatch, size: 30, radius: Metrics.swatchRadius(30), empty: slot.empty)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.system(size: 12.5, weight: .semibold))

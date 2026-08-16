@@ -111,7 +111,11 @@ private struct MacJobsNowPrinting: View {
             // `archiveThumbnail` are raw paths with no documented base and no stated token, and
             // nothing in the app builds a URL from them. Guessing one would render a broken tile on
             // every print — an affordance resting on a capability nobody checked.
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            //
+            // `controlRadius`, not `cardRadius`: the scale's middle step covers fixed-size media
+            // wells in the 28–64 pt band as well as clickable controls, and this and the 32 pt
+            // queue-row well below both sit in it.
+            RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                 .fill(c.thumb)
                 .frame(width: 52, height: 52)
                 .overlay {
@@ -454,7 +458,7 @@ private struct MacJobsUpNext: View {
                 .foregroundStyle(c.t3)
                 .frame(width: 14, alignment: .leading)
 
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                 .fill(c.thumb)
                 .frame(width: Self.thumbSize, height: Self.thumbSize)
 
@@ -596,7 +600,7 @@ private struct MacJobsHistory: View {
             TableColumn("FILE", value: \MacJobRow.name) { row in
                 HStack(spacing: 8) {
                     if let swatch = row.swatch {
-                        Swatch(value: swatch, size: 11, radius: 3)
+                        Swatch(value: swatch, size: 11, radius: Metrics.swatchRadius(11))
                     }
                     Text(row.name)
                         .font(.system(size: 12, weight: .semibold))
@@ -647,7 +651,7 @@ private struct MacJobsHistory: View {
                     .foregroundStyle(row.outcome.color(c))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(row.outcome.dim(c)))
+                    .background(RoundedRectangle(cornerRadius: m.chipRadius, style: .continuous).fill(row.outcome.dim(c)))
             }
             .width(min: 70, ideal: 90)
         }
@@ -1102,7 +1106,7 @@ struct MacJobsChipButtonStyle: ButtonStyle {
             .foregroundStyle(c.t2)
             .padding(.horizontal, 10)
             .frame(height: m.minControlHeight)
-            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(c.s3))
+            .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s3))
             .opacity(configuration.isPressed ? 0.82 : 1)
             .contentShape(.rect)
             .animation(Motion.standard(0.12), value: configuration.isPressed)

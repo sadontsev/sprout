@@ -468,7 +468,7 @@ private struct MacQuickLookCard: View {
             // swatches by their contents would collapse them into one.
             HStack(spacing: 5) {
                 ForEach(slots.indices, id: \.self) { i in
-                    Swatch(value: FilamentColor.norm(slots[i].color), size: 15, radius: 4)
+                    Swatch(value: FilamentColor.norm(slots[i].color), size: 15, radius: Metrics.swatchRadius(15))
                 }
             }
         }

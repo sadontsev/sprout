@@ -142,6 +142,9 @@ struct MacPowerInspector: View {
         let lead = Self.barCount - samples.count
         let value: Double? = index >= lead ? samples[index - lead].watts : nil
         let isLatest = index == Self.barCount - 1 && !samples.isEmpty
+        // Deliberately OFF the card/control/chip scale: this is a data mark in a sparkline, not a
+        // piece of chrome, and it is 2 pt tall at its floor. Any token radius would round a 2 pt bar
+        // into a dot and a 40 pt one into a lozenge — the mark has to stay a bar at every height.
         return RoundedRectangle(cornerRadius: 2, style: .continuous)
             .fill(value == nil ? c.s3 : (isLatest ? c.accent : c.accent.opacity(0.55)))
             .frame(maxWidth: .infinity)

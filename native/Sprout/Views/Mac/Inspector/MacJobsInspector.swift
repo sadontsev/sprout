@@ -134,7 +134,7 @@ struct MacJobsInspector: View {
                     .foregroundStyle(row.outcome.color(c))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(row.outcome.dim(c)))
+                    .background(RoundedRectangle(cornerRadius: m.chipRadius, style: .continuous).fill(row.outcome.dim(c)))
                 if !row.startedAbsolute.isEmpty {
                     Text(verbatim: row.startedAbsolute)
                         .font(.system(size: 11, weight: .medium))

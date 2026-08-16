@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import SwiftUI
 
 /// The `Settings` scene (prototype `1d`), reached with `⌘,`.
@@ -25,6 +26,10 @@ struct MacSettingsView: View {
         .frame(width: 700, height: 520)
         .environment(\.palette, Palette.forScheme(model.theme.colorScheme ?? scheme))
         .environment(\.metrics, .mac)
+        // Deliberately NOT the place the print-alert watcher is attached — `MacRoot` is, because
+        // this window may never be opened and the toggles below default to ON. A pane that had to
+        // be visited before its own switches meant anything would promise alerts to everyone who
+        // never went looking.
     }
 }
 
@@ -264,41 +269,169 @@ struct MacSettingsAppearance: View {
 
 // MARK: - Notifications (Mac-only)
 
+/// Spec 1d's Mac-only pane: what the menu bar extra shows, and which events post a
+/// `UNUserNotification`. It replaces the iOS Live Activity pane, because macOS has neither
+/// ActivityKit nor — see `MacNotificationController` — a way to receive the remote banners Trellis
+/// pushes to the iPhone.
+///
+/// Three of the toggles that used to be here were wired to nothing, and one of them ("Filament ran
+/// out") was gated on a state the printer does not report at all. Every switch below now names the
+/// observation it is driven by, and `MacNotifyKind` owns both halves so a toggle cannot exist
+/// without an event or an event without a toggle.
 struct MacSettingsNotifications: View {
     let model: AppModel
     @Environment(\.palette) private var c
 
     @AppStorage("mac.menuBar.showWhenIdle") private var showWhenIdle = false
-    @AppStorage("mac.notify.printFinished") private var notifyFinished = true
-    @AppStorage("mac.notify.printFailed") private var notifyFailed = true
-    @AppStorage("mac.notify.filamentRunout") private var notifyRunout = true
+    // One `@AppStorage` per kind rather than a loop: `@AppStorage` is a property wrapper and needs
+    // a stored binding, and the keys come from `MacNotifyKind.Key` so the pane and
+    // `MacNotifyPrefs.load` cannot drift onto different strings.
+    @AppStorage(MacNotifyKind.Key.finished) private var notifyFinished = true
+    @AppStorage(MacNotifyKind.Key.stopped) private var notifyStopped = true
+    @AppStorage(MacNotifyKind.Key.problem) private var notifyProblem = true
+    @AppStorage(MacNotifyKind.Key.plateCool) private var notifyPlateCool = true
+    @AppStorage(MacNotifyKind.Key.dryingDone) private var notifyDryingDone = true
+
+    private var notifications: MacNotificationController { .shared }
+    private var advice: MacNotifyAuthorization.Advice {
+        MacNotifyAuthorization.advice(notifications.authorization)
+    }
 
     var body: some View {
         MacSettingsPane {
-            Section {
-                Toggle("Show the percentage when idle", isOn: $showWhenIdle)
-            } header: {
-                Text("MENU BAR")
-            } footer: {
-                Text("While printing the menu bar always shows the percentage. Off, an idle printer "
-                   + "shows just the Sprout mark.")
-            }
+            permission
+            menuBar
+            events
+            delivery
+        }
+        // The pane is the only place that asks for permission, and it re-reads it on every
+        // appearance because it can be changed in System Settings behind the app's back.
+        .task { await notifications.refreshAuthorization() }
+    }
 
-            Section {
-                Toggle("Print finished", isOn: $notifyFinished)
-                Toggle("Print failed or halted", isOn: $notifyFailed)
-                Toggle("Filament ran out", isOn: $notifyRunout)
-            } header: {
-                Text("NOTIFY ME WHEN")
-            } footer: {
-                // States the mechanism plainly, because it is genuinely different from iOS and the
-                // difference is user-visible: these fire from the app's own live connection, so
-                // they arrive only while Sprout is running.
-                Text("These are posted by Sprout itself from its live connection to Bambuddy, so "
-                   + "they arrive while Sprout is running. There is no Live Activity on Mac — the "
-                   + "menu bar is the equivalent.")
+    // MARK: Permission
+
+    private var permission: some View {
+        Section {
+            LabeledContent("macOS permission") {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(advice.willBeSeen ? c.running : c.error)
+                        .frame(width: 6, height: 6)
+                    Text(advice.label)
+                }
+            }
+            if advice.canAsk {
+                Button("Allow notifications…") {
+                    Task { await notifications.requestAuthorization() }
+                }
+            } else if advice.canOpenSettings {
+                Button("Open Notification settings") { openSystemNotificationSettings() }
+            }
+        } header: {
+            Text("PERMISSION")
+        } footer: {
+            // Says the unhappy thing out loud. A pane that showed only switches would let someone
+            // believe alerts were on while macOS was dropping every one of them.
+            Text(advice.detail)
+        }
+    }
+
+    // MARK: Menu bar
+
+    private var menuBar: some View {
+        Section {
+            Toggle("Show the percentage when idle", isOn: $showWhenIdle)
+        } header: {
+            Text("MENU BAR")
+        } footer: {
+            Text("While printing the menu bar always shows the percentage. Off, an idle printer "
+               + "shows just the Sprout mark.")
+        }
+    }
+
+    // MARK: Events
+
+    private var events: some View {
+        Section {
+            toggle(.finished, $notifyFinished)
+            toggle(.stopped, $notifyStopped)
+            toggle(.problem, $notifyProblem)
+            toggle(.plateCool, $notifyPlateCool)
+            toggle(.dryingDone, $notifyDryingDone)
+        } header: {
+            Text("NOTIFY ME WHEN")
+        } footer: {
+            Text("Every switch names what Sprout actually watches. There is no separate "
+               + "“filament ran out” alert because the printer has no such state — a runout stops "
+               + "the print and reports it as a pause, which is what “Print paused, halted or "
+               + "failed” is watching for.")
+        }
+    }
+
+    /// One switch, with the evidence behind it underneath.
+    private func toggle(_ kind: MacNotifyKind, _ isOn: Binding<Bool>) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Toggle(kind.label, isOn: isOn)
+            Text(kind.gatedOn)
+                .font(.system(size: 11))
+                .foregroundStyle(c.t3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Delivery
+
+    private var delivery: some View {
+        Section {
+            LabeledContent("Alerts arrive", value: watchingLine)
+            LabeledContent("Remote push", value: remotePushLine)
+        } header: {
+            Text("DELIVERY")
+        } footer: {
+            // The whole honest story, because the alternative is someone quitting Sprout before bed
+            // and wondering why the phone was told and the Mac was not. Three `Text`s rather than
+            // one string with blank lines in it: a `Text` literal is a `LocalizedStringKey`, which
+            // SwiftUI parses as Markdown, and Markdown does not keep the paragraph breaks.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Sprout watches your printer over the connection it already has and posts "
+                   + "these itself, so they arrive only while it is running — quitting it stops "
+                   + "them. Closing the window does not: the menu bar item keeps the app alive.")
+                Text("Your iPhone gets the same alerts remotely, pushed by Trellis. This Mac "
+                   + "cannot: the relay that holds the push keys only sends to a token a device "
+                   + "has claimed with App Attest, and macOS has no App Attest. Registering this "
+                   + "Mac's token anyway would leave Trellis pushing at something that can never "
+                   + "receive it, so Sprout does not register it.")
+                Text("There is no Live Activity on Mac — the menu bar item is the equivalent.")
             }
         }
+    }
+
+    /// Says what the watcher is actually doing, not merely that it exists. "The loop is running"
+    /// and "there is a printer to watch" are different facts, and reporting only the first would be
+    /// reassuring in exactly the case where nothing can fire.
+    private var watchingLine: String {
+        guard notifications.isWatching else { return "Not yet — Sprout is not watching" }
+        let n = notifications.watchedPrinters
+        guard n > 0 else { return "While Sprout is running · no printer status yet" }
+        return "While Sprout is running · \(n) printer\(n == 1 ? "" : "s")"
+    }
+
+    private var remotePushLine: String {
+        // Reports the token as what it IS — present, and not deliverable — rather than hiding it.
+        // Dropping it silently is the defect this pane was built to close.
+        notifications.deviceToken == nil
+            ? "Not registered with Apple yet"
+            : "Registered with Apple · not deliverable on macOS"
+    }
+
+    /// macOS shows its own permission prompt exactly once, so a denied app can only send someone
+    /// here. Opened through LaunchServices, which the sandbox permits.
+    private func openSystemNotificationSettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+        ) else { return }
+        NSWorkspace.shared.open(url)
     }
 }
 
@@ -316,11 +449,18 @@ struct MacSettingsAdvanced: View {
             Section {
                 TextField("Username", text: $adminUsername)
                 SecureField("Password", text: $adminPassword)
+                // `connect`, not `update`. `BambuddyClient` captures the admin credentials as
+                // `let`s at init and is only ever constructed by `AppModel.connect`, so `update`
+                // answered the nearby question — "persist this" — instead of the real one, "make
+                // this the live session's credentials". The visible cost: Hardware kept printing
+                // "add the admin username and password in Settings" directly under credentials that
+                // had just been added, and library rename/delete/move kept 403ing, until relaunch.
+                // iOS routes the same two fields through `connect` for exactly this reason.
                 Button("Save") {
-                    model.update {
-                        $0.adminUsername = adminUsername.isEmpty ? nil : adminUsername
-                        $0.adminPassword = adminPassword.isEmpty ? nil : adminPassword
-                    }
+                    guard var cfg = model.config else { return }
+                    cfg.adminUsername = adminUsername.isEmpty ? nil : adminUsername
+                    cfg.adminPassword = adminPassword.isEmpty ? nil : adminPassword
+                    Task { await model.connect(cfg) }
                 }
             } header: {
                 Text("BAMBUDDY ADMIN")

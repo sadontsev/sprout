@@ -550,9 +550,12 @@ struct MacPrintSheet: View {
     }
 
     private var platePreview: some View {
+        // A 180×150 media surface is card-scale, so it takes `cardRadius`. It is not nested inside
+        // another rounded shape — it sits on the sheet's flat background — so there is nothing here
+        // to be concentric with.
         CachedThumb(url: thumbURL, size: CGSize(width: 180, height: 150), contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(c.line))
+            .clipShape(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous).strokeBorder(c.line))
             .accessibilityLabel("Plate \(vm.plateIndex) preview")
     }
 
@@ -596,7 +599,7 @@ struct MacPrintSheet: View {
         return HStack(spacing: 10) {
             // The colour the FILE asks for, on the left; the colour that will actually come out, in
             // the chip on the right. Two different facts, so two swatches.
-            Swatch(value: FilamentColor.norm(row.want?.color), size: 18, radius: 5)
+            Swatch(value: FilamentColor.norm(row.want?.color), size: 18, radius: Metrics.swatchRadius(18))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: wantLine(row))
@@ -616,9 +619,9 @@ struct MacPrintSheet: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 9)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.s2))
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
         .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                 .strokeBorder(attention ? c.heating : c.line)
         )
         .accessibilityElement(children: .contain)
@@ -673,7 +676,7 @@ struct MacPrintSheet: View {
             }
         } label: {
             HStack(spacing: 7) {
-                Swatch(value: row.identity?.colorHex, size: 13, radius: 4, empty: row.tray == nil)
+                Swatch(value: row.identity?.colorHex, size: 13, radius: Metrics.swatchRadius(13), empty: row.tray == nil)
                 Text(verbatim: row.tray.map(trayLabel) ?? "Choose…")
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(row.tray == nil ? c.t3 : c.t1)
@@ -684,7 +687,7 @@ struct MacPrintSheet: View {
         .fixedSize()
         .padding(.horizontal, 9)
         .frame(height: m.controlHeight - 4)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(c.s3))
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s3))
         .help(row.identity?.line ?? "Choose the AMS tray this filament prints from")
     }
 
@@ -714,9 +717,9 @@ struct MacPrintSheet: View {
                 .foregroundStyle(selected ? c.accent : c.t2)
                 .padding(.horizontal, 12)
                 .frame(height: m.controlHeight - 4)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                     .fill(selected ? c.accentDim : c.s2))
-                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                     .strokeBorder(selected ? c.accent : c.line))
                 .contentShape(.rect)
         }
@@ -755,7 +758,7 @@ struct MacPrintSheet: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
-        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(c.s2))
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
         // Dimmed enough to read as "not a control", light enough that the caption stays legible —
         // the row is still information, not a disabled button.
         .opacity(0.72)

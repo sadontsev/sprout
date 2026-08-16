@@ -48,6 +48,18 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
         // was silently absent for three builds (the iOS spelling `aps-environment` instead of the
         // macOS `com.apple.developer.aps-environment`).
         NSApplication.shared.registerForRemoteNotifications()
+
+        // The consumer. It installs the `UNUserNotificationCenter` delegate — without one macOS
+        // silently drops a notification posted while Sprout is frontmost, which is most of the
+        // time these fire — and reads the current permission. It deliberately does NOT ask for
+        // permission here: macOS shows its prompt exactly once, and a prompt on first launch,
+        // before the user has even told the app about a printer, is the prompt everyone denies.
+        // The Notifications pane asks, in context, with a button.
+        MacNotificationController.shared.start()
+        MacAppDelegate.onDeviceToken = { token in
+            MacNotificationController.shared.deviceTokenArrived(token)
+        }
+
         #if DEBUG
         MacWindowProbe.runIfRequested()
         #endif
@@ -68,13 +80,19 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
         macPushLog.error("APNs registration failed: \(error.localizedDescription, privacy: .public)")
     }
 
-    /// Set by whatever consumes the token. **Nothing does yet on macOS.**
+    /// Set by whatever consumes the token — `MacNotificationController`, wired in
+    /// `applicationDidFinishLaunching` above. It used to be an unset hook, so the token arrived and
+    /// was dropped.
     ///
-    /// Registration above now succeeds and a token arrives, but `LiveActivityController` — the only
-    /// thing that registers a token with Trellis — is `#if os(iOS)`, because its subject is a Live
-    /// Activity. The Mac's consumer is the Notifications pane (1d), which turns a push into a
-    /// `UNUserNotification`. Until that exists the token is received and dropped, which is why this
-    /// stays an unset hook rather than a call into something.
+    /// It is a hook rather than a direct call for the same reason `onOpen` is: this delegate is
+    /// constructed by `@NSApplicationDelegateAdaptor` and cannot see anything SwiftUI owns.
+    ///
+    /// **What the consumer does with it is NOT what iOS does.** On iOS the token goes to Trellis so
+    /// the relay can push alert banners; on macOS it is recorded and surfaced in Settings and goes
+    /// no further, because Canopy will only push to a token that has been claimed with App Attest
+    /// and the Mac profile grants no App Attest entitlement. See `MacNotificationController` for
+    /// the whole chain — registering it anyway would leave the server pushing at a token that can
+    /// never receive anything, with every component reporting success.
     nonisolated(unsafe) static var onDeviceToken: (@MainActor (String) -> Void)?
 
     /// Closing the last window should not quit: the menu bar extra (§5.1) is expected to keep

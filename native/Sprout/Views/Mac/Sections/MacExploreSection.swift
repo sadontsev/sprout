@@ -68,12 +68,6 @@ struct MacExploreSection: View {
 
     private var caption: CGFloat { MacExploreType.caption(m) }
 
-    /// The corner both `MacPrimaryButtonStyle` and `MacSecondaryButtonStyle` draw, so the field and
-    /// the buttons beside it read as one control family. Named once here rather than typed at each
-    /// use; it belongs in `Metrics` as a `controlRadius` token, which is reported rather than added
-    /// to a file five other sections are being edited in.
-    private let controlRadius: CGFloat = 9
-
     /// The owner's own collections, from their Trellis.
     ///
     /// `laPushUrl`, **not** `resolvePushUrl`: collections are plain authenticated HTTP with no APNs
@@ -179,8 +173,8 @@ struct MacExploreSection: View {
         // `c.line`, not `c.line2`: the other two fields in this window (Files' search, Printer's)
         // both draw `c.line`, and two search fields in one window with different borders is a
         // difference nobody chose.
-        .background(RoundedRectangle(cornerRadius: controlRadius, style: .continuous).fill(c.s2))
-        .overlay(RoundedRectangle(cornerRadius: controlRadius, style: .continuous).stroke(c.line))
+        .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
+        .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).stroke(c.line))
     }
 
     /// Order. **The label is the honesty**, and it has to survive edits.
@@ -241,7 +235,7 @@ struct MacExploreSection: View {
             .padding(.horizontal, 11)
             .frame(height: m.controlHeight)
             .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: controlRadius, style: .continuous).fill(c.accentDim))
+            .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.accentDim))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -282,8 +276,11 @@ struct MacExploreSection: View {
             .foregroundStyle(on ? c.accent : c.t2)
             .padding(.horizontal, 11)
             .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(on ? c.accentDim : c.s2))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            // `controlRadius`, not `chipRadius`, despite the name: this is a toggle the user clicks,
+            // sitting in the same header as the search field and the sort menu, so it belongs to the
+            // control family. `chipRadius` is for tags that only report.
+            .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(on ? c.accentDim : c.s2))
+            .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous)
                 .stroke(on ? c.accent : c.line, lineWidth: on ? 1.2 : 1))
             .contentShape(.rect)
         }
@@ -518,8 +515,13 @@ struct MacExploreSection: View {
                         RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous)
                             .fill(c.s2)
                             .aspectRatio(4.0 / 3.0, contentMode: .fit)
-                        RoundedRectangle(cornerRadius: 4).fill(c.s2).frame(height: 10)
-                        RoundedRectangle(cornerRadius: 4).fill(c.s2).frame(width: 64, height: 8)
+                        // A `Capsule`, not a radius: these stand in for two lines of TEXT, and at
+                        // 8–10 pt tall any radius over ~4 already IS a capsule. Naming the shape
+                        // instead of a number also kept these two bars off the radius scale, where
+                        // they were the only `.circular` corners left in the file (the default when
+                        // `style:` is omitted, which is how they got there).
+                        Capsule().fill(c.s2).frame(height: 10)
+                        Capsule().fill(c.s2).frame(width: 64, height: 8)
                     }
                 }
             }
