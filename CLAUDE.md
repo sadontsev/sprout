@@ -8,7 +8,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > the team id comes from `DEVELOPMENT_TEAM` (see `native/.env-local.example`), and secrets live on
 > your server. Start with [README.md](README.md) for setup.
 
-A **personal iOS app** to control + monitor a Chinese-market Bambu Lab printer — currently an **H2C** (dual-nozzle, 9 addressable AMS trays); the codebase still carries A1-era notes where they were written. The official Bambu Handy app can't drive these units. It is a polished client of a **self-hosted Bambuddy backend** (FastAPI, ~548 endpoints). Distribution is **local/TestFlight for one user** — there is no CI, and both apps are **built locally with Xcode**, not EAS.
+An **iOS and macOS app** to control + monitor a Chinese-market Bambu Lab printer — currently an **H2C** (dual-nozzle, 9 addressable AMS trays); the codebase still carries A1-era notes where they were written. The official Bambu Handy app can't drive these units. It is a polished client of a **self-hosted Bambuddy backend** (FastAPI, ~548 endpoints).
+
+**Distribution is TestFlight, to real testers — not a single-user sideload.** This line used to say
+"local/TestFlight for one user" and that was wrong in a way that mattered: it invites shortcuts the
+rest of this repo has deliberately not taken. Everything here already assumes other people —
+`canopy/` exists so **users need no Apple account of their own**, Trellis is "the service each USER
+runs next to their own Bambuddy", and there is a documented case for someone running a build signed
+by **another team** (who cannot get push at all, and for whom switching it off is correct). Treat
+copy, empty states, failure messages and capability gating as things a stranger will read without
+being able to ask what they meant.
+
+There is no CI, and both apps are **built locally with Xcode**, not EAS. One app record
+(`com.mvks5.bambu`) now carries both the `IOS` and `MAC_OS` platforms, so the two ship as separate
+TestFlight builds of one app and share its testers.
 
 **There are two apps, same bundle id, shipped as separate TestFlight builds.** `mobile/` is the Expo SDK 56 / RN 0.85 original; `native/` is the SwiftUI reimplementation and is where new work lands. When a change could go in either, ask which is meant.
 

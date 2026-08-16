@@ -282,18 +282,24 @@ uploads. Nothing about the Mac port changed that path — the widget is still em
 downloads file access, and the app group. No appex, `NSPrincipalClass = NSApplication`, and all four
 document types intact.
 
-**What it cannot do is upload**, and the remaining blocker is one line from `altool --validate-app`:
+**And it uploads.** `com.mvks5.bambu` now carries both `IOS` and `MAC_OS` platforms on one App
+Store Connect record, so the two ship as separate TestFlight builds of one app and share its
+testers. Adding the platform is a UI-only action — the ASC API exposes neither app creation nor
+platform addition — and it was the last blocker.
+
+The failure before it was added is worth keeping, because it names itself badly:
 
 ```
 ERROR: Cannot determine the Apple ID from Bundle ID 'com.mvks5.bambu' and platform 'MAC_OS'. (12)
 ```
 
-The App Store Connect **app record carries the iOS platform only**. A Mac build cannot be uploaded
-to a record that does not list macOS, whatever the signing says. Adding the macOS platform to the
-existing Sprout record is the one remaining step, and it is the only one nothing local can do.
+That is not a credentials problem. The same API key had uploaded an iOS build minutes earlier; the
+record simply had no macOS platform to attach the build to. **Always `--validate-app` first** — this
+cost a validation call instead of a spent build number.
 
-Validate before uploading, always: this was caught for the cost of a validation call rather than a
-spent build number.
+`scripts-archive.sh` is still iOS-only (`generic/platform=iOS`, `altool -t ios`). The macOS path is
+the same four steps with `generic/platform=macOS`, an export plist whose `method` is
+`app-store-connect`, and `-t macos`; it produces a `.pkg` rather than an `.ipa`.
 
 ### Two capabilities are silently absent on macOS
 
