@@ -30,17 +30,31 @@
 		<string>group.com.mvks5.bambu</string>
 	</array>
 
-	<!-- `aps-environment` and `com.apple.developer.devicecheck.appattest-environment` are
-	     deliberately ABSENT, and this file used to declare both.
+	<!-- Remote notifications. **`com.apple.developer.aps-environment`, not `aps-environment`.**
 	     
-	     The App ID has neither capability enabled for macOS, and Xcode's packaging step does not
-	     refuse an entitlement the profile lacks — it SILENTLY FILTERS IT OUT. Verified on the
-	     exported .pkg: the archive succeeded, the signature was valid, and the two keys were simply
-	     gone. A file that asks for something it never receives is worse than one that does not ask,
-	     because it reads as a guarantee.
+	     The bare `aps-environment` is the iOS spelling. macOS uses the prefixed one, and the two are
+	     not interchangeable: the Mac profile grants only the prefixed key, so the iOS spelling is an
+	     entitlement the profile does not contain — and Xcode does not refuse those, it SILENTLY
+	     FILTERS THEM OUT. The archive succeeded, the signature was valid, and push was simply gone.
+	     
+	     That cost a wrong diagnosis: the App ID was blamed (it has PUSH_NOTIFICATIONS enabled and
+	     always did) and the profile was blamed (it grants the capability and always did). Decoding
+	     the profile and reading the key names is what settled it. Two names that look like synonyms
+	     and are not — the same shape as `isSliced` vs `hasGcode`.
+	     
+	     Xcode rewrites `development` to `production` on an App Store export, as it does on iOS. -->
+	<key>com.apple.developer.aps-environment</key>
+	<string>development</string>
 
-	     Restoring them is: enable Push Notifications and App Attest for macOS on the App ID, put
-	     the two keys back, and re-enable the registration call in MacAppDelegate. Until then macOS
-	     has no remote notifications, which costs nothing today — nothing there consumes a token. -->
+	<!-- App Attest is deliberately ABSENT on macOS, and this file used to declare it.
+	     
+	     The App ID has APP_ATTEST enabled, but the Mac provisioning profile does not carry it —
+	     decoded and checked, `appattest=0` on both the development and store profiles, while
+	     `aps=1` on both. Xcode's packaging step does not refuse an entitlement the profile lacks;
+	     it SILENTLY FILTERS IT OUT, so the archive succeeds and the signature is valid with the key
+	     simply gone. A file that asks for something it never receives reads as a guarantee.
+
+	     Nothing on macOS needs it in any case: App Attest is used by `LiveActivityController` to
+	     vouch push tokens to Canopy, and that whole file is `#if os(iOS)`. -->
 </dict>
 </plist>

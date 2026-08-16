@@ -44,20 +44,10 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // NOT registering for remote notifications, deliberately — see `onDeviceToken` below.
-        //
-        // §0 lists APNs registration as this delegate's second job, and it will be. Today it would
-        // be a call that cannot succeed and whose result nothing reads: the App ID has no Push
-        // Notifications capability for macOS, so the distribution profile omits `aps-environment`
-        // and the registration fails; and no macOS code assigns `onDeviceToken`, so even a token
-        // that arrived would be discarded. Measured on the exported .pkg — the entitlement is
-        // stripped silently, not refused loudly.
-        //
-        // To turn it on: enable Push Notifications for macOS on the App ID, restore
-        // `aps-environment` to Sprout-macOS.entitlements, wire `onDeviceToken` to whatever consumes
-        // it (the Notifications pane, 1d), and uncomment the line below.
-        //
-        //   NSApplication.shared.registerForRemoteNotifications()
+        // §0's second job. The entitlement is real now — see `Sprout-macOS.entitlements` for why it
+        // was silently absent for three builds (the iOS spelling `aps-environment` instead of the
+        // macOS `com.apple.developer.aps-environment`).
+        NSApplication.shared.registerForRemoteNotifications()
         #if DEBUG
         MacWindowProbe.runIfRequested()
         #endif
@@ -78,6 +68,13 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
         macPushLog.error("APNs registration failed: \(error.localizedDescription, privacy: .public)")
     }
 
+    /// Set by whatever consumes the token. **Nothing does yet on macOS.**
+    ///
+    /// Registration above now succeeds and a token arrives, but `LiveActivityController` — the only
+    /// thing that registers a token with Trellis — is `#if os(iOS)`, because its subject is a Live
+    /// Activity. The Mac's consumer is the Notifications pane (1d), which turns a push into a
+    /// `UNUserNotification`. Until that exists the token is received and dropped, which is why this
+    /// stays an unset hook rather than a call into something.
     nonisolated(unsafe) static var onDeviceToken: (@MainActor (String) -> Void)?
 
     /// Closing the last window should not quit: the menu bar extra (§5.1) is expected to keep

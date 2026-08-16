@@ -301,19 +301,38 @@ cost a validation call instead of a spent build number.
 the same four steps with `generic/platform=macOS`, an export plist whose `method` is
 `app-store-connect`, and `-t macos`; it produces a `.pkg` rather than an `.ipa`.
 
-### Two capabilities are silently absent on macOS
+### The macOS push entitlement is spelled differently, and the wrong one vanishes
 
-`aps-environment` and `com.apple.developer.devicecheck.appattest-environment` were declared in
-`Sprout-macOS.entitlements` and **stripped from the signed package without an error**. The App ID has
-neither capability enabled for macOS, and Xcode's packaging step filters an entitlement the profile
-lacks rather than refusing it — the archive succeeded, the signature was valid, and the keys were
-simply gone.
+`aps-environment` is the **iOS** key. macOS grants `com.apple.developer.aps-environment`, and the
+two are not interchangeable — an entitlement the profile does not contain is not refused, it is
+**silently filtered out of the `.xcent`**. Three Mac builds shipped without push while the source
+file plainly declared it, the archive succeeded and the signature was valid.
 
-Both have been removed from the entitlements file, and `MacAppDelegate` no longer calls
-`registerForRemoteNotifications()`. Nothing on macOS assigns `onDeviceToken`, so the registration
-could not have succeeded and its result would not have been read. Restoring it is: enable Push
-Notifications and App Attest for macOS on the App ID, put the two keys back, wire `onDeviceToken` to
-the Notifications pane (1d), and uncomment the call — all four, or it is dead again.
+It cost two wrong diagnoses before the right one. The App ID was blamed — it has
+`PUSH_NOTIFICATIONS` enabled and always did, confirmed through the ASC API. The provisioning profile
+was blamed — it grants the capability and always did. What settled it was decoding the profile and
+reading the key NAMES:
+
+```
+$ security cms -D -i "Mac Team Store Provisioning Profile: com.mvks5.bambu.provisionprofile"
+com.apple.developer.aps-environment      <- what macOS grants
+```
+
+Check the spelling against the profile before concluding anything about an account. This is
+`isSliced` vs `hasGcode` in a plist.
+
+### App Attest is genuinely absent on macOS
+
+The Mac profile grants no App Attest entitlement under any spelling, so it stays out of
+`Sprout-macOS.entitlements`. Nothing on macOS needs it: App Attest exists to vouch push tokens to
+Canopy from `LiveActivityController`, and that whole file is `#if os(iOS)`.
+
+**Push itself now ships.** The entitlement is correct, `MacAppDelegate` registers, and the exported
+package carries `com.apple.developer.aps-environment = production`. What is still missing is a
+CONSUMER: nothing on macOS assigns `onDeviceToken`, so a token arrives and is dropped. The Mac's
+consumer is the Notifications pane (1d), which turns a push into a `UNUserNotification`. Until that
+exists, Mac testers get no remote alerts while iOS testers do — a real gap now that TestFlight goes
+to real testers rather than one person.
 
 ## Order
 
