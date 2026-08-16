@@ -102,6 +102,7 @@ struct MacJobsInspector: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, m.cardPadding)
         .padding(.top, 60)
+        .macInspectorPlaceholder()
     }
 
     // MARK: - The selected run

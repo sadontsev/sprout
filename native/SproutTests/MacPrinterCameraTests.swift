@@ -329,6 +329,23 @@ final class MacInspectorDrawerTests: XCTestCase {
         XCTAssertEqual(MacInspectorPlacement.drawerHeight(available: 200), 140)
     }
 
+    /// A placeholder gets a SHORT drawer. Measured on Explore: the section's own "Find something to
+    /// print" over a full-height drawer saying "Nothing selected" filled the window with two empty
+    /// states, so the fallback was reserving a third of the screen to report that there is nothing
+    /// to report.
+    func testAPlaceholderGetsAMuchShorterDrawer() {
+        XCTAssertLessThan(MacInspectorPlacement.placeholderHeight,
+                          MacInspectorPlacement.drawerHeight(available: 700))
+    }
+
+    /// …but tall enough for the panes' own placeholder layout, which carries a 40 pt top padding for
+    /// the column. At 104 the title showed and its one explanatory sentence was clipped, which reads
+    /// as broken rather than compact.
+    func testThePlaceholderDrawerFitsTheTallestPlaceholder() {
+        let tallest: CGFloat = 40 + 22 + 8 + 17 + 8 + 30      // padding, icon, title, two lines
+        XCTAssertGreaterThanOrEqual(MacInspectorPlacement.placeholderHeight, tallest)
+    }
+
     /// At the window's own minimum height (§1: 680) the section still keeps the majority.
     func testTheSectionKeepsMostOfTheSmallestWindow() {
         let h = MacInspectorPlacement.drawerHeight(available: 680)

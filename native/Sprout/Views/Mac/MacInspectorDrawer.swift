@@ -58,6 +58,10 @@ struct MacInspectorDrawer: ViewModifier {
     /// The height available to split between the section and the drawer.
     @State private var available: CGFloat = 700
 
+    /// Whether the pane has anything to show. See `MacInspectorHasContentKey` — a placeholder gets a
+    /// short drawer rather than a third of the window.
+    @State private var paneHasContent = true
+
     init(model: AppModel, explore: ExploreModel, section: TabKey) {
         self.model = model
         self.explore = explore
@@ -79,7 +83,13 @@ struct MacInspectorDrawer: ViewModifier {
                 header
                 if !collapsed {
                     MacInspectorContent(model: model, explore: explore, section: section)
-                        .frame(height: MacInspectorPlacement.drawerHeight(available: available))
+                        .frame(height: paneHasContent
+                               ? MacInspectorPlacement.drawerHeight(available: available)
+                               : MacInspectorPlacement.placeholderHeight)
+                        // The pane stays mounted when it is a placeholder — only its height
+                        // changes. Unmounting it would remove the preference that decided to
+                        // unmount it, and the drawer would oscillate.
+                        .onPreferenceChange(MacInspectorHasContentKey.self) { paneHasContent = $0 }
                 }
             }
         }
@@ -89,6 +99,7 @@ struct MacInspectorDrawer: ViewModifier {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { available = $0 }
         .animation(Motion.standard(0.24), value: collapsed)
         .animation(Motion.standard(0.24), value: shows)
+        .animation(Motion.standard(0.24), value: paneHasContent)
     }
 
     /// Names what the drawer is, and offers the two ways out of it.

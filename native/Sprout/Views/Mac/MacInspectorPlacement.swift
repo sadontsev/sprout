@@ -98,6 +98,18 @@ enum MacInspectorPlacement {
         fitsAsColumn
     }
 
+    /// The drawer's height when its pane is only a placeholder.
+    ///
+    /// Enough for the "Nothing selected" line and its one sentence of explanation, and no more. The
+    /// full height is for content; a placeholder that took it would be the fallback reserving a
+    /// third of the window to report that there is nothing to report — measured on Explore, where it
+    /// sat under the section's OWN empty state and filled the window with two of them.
+    /// 150, not 104. The panes' placeholders are laid out for the COLUMN and carry a 40 pt top
+    /// padding to sit them below its header; in a 104 pt drawer that left the title visible and its
+    /// one explanatory sentence clipped, which reads as broken rather than compact. Measured against
+    /// Explore's, the tallest: 40 padding + 22 icon + 8 + 17 title + 8 + two 15 pt lines.
+    static let placeholderHeight: CGFloat = 150
+
     /// The width the panes are held to when they fall back into the content column.
     ///
     /// The column is 280–400 pt and every card in it is laid out for that. The content column is at

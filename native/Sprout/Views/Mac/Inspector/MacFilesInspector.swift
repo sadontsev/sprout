@@ -106,6 +106,7 @@ struct MacFilesInspector: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)
+        .macInspectorPlaceholder()
     }
 
     /// A selection that no longer resolves is a different situation from never having selected

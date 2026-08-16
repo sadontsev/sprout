@@ -65,6 +65,15 @@ enum MacWindowProbe {
             }
         }
 
+        // Make the app FRONTMOST before measuring anything.
+        //
+        // Without this a headless run never becomes key, so `@FocusedValue` reads nil and
+        // `controlActiveState` is `.inactive` — and every focus-gated control photographs as
+        // DIMMED. That is a property of the probe, not of the app, and it is exactly the kind of
+        // false negative this file exists to warn about: it makes working navigation links look
+        // like the dead controls this codebase keeps hunting.
+        NSApp.activate(ignoringOtherApps: true)
+
         let delay = env["SPROUT_SHOT_DELAY"].flatMap(Double.init) ?? 3
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             if wantsReport { report() }
