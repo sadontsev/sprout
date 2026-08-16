@@ -75,7 +75,7 @@ struct MacWindow: View {
     private func consumePendingOpen(_ request: MacOpenRequest?) {
         guard let request else { return }
         section = request.section
-        if case .section = request { model.pendingOpen = nil }
+        if request.isServedByArriving { model.pendingOpen = nil }
     }
 
     /// Mirror the inspector's visibility onto the model, so a section can compensate for what the

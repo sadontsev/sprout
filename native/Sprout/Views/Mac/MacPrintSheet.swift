@@ -978,23 +978,26 @@ struct MacPrintSheet: View {
                     "plate_id": .int(plate),
                 ])
                 // The sheet closing IS the confirmation: a failure keeps it open and raises the
-                // alert below, so a dismissed sheet can only mean the queue accepted it.
+                // alert below, so a dismissed sheet can only mean the queue accepted it. But a sheet
+                // that merely vanishes leaves the user on the Files grid, looking at the file they
+                // just queued, with nothing on screen having changed — so this also LANDS them where
+                // the job now is, and says so.
                 //
-                // Deliberately no navigation and no success toast, and neither is an omission:
+                // This was blocked, and the two things blocking it are both fixed:
                 //
-                // - `model.tab = .printer` is what iOS does here, and on macOS it would be **dead
-                //   code**. The Mac section lives in `@SceneStorage("mac.section")` (`MacWindow`);
-                //   nothing on this platform reads `AppModel.tab`. A line that compiles, runs and is
-                //   read by nobody is the recurring bug written by the person fixing it.
-                // - `model.pendingOpen = .section(.jobs)` IS the right channel, but `MacWindow`
-                //   consumes it with `.onChange` and never clears a `.section` request — so the
-                //   second print of a session would set the value it already holds and navigate
-                //   nowhere. A jump that works once is worse than no jump.
-                // - `MacToast` draws a warning triangle in `heating`; every writer of it in this
-                //   tree reports a refusal. "Queued for printing" under that icon reads as a problem.
+                //  - `MacWindow.consumePendingOpen` now CLEARS a `.section` request once it has been
+                //    served. It did not, and `onChange` fires on a CHANGE — so the second print of a
+                //    session assigned the value already held and navigated nowhere. A jump that
+                //    works once is worse than no jump.
+                //  - `Toast` has a success kind, drawn with a checkmark. Every toast used to get
+                //    `exclamationmark.triangle.fill`, and "Queued for printing" under a warning
+                //    triangle reads as a refusal.
                 //
-                // TODO(MacWindow): clear `pendingOpen` once its section half is consumed, then this
-                // can land the user on Jobs where the queued item actually is.
+                // `model.tab` is still deliberately NOT set: nothing on macOS reads it — the section
+                // lives in `MacWindow`'s `@AppStorage` — so that line would compile, run, and be
+                // read by nobody.
+                model.pendingOpen = .section(.jobs)
+                model.toast = .success("Queued for printing — \(LibraryBrowse.displayName(file))")
                 isPresented = false
             } catch {
                 starting = false

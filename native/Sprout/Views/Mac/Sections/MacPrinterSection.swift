@@ -892,11 +892,11 @@ struct MacPrinterCameraTile: View {
     /// Does the camera **window** hold the upstream claim? `MacCameraOwnership` is the arbiter and
     /// this is the only question either tile may ask it.
     ///
-    /// (Its method is still named `inspectorMayStream` from when the inspector was the only tile.
+    /// (Its method is still named `tileMayStream` from when the inspector was the only tile.
     /// What it actually answers is "no camera window is streaming this printer", which is the right
     /// question for both.)
     private var windowHasClaim: Bool {
-        !model.cameraOwnership.inspectorMayStream(printerId: model.printerId)
+        !model.cameraOwnership.tileMayStream(printerId: model.printerId)
     }
 
     /// May THIS tile open an upstream stream right now? See `MacCameraPlacement` for why placement

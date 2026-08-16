@@ -77,5 +77,24 @@ enum MacOpenRequest: Equatable, Hashable {
         case .section(let key): key
         }
     }
+
+    /// Is ARRIVING at that section the whole of the service?
+    ///
+    /// This is the handover rule between the request's two consumers, and it has to be stated
+    /// somewhere both can read: `MacWindow` navigates, and then either clears the request or leaves
+    /// it for the section that landed to finish. `.section` is finished by arriving. `.file` is only
+    /// half finished — `MacFilesSection` still has to select the id — so it must survive the trip.
+    ///
+    /// Load-bearing because `onChange` fires on a CHANGE. A `.section` request that is served and
+    /// NOT cleared makes the next identical request assign the value already held, so `onChange`
+    /// never fires and nothing happens. That is not hypothetical: it is why printing from
+    /// `MacPrintSheet` could not navigate to Jobs until this was fixed — a jump that works exactly
+    /// once, on the first print of a session, is worse than no jump at all.
+    var isServedByArriving: Bool {
+        switch self {
+        case .file: false
+        case .section: true
+        }
+    }
 }
 #endif

@@ -43,10 +43,14 @@ final class MacCameraOwnership {
         else { windowsStreaming.remove(printerId) }
     }
 
-    /// May the **inspector tile** stream this printer?
+    /// May an in-window **tile** stream this printer?
     ///
-    /// The window never asks — it always may, because it is the owner by definition.
-    func inspectorMayStream(printerId: Int) -> Bool {
+    /// Asked by BOTH tiles now — the inspector's and the content column's fallback — which is why it
+    /// is no longer called `inspectorMayStream`. One printer, one live stream: whoever asks, the
+    /// answer is "not while a camera WINDOW is streaming it".
+    ///
+    /// The window itself never asks. It always may, because it is the owner by definition.
+    func tileMayStream(printerId: Int) -> Bool {
         !windowsStreaming.contains(printerId)
     }
 }

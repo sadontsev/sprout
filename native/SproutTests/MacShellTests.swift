@@ -168,13 +168,13 @@ final class MacShellTests: XCTestCase {
     @MainActor
     func testAPausedCameraWindowReleasesTheClaim() {
         let owner = MacCameraOwnership()
-        XCTAssertTrue(owner.inspectorMayStream(printerId: 1))
+        XCTAssertTrue(owner.tileMayStream(printerId: 1))
 
         owner.setWindowStreaming(true, printerId: 1)
-        XCTAssertFalse(owner.inspectorMayStream(printerId: 1))
+        XCTAssertFalse(owner.tileMayStream(printerId: 1))
 
         owner.setWindowStreaming(false, printerId: 1)     // paused, still open
-        XCTAssertTrue(owner.inspectorMayStream(printerId: 1), "a paused window is not using the camera")
+        XCTAssertTrue(owner.tileMayStream(printerId: 1), "a paused window is not using the camera")
     }
 
     /// One claim per PRINTER, not one globally: a camera window for printer 1 must not stop the
@@ -183,8 +183,8 @@ final class MacShellTests: XCTestCase {
     func testTheClaimIsPerPrinter() {
         let owner = MacCameraOwnership()
         owner.setWindowStreaming(true, printerId: 1)
-        XCTAssertFalse(owner.inspectorMayStream(printerId: 1))
-        XCTAssertTrue(owner.inspectorMayStream(printerId: 2))
+        XCTAssertFalse(owner.tileMayStream(printerId: 1))
+        XCTAssertTrue(owner.tileMayStream(printerId: 2))
     }
 
     /// SwiftUI can run `onDisappear` for a window being replaced rather than closed. A double
@@ -195,7 +195,7 @@ final class MacShellTests: XCTestCase {
         owner.setWindowStreaming(true, printerId: 3)
         owner.setWindowStreaming(false, printerId: 3)
         owner.setWindowStreaming(false, printerId: 3)
-        XCTAssertTrue(owner.inspectorMayStream(printerId: 3))
+        XCTAssertTrue(owner.tileMayStream(printerId: 3))
     }
 
     // MARK: - Drop target (§5.3)
@@ -267,5 +267,36 @@ final class PlugFreshnessTests: XCTestCase {
         poller.stop()
         XCTAssertNil(poller.watts, "no poll has run, so there is nothing retained yet")
         XCTAssertFalse(poller.readingIsCurrent)
+    }
+
+    // MARK: - Who finishes an open request
+
+    /// The handover rule between the request's two consumers. `MacWindow` navigates and then either
+    /// clears the request or leaves it for the section that landed; getting this backwards breaks
+    /// one of the two in a way nothing else catches.
+    func testArrivingFinishesASectionRequestButNotAFileRequest() {
+        XCTAssertTrue(MacOpenRequest.section(.jobs).isServedByArriving)
+        XCTAssertTrue(MacOpenRequest.section(.library).isServedByArriving,
+                      "even to Files — a bare section request asks for nothing but the section")
+        XCTAssertFalse(MacOpenRequest.file(12).isServedByArriving,
+                       "the id still has to be selected, so the request must survive the trip")
+    }
+
+    /// A served-and-cleared request is what lets the SECOND one of a session do anything at all:
+    /// `onChange` fires on a change, so an uncleared `.section(.jobs)` would be re-assigned its own
+    /// value and navigate nowhere. This is the print-sheet-to-Jobs jump.
+    func testRepeatingASectionRequestStillNavigatesBecauseItWasCleared() {
+        var pending: MacOpenRequest?
+        var arrivedAt: [TabKey] = []
+        func consume(_ request: MacOpenRequest?) {
+            guard let request else { return }
+            arrivedAt.append(request.section)
+            if request.isServedByArriving { pending = nil }
+        }
+
+        pending = .section(.jobs); consume(pending)
+        XCTAssertNil(pending, "serving it must clear it")
+        pending = .section(.jobs); consume(pending)
+        XCTAssertEqual(arrivedAt, [.jobs, .jobs], "the second print must navigate too")
     }
 }

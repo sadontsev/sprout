@@ -109,7 +109,7 @@ final class MacPrinterCameraTests: XCTestCase {
         XCTAssertFalse(MacCameraPlacement.mayStream(
             surface: .section,
             cameraPossible: true,
-            windowHasClaim: !owner.inspectorMayStream(printerId: 7),
+            windowHasClaim: !owner.tileMayStream(printerId: 7),
             inspectorVisible: false
         ))
 
@@ -117,7 +117,7 @@ final class MacPrinterCameraTests: XCTestCase {
         XCTAssertTrue(MacCameraPlacement.mayStream(
             surface: .section,
             cameraPossible: true,
-            windowHasClaim: !owner.inspectorMayStream(printerId: 7),
+            windowHasClaim: !owner.tileMayStream(printerId: 7),
             inspectorVisible: false
         ))
     }
@@ -131,7 +131,7 @@ final class MacPrinterCameraTests: XCTestCase {
         XCTAssertTrue(MacCameraPlacement.mayStream(
             surface: .section,
             cameraPossible: true,
-            windowHasClaim: !owner.inspectorMayStream(printerId: 2),
+            windowHasClaim: !owner.tileMayStream(printerId: 2),
             inspectorVisible: false
         ))
     }
