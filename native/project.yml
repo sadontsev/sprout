@@ -79,6 +79,36 @@ targets:
         # It has to be conditional: NSApplication is wrong on iOS, where the value is UIApplication.
         "SPROUT_PRINCIPAL_CLASS[sdk=macosx*]": NSApplication
         "SPROUT_PRINCIPAL_CLASS[sdk=iphone*]": UIApplication
+        # macOS builds from a DERIVED copy of the shared plist — see the preBuildScript.
+        "INFOPLIST_FILE[sdk=macosx*]": "$(DERIVED_FILE_DIR)/Info-macOS.plist"
+    preBuildScripts:
+      # Derive the macOS Info.plist from the iOS one, minus the single key macOS refuses.
+      #
+      # Deriving rather than committing a second plist: the two would differ by ONE key and share
+      # sixty, including CFBundleDocumentTypes and UTImportedTypeDeclarations — the declarations
+      # that make drag-and-drop, Finder "Open with" and Quick Look work. Two hand-maintained copies
+      # of those would drift, and the drift would look like a platform bug rather than a typo.
+      #
+      # Runs before ProcessInfoPlistFile, which is where the macOS build fails on the key: a
+      # post-processing phase would be too late, because the failure IS that step.
+      - name: Derive macOS Info.plist
+        inputFiles:
+          - $(SRCROOT)/Sprout/Resources/Info.plist
+        # Declared so Xcode orders this BEFORE ProcessInfoPlistFile. Without the declaration the
+        # macOS build fails with "Build input file cannot be found" — the file is produced, just
+        # not in the dependency graph, so nothing knows to wait for it.
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/Info-macOS.plist
+        script: |
+          mkdir -p "$DERIVED_FILE_DIR"
+          cp "$SRCROOT/Sprout/Resources/Info.plist" "$DERIVED_FILE_DIR/Info-macOS.plist"
+          # Written on BOTH platforms, because a declared output that does not appear fails the
+          # build — and only macOS reads it. The key is removed only where it is a problem.
+          if [ "$PLATFORM_NAME" = "macosx" ]; then
+            # `|| true`: absent is the desired end state, so a Delete that finds nothing succeeded.
+            /usr/libexec/PlistBuddy -c "Delete :LSSupportsOpeningDocumentsInPlace" \
+              "$DERIVED_FILE_DIR/Info-macOS.plist" || true
+          fi
     info:
       path: Sprout/Resources/Info.plist
       properties:
@@ -106,14 +136,19 @@ targets:
         UIBackgroundModes:
           - audio
         ITSAppUsesNonExemptEncryption: false
-        # LSSupportsOpeningDocumentsInPlace is deliberately ABSENT rather than `false`.
+        # `false` because Sprout COPIES an opened document into the library rather than editing the
+        # user's file where it sits. Both platforms behave that way; only their tolerance differs.
         #
-        # §0 lists the iOS-only keys macOS ignores; this one is not among them and is not ignored —
-        # macOS fails the build outright ("'LSSupportsOpeningDocumentsInPlace = NO' is not supported
-        # on macOS"). Absent means exactly what `false` meant on iOS (the app copies the document
-        # into its own storage rather than editing the user's file in place), which is what Sprout
-        # does: an import lands in the library. So dropping the key changes no iOS behaviour, and
-        # setting it to YES for macOS would claim an in-place editing model the app does not have.
+        # iOS REQUIRES the key once CFBundleDocumentTypes is declared — App Store Connect returns
+        # warning 90737 without it ("All document-based apps must include one of these
+        # configurations"), which is exactly what build 22 shipped with after this was dropped.
+        # macOS REFUSES it at `false` and fails the build outright, and setting it to YES there
+        # would claim an in-place editing model the app does not have.
+        #
+        # So the honest value differs per platform: present-and-false on iOS, absent on macOS. A
+        # build-setting substitution cannot express "absent", so the macOS plist is derived from
+        # this one by the script phase below — one source of truth, one deleted key.
+        LSSupportsOpeningDocumentsInPlace: false
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
         NSPhotoLibraryAddUsageDescription: Save printed-model snapshots and timelapses to your photo library.
