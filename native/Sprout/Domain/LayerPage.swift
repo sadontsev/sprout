@@ -157,7 +157,7 @@ enum LayerPage {
         <canvas id="c"></canvas>
         <canvas id="cg"></canvas>
         <div id="reset">⌂</div>
-        <div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint">drag rotate · pinch zoom · 2-finger pan · double-tap reset</span></div><input id="s" type="range" min="1" max="1" value="1"><div id="chips"><div class="chip on" data-m="steel">Steel</div><div class="chip" data-m="ivory">Ivory</div><div class="chip" data-m="bg">Light bg</div></div></div></div>
+        <div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint"></span></div><input id="s" type="range" min="1" max="1" value="1"><div id="chips"><div class="chip on" data-m="steel">Steel</div><div class="chip" data-m="ivory">Ivory</div><div class="chip" data-m="bg">Light bg</div></div></div></div>
         <div id="err"></div>
         <script>
           var URL_=\#(urlLit), HDRS=\#(hdrLit);
@@ -437,12 +437,33 @@ enum LayerPage {
               } else { g={m:'r',x:e.touches[0].clientX,y:e.touches[0].clientY}; }
             },{passive:true});
             // mouse + wheel: trackpad use AND headless testing
-            cv.addEventListener('mousedown',function(e){ g={m:'r',x:e.clientX,y:e.clientY}; interacting=true; });
-            window.addEventListener('mousemove',function(e){ if(!g||g.m!=='r')return; rotate(e.clientX-g.x,e.clientY-g.y); g.x=e.clientX; g.y=e.clientY; });
-            window.addEventListener('mouseup',function(){ if(g&&g.m==='r'){g=null;interacting=false;schedule();} });
+            // Shift-drag (or the middle button) pans, so a plain mouse with a notched wheel can
+            // still reach the whole plate — `wheel` pan needs a trackpad to be pleasant.
+            cv.addEventListener('mousedown',function(e){
+              g={m:(e.shiftKey||e.button===1)?'p':'r',x:e.clientX,y:e.clientY}; interacting=true; });
+            window.addEventListener('mousemove',function(e){ if(!g)return;
+              if(g.m==='r'){ rotate(e.clientX-g.x,e.clientY-g.y); }
+              else { px+=e.clientX-g.x; py+=e.clientY-g.y; schedule(); }
+              g.x=e.clientX; g.y=e.clientY; });
+            window.addEventListener('mouseup',function(){ if(g){g=null;interacting=false;schedule();} });
             cv.addEventListener('dblclick',resetView);
-            cv.addEventListener('wheel',function(e){ e.preventDefault(); zoom=Math.max(0.15,Math.min(14,zoom*(e.deltaY<0?1.1:0.9))); schedule(); },{passive:false});
+            // A trackpad sends BOTH gestures as `wheel`, and only `ctrlKey` tells them apart —
+            // WebKit sets it for a pinch. Treating every wheel as zoom is why two-finger drag
+            // zoomed instead of panning, and why this viewer had no pan on the Mac at all despite
+            // `px`/`py` existing and being carried into the GL path by `uOff`.
+            //
+            // Signs mirror the touch handler below so both feel the same: content follows the
+            // fingers. Natural scrolling gives a negative deltaY for fingers-down.
+            cv.addEventListener('wheel',function(e){ e.preventDefault();
+              if(e.ctrlKey){ zoom=Math.max(0.15,Math.min(14,zoom*(e.deltaY<0?1.1:0.9))); }
+              else { px-=e.deltaX; py-=e.deltaY; }
+              schedule(); },{passive:false});
             document.getElementById('reset').addEventListener('click',resetView);
+            (function(){ var h=document.getElementById('hint'); if(!h) return;
+              h.textContent = (navigator.maxTouchPoints>0)
+                ? 'drag rotate · pinch zoom · 2-finger pan · double-tap reset'
+                : 'drag rotate · scroll pan · pinch zoom · double-click reset'; })();
+
 
             // Shading/background chips — tint switches the GL palette, bg reflows the whole 2D scene.
             document.querySelectorAll('.chip').forEach(function(ch){ ch.addEventListener('click',function(){

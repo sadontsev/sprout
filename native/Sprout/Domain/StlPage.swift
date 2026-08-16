@@ -50,7 +50,7 @@ enum StlPage {
         <div id="reset">⌂</div>
         <div id="load">Loading model…</div>
         <div id="bar"><div id="card">
-          <div id="top"><span id="lbl"></span><span id="hint">drag rotate · pinch zoom · 2-finger pan</span></div>
+          <div id="top"><span id="lbl"></span><span id="hint"></span></div>
           <div id="chips">
             <div class="chip on" data-m="steel">Steel</div>
             <div class="chip" data-m="ivory">Ivory</div>
@@ -210,6 +210,42 @@ enum StlPage {
                 var s=dist*0.0016; panX=panS.px-(mx-panS.x)*s; panY=panS.py+(my-panS.y)*s; schedule(); }
             },{passive:false});
             cv.addEventListener('touchend',function(e){ if(e.touches.length===0){ t0=null;panS=null; requestAnimationFrame(tick);} },{passive:false});
+
+            // ---- pointer + wheel: the Mac half. ----
+            //
+            // macOS WebKit does NOT synthesise touch events from a trackpad, so everything above is
+            // dead on the Mac: this viewer rendered a model it would not rotate, zoom or pan, and
+            // the hint line promised all three. Same gestures, different event names:
+            //
+            //   drag            -> rotate      (mousedown/move/up, matching the 1-finger constants)
+            //   two-finger drag -> PAN         (a plain `wheel`; deltaX/deltaY are the finger delta)
+            //   pinch           -> zoom        (a `wheel` with ctrlKey, which is how WebKit reports it)
+            //   double-click    -> reset
+            //
+            // The pan signs mirror the touch maths above so the two feel identical: content follows
+            // the fingers. With natural scrolling, fingers-down gives a negative deltaY, and the
+            // model should move down — hence `-=` on Y and `+=` on X.
+            var md=null;
+            cv.addEventListener('mousedown',function(e){ e.preventDefault(); md={x:e.clientX,y:e.clientY}; vyaw=0; vpitch=0; });
+            window.addEventListener('mousemove',function(e){ if(!md)return;
+              var dx=e.clientX-md.x, dy=e.clientY-md.y;
+              vyaw=dx*0.006; vpitch=dy*0.006; yaw+=vyaw; pitch=clampP(pitch+vpitch);
+              md={x:e.clientX,y:e.clientY}; schedule(); });
+            window.addEventListener('mouseup',function(){ if(md){ md=null; requestAnimationFrame(tick); } });
+            cv.addEventListener('dblclick',function(e){ e.preventDefault();
+              yaw=DEF.yaw;pitch=DEF.pitch;dist=DEF.dist;panX=0;panY=0;vyaw=0;vpitch=0;schedule(); });
+            cv.addEventListener('wheel',function(e){ e.preventDefault();
+              if(e.ctrlKey){ dist=Math.max(span*0.15,Math.min(span*8,dist*(e.deltaY>0?1.08:0.92))); }
+              else { var s=dist*0.0016; panX+=e.deltaX*s; panY-=e.deltaY*s; }
+              schedule(); },{passive:false});
+
+            // The hint has to match the device, not the developer's phone. `maxTouchPoints` is the
+            // honest test: WebKit on macOS reports 0 even on a trackpad, because a trackpad drives
+            // mouse and wheel events rather than touches.
+            (function(){ var h=document.getElementById('hint'); if(!h) return;
+              h.textContent = (navigator.maxTouchPoints>0)
+                ? 'drag rotate · pinch zoom · 2-finger pan · double-tap reset'
+                : 'drag rotate · scroll pan · pinch zoom · double-click reset'; })();
 
             // ---- chips ----
             var chips=document.querySelectorAll('.chip');

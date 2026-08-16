@@ -1022,6 +1022,18 @@ private struct MacViewerSegment<Value: Hashable>: View {
         .padding(trackInset)
         .background(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).fill(c.s2))
         .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).stroke(c.line))
+        // Never let the toolbar compress it.
+        //
+        // Without this the item is a flexible width, and when the toolbar is short of room the
+        // TRAILING label is the one that loses — the track's right corner comes back squared off
+        // while the left keeps its radius, which reads as the text having outgrown the control.
+        //
+        // Height was NOT the problem, though it looked like it: measured with `SPROUT_TREE`, this
+        // window's `.primaryAction` items are laid out at 36 pt, so a 28 pt segment has room to
+        // spare. Shrinking it — the first fix attempted here — would have made it inconsistent with
+        // every other control for no reason. The probe now dumps toolbar item frames precisely so
+        // this class of guess can be checked instead of shipped.
+        .fixedSize()
         .animation(Motion.standard(0.14), value: selection)
     }
 }

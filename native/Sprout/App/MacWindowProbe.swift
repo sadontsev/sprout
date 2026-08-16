@@ -122,6 +122,20 @@ enum MacWindowProbe {
         }), let root = window.contentView else { return }
 
         var out = "TREE window=\(Int(window.frame.width))x\(Int(window.frame.height))\n"
+
+        // The toolbar, which `SPROUT_SHOT` cannot photograph — it is in the window FRAME, above the
+        // contentView `cacheDisplay` renders. Measuring it is the only way to settle whether an item
+        // fits: a control taller than the toolbar's item area is silently CLIPPED, and clipping is
+        // exactly what a screenshot would have shown if a screenshot were possible.
+        if let toolbar = window.toolbar {
+            out += "TOOLBAR items=\(toolbar.items.count)\n"
+            for item in toolbar.items {
+                let v = item.view
+                let size = v.map { "\(Int($0.frame.width))x\(Int($0.frame.height))" } ?? "-"
+                let fitting = v.map { "fitting=\(Int($0.fittingSize.width))x\(Int($0.fittingSize.height))" } ?? ""
+                out += "TOOLBAR  \(item.itemIdentifier.rawValue) view=\(size) \(fitting)\n"
+            }
+        }
         func walk(_ v: NSView, _ depth: Int) {
             // Deep enough to reach the split view's columns and see that they hold something;
             // beyond that it is thousands of lines of SwiftUI internals.
