@@ -257,7 +257,10 @@ struct MacPrinterSection: View {
                     Image(systemName: "square.dashed")
                         .font(.system(size: 17, weight: .light))
                         .foregroundStyle(c.t3)
-                    MacPrinterMonoLabel("NO PREVIEW")
+                    // The CAUSE, not the generic word. All six absences read "NO PREVIEW" before
+                    // this, so a plate that simply is not written until the print ends looked
+                    // identical to a broken token.
+                    MacPrinterMonoLabel(outcome.absence?.shortLabel ?? "NO PREVIEW")
                 }
             }
         }
@@ -937,6 +940,23 @@ enum MacPlateAbsence: Equatable {
     case archiveMissing
     /// An explicit null `thumbnail_path` — the server saying it has no image, not a fetch to retry.
     case noImage
+
+    /// Two or three words for the tile itself.
+    ///
+    /// The full `sentence` lives in a tooltip, which is invisible until hovered and impossible to
+    /// report. Six distinct causes were all rendering as the single word "NO PREVIEW", so the tile
+    /// looked permanently broken rather than temporarily empty — and the commonest cause is not a
+    /// fault at all: a plate image is written when a print ENDS, so a running job has none yet.
+    var shortLabel: String {
+        switch self {
+        case .noJob: "NO JOB"
+        case .noToken: "NO TOKEN YET"
+        case .notArchived: "NOT ARCHIVED"
+        case .archiveLoading: "LOADING…"
+        case .archiveMissing: "AFTER THE PRINT"
+        case .noImage: "NO PLATE IMAGE"
+        }
+    }
 
     var sentence: String {
         switch self {

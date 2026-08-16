@@ -129,6 +129,15 @@ final class AppModel {
     /// double-click and the Files inspector's `Print…` — are sibling views with no ancestor between
     /// them but this, and a sheet attaches to a window rather than to a column.
     var pendingPrint: LibraryFile?
+
+    /// Is the inspector column on screen right now?
+    ///
+    /// Published because the inspector holds things a section may need to COMPENSATE for losing.
+    /// The camera tile is the case: §1 auto-hides the inspector below 1180 pt, and it took the live
+    /// camera with it — a window narrowed by a few points lost the picture with no explanation and
+    /// no obvious way back. The Printer section falls the camera back into the content column when
+    /// this is false, so the camera is always somewhere rather than conditionally nowhere.
+    var inspectorVisible = true
     #endif
 
     /// The library upload in flight, if any.

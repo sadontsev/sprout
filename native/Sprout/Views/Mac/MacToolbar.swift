@@ -7,6 +7,12 @@ import SwiftUI
 /// `fleetSwitcher` and its `switcherOpen` state do not exist on this platform. One switcher, in
 /// window chrome, so that changing machine never looks like navigating.
 struct MacToolbar: ToolbarContent {
+    /// The supported way to open the `Settings` scene. This was
+    /// `NSApp.sendAction(Selector(("showSettingsWindow:")))` — a PRIVATE selector whose name Apple
+    /// has already changed once (`showPreferencesWindow:` before Ventura). `sendAction` returns a
+    /// discarded `Bool` when nothing in the responder chain answers, so the wrong name is not an
+    /// error: the menu item simply does nothing, which is exactly what it did.
+    @Environment(\.openSettings) private var openSettings
     let model: AppModel
     @Binding var section: TabKey
     @Binding var inspectorShown: Bool
@@ -22,11 +28,12 @@ struct MacToolbar: ToolbarContent {
         }
 
         ToolbarItem(placement: .principal) {
+            // NO section title here. `MacWindow` sets `.navigationTitle(section.label)`, which macOS
+            // already draws in the titlebar — a `Text(section.label)` in this item rendered it a
+            // SECOND time, so the window read "Printer … Printer · H2C · PRINTING 13 %". The
+            // prototype shows one title, and the window title is the one the system also uses for
+            // the Window menu and Mission Control, so this is the copy that goes.
             HStack(spacing: 14) {
-                Text(section.label)
-                    .font(.system(size: 15, weight: .bold))
-                    .tracking(-0.2)
-                Divider().frame(height: 20)
                 printerPopup
                 MacStatusPillView(vm: model.vm)
             }
@@ -89,9 +96,7 @@ struct MacToolbar: ToolbarContent {
             Divider()
             // Deliberately opens Settings rather than a bespoke sheet: the server is where printers
             // come from, and there is exactly one place in this app that edits it.
-            Button("Manage printers…") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }
+            Button("Manage printers…") { openSettings() }
         } label: {
             HStack(spacing: 8) {
                 PulseDot(color: model.vm.stateColor.resolve(palette), size: 7)

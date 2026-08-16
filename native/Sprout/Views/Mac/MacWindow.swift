@@ -62,6 +62,12 @@ struct MacWindow: View {
         Binding(get: { inspectorPreferred }, set: { inspectorPreferred = $0 })
     }
 
+    /// Mirror the inspector's visibility onto the model, so a section can compensate for what the
+    /// inspector was carrying — see `AppModel.inspectorVisible`.
+    private func publishInspectorVisibility() {
+        model.inspectorVisible = inspectorPreferred
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Part of the LAYOUT, above the split view (§1) — the toolbar is window chrome and
@@ -86,6 +92,8 @@ struct MacWindow: View {
         .background(c.bg)
         .frame(minWidth: 1080, minHeight: 680)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
+        .onAppear { publishInspectorVisibility() }
+        .onChange(of: inspectorPreferred) { _, _ in publishInspectorVisibility() }
         .onChange(of: collapse.sidebarFitsAsColumn) { _, fits in
             columnVisibility = fits ? .all : .detailOnly
         }
