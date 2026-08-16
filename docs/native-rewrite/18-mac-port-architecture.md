@@ -270,6 +270,39 @@ DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
 
 The iOS lines in `CLAUDE.md` are unchanged and must stay green throughout.
 
+## Shipping
+
+**iOS ships today.** `./native/scripts-archive.sh --upload` archives, exports, validates and
+uploads. Nothing about the Mac port changed that path — the widget is still embedded (see the
+`platformFilter` note above, which is the one thing that nearly broke it silently).
+
+**macOS does not ship yet, and the blockers are account-side, not code-side.** Measured with
+`xcodebuild -destination 'generic/platform=macOS' … archive -allowProvisioningUpdates`:
+
+```
+error: No Accounts: Add a new account in Accounts settings.
+error: No profiles for 'com.mvks5.bambu' were found: Xcode couldn't find any Mac App
+       Development provisioning profiles matching 'com.mvks5.bambu'.
+```
+
+Two separate things, in this order:
+
+1. **Sign Xcode into the Apple ID** (Settings → Accounts). `-allowProvisioningUpdates` cannot fetch
+   or create a profile without one — this is the same "No Accounts" wall `scripts-archive.sh`
+   already checks for before it archives.
+2. **Enable the App ID `com.mvks5.bambu` for macOS** on the developer portal. The identifier exists
+   for iOS only, so there is no Mac profile to find. The macOS entitlements the app declares —
+   App Sandbox, `network.client`, `network.server`, `files.user-selected.read-write`,
+   `files.downloads.read-write`, the app group, and App Attest — all have to be enabled on it too,
+   or the profile will be issued without them and the sandbox will deny at runtime.
+
+Once both are done, `scripts-archive.sh` needs a macOS destination: it hard-codes
+`-destination 'generic/platform=iOS'` and `altool … -t ios`. The export plist also differs —
+`method=app-store-connect` is right for both, but a Mac upload is `-t macos`.
+
+Neither step is something a build can do for itself, and both fail loudly rather than silently,
+which is the one merciful thing about them.
+
 ## Order
 
 Follows §9, with the extraction inserted as its own step because it is the one that can break the
