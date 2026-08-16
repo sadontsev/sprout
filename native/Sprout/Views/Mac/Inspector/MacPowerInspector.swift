@@ -15,6 +15,18 @@ import SwiftUI
 /// labelled with the span the bars actually cover rather than a day it never saw.
 struct MacPowerInspector: View {
     let model: AppModel
+    /// Does this instance bring its own `ScrollView`?
+    ///
+    /// True in the inspector column, which is its own scrolling region. False when the panes fall
+    /// back INTO the section (`MacInspectorPlacement`), because the section already scrolls and
+    /// nesting one scroll view in another gives an ambiguous height and two scrollbars.
+    ///
+    /// A parameter rather than a computed `panes` property read from outside, because a SwiftUI
+    /// view's `@State` and `@Environment` are only established once it is installed in the
+    /// hierarchy — reading `SomeInspector(model:).panes` from another view would evaluate those
+    /// wrappers before SwiftUI has set them up.
+    var scrolls = true
+
 
     @Environment(\.palette) private var c
     @Environment(\.metrics) private var m
@@ -46,7 +58,7 @@ struct MacPowerInspector: View {
     private static let chartHeight: CGFloat = 74
 
     var body: some View {
-        ScrollView {
+        MacInspectorScroll(scrolls: scrolls) {
             VStack(alignment: .leading, spacing: m.cardGap) {
                 drawCard
                 tariffCard

@@ -13,6 +13,18 @@ import SwiftUI
 struct MacExploreInspector: View {
     let model: AppModel
     let explore: ExploreModel
+    /// Does this instance bring its own `ScrollView`?
+    ///
+    /// True in the inspector column, which is its own scrolling region. False when the panes fall
+    /// back INTO the section (`MacInspectorPlacement`), because the section already scrolls and
+    /// nesting one scroll view in another gives an ambiguous height and two scrollbars.
+    ///
+    /// A parameter rather than a computed `panes` property read from outside, because a SwiftUI
+    /// view's `@State` and `@Environment` are only established once it is installed in the
+    /// hierarchy — reading `SomeInspector(model:).panes` from another view would evaluate those
+    /// wrappers before SwiftUI has set them up.
+    var scrolls = true
+
 
     @Environment(\.palette) private var c
     @Environment(\.metrics) private var m
@@ -74,7 +86,7 @@ struct MacExploreInspector: View {
     private var footnote: CGFloat { MacExploreType.footnote(m) }
 
     var body: some View {
-        ScrollView {
+        MacInspectorScroll(scrolls: scrolls) {
             VStack(alignment: .leading, spacing: m.cardGap) {
                 if let id = selectedId {
                     cover

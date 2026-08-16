@@ -225,3 +225,59 @@ final class MacPrinterCameraTests: XCTestCase {
 }
 
 #endif
+
+#if os(macOS)
+/// Where the inspector's panes live, and why the camera's answer must match.
+///
+/// The camera tile is drawn INSIDE `MacPrinterInspector`, and those panes now fall back into the
+/// section when the inspector is hidden. So two rules decide one picture: `MacInspectorPlacement`
+/// says which surface draws the panes, and `MacCameraPlacement` says which surface may stream. If
+/// they ever disagree the tile is rendered on one surface while believing the other owns it — and
+/// `mayStream` returns false, so the camera goes black in exactly the case the fallback exists for.
+final class MacInspectorPlacementTests: XCTestCase {
+
+    func testPanesFollowTheInspector() {
+        XCTAssertEqual(MacInspectorPlacement.owner(inspectorVisible: true), .column)
+        XCTAssertEqual(MacInspectorPlacement.owner(inspectorVisible: false), .section)
+    }
+
+    /// The coupling itself. Both rules read one fact and must reach the same conclusion about it.
+    func testTheCameraIsWhereverThePanesAre() {
+        for visible in [true, false] {
+            let panes = MacInspectorPlacement.owner(inspectorVisible: visible)
+            let camera = MacCameraPlacement.owner(inspectorVisible: visible)
+            let agree = (panes == .column && camera == .inspector)
+                     || (panes == .section && camera == .section)
+            XCTAssertTrue(agree, "inspectorVisible: \(visible) — panes \(panes), camera \(camera)")
+        }
+    }
+
+    /// And the consequence: on whichever surface the panes land, that tile may stream.
+    func testTheTileThatIsDrawnIsTheTileThatMayStream() {
+        for visible in [true, false] {
+            let surface = MacCameraPlacement.owner(inspectorVisible: visible)
+            XCTAssertTrue(
+                MacCameraPlacement.mayStream(surface: surface,
+                                             cameraPossible: true,
+                                             windowHasClaim: false,
+                                             inspectorVisible: visible),
+                "the drawn tile must be the streaming one (inspectorVisible: \(visible))"
+            )
+        }
+    }
+
+    /// Exactly one, still. A fallback that leaves both live is two upstream connections per printer.
+    func testTheOtherSurfaceNeverStreams() {
+        for visible in [true, false] {
+            let owner = MacCameraPlacement.owner(inspectorVisible: visible)
+            let other: MacCameraTileSurface = owner == .inspector ? .section : .inspector
+            XCTAssertFalse(
+                MacCameraPlacement.mayStream(surface: other,
+                                             cameraPossible: true,
+                                             windowHasClaim: false,
+                                             inspectorVisible: visible)
+            )
+        }
+    }
+}
+#endif

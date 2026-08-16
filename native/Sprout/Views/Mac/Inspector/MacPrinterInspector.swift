@@ -20,12 +20,24 @@ import SwiftUI
 /// saves the frame the tile has already decoded rather than asking the server for another.
 struct MacPrinterInspector: View {
     let model: AppModel
+    /// Does this instance bring its own `ScrollView`?
+    ///
+    /// True in the inspector column, which is its own scrolling region. False when the panes fall
+    /// back INTO the section (`MacInspectorPlacement`), because the section already scrolls and
+    /// nesting one scroll view in another gives an ambiguous height and two scrollbars.
+    ///
+    /// A parameter rather than a computed `panes` property read from outside, because a SwiftUI
+    /// view's `@State` and `@Environment` are only established once it is installed in the
+    /// hierarchy — reading `SomeInspector(model:).panes` from another view would evaluate those
+    /// wrappers before SwiftUI has set them up.
+    var scrolls = true
 
     /// Spelled out because `selection` below is a `private` stored property with a default, which
     /// makes the synthesised memberwise initialiser private too — `MacInspectorContent` builds this
-    /// view with only `model`.
-    init(model: AppModel) {
+    /// view from outside the file.
+    init(model: AppModel, scrolls: Bool = true) {
         self.model = model
+        self.scrolls = scrolls
     }
 
     @Environment(\.palette) private var c
@@ -40,13 +52,22 @@ struct MacPrinterInspector: View {
     private var caption: CGFloat { MacPrinterType.caption(m) }
 
     var body: some View {
-        ScrollView {
+        MacInspectorScroll(scrolls: scrolls) {
             VStack(alignment: .leading, spacing: m.cardGap) {
                 header
-                // The same tile the section falls back to when this column is hidden — one view, so
-                // the two surfaces cannot drift apart in behaviour or in copy. It asks
-                // `MacCameraPlacement` whether it may stream; being rendered is not the permission.
-                MacPrinterCameraTile(model: model, surface: .inspector)
+                // One tile, drawn on whichever surface currently owns the panes.
+                //
+                // The surface is DERIVED rather than hard-coded `.inspector`: these panes are also
+                // rendered inside the section when the inspector is hidden, and a tile that still
+                // called itself `.inspector` there would never match the owner, so the camera would
+                // go dark in exactly the case the fallback exists to cover. Asking
+                // `MacCameraPlacement` for both the placement and the streaming permission is what
+                // keeps "which tile is drawn" and "which tile may stream" from ever disagreeing.
+                MacPrinterCameraTile(
+                    model: model,
+                    surface: MacCameraPlacement.owner(inspectorVisible: model.inspectorVisible),
+                    maxWidth: scrolls ? nil : MacPrinterCameraTile.contentColumnWidth
+                )
                 triageCard
                 jobCard
                 recentCard

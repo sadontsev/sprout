@@ -13,6 +13,18 @@ import SwiftUI
 /// simply stops resolving, and the panel says so instead of showing a stale card.
 struct MacFilesInspector: View {
     let model: AppModel
+    /// Does this instance bring its own `ScrollView`?
+    ///
+    /// True in the inspector column, which is its own scrolling region. False when the panes fall
+    /// back INTO the section (`MacInspectorPlacement`), because the section already scrolls and
+    /// nesting one scroll view in another gives an ambiguous height and two scrollbars.
+    ///
+    /// A parameter rather than a computed `panes` property read from outside, because a SwiftUI
+    /// view's `@State` and `@Environment` are only established once it is installed in the
+    /// hierarchy — reading `SomeInspector(model:).panes` from another view would evaluate those
+    /// wrappers before SwiftUI has set them up.
+    var scrolls = true
+
 
     @Environment(\.palette) private var c
     @Environment(\.metrics) private var m
@@ -42,7 +54,7 @@ struct MacFilesInspector: View {
     }
 
     var body: some View {
-        ScrollView {
+        MacInspectorScroll(scrolls: scrolls) {
             Group {
                 if store.source == .printer {
                     if let pf = selectedSd { printerDetail(pf) } else { placeholder }

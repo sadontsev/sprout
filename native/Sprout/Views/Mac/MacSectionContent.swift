@@ -111,14 +111,18 @@ struct MacInspectorContent: View {
     let explore: ExploreModel
     let section: TabKey
 
+    /// False when these panes are being drawn INSIDE the section's scroll view — see
+    /// `MacInspectorPlacement`. The six views are the same views either way; only the wrapper goes.
+    var scrolls = true
+
     var body: some View {
         switch section {
-        case .printer: MacPrinterInspector(model: model)
-        case .library: MacFilesInspector(model: model)
-        case .jobs:    MacJobsInspector(model: model)
-        case .ams:     MacHardwareInspector(model: model)
-        case .power:   MacPowerInspector(model: model)
-        case .explore: MacExploreInspector(model: model, explore: explore)
+        case .printer: MacPrinterInspector(model: model, scrolls: scrolls)
+        case .library: MacFilesInspector(model: model, scrolls: scrolls)
+        case .jobs:    MacJobsInspector(model: model, scrolls: scrolls)
+        case .ams:     MacHardwareInspector(model: model, scrolls: scrolls)
+        case .power:   MacPowerInspector(model: model, scrolls: scrolls)
+        case .explore: MacExploreInspector(model: model, explore: explore, scrolls: scrolls)
         }
     }
 }

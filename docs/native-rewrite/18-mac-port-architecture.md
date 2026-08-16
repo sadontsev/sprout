@@ -270,6 +270,34 @@ DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
 
 The iOS lines in `CLAUDE.md` are unchanged and must stay green throughout.
 
+### The inspector falls back into the section (Printer only)
+
+§1 auto-hides the inspector below 1180 pt and `⌥⌘I` hides it at any width. Its panes went with it
+and nothing took their place. The camera got a fallback first, because that was the symptom that got
+noticed — which fixed one card and left the triage card, the running job's facts and the recent
+prints disappearing exactly as before.
+
+`MacInspectorPlacement.owner(inspectorVisible:)` now answers *"column, or beneath the section?"* for
+the whole set, deliberately the same shape as `MacCameraPlacement.owner` so one fact has one reader.
+The camera tile travels **inside** the panes, so the bespoke camera fallback in `MacPrinterSection`
+is gone: two mechanisms that had to agree about one fact became one. The coupling is tested — if the
+two rules ever diverge the tile is drawn on one surface while believing the other owns it, and
+`mayStream` returns false, so the camera goes black in precisely the case the fallback exists for.
+
+Each inspector takes `scrolls`, and `MacInspectorScroll` applies it. A parameter rather than a
+`panes` property read from outside, because a SwiftUI view's `@State` and `@Environment` are only
+established once it is installed in the hierarchy — `SomeInspector(model:).panes` would evaluate
+those wrappers before SwiftUI has set them up.
+
+**This is Printer-only, and the reason is structural rather than a decision to finish later.**
+Printer is the one section that is a single top-level `ScrollView` over a stack of cards, so panes
+append to it naturally. The other five end in a greedy scrolling child — Files' grid, Jobs' history,
+Hardware's segmented panes, Power's socket table, Explore's grid — and appending a variable-height
+block after `maxHeight: .infinity` either gets clipped or permanently steals height from the thing
+the section is for. Making those work means a different mechanism (a bottom drawer with its own
+scroll, or the overlay presentation `MacCollapse` originally described), not the same one applied
+five more times. Until then `⌥⌘I` still reveals the column at any width on every section.
+
 ## Shipping
 
 **iOS ships today.** `./native/scripts-archive.sh --upload` archives, exports, validates and

@@ -77,24 +77,26 @@ struct MacPrinterSection: View {
 
                 if model.lanMode == .off { lanBanner }
 
-                // The camera, when the inspector is not on screen to hold it.
+                // The inspector's panes, when there is no column to hold them.
                 //
-                // Asked through `MacCameraPlacement.owner` rather than by reading
-                // `model.inspectorVisible` a second time here: this decides whether the tile is
-                // DRAWN and the tile itself decides whether it may STREAM, and if those two ever
-                // read the fact separately they can disagree — which is two live tiles for one
-                // printer, the exact thing `MacCameraOwnership` exists to prevent.
+                // The camera used to have a fallback here and nothing else did, which fixed the one
+                // symptom that got noticed and left the triage card, the running job's facts and the
+                // recent prints disappearing exactly as before. The camera tile now travels inside
+                // these panes, so the two mechanisms that had to agree about one fact are one.
                 //
-                // Below the two warning blocks rather than directly under the hero: the cooldown
-                // card and the LAN banner are things the user has to act on, and a 350 pt picture
-                // pushing them down the page would be a fallback promoting itself over the blocks
-                // it was inserted beneath.
-                if MacCameraPlacement.owner(inspectorVisible: model.inspectorVisible) == .section {
-                    MacPrinterCameraTile(
-                        model: model,
-                        surface: .section,
-                        maxWidth: MacPrinterCameraTile.contentColumnWidth
-                    )
+                // `scrolls: false` because this is already inside the section's scroll view.
+                // Constrained to `sectionWidth` because every card in here is laid out for a 320 pt
+                // column, and a 900 pt-wide card holding one short line is not the same design.
+                //
+                // Above `temperatures` rather than at the very bottom: these panes are what the user
+                // would have been looking at beside the hero, and burying them under every readout
+                // on the page would make the fallback technically true and practically useless.
+                if MacInspectorPlacement.owner(inspectorVisible: model.inspectorVisible) == .section {
+                    // The pane view directly, not `MacInspectorContent`: the router exists to pick
+                    // one of six from a runtime `section`, and here the section is known. Going
+                    // through it would also demand an `ExploreModel` this view has no reason to hold.
+                    MacPrinterInspector(model: model, scrolls: false)
+                        .frame(maxWidth: MacInspectorPlacement.sectionWidth, alignment: .leading)
                 }
 
                 temperatures
