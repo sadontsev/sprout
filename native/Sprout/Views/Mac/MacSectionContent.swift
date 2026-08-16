@@ -19,6 +19,13 @@ struct MacSectionContent: View {
             case .explore: MacExploreSection(model: model, explore: explore)
             }
         }
+        // The inspector's panes, when there is no column to hold them (`MacInspectorPlacement`).
+        //
+        // Here rather than in each of the five sections that need it: five copies of "and also show
+        // the panes when the inspector is hidden" is five chances for one to read the wrong flag,
+        // and the one that got it wrong would be indistinguishable from the one not yet done. The
+        // modifier is inert on Printer, which hosts its panes inline instead.
+        .macInspectorDrawer(model: model, explore: explore, section: section)
         // Store lifetimes are driven HERE, not by each section.
         //
         // `AppModel` deliberately has no `startStores()` — polling belongs to whoever can see the

@@ -91,7 +91,8 @@ struct MacPrinterSection: View {
                 // Above `temperatures` rather than at the very bottom: these panes are what the user
                 // would have been looking at beside the hero, and burying them under every readout
                 // on the page would make the fallback technically true and practically useless.
-                if MacInspectorPlacement.owner(inspectorVisible: model.inspectorVisible) == .section {
+                if MacInspectorPlacement.shows(.inline, section: .printer,
+                                               inspectorVisible: model.inspectorVisible) {
                     // The pane view directly, not `MacInspectorContent`: the router exists to pick
                     // one of six from a runtime `section`, and here the section is known. Going
                     // through it would also demand an `ExploreModel` this view has no reason to hold.

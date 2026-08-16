@@ -281,3 +281,58 @@ final class MacInspectorPlacementTests: XCTestCase {
     }
 }
 #endif
+
+#if os(macOS)
+/// Which host shows the panes, and the rule that exactly one of them ever does.
+final class MacInspectorDrawerTests: XCTestCase {
+
+    private let all: [TabKey] = [.printer, .library, .jobs, .ams, .power, .explore]
+
+    /// The host follows the section's LAYOUT. Printer is the single card-stack scroll view; the rest
+    /// end in a greedy scrolling child that owns the viewport.
+    func testOnlyPrinterHostsThePanesInline() {
+        XCTAssertEqual(MacInspectorPlacement.host(for: .printer), .inline)
+        for section in all where section != .printer {
+            XCTAssertEqual(MacInspectorPlacement.host(for: section), .drawer, "\(section)")
+        }
+    }
+
+    /// Nothing falls back while the column is on screen — otherwise the panes are drawn twice, and
+    /// on Explore and Power that means their `.task`s run twice.
+    func testNothingFallsBackWhileTheColumnIsUp() {
+        for section in all {
+            XCTAssertFalse(MacInspectorPlacement.shows(.inline, section: section, inspectorVisible: true))
+            XCTAssertFalse(MacInspectorPlacement.shows(.drawer, section: section, inspectorVisible: true))
+        }
+    }
+
+    /// And when it is down, exactly one host takes them — never none, never both.
+    func testExactlyOneHostTakesThemWhenTheColumnIsGone() {
+        for section in all {
+            let inline = MacInspectorPlacement.shows(.inline, section: section, inspectorVisible: false)
+            let drawer = MacInspectorPlacement.shows(.drawer, section: section, inspectorVisible: false)
+            XCTAssertNotEqual(inline, drawer, "\(section): inline \(inline), drawer \(drawer)")
+        }
+    }
+
+    // MARK: - Height
+
+    /// Proportional in the middle, so the drawer scales with the window instead of being a fixed
+    /// strip on a large display and half the section on a small one.
+    func testTheDrawerTakesAShareOfTheHeight() {
+        XCTAssertEqual(MacInspectorPlacement.drawerHeight(available: 600), 252, accuracy: 0.5)
+    }
+
+    /// Clamped at both ends: never more than 320, never so little that it is a header and a sliver.
+    func testTheShareIsClampedBothWays() {
+        XCTAssertEqual(MacInspectorPlacement.drawerHeight(available: 2000), 320)
+        XCTAssertEqual(MacInspectorPlacement.drawerHeight(available: 200), 140)
+    }
+
+    /// At the window's own minimum height (§1: 680) the section still keeps the majority.
+    func testTheSectionKeepsMostOfTheSmallestWindow() {
+        let h = MacInspectorPlacement.drawerHeight(available: 680)
+        XCTAssertLessThan(h, 680 / 2, "the drawer must not take half the smallest allowed window")
+    }
+}
+#endif

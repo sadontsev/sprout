@@ -289,14 +289,37 @@ Each inspector takes `scrolls`, and `MacInspectorScroll` applies it. A parameter
 established once it is installed in the hierarchy — `SomeInspector(model:).panes` would evaluate
 those wrappers before SwiftUI has set them up.
 
-**This is Printer-only, and the reason is structural rather than a decision to finish later.**
-Printer is the one section that is a single top-level `ScrollView` over a stack of cards, so panes
-append to it naturally. The other five end in a greedy scrolling child — Files' grid, Jobs' history,
-Hardware's segmented panes, Power's socket table, Explore's grid — and appending a variable-height
-block after `maxHeight: .infinity` either gets clipped or permanently steals height from the thing
-the section is for. Making those work means a different mechanism (a bottom drawer with its own
-scroll, or the overlay presentation `MacCollapse` originally described), not the same one applied
-five more times. Until then `⌥⌘I` still reveals the column at any width on every section.
+**Two hosts, and which one a section gets follows its own layout.** `MacInspectorPlacement.host(for:)`
+names the fact:
+
+- **`.inline`** — Printer only. It is the one section that is a single top-level `ScrollView` over a
+  stack of cards, so the panes simply join the stack and scroll with it.
+- **`.drawer`** — the other five. Each ends in a greedy scrolling child that owns the viewport —
+  Files' grid, Jobs' history, Hardware's segmented panes, Power's socket table, Explore's grid — and
+  a variable-height block appended after `maxHeight: .infinity` is either clipped to nothing or
+  permanently takes the room the section exists for. Those get a bounded, separately-scrolling
+  region pinned to the bottom instead, with a header that names it and states `⌥⌘I`.
+
+The two look inconsistent side by side and are not: a drawer on Printer would be a second scroll
+region inside a page that already scrolls as one.
+
+`MacInspectorPlacement.shows(_:section:inspectorVisible:)` is the single predicate **both** hosts
+ask — `MacPrinterSection` about `.inline`, `MacInspectorDrawer` about `.drawer`. If each assembled
+the answer from `owner` and `host` separately they could both say yes (two copies of the panes, and
+two `.task`s behind them on Explore and Power) or both say no, which is the original
+disappearing-inspector bug returning by a new route. A test asserts exactly one host takes them for
+every section, and that neither does while the column is up.
+
+The drawer's height is proportional with a floor and a ceiling rather than a constant: the window
+minimum is 680 pt, where a fixed 320 would take nearly half the section, and on a tall display a
+fixed 320 is a thin strip under an ocean of grid. Collapse state is `@AppStorage` **per section** —
+the drawer earns its height on Jobs, where the selected print's detail is why you clicked the row,
+and often not on Explore, where the grid is the point.
+
+The modifier is applied once, in `MacSectionContent`, not added to five section files: five copies
+of "and also show the panes when the inspector is hidden" is five chances for one to read the wrong
+flag, and the one that got it wrong would be indistinguishable from the one not yet done.
+
 
 ## Shipping
 
