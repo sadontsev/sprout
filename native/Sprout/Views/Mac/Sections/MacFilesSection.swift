@@ -746,6 +746,9 @@ struct MacFilesSection: View {
         .onTapGesture(count: 2) { requestPrint(f) }
         .onTapGesture { select(f) }
         .contextMenu { fileMenu(f) }
+        // §5.3, the other direction. A promise, so grabbing a 60 MB print does not stall the
+        // gesture — see `MacFileDrag`.
+        .macFileDrag(f, model: model)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(on ? [.isSelected] : [])
     }
@@ -796,6 +799,10 @@ struct MacFilesSection: View {
                         .foregroundStyle(c.t1)
                         .lineLimit(1)
                 }
+                // Dragging out works from list mode too (§5.3). On the name cell rather than the
+                // whole row because `Table` builds each column separately — there is no row view to
+                // attach it to, and the name is the part a user grabs.
+                .macFileDrag(f, model: model)
                 // `Metrics.rowHeight` is the density token for exactly this. SwiftUI has no
                 // row-height modifier on `Table`, so the tallest cell is where it has to be spent —
                 // `minHeight`, never a fixed height, so a row can still grow if a cell needs to.

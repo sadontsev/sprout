@@ -20,7 +20,12 @@ struct MacDropTarget: ViewModifier {
     func body(content: Content) -> some View {
         content
             .dropDestination(for: URL.self) { urls, _ in
-                let accepted = urls.filter(MacDropTarget.accepts)
+                // A drag that started in our own Files grid and was released back over the window
+                // is a CANCELLED drag, not an import. Without this, abandoning a drag over the
+                // window you dragged from re-uploads the file you just exported.
+                let incoming = urls.filter { !MacFileDrag.isOwnExport($0) }
+                guard !incoming.isEmpty else { return true }
+                let accepted = incoming.filter(MacDropTarget.accepts)
                 guard !accepted.isEmpty else {
                     // Rejected explicitly rather than silently. A drop that vanishes reads as a
                     // failed app; naming the four types it takes is the whole remedy.
