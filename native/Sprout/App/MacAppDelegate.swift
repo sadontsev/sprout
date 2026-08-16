@@ -44,7 +44,20 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApplication.shared.registerForRemoteNotifications()
+        // NOT registering for remote notifications, deliberately — see `onDeviceToken` below.
+        //
+        // §0 lists APNs registration as this delegate's second job, and it will be. Today it would
+        // be a call that cannot succeed and whose result nothing reads: the App ID has no Push
+        // Notifications capability for macOS, so the distribution profile omits `aps-environment`
+        // and the registration fails; and no macOS code assigns `onDeviceToken`, so even a token
+        // that arrived would be discarded. Measured on the exported .pkg — the entitlement is
+        // stripped silently, not refused loudly.
+        //
+        // To turn it on: enable Push Notifications for macOS on the App ID, restore
+        // `aps-environment` to Sprout-macOS.entitlements, wire `onDeviceToken` to whatever consumes
+        // it (the Notifications pane, 1d), and uncomment the line below.
+        //
+        //   NSApplication.shared.registerForRemoteNotifications()
         #if DEBUG
         MacWindowProbe.runIfRequested()
         #endif

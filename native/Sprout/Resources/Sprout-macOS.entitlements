@@ -30,16 +30,17 @@
 		<string>group.com.mvks5.bambu</string>
 	</array>
 
-	<!-- Remote notifications. The Mac app registers for APNs the same way iOS does; what it does
-	     NOT have is ActivityKit, so there is no time-sensitive entitlement here — the menu bar
-	     extra is the Mac answer to the Live Activity. -->
-	<key>aps-environment</key>
-	<string>development</string>
+	<!-- `aps-environment` and `com.apple.developer.devicecheck.appattest-environment` are
+	     deliberately ABSENT, and this file used to declare both.
+	     
+	     The App ID has neither capability enabled for macOS, and Xcode's packaging step does not
+	     refuse an entitlement the profile lacks — it SILENTLY FILTERS IT OUT. Verified on the
+	     exported .pkg: the archive succeeded, the signature was valid, and the two keys were simply
+	     gone. A file that asks for something it never receives is worse than one that does not ask,
+	     because it reads as a guarantee.
 
-	<!-- Same reasoning as the iOS entitlements: this declares which of Apple's ATTESTATION
-	     environments a locally-built app talks to, and is unrelated to the APNs environment above.
-	     Canopy's CANOPY_ALLOW_DEVELOPMENT_ATTEST is what accepts the result. -->
-	<key>com.apple.developer.devicecheck.appattest-environment</key>
-	<string>development</string>
+	     Restoring them is: enable Push Notifications and App Attest for macOS on the App ID, put
+	     the two keys back, and re-enable the registration call in MacAppDelegate. Until then macOS
+	     has no remote notifications, which costs nothing today — nothing there consumes a token. -->
 </dict>
 </plist>

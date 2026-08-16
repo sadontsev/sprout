@@ -276,32 +276,38 @@ The iOS lines in `CLAUDE.md` are unchanged and must stay green throughout.
 uploads. Nothing about the Mac port changed that path — the widget is still embedded (see the
 `platformFilter` note above, which is the one thing that nearly broke it silently).
 
-**macOS does not ship yet, and the blockers are account-side, not code-side.** Measured with
-`xcodebuild -destination 'generic/platform=macOS' … archive -allowProvisioningUpdates`:
+**macOS builds, signs and exports a valid App Store package.** With an Apple ID signed into Xcode,
+`-allowProvisioningUpdates` creates the Mac profile itself. Measured on the exported `.pkg`: signed
+`Apple Distribution`, hardened runtime, App Sandbox plus network client/server, user-selected and
+downloads file access, and the app group. No appex, `NSPrincipalClass = NSApplication`, and all four
+document types intact.
+
+**What it cannot do is upload**, and the remaining blocker is one line from `altool --validate-app`:
 
 ```
-error: No Accounts: Add a new account in Accounts settings.
-error: No profiles for 'com.mvks5.bambu' were found: Xcode couldn't find any Mac App
-       Development provisioning profiles matching 'com.mvks5.bambu'.
+ERROR: Cannot determine the Apple ID from Bundle ID 'com.mvks5.bambu' and platform 'MAC_OS'. (12)
 ```
 
-Two separate things, in this order:
+The App Store Connect **app record carries the iOS platform only**. A Mac build cannot be uploaded
+to a record that does not list macOS, whatever the signing says. Adding the macOS platform to the
+existing Sprout record is the one remaining step, and it is the only one nothing local can do.
 
-1. **Sign Xcode into the Apple ID** (Settings → Accounts). `-allowProvisioningUpdates` cannot fetch
-   or create a profile without one — this is the same "No Accounts" wall `scripts-archive.sh`
-   already checks for before it archives.
-2. **Enable the App ID `com.mvks5.bambu` for macOS** on the developer portal. The identifier exists
-   for iOS only, so there is no Mac profile to find. The macOS entitlements the app declares —
-   App Sandbox, `network.client`, `network.server`, `files.user-selected.read-write`,
-   `files.downloads.read-write`, the app group, and App Attest — all have to be enabled on it too,
-   or the profile will be issued without them and the sandbox will deny at runtime.
+Validate before uploading, always: this was caught for the cost of a validation call rather than a
+spent build number.
 
-Once both are done, `scripts-archive.sh` needs a macOS destination: it hard-codes
-`-destination 'generic/platform=iOS'` and `altool … -t ios`. The export plist also differs —
-`method=app-store-connect` is right for both, but a Mac upload is `-t macos`.
+### Two capabilities are silently absent on macOS
 
-Neither step is something a build can do for itself, and both fail loudly rather than silently,
-which is the one merciful thing about them.
+`aps-environment` and `com.apple.developer.devicecheck.appattest-environment` were declared in
+`Sprout-macOS.entitlements` and **stripped from the signed package without an error**. The App ID has
+neither capability enabled for macOS, and Xcode's packaging step filters an entitlement the profile
+lacks rather than refusing it — the archive succeeded, the signature was valid, and the keys were
+simply gone.
+
+Both have been removed from the entitlements file, and `MacAppDelegate` no longer calls
+`registerForRemoteNotifications()`. Nothing on macOS assigns `onDeviceToken`, so the registration
+could not have succeeded and its result would not have been read. Restoring it is: enable Push
+Notifications and App Attest for macOS on the App ID, put the two keys back, wire `onDeviceToken` to
+the Notifications pane (1d), and uncomment the call — all four, or it is dead again.
 
 ## Order
 
