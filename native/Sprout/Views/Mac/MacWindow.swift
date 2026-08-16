@@ -33,6 +33,19 @@ struct MacWindow: View {
     /// Stored as the raw string because `TabKey`'s raw values are already the persisted format.
     @AppStorage("mac.section") private var sectionRaw = TabKey.printer.rawValue
     @AppStorage("mac.inspector") private var inspectorPreferred = true
+
+    /// Has the stored inspector preference been cleared once, to undo the auto-hide's damage?
+    ///
+    /// Builds 22–26 wrote `mac.inspector = false` from the width transition, not from the user — see
+    /// `inspectorIsColumn`. Anyone whose window was ever narrow enough to trip it is now carrying a
+    /// `false` that nothing will lift, on every launch, at every width, with no visible cause.
+    /// Shipping the fix alone leaves them exactly where they were.
+    ///
+    /// The two cases are indistinguishable on disk: a `false` written by `⌥⌘I` and a `false` written
+    /// by the bug look identical. So this resets it once for everybody rather than guessing. It
+    /// costs a user who genuinely wanted the inspector off one keystroke to turn it off again, and
+    /// it costs a user hit by the bug nothing at all — the asymmetry is the whole argument.
+    @AppStorage("mac.inspector.healed") private var healedInspectorPreference = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var windowWidth: CGFloat = 1440
 
@@ -47,19 +60,75 @@ struct MacWindow: View {
 
     private var collapse: MacCollapse { .forWidth(windowWidth) }
 
-    /// What the user's preference was before the window got too narrow to honour it, so widening
-    /// again restores what they had rather than leaving the inspector off for good.
-    @State private var inspectorPreferredWhenWide: Bool?
-
-    /// The inspector's visibility.
+    /// Is the inspector on screen **as a column** right now?
     ///
-    /// Deliberately still just the preference: the toggle must keep working at any width, because a
-    /// control that silently does nothing is the failure mode this codebase keeps rediscovering.
-    /// The WIDTH rule is applied as a transition in `onChange` below — auto-hide on the way down,
-    /// restore on the way up — rather than as a condition here, which would have made `⌥⌘I` dead
-    /// below 1180.
+    /// A pure function of the user's wish and the width — never a stored third thing.
+    ///
+    /// It used to be the preference alone, with the width applied as a `onChange` transition that
+    /// wrote `inspectorPreferred = false` on the way down and restored it on the way up. That was
+    /// wrong in a way no test caught and no short session revealed: **the auto-hide wrote into
+    /// `@AppStorage` (persisted) while the value to restore lived in `@State` (not persisted).** One
+    /// window narrow enough to trip it — split screen, Stage Manager, a small external display —
+    /// and the preference was `false` on disk with nothing left to undo it. Every later launch, at
+    /// any width, opened with no inspector and no way to know why. Measured: `pref=false` at 1440 pt
+    /// on the first evaluation of a fresh session, before any transition could have run.
+    ///
+    /// The original objection to computing it — that `⌥⌘I` would be dead below the threshold — is
+    /// answered by `inspectorToggle` below rather than by storing state. The shortcut now toggles
+    /// whichever surface is actually carrying the panes.
+    private var inspectorIsColumn: Bool {
+        MacInspectorPlacement.columnShown(preference: inspectorPreferred,
+                                          fitsAsColumn: collapse.inspectorFitsAsColumn)
+    }
+
+    /// What `.inspector(isPresented:)` binds to.
+    ///
+    /// The setter **ignores writes made while the column cannot fit**, and that guard is the second
+    /// half of the fix above. Removing the `onChange` transition was not enough: SwiftUI's own
+    /// `.inspector` writes `false` back through this binding when it hides itself, so below the
+    /// threshold the preference was still being overwritten — same corruption, different author.
+    /// Measured after the first fix: `pref` went `true → false` on a 1120 pt window with nobody
+    /// touching anything.
+    ///
+    /// So only a decision made while the column is actually available counts as the user's. The
+    /// width already decides visibility through `inspectorIsColumn`; it has no business also
+    /// deciding what the user wants.
     private var inspectorShown: Binding<Bool> {
-        Binding(get: { inspectorPreferred }, set: { inspectorPreferred = $0 })
+        Binding(
+            get: { inspectorIsColumn },
+            set: { want in
+                guard MacInspectorPlacement.acceptsPreferenceWrite(
+                        fitsAsColumn: collapse.inspectorFitsAsColumn) else { return }
+                inspectorPreferred = want
+            }
+        )
+    }
+
+    /// What `⌥⌘I` drives — and it is deliberately NOT the same binding.
+    ///
+    /// Above the threshold the panes are a column, so the shortcut toggles the column. Below it
+    /// there is no column to toggle and the panes are in the drawer (or inline, on Printer), so it
+    /// toggles that instead. Same promise either way — "show or hide the inspector" — and it is
+    /// never a control that looks live and does nothing.
+    ///
+    /// Printer hosts its panes inline in its own scroll view and has no collapse of its own, so
+    /// below the threshold there the shortcut still writes the preference. That is honest: on
+    /// Printer the panes are always present once the column is gone.
+    private var inspectorToggle: Binding<Bool> {
+        Binding(
+            get: {
+                if collapse.inspectorFitsAsColumn { return inspectorPreferred }
+                guard MacInspectorPlacement.host(for: section) == .drawer else { return inspectorPreferred }
+                return !MacDrawerCollapse.isCollapsed(section)
+            },
+            set: { want in
+                if collapse.inspectorFitsAsColumn || MacInspectorPlacement.host(for: section) != .drawer {
+                    inspectorPreferred = want
+                } else {
+                    MacDrawerCollapse.set(!want, for: section)
+                }
+            }
+        )
     }
 
     /// Navigate for a request from outside the view tree, and clear the ones nothing else will.
@@ -81,7 +150,7 @@ struct MacWindow: View {
     /// Mirror the inspector's visibility onto the model, so a section can compensate for what the
     /// inspector was carrying — see `AppModel.inspectorVisible`.
     private func publishInspectorVisibility() {
-        model.inspectorVisible = inspectorPreferred
+        model.inspectorVisible = inspectorIsColumn
     }
 
     var body: some View {
@@ -108,30 +177,29 @@ struct MacWindow: View {
         .background(c.bg)
         .frame(minWidth: 1080, minHeight: 680)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
-        .onAppear { publishInspectorVisibility() }
-        .onChange(of: inspectorPreferred) { _, _ in publishInspectorVisibility() }
+        #if DEBUG
+        .onChange(of: "\(windowWidth)|\(inspectorPreferred)|\(model.inspectorVisible)", initial: true) { _, v in
+            if ProcessInfo.processInfo.environment["SPROUT_INSPECTOR_LOG"] != nil {
+                FileHandle.standardError.write(Data("INSPECTOR w/pref/visible = \(v)\n".utf8))
+            }
+        }
+        #endif
+        .onAppear {
+            // Before the first publish, so the healed value is the one that reaches `AppModel`.
+            if !healedInspectorPreference {
+                healedInspectorPreference = true
+                inspectorPreferred = true
+            }
+            publishInspectorVisibility()
+        }
+        .onChange(of: inspectorIsColumn) { _, _ in publishInspectorVisibility() }
         .onChange(of: collapse.sidebarFitsAsColumn) { _, fits in
             columnVisibility = fits ? .all : .detailOnly
         }
-        // §1's first collapse rule. Without this `MacCollapse.inspectorFitsAsColumn` had no consumer
-        // at all — the predicate was written, documented and tested, and the inspector never
-        // actually hid. Found by looking at a screenshot of the running app, not by reading.
-        //
-        // A transition rather than a condition on `inspectorShown`: making the binding false below
-        // the threshold would leave `⌥⌘I` looking live and doing nothing, which is the exact bug
-        // §Recurring-bug is about.
-        .onChange(of: collapse.inspectorFitsAsColumn) { _, fits in
-            if fits {
-                // Restore what they had before it was taken away — but only if it WAS taken away.
-                if let remembered = inspectorPreferredWhenWide {
-                    inspectorPreferred = remembered
-                    inspectorPreferredWhenWide = nil
-                }
-            } else if inspectorPreferred {
-                inspectorPreferredWhenWide = true
-                inspectorPreferred = false
-            }
-        }
+        // §1's first collapse rule is now `inspectorIsColumn`, a condition rather than the
+        // `onChange` transition that used to live here. The transition is what corrupted the stored
+        // preference — see `inspectorIsColumn` — and a condition cannot: nothing but `⌥⌘I` writes
+        // `inspectorPreferred` any more, so the width can never leave a mark that outlives it.
         // Navigate for a Spotlight hit / `bambu:` URL / Dock-opened file (§5.4). Only the SECTION
         // half is consumed here — the request itself stays set so the section that lands can act on
         // the rest of it (selecting the file) and clear it. Splitting the consumption this way is
@@ -155,7 +223,7 @@ struct MacWindow: View {
             MacToolbar(
                 model: model,
                 section: sectionBinding,
-                inspectorShown: inspectorShown,
+                inspectorShown: inspectorToggle,
                 needsSectionPopup: collapse.needsToolbarSectionPopup,
                 onOpenCamera: { openWindow(id: "camera", value: model.printerId) },
                 onAddFromFiles: { MacFileImport.present(model: model) },
@@ -190,7 +258,7 @@ struct MacWindow: View {
         // §10: ⌘R refetches the CURRENT section and nothing else.
         .focusedSceneValue(\.refreshSection, RefreshAction { await MacSectionRefresh.run(section, model: model, explore: explore) })
         .focusedSceneValue(\.selectedSection, sectionBinding)
-        .focusedSceneValue(\.inspectorToggle, inspectorShown)
+        .focusedSceneValue(\.inspectorToggle, inspectorToggle)
     }
 
     @Environment(\.openWindow) private var openWindow

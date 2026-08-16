@@ -77,6 +77,27 @@ enum MacInspectorPlacement {
         min(320, max(140, available * 0.42))
     }
 
+    // MARK: - The stored preference, and what may write it
+
+    /// Is the inspector on screen as a column?
+    ///
+    /// A pure function of the user's wish and the width, with no third stored thing between them.
+    /// The width used to be applied as a transition that wrote the preference — see
+    /// `MacWindow.inspectorIsColumn` for what that cost.
+    nonisolated static func columnShown(preference: Bool, fitsAsColumn: Bool) -> Bool {
+        preference && fitsAsColumn
+    }
+
+    /// May a write to the inspector binding change the STORED preference?
+    ///
+    /// Only when the column could actually be shown. Below the threshold SwiftUI's own `.inspector`
+    /// writes `false` back through the binding as it hides itself, and honouring that is
+    /// indistinguishable from the user asking for it — which is how a narrow window came to leave a
+    /// permanent `false` on disk.
+    nonisolated static func acceptsPreferenceWrite(fitsAsColumn: Bool) -> Bool {
+        fitsAsColumn
+    }
+
     /// The width the panes are held to when they fall back into the content column.
     ///
     /// The column is 280–400 pt and every card in it is laid out for that. The content column is at

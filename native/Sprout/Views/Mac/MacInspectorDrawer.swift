@@ -17,6 +17,24 @@ import SwiftUI
 /// column does, so there is no parallel copy to keep in step, and the two are mutually exclusive by
 /// `MacInspectorPlacement.owner` — which matters beyond tidiness on Explore and Power, whose panes
 /// own `.task`s that would otherwise run twice.
+/// Where the drawer's per-section collapse lives.
+///
+/// Shared rather than private to the modifier because `⌥⌘I` has to reach it: below the threshold
+/// there is no column for that shortcut to toggle, and a shortcut that silently does nothing is the
+/// failure this codebase keeps rediscovering. `MacWindow` writes here; the drawer's `@AppStorage`
+/// observes the same key and re-renders.
+enum MacDrawerCollapse {
+    static func key(_ section: TabKey) -> String { "mac.drawer.collapsed.\(section.rawValue)" }
+
+    static func isCollapsed(_ section: TabKey) -> Bool {
+        UserDefaults.standard.bool(forKey: key(section))
+    }
+
+    static func set(_ collapsed: Bool, for section: TabKey) {
+        UserDefaults.standard.set(collapsed, forKey: key(section))
+    }
+}
+
 struct MacInspectorDrawer: ViewModifier {
     let model: AppModel
     let explore: ExploreModel
@@ -44,7 +62,7 @@ struct MacInspectorDrawer: ViewModifier {
         self.model = model
         self.explore = explore
         self.section = section
-        _collapsed = AppStorage(wrappedValue: false, "mac.drawer.collapsed.\(section.rawValue)")
+        _collapsed = AppStorage(wrappedValue: false, MacDrawerCollapse.key(section))
     }
 
     private var shows: Bool {

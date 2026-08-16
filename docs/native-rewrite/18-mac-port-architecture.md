@@ -321,6 +321,44 @@ of "and also show the panes when the inspector is hidden" is five chances for on
 flag, and the one that got it wrong would be indistinguishable from the one not yet done.
 
 
+### A window width may never write the stored inspector preference
+
+Builds 22–26 hid the inspector **permanently** after a single narrow window, and the cause was
+written twice, by two different authors of the same write.
+
+First, §1's collapse rule was an `onChange` transition: on the way down it set
+`inspectorPreferred = false`, and on the way up it restored the old value from
+`inspectorPreferredWhenWide`. But `inspectorPreferred` is `@AppStorage` and `inspectorPreferredWhenWide`
+is `@State` — **the damage persisted and the repair did not.** One window narrow enough to trip it
+(split screen, Stage Manager, a small external display) and the preference was `false` on disk with
+nothing left to lift it: every later launch, at every width, opened with no inspector and no visible
+cause. Measured on a fresh session: `pref=false` at 1440 pt on the first evaluation, before any
+transition could have run.
+
+Removing the transition was not enough. **SwiftUI's own `.inspector` writes `false` back through the
+binding when it hides itself**, so the preference was still overwritten below the threshold — same
+corruption, different author. Measured after the first fix: `pref` went `true → false` on a 1120 pt
+window with nobody touching anything.
+
+Both halves are now stated as pure rules and tested:
+
+- `MacInspectorPlacement.columnShown(preference:fitsAsColumn:)` — the column is the wish AND the
+  room, with no third stored thing between them.
+- `MacInspectorPlacement.acceptsPreferenceWrite(fitsAsColumn:)` — a write only counts as the user's
+  when the column could actually have been shown. The width decides visibility; it has no business
+  also deciding what the user wants.
+
+A one-time `mac.inspector.healed` flag clears the stored value once, because a `false` written by
+`⌥⌘I` and one written by the bug are indistinguishable on disk. It costs a user who genuinely wanted
+it off one keystroke; it costs a user hit by the bug nothing. That asymmetry is the whole argument.
+
+`⌥⌘I` is bound to a **different** binding from `.inspector(isPresented:)` for this reason: above the
+threshold it toggles the column, below it toggles the drawer's collapse. Same promise either way,
+and never a shortcut that looks live and does nothing.
+
+The `SPROUT_INSPECTOR_LOG` env var (DEBUG) prints `width|preference|visible` on every change. It is
+what turned three wrong theories into one measurement, twice.
+
 ## Shipping
 
 **iOS ships today.** `./native/scripts-archive.sh --upload` archives, exports, validates and

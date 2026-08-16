@@ -336,3 +336,59 @@ final class MacInspectorDrawerTests: XCTestCase {
     }
 }
 #endif
+
+#if os(macOS)
+/// The stored inspector preference, and the rule that a WINDOW WIDTH may never change it.
+///
+/// Builds 22–26 got this wrong twice over, by two different authors of the same write. First an
+/// `onChange` transition wrote `inspectorPreferred = false` on the way down and restored it from
+/// `@State` on the way up — so the damage persisted and the repair did not. Then, with the
+/// transition removed, SwiftUI's own `.inspector` wrote `false` back through the binding as it hid
+/// itself. Either way one narrow window — split screen, Stage Manager, a small display — left a
+/// `false` on disk that no later launch would lift, at any width, with no visible cause.
+final class MacInspectorPreferenceTests: XCTestCase {
+
+    func testTheColumnNeedsBothTheWishAndTheRoom() {
+        XCTAssertTrue(MacInspectorPlacement.columnShown(preference: true, fitsAsColumn: true))
+        XCTAssertFalse(MacInspectorPlacement.columnShown(preference: true, fitsAsColumn: false))
+        XCTAssertFalse(MacInspectorPlacement.columnShown(preference: false, fitsAsColumn: true))
+        XCTAssertFalse(MacInspectorPlacement.columnShown(preference: false, fitsAsColumn: false))
+    }
+
+    /// The guard itself: a write arriving while the column cannot fit is not the user's.
+    func testOnlyAWriteMadeWithRoomCounts() {
+        XCTAssertTrue(MacInspectorPlacement.acceptsPreferenceWrite(fitsAsColumn: true))
+        XCTAssertFalse(MacInspectorPlacement.acceptsPreferenceWrite(fitsAsColumn: false))
+    }
+
+    /// The regression, end to end: narrow the window, let SwiftUI write false back, widen again —
+    /// and the inspector must return. This is the sequence that used to hide it for ever.
+    func testANarrowWindowDoesNotCostTheInspectorPermanently() {
+        var stored = true                                   // the user wants it
+
+        func write(_ want: Bool, fits: Bool) {
+            if MacInspectorPlacement.acceptsPreferenceWrite(fitsAsColumn: fits) { stored = want }
+        }
+
+        // Wide: visible.
+        XCTAssertTrue(MacInspectorPlacement.columnShown(preference: stored, fitsAsColumn: true))
+
+        // Narrow. The column hides, and `.inspector` writes false back through the binding.
+        write(false, fits: false)
+        XCTAssertFalse(MacInspectorPlacement.columnShown(preference: stored, fitsAsColumn: false))
+        XCTAssertTrue(stored, "the width must not have touched the stored preference")
+
+        // Wide again — including after a relaunch, which is where @State could not have helped.
+        XCTAssertTrue(MacInspectorPlacement.columnShown(preference: stored, fitsAsColumn: true),
+                      "the inspector must come back")
+    }
+
+    /// And a deliberate hide still sticks, which is the thing the guard must not break.
+    func testTurningItOffWithRoomStillSticks() {
+        var stored = true
+        if MacInspectorPlacement.acceptsPreferenceWrite(fitsAsColumn: true) { stored = false }
+        XCTAssertFalse(stored)
+        XCTAssertFalse(MacInspectorPlacement.columnShown(preference: stored, fitsAsColumn: true))
+    }
+}
+#endif
