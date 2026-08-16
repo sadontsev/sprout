@@ -16,7 +16,7 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "21"
+    CURRENT_PROJECT_VERSION: "22"
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     MACOSX_DEPLOYMENT_TARGET: "26.0"
     # Conditioned, not project-wide. As a bare "1" this also reached the macOS build, where the
