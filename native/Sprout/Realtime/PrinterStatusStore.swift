@@ -133,6 +133,10 @@ final class PrinterStatusStore {
     private var socketTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
     private var seedTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
+
+    /// When a status last ARRIVED, from any source. The watchdog's only input.
+    private var lastStatusAt = ContinuousClock.now
 
     /// Set by `start()`, cleared by `stop()`. Everything that (re)arms a task consults it, because
     /// the socket unwinding calls back into `restartPolling()` on its way out — after `stop()` has
@@ -147,6 +151,16 @@ final class PrinterStatusStore {
 
     private static let pollInterval: Duration = .seconds(3)
     private static let reconnectDelay: Duration = .seconds(12)
+
+    /// How long status may be silent before the socket is treated as dead.
+    ///
+    /// Generous on purpose. While a print is running frames arrive far more often than this, so a
+    /// 90-second silence is not a quiet printer — it is a connection that has stopped delivering. An
+    /// idle printer may genuinely have nothing to say, and tripping the watchdog then costs only the
+    /// REST poll, which is the correct behaviour anyway: if we cannot tell "idle and quiet" from
+    /// "socket is dead", we must assume the second and go and ask.
+    private static let staleAfter: Duration = .seconds(90)
+    private static let watchdogInterval: Duration = .seconds(15)
 
     init(client: BambuddyClient, printerId: Int) {
         self.client = client
@@ -169,6 +183,7 @@ final class PrinterStatusStore {
         }
         seedStatus()
         restartPolling()
+        startWatchdog()
     }
 
     func stop() {
@@ -186,6 +201,8 @@ final class PrinterStatusStore {
         pollTask = nil
         seedTask?.cancel()
         seedTask = nil
+        watchdogTask?.cancel()
+        watchdogTask = nil
         connected = false
     }
 
@@ -233,7 +250,9 @@ final class PrinterStatusStore {
                 }
                 guard let raw else { noteDroppedFrame("frame was not valid UTF-8"); continue }
                 switch WsFrame.classify(raw) {
-                case .status(let frame): statuses[frame.printerId] = frame.status
+                case .status(let frame):
+                    statuses[frame.printerId] = frame.status
+                    lastStatusAt = ContinuousClock.now
                 case .ignored: break
                 case .undecodable(let why): noteDroppedFrame(why)
                 }
@@ -273,7 +292,63 @@ final class PrinterStatusStore {
             guard let self, let s = try? await self.client.getStatus(id) else { return }
             guard !Task.isCancelled else { return }
             // A socket frame that landed while this was in flight is fresher — don't overwrite it.
-            if self.statuses[id] == nil { self.statuses[id] = s }
+            if self.statuses[id] == nil {
+                self.statuses[id] = s
+                self.lastStatusAt = ContinuousClock.now
+            }
+        }
+    }
+
+    /// Is a connection that has said nothing since `lastStatusAt` dead?
+    ///
+    /// Pure and static so the rule can be tested without a socket, a clock or a server.
+    /// `threshold` has no default: a `@MainActor` static cannot supply one to a `nonisolated`
+    /// signature, and passing it explicitly is what lets a test choose its own without a clock.
+    nonisolated static func isStale(
+        lastStatusAt: ContinuousClock.Instant,
+        now: ContinuousClock.Instant,
+        threshold: Duration
+    ) -> Bool {
+        now - lastStatusAt > threshold
+    }
+
+    /// Notice a socket that has gone SILENT rather than broken, and force it to be rebuilt.
+    ///
+    /// This is the gap that let a Mac show a two-print-old "Complete" over a machine that was
+    /// printing. The recovery paths this store already had both key on the socket FAILING: a thrown
+    /// error unwinds `runSocketOnce`, which flips `connected` and lets `restartPolling` run the REST
+    /// fallback. A socket that is merely dead — which is what a Mac waking from sleep, a changed
+    /// network or a silently dropped TCP connection leaves behind — never throws. `receive()` stays
+    /// parked (this file already documents that it does not observe cancellation), `connected` stays
+    /// true, and `restartPolling`'s `guard !connected || socketDegraded` therefore REFUSES to poll.
+    /// Nothing was left to notice, so the last frame stayed on screen indefinitely while the camera —
+    /// a separate connection — kept working and made the app look healthy.
+    ///
+    /// iOS mostly escapes this because the system suspends the app and tears the socket down properly,
+    /// so resuming reconnects. A Mac app stays open across sleep for hours, which is why this surfaced
+    /// there.
+    ///
+    /// The remedy is deliberately the existing machinery rather than a new path: closing the socket is
+    /// exactly what `stop()` does to unwind a parked receive, and everything downstream — `connected`
+    /// going false, `restartPolling()` on the way out, the reconnect loop after `reconnectDelay` —
+    /// already works and is already reasoned about.
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.watchdogInterval)
+                guard let self, !Task.isCancelled, self.running else { return }
+                guard self.connected,
+                      Self.isStale(lastStatusAt: self.lastStatusAt,
+                                   now: ContinuousClock.now,
+                                   threshold: Self.staleAfter)
+                else { continue }
+                statusLog.debug("status silent past the watchdog threshold; rebuilding the socket")
+                // Stamped BEFORE closing, so a reconnect that takes a moment cannot trip the watchdog
+                // again immediately and close the socket it is still opening.
+                self.lastStatusAt = ContinuousClock.now
+                self.socket?.cancel(with: .goingAway, reason: nil)
+            }
         }
     }
 
@@ -290,6 +365,7 @@ final class PrinterStatusStore {
                 guard let self else { return }
                 if let s = try? await self.client.getStatus(id) {
                     self.statuses[id] = s
+                    self.lastStatusAt = ContinuousClock.now
                 }
                 try? await Task.sleep(for: Self.pollInterval)
             }
