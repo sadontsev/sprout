@@ -18,10 +18,35 @@ signing keys so you don't need an Apple developer account, and it never contacts
 it can't see your printer, your files or your camera. [Run your own](docs/guides/self-hosting-push.md)
 if you'd rather.
 
+## Install
+
+[![Join the TestFlight beta](https://img.shields.io/badge/TestFlight-Join_the_beta-0D96F6?style=for-the-badge&logo=apple&logoColor=white)](https://testflight.apple.com/join/hPeRqT65)
+
+Sprout ships through **TestFlight**. Nothing to buy, and no Apple developer account of your own —
+Canopy exists so that push works without one. Open
+**[the invite](https://testflight.apple.com/join/hPeRqT65)** on the device you want it on, install
+Apple's TestFlight app if you don't already have it, and Sprout appears alongside it.
+
+| | |
+|---|---|
+| **iPhone / iPad** | iOS 26 or later |
+| **Mac** | macOS 26 or later — the same build, a real Mac app, not Catalyst |
+
+**It needs a server before it can show you anything.** Your printer talks to
+[Bambuddy](https://github.com/maziggy/bambuddy), which you run yourself on a NAS, a Pi or any spare
+box. That is [step 1 below](#getting-started), and it is the longer half of the setup.
+
+Joined to look around first? Open the app and pick **Try demo mode** on the onboarding screen. The
+whole app runs against an in-process fake server — a print that advances, a filled library, AMS
+trays — and it reaches no network at all. No printer, no server, nothing to configure.
+
+> TestFlight builds expire after 90 days. If Sprout stops opening, the invite link above has the
+> current one.
+
 ## What you need
 
-**To use the app**, a TestFlight invite and a printer — that's all. You need no Apple developer
-account of your own: Canopy exists so that push works without one.
+**To use the app**, the TestFlight invite above and a printer — that's all. You need no Apple
+developer account of your own: Canopy exists so that push works without one.
 
 **To run the backend** (everyone needs this — the app is a client, not a bridge):
 
@@ -146,8 +171,8 @@ referenced via gitignored `.env` files and mounted paths. `.gitignore` already e
 ## Status & credits
 
 A personal project, built for one household's printers (currently a Bambu Lab H2C) and distributed
-through TestFlight. It is not affiliated with Bambu Lab. Expect sharp edges outside the tested
-paths — issues and PRs welcome.
+through [TestFlight](https://testflight.apple.com/join/hPeRqT65). It is not affiliated with Bambu
+Lab. Expect sharp edges outside the tested paths — issues and PRs welcome.
 
 Built on the excellent [Bambuddy](https://github.com/maziggy/bambuddy) (AGPL-3.0) by maziggy —
 Sprout is an independent API client and ships none of Bambuddy's code.
