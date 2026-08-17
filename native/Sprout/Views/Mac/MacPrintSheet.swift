@@ -359,6 +359,16 @@ struct MacPrintSheet: View {
 
     @State private var starting = false
     @State private var sendFailure: String?
+
+    /// The slicer presets, once fetched. `nil` means "not asked yet or the ask failed" — the
+    /// distinction is `presetsError`.
+    @State private var presets: SlicePresets?
+    /// Why the preset fetch failed, if it did.
+    ///
+    /// A presets failure must NOT block printing: the tray Menu renders perfectly without them, and
+    /// only slicing needs them. So this refuses SLICING with a reason and leaves an already-sliced
+    /// file as printable as it was before.
+    @State private var presetsError: String?
     @State private var lanAlert = false
 
     init(file: LibraryFile, model: AppModel, isPresented: Binding<Bool>) {
@@ -377,16 +387,39 @@ struct MacPrintSheet: View {
     private var trays: [AmsTrayRef] { AmsTopology.trayRefs(status) }
     private var assignmentLikes: [AssignmentLike] { assigns.map { AssignmentLike($0) } }
 
-    /// The spools physically loaded, named by the domain.
+    /// The spools physically loaded, named by the domain — and, once the presets are in, carrying the
+    /// slicer preset each tray resolves to.
     ///
-    /// `presets: []` is deliberate, not an oversight: `FilamentMatch.loaded` resolves a slicer
-    /// preset per tray so the WIZARD can slice with it, and this sheet never slices. Passing the
-    /// preset list would cost a `GET /slicer/presets` (189 rows on the H2C) to populate a field
-    /// nothing here reads. Every other field — identity, colour, support classification — is
-    /// unaffected.
+    /// This used to pass `presets: []` with a comment defending it because "this sheet never slices".
+    /// It does now, so the real list goes in, and the existing tray Menu becomes the filament-preset
+    /// picker for free — which is why the Mac needs no equivalent of the wizard's whole Material step.
+    /// Before the fetch lands (or if it fails) this degrades to exactly the old behaviour: identity,
+    /// colour and support classification are unaffected by an empty preset list, so an
+    /// already-sliced file stays printable while presets are still loading.
+    ///
+    /// **`token:` and `nozzle:` are passed explicitly and must stay that way.** They default to
+    /// `"@BBL A1"` and `.mm04`; on an H2C those match against the wrong machine and return
+    /// plausible-looking wrong presets, silently, with a green suite.
     private var loaded: [LoadedFilament] {
-        FilamentMatch.loaded(trays: trays, assignments: assignmentLikes, presets: [])
-            .filter { !$0.isSupport }
+        FilamentMatch.loaded(
+            trays: trays,
+            assignments: assignmentLikes,
+            presets: presets?.allFilaments ?? [],
+            token: profile.presetToken,
+            nozzle: nozzle
+        )
+        .filter { !$0.isSupport }
+    }
+
+    /// The nozzle the presets are resolved for.
+    ///
+    /// Read from what is actually mounted rather than offered as a control: the choice selects a
+    /// preset FAMILY, not machine behaviour, and `nozzle_mapping` is absent from
+    /// `PrintQueueItemCreate` — so the app cannot say which nozzle runs which material regardless
+    /// (`MacPrintScope.nozzleChoiceNote`). On a machine with two unequal nozzles mounted this picks
+    /// one and the note names it, rather than the sheet pretending the choice is not being made.
+    private var nozzle: NozzleSize {
+        PresetSelect.defaultNozzle(PresetSelect.mountedNozzles(status))
     }
 
     private var vm: PlateReviewVM { PlateReview.build(plates: plates, meta: meta, plateIndex: selectedPlate) }
@@ -423,6 +456,30 @@ struct MacPrintSheet: View {
                 identity: tray.map { FilamentMatch.identity(for: $0, in: assignmentLikes) },
                 candidateCount: MacFilamentMatching.candidates(for: requirement(for: slot), in: spools).count
             )
+        }
+    }
+
+    /// Fetch and flatten the slicer presets for this machine.
+    ///
+    /// `getPresets()` returns raw `Data`, not a decoded response — the decode belongs to the caller,
+    /// and until now the only caller was the iOS wizard.
+    private func loadPresets() async {
+        guard SliceCapability.canSlice(file), let client = model.client else { return }
+        do {
+            let data = try await client.getPresets()
+            let response = try BambuddyClient.decoder.decode(PresetsResponse.self, from: data)
+            guard !Task.isCancelled else { return }
+            presets = SlicePresets.build(
+                from: response,
+                printerPresetBase: profile.printerPresetBase,
+                token: profile.presetToken,
+                nozzle: nozzle
+            )
+            presetsError = nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            presets = nil
+            presetsError = JobsStore.failureText(error)
         }
     }
 
@@ -480,6 +537,13 @@ struct MacPrintSheet: View {
         }
         .background(c.sheet)
         .task(id: file.id) { await loadFile() }
+        // Presets are fetched ONLY for a file that can actually be sliced.
+        //
+        // `GET /slicer/presets` is 189 rows on an H2C, and the overwhelmingly common case here is an
+        // already-sliced file that needs none of them. Keying on `canSlice` rather than firing
+        // unconditionally is what keeps opening the sheet on a `gcode.3mf` exactly as cheap as it was
+        // before slicing existed.
+        .task(id: "presets-\(file.id)-\(SliceCapability.canSlice(file))") { await loadPresets() }
         // Per PLATE, and keyed on the exact (file, plate) pair that will be enqueued. Unfiltered,
         // `filament-requirements` reports every slot in the FILE — a different question, and the one
         // that maps trays this plate never asks for.

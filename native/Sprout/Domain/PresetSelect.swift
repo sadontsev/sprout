@@ -67,6 +67,26 @@ enum PresetSelect {
     }
 
     /// The stock printer-preset name for a nozzle variant ("Bambu Lab H2C 0.6 nozzle").
+    /// The machine preset for a mounted nozzle, with the two fallbacks that keep a slice possible.
+    ///
+    /// Three tiers, in order, and each exists for a measured reason:
+    ///
+    ///  1. the exact nozzle variant — `"H2C 0.6 nozzle"` — which is what you actually want;
+    ///  2. the `0.4 nozzle` name, because it is the only variant every A1/H2 profile set is
+    ///     guaranteed to ship, so it is the safe landing spot for an unusual nozzle;
+    ///  3. the bare base name, for a profile set that does not split by nozzle at all.
+    ///
+    /// Returning nil rather than guessing is deliberate: `SlicePresets.canSlice` reads it, and a
+    /// slice with no machine preset is a slice for no machine.
+    ///
+    /// Lifted out of `WizardView.loadPresets`, where it was three chained `first(where:)` calls in a
+    /// view macOS cannot see.
+    static func pickPrinterPreset(_ stock: [Preset], base: String, nozzle: NozzleSize) -> Preset? {
+        stock.first { $0.name == printerPresetNameFor(base, nozzle: nozzle) }
+            ?? stock.first { $0.name == "\(base) 0.4 nozzle" }
+            ?? stock.first { $0.name == base }
+    }
+
     static func printerPresetNameFor(_ base: String, nozzle: NozzleSize) -> String {
         "\(base) \(nozzle.rawValue) nozzle"
     }

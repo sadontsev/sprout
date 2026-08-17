@@ -1291,28 +1291,19 @@ struct WizardView: View {
             let assignments = await client.listAssignments(printerId: model.printerId)
             guard !Task.isCancelled else { return }
 
-            let stock = p.standard?.printer ?? []
-            // Exact nozzle variant first; the 0.4 machine preset is the safe fallback because it is
-            // the only one every A1/H2 profile set is guaranteed to ship.
-            let printerPreset =
-                stock.first { $0.name == PresetSelect.printerPresetNameFor(profile.printerPresetBase, nozzle: nozzle) }
-                ?? stock.first { $0.name == "\(profile.printerPresetBase) 0.4 nozzle" }
-                ?? stock.first { $0.name == profile.printerPresetBase }
-
-            let process = PresetSelect.selectProcess(p, token: token, nozzle: nozzle)
-            let allFilaments = p.standard?.filament ?? []
-
-            presets = WizardPresets(
-                printer: printerPreset,
-                qualities: process.qualities,
-                supportByBase: process.supportByBase,
-                hasSupportProfile: process.hasSupportProfile,
-                catalog: FilamentMatch.catalog(in: allFilaments, token: token, nozzle: nozzle),
-                allFilaments: allFilaments
+            // `SlicePresets.build` — shared with macOS, which assembles the identical bundle. The
+            // three-tier printer-preset fallback that used to be inlined here is
+            // `PresetSelect.pickPrinterPreset`, and it is tested now.
+            let bundle = SlicePresets.build(
+                from: p,
+                printerPresetBase: profile.printerPresetBase,
+                token: token,
+                nozzle: nozzle
             )
+            presets = bundle
             presetsError = nil
             assigns = assignments
-            quality = PresetSelect.pickDefaultQuality(process.qualities)
+            quality = PresetSelect.pickDefaultQuality(bundle.qualities)
         } catch {
             guard !Task.isCancelled else { return }
             presets = WizardPresets()
@@ -1556,16 +1547,9 @@ struct WizardView: View {
 // MARK: - Local value types
 
 /// What the presets request produced, flattened for the view.
-private struct WizardPresets {
-    var printer: Preset?
-    var qualities: [Preset] = []
-    var supportByBase: [String: Preset] = [:]
-    /// Tri-state: nil when the presets request failed, so the "supports aren't provisioned" card
-    /// isn't shown for what is really a network error.
-    var hasSupportProfile: Bool?
-    var catalog: [Preset] = []
-    var allFilaments: [Preset] = []
-}
+/// Was a local struct; now `Domain/SlicePresets.swift`, because macOS builds the same bundle to slice
+/// the same way. The alias keeps this file's dozen call sites reading as they did.
+private typealias WizardPresets = SlicePresets
 
 /// What the wizard carries forward from the slice — including the NEW library file id, which is what
 /// actually gets enqueued.
