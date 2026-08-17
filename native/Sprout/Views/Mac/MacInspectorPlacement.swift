@@ -73,8 +73,19 @@ enum MacInspectorPlacement {
     /// 320 there would take nearly half the section, while on a tall display a fixed 320 is a thin
     /// strip under an ocean of grid. The floor matters too — below about 120 the drawer shows a
     /// header and a sliver, which reads as broken rather than compact.
+    /// Reduced from `min(320, 42 %)`.
+    ///
+    /// 42 % of the window for a detail panel is a lot to spend when the thing above it is a grid of
+    /// sixty files: on a 1000 pt window the drawer took 320 pt and the browser was left with two rows.
+    /// The panels themselves do not need it — the SD detail lays out side by side at drawer widths
+    /// (`detailIsHorizontal`) and comes in around 200 pt, and the rest scroll. A third is a fairer
+    /// split, and the floor is unchanged so a short window is no worse off than before.
+    ///
+    /// It stays a cap plus a fraction rather than a fit-to-content height on purpose: a drawer that
+    /// resized itself per selection would make the grid above it jump every time you clicked a
+    /// different file.
     nonisolated static func drawerHeight(available: CGFloat) -> CGFloat {
-        min(320, max(140, available * 0.42))
+        min(248, max(140, available * 0.33))
     }
 
     /// Should a detail panel lay its preview BESIDE its details rather than above them?

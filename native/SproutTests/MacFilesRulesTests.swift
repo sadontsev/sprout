@@ -423,6 +423,87 @@ final class MacFilesLayoutTests: XCTestCase {
     }
 }
 
+// MARK: - Grid sizing
+
+/// How many cards go in a row.
+///
+/// The count used to be the constant 4, which meant a wider window drew BIGGER cards rather than
+/// more of them: at 1400 pt of content each card was 341 pt, and a 63-file SD card showed eight
+/// items. The card is the constant now and the grid is what changes.
+final class MacFileGridTests: XCTestCase {
+
+    private let gap: CGFloat = 12
+
+    private func card(_ width: CGFloat) -> CGFloat {
+        MacFileGrid.cardWidth(width: width,
+                              columns: MacFileGrid.columnCount(width: width, gap: gap),
+                              gap: gap)
+    }
+
+    /// The whole point: a card stays roughly one size from a narrow window to a very wide one. The
+    /// old rule ran from 116 pt to 641 pt over this same range.
+    func testCardsStayAboutTheSameSizeAtEveryWidth() {
+        for width in [500.0, 640.0, 800.0, 1000.0, 1200.0, 1400.0, 1700.0, 2000.0] {
+            let w = card(width)
+            XCTAssertGreaterThanOrEqual(w, MacFileGrid.minCard, "\(width) pt gave \(w) pt cards")
+            XCTAssertLessThanOrEqual(w, 210, "\(width) pt gave \(w) pt cards")
+        }
+    }
+
+    /// More width means more columns, never fewer — the property that makes resizing predictable.
+    func testColumnsNeverDecreaseAsTheWindowGrows() {
+        var last = 0
+        for width in stride(from: 400.0, through: 2600.0, by: 25) {
+            let n = MacFileGrid.columnCount(width: width, gap: gap)
+            XCTAssertGreaterThanOrEqual(n, last, "\(width) pt dropped from \(last) to \(n) columns")
+            last = n
+        }
+    }
+
+    /// Never below two: a one-column grid is a list, and the List layout already does that better.
+    func testAVeryNarrowSurfaceStillGetsTwoColumns() {
+        for width in [0.0, 50.0, 200.0, 320.0] {
+            XCTAssertEqual(MacFileGrid.columnCount(width: width, gap: gap), MacFileGrid.minColumns,
+                           "\(width)")
+        }
+    }
+
+    /// A width that has not been measured yet, or that arrives as a degenerate value, must not
+    /// produce a nonsense column count — this runs before the first geometry read on every launch.
+    func testAnUnmeasuredWidthIsSafe() {
+        for width in [0.0, -1.0, CGFloat.nan, CGFloat.infinity] {
+            let n = MacFileGrid.columnCount(width: width, gap: gap)
+            XCTAssertGreaterThanOrEqual(n, MacFileGrid.minColumns, "\(width)")
+            XCTAssertLessThanOrEqual(n, MacFileGrid.maxColumns, "\(width)")
+        }
+    }
+
+    /// The ceiling holds on an ultrawide display.
+    func testTheColumnCountIsCapped() {
+        XCTAssertEqual(MacFileGrid.columnCount(width: 6000, gap: gap), MacFileGrid.maxColumns)
+    }
+
+    /// At §1's 640 pt content minimum — the narrowest the window may be — the grid is still a grid
+    /// and the cards are still readable.
+    func testTheContentMinimumGivesAUsableGrid() {
+        let n = MacFileGrid.columnCount(width: 640, gap: gap)
+        XCTAssertGreaterThanOrEqual(n, 3)
+        XCTAssertGreaterThanOrEqual(MacFileGrid.cardWidth(width: 640, columns: n, gap: gap),
+                                    MacFileGrid.minCard)
+    }
+
+    /// `cardWidth` is the inverse of the layout the grid actually performs: n cards and n-1 gaps must
+    /// add back up to the width, or the last column overflows and the row wraps to one card.
+    func testTheCardsAndGapsAddBackUpToTheWidth() {
+        for width in [640.0, 1000.0, 1500.0] {
+            let n = MacFileGrid.columnCount(width: width, gap: gap)
+            let total = MacFileGrid.cardWidth(width: width, columns: n, gap: gap) * CGFloat(n)
+                + gap * CGFloat(n - 1)
+            XCTAssertEqual(total, width, accuracy: 0.01, "\(width) with \(n) columns")
+        }
+    }
+}
+
 // MARK: - Detail layout
 
 /// Which way the SD detail panel lays itself out.

@@ -213,9 +213,26 @@ struct MacWindow: View {
             consumePendingOpen(model.pendingOpen)
             #if DEBUG
             // Open on a named section, for headless UI verification. See `MacWindowProbe`.
-            if let raw = ProcessInfo.processInfo.environment["SPROUT_SECTION"],
-               let key = TabKey(rawValue: raw) {
-                section = key
+            //
+            // Accepts the LABEL as well as the raw value, and says so when it accepts neither.
+            // `SPROUT_SECTION=files` looks obviously right and is silently ignored — Files is
+            // `TabKey.library`, so `TabKey(rawValue:)` returns nil, the `if let` falls through, and
+            // the app opens on whatever section was last stored. Every screenshot then photographs a
+            // section nobody asked for, and it reads as the probe working, because it IS a window
+            // with content in it. A knob that looks live and quietly does nothing is the recurring
+            // bug in this codebase, here in the tool used to catch it.
+            if let raw = ProcessInfo.processInfo.environment["SPROUT_SECTION"] {
+                let wanted = raw.lowercased()
+                if let key = TabKey.allCases.first(where: {
+                    $0.rawValue.lowercased() == wanted || $0.label.lowercased() == wanted
+                }) {
+                    section = key
+                } else {
+                    let names = TabKey.allCases
+                        .map { "\($0.rawValue) (\($0.label))" }
+                        .joined(separator: ", ")
+                    print("SPROUT_SECTION=\(raw) matches no section — staying on \(section.rawValue). Try: \(names)")
+                }
             }
             // Open the PRINT SHEET on a library file, for the same reason.
             //

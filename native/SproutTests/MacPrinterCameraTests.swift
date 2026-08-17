@@ -320,13 +320,24 @@ final class MacInspectorDrawerTests: XCTestCase {
     /// Proportional in the middle, so the drawer scales with the window instead of being a fixed
     /// strip on a large display and half the section on a small one.
     func testTheDrawerTakesAShareOfTheHeight() {
-        XCTAssertEqual(MacInspectorPlacement.drawerHeight(available: 600), 252, accuracy: 0.5)
+        XCTAssertEqual(MacInspectorPlacement.drawerHeight(available: 600), 198, accuracy: 0.5)
     }
 
-    /// Clamped at both ends: never more than 320, never so little that it is a header and a sliver.
+    /// Clamped at both ends: never more than 248, never so little that it is a header and a sliver.
     func testTheShareIsClampedBothWays() {
-        XCTAssertEqual(MacInspectorPlacement.drawerHeight(available: 2000), 320)
+        XCTAssertEqual(MacInspectorPlacement.drawerHeight(available: 2000), 248)
         XCTAssertEqual(MacInspectorPlacement.drawerHeight(available: 200), 140)
+    }
+
+    /// The share was cut from `min(320, 42 %)` because the thing above the drawer is usually a grid,
+    /// and 42 % of a normal window left it two rows. Pinned as a comparison rather than a bare number
+    /// so the intent survives the next tuning pass: the drawer must stay a minority of the window at
+    /// every size it is used at.
+    func testTheDrawerIsAMinorityOfTheWindow() {
+        for available in [400.0, 680.0, 900.0, 1200.0, 2000.0] {
+            let h = MacInspectorPlacement.drawerHeight(available: available)
+            XCTAssertLessThan(h, available * 0.4, "\(available) pt window gave a \(h) pt drawer")
+        }
     }
 
     /// A placeholder gets a SHORT drawer. Measured on Explore: the section's own "Find something to

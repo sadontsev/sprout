@@ -500,6 +500,12 @@ struct MacFilesInspector: View {
         }
     }
 
+    /// How wide the SD preview may be, which in the drawer is really how TALL it may be — a square
+    /// plate render is as tall as it is wide, and the drawer's height is the scarce dimension.
+    private var previewMaxWidth: CGFloat {
+        MacInspectorPlacement.detailIsHorizontal(width: panelWidth) ? 148 : 280
+    }
+
     private func sdIdentity(_ pf: PrinterFile) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(verbatim: plate?.name ?? SdFileCaps.displayName(pf))
@@ -565,18 +571,22 @@ struct MacFilesInspector: View {
                     }
             }
         }
-        // Capped, unlike the library's preview above, because this panel has two homes and they are
-        // very different widths. In the inspector COLUMN (236–320 pt) the cap never binds. In the
-        // bottom DRAWER the panel is as wide as the window, and an unconstrained square plate render
-        // became a ~1400 pt image that pushed every action below the fold of a 320 pt drawer — the
-        // buttons were reachable only by scrolling, which for the panel whose whole point is those
-        // buttons is the same as not having them.
-        .frame(maxWidth: 280, alignment: .leading)
+        // Capped, unlike the library's preview above, because this panel has two homes with opposite
+        // proportions — and the cap differs per home, because the constraint does.
+        //
+        // In the inspector COLUMN the panel is 236–320 pt wide and tall, so the preview is the width
+        // of the panel and 280 never binds. In the bottom DRAWER the panel is as wide as the window
+        // and only `drawerHeight` tall, so the binding constraint is HEIGHT: a square plate render at
+        // 280 filled the whole drawer and pushed the buttons below the fold.
+        //
+        // Deliberately NOT followed by `.frame(maxWidth: .infinity)`. It was, and that made the
+        // preview greedy inside the horizontal stack: it claimed half the drawer and left the details
+        // marooned in the middle of the window with a screen of empty space beside them.
+        .frame(maxWidth: previewMaxWidth, alignment: .leading)
         // On the composite, never inside the overlay — an overlay is not clipped to its base, and a
         // `.fill` image is flexible enough to escape one.
         .clipShape(shape)
         .overlay(shape.strokeBorder(c.line))
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Size, plus whatever the plates endpoint could tell us.

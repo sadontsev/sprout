@@ -269,6 +269,62 @@ enum MacFileBrowse {
     }
 }
 
+// MARK: - How many cards fit
+
+/// How wide a file card is, and therefore how many go in a row.
+///
+/// **Four across was a constant, and it was wrong at every width except the one it was drawn at.**
+/// The prototype specifies four; on a real 1500 pt window that makes each card ~360 pt — a thumbnail
+/// the size of a playing card, eight items visible, and a 63-file SD card that takes eight scrolls to
+/// read. Widening the window made the cards bigger rather than showing more of them, which is the
+/// opposite of what a wider window is for.
+///
+/// The count is derived from the width instead, so the CARD stays a constant size and the GRID
+/// changes. That is the direction every file browser on this platform picks, and it is the one that
+/// makes a big window worth having.
+///
+/// It must be one function because two callers need the same answer and they fail differently when
+/// they disagree: the `LazyVGrid` draws the rows, and `moveSelection` steps the arrow keys by exactly
+/// one row. A hardcoded four with an adaptive grid would move the selection to a card in a different
+/// column every time — visibly wrong, and impossible to explain.
+enum MacFileGrid {
+    /// What a card wants to be. Big enough that a plate render reads as a model rather than a stamp,
+    /// small enough that a normal window shows a couple of rows without scrolling.
+    static let idealCard: CGFloat = 168
+    /// Below this a card is not worth drawing as a card — the name truncates to nothing and the
+    /// thumbnail becomes a chip. The column count is reduced rather than letting cards go under it.
+    static let minCard: CGFloat = 132
+    /// Two, so the grid never degenerates into a single-column list that the List layout already does
+    /// better.
+    static let minColumns = 2
+    /// A ceiling, so an ultrawide display gets a browser rather than a contact sheet. High enough
+    /// that it does not bind before ~2200 pt of content — below that the ideal width is what decides,
+    /// which is the point.
+    static let maxColumns = 12
+
+    /// How many columns fit in `width`.
+    static func columnCount(width: CGFloat, gap: CGFloat) -> Int {
+        guard width.isFinite, width > 0 else { return minColumns }
+        // Rounded, not floored: at 1400 pt flooring gives 6 columns of 223 pt, which drifts well past
+        // the ideal, while rounding gives 7 of 190 — exactly what was asked for.
+        let wanted = Int(((width + gap) / (idealCard + gap)).rounded())
+        var count = max(minColumns, min(maxColumns, wanted))
+        // Rounding UP can push cards under the floor, so give a column back until they fit. Never
+        // below `minColumns`: at that point the window is narrower than two minimum cards and the
+        // cards shrink, because a grid with one column is not a grid.
+        while count > minColumns, cardWidth(width: width, columns: count, gap: gap) < minCard {
+            count -= 1
+        }
+        return count
+    }
+
+    /// What each card gets once `columns` of them share `width`.
+    static func cardWidth(width: CGFloat, columns: Int, gap: CGFloat) -> CGFloat {
+        guard columns > 0 else { return width }
+        return (width - gap * CGFloat(columns - 1)) / CGFloat(columns)
+    }
+}
+
 // MARK: - Capability gates
 
 /// Whether the print sheet (1f) exists yet.
@@ -367,10 +423,14 @@ struct MacFilesSection: View {
     /// makes the selection ring mean something — see `cardStroke`.
     @FocusState private var filesFocused: Bool
 
-    /// Four across, as the prototype draws it. A constant rather than a literal in the `GridItem`
-    /// array because the arrow keys need the same number: up/down is ±one row, and a row is however
-    /// many columns there are.
-    private static let gridColumns = 4
+    /// How many cards are actually in a row right now.
+    ///
+    /// Derived from the measured width by `MacFileGrid`, not fixed at the prototype's four — see that
+    /// type for why. Held as state rather than recomputed inline because the arrow keys need the SAME
+    /// number the grid drew with: up/down is ±one row, and a row is however many columns there are.
+    @State private var gridColumns = MacFileGrid.minColumns
+    /// The width the two grids share, measured once on the file surface.
+    @State private var surfaceWidth: CGFloat = 0
 
     private var store: LibraryStore { model.library }
     private var layout: MacFilesLayout { MacFilesLayout(rawValue: layoutRaw) ?? .grid }
@@ -421,6 +481,13 @@ struct MacFilesSection: View {
             breadcrumb(visible)
             fileSurface(visible)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                // Measured on the SURFACE, not the window: the inspector column and the sidebar both
+                // take from it, so a width read off the window would over-count columns by two
+                // whenever either is open.
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                    surfaceWidth = width
+                    gridColumns = MacFileGrid.columnCount(width: width, gap: m.cardGap)
+                }
             // Only while a drag is actually in flight. The fact is published on `AppModel` by
             // `MacDropTarget`, which sits on the WINDOW because a drop is accepted anywhere — two
             // views, one fact. This used to read a local `@State` that nothing ever wrote, so the
@@ -751,10 +818,8 @@ struct MacFilesSection: View {
     private func libraryGrid(_ rows: [LibraryFile]) -> some View {
         LazyVGrid(
             columns: Array(
-                // The minimum keeps the cards from becoming stamps at §1's 640 pt content minimum
-                // with the inspector open.
-                repeating: GridItem(.flexible(minimum: 118), spacing: m.cardGap),
-                count: Self.gridColumns
+                repeating: GridItem(.flexible(minimum: MacFileGrid.minCard * 0.6), spacing: m.cardGap),
+                count: gridColumns
             ),
             spacing: m.cardGap
         ) {
@@ -796,12 +861,23 @@ struct MacFilesSection: View {
                 .overlay(alignment: .topLeading) { typeChip(f) }
                 .overlay(alignment: .topTrailing) { if LibraryFileCaps.isSliced(f) { slicedTick } }
 
+            // TWO lines, with the space reserved whether or not they are used.
+            //
+            // One line was survivable at four fixed columns; at `MacFileGrid`'s ~190 pt it is not.
+            // Real names on this printer read "4 - Axis Washers Handle (EDITED - drill adapter + std
+            // 45mm removed)_plate_3.gcode.3mf", and middle truncation on one line rendered that as
+            // "4 - Axis Wa…gcode.3mf" — every card in a folder looking identical.
+            //
+            // `reservesSpace` because a `LazyVGrid` row is as tall as its tallest card: without it a
+            // row holding one two-line name would stand taller than its neighbours and the grid would
+            // step up and down as you scrolled.
             Text(verbatim: MacFileBrowse.displayName(f))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(c.t1)
-                .lineLimit(1)
+                .lineLimit(2, reservesSpace: true)
                 .truncationMode(.middle)
-                .padding(.top, 9)
+                .multilineTextAlignment(.leading)
+                .padding(.top, 8)
             Text(verbatim: MacFileBrowse.bytes(f.fileSize?.double))
                 .font(.mono(10.5, weight: .medium))
                 .foregroundStyle(c.t3)
@@ -956,8 +1032,8 @@ struct MacFilesSection: View {
     private func sdGrid(_ rows: [PrinterFile]) -> some View {
         LazyVGrid(
             columns: Array(
-                repeating: GridItem(.flexible(minimum: 118), spacing: m.cardGap),
-                count: Self.gridColumns
+                repeating: GridItem(.flexible(minimum: MacFileGrid.minCard * 0.6), spacing: m.cardGap),
+                count: gridColumns
             ),
             spacing: m.cardGap
         ) {
@@ -983,12 +1059,16 @@ struct MacFilesSection: View {
                 .overlay(alignment: .topLeading) { sdTypeChip(pf) }
                 .overlay { if SdFileCaps.canPlay(pf) { playBadge } }
 
+            // Two lines and reserved space, exactly as the library card — see there for why. SD names
+            // are the worst case: the printer keeps the slicer's full output name, plate suffix and
+            // all.
             Text(verbatim: SdFileCaps.displayName(pf))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(c.t1)
-                .lineLimit(1)
+                .lineLimit(2, reservesSpace: true)
                 .truncationMode(.middle)
-                .padding(.top, 9)
+                .multilineTextAlignment(.leading)
+                .padding(.top, 8)
             Text(verbatim: pf.isDirectory ? "Folder" : MacFileBrowse.bytes(pf.size?.double))
                 .font(.mono(10.5, weight: .medium))
                 .foregroundStyle(c.t3)
@@ -1242,8 +1322,8 @@ struct MacFilesSection: View {
         switch direction {
         case .left: step = -1
         case .right: step = 1
-        case .up: step = -Self.gridColumns
-        case .down: step = Self.gridColumns
+        case .up: step = -gridColumns
+        case .down: step = gridColumns
         @unknown default: return
         }
         guard let current = rows.firstIndex(where: { $0.id == selectedSdPath }) else {
@@ -1299,8 +1379,8 @@ struct MacFilesSection: View {
         switch direction {
         case .left: step = -1
         case .right: step = 1
-        case .up: step = -Self.gridColumns
-        case .down: step = Self.gridColumns
+        case .up: step = -gridColumns
+        case .down: step = gridColumns
         @unknown default: return
         }
         guard let current = rows.firstIndex(where: { $0.id == selectedId }) else {
