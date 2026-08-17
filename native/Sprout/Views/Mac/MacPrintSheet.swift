@@ -48,11 +48,11 @@ enum MacPrintScope {
     /// genuinely need it. A sliceable `.3mf` gets `willSliceNote` instead; sending someone to another
     /// app for something this sheet is about to offer was the whole complaint.
     static func cannotSliceReason(_ file: LibraryFile) -> String {
-        let kind = LibraryFileCaps.isStl(file)
-            ? "An STL is a bare mesh, and Bambuddy hasn’t been confirmed to slice one"
-            : "This file carries no toolpaths and isn’t a project Bambuddy can slice"
-        return "\(kind), so there is nothing for the printer to run. Slice it in the iPhone app or in "
-            + "Bambu Studio, then print the sliced file from here."
+        // No STL branch any more: an STL IS sliceable — `POST /slice` accepts one exactly as it accepts
+        // a project 3MF, measured. What reaches this sentence is a type Bambuddy's slicer does not take
+        // at all, which today means anything that is neither of those two.
+        "This file carries no toolpaths and isn’t something Bambuddy’s slicer takes, so there is "
+            + "nothing for the printer to run. Slice it in Bambu Studio, then print the result from here."
     }
 
     /// Why the button says Slice — the ACTIONABLE branch.

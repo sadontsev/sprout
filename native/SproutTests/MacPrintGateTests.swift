@@ -82,10 +82,16 @@ final class MacPrintGateTests: XCTestCase {
         XCTAssertNotEqual(p?.terminal, true, "one button fixes it — that is not terminal")
     }
 
-    /// An STL is terminal until somebody measures whether Bambuddy slices one. `canSlice` says no, so
-    /// the gate must NOT offer a button that would fail.
-    func testAnStlIsTerminalWithNoRemedy() {
+    /// An STL is SLICEABLE — measured against the live server — so it gets the remedy, not a dead end.
+    func testAnStlIsOfferedASlice() {
         let p = evaluate(file: file("stl"))
+        XCTAssertEqual(p?.title, "Not sliced yet")
+        XCTAssertEqual(p?.remedy, .slice)
+    }
+
+    /// A type the slicer does not take at all is still terminal, and still says where to go.
+    func testAnUnknownTypeIsTerminalWithNoRemedy() {
+        let p = evaluate(file: file("zip"))
         XCTAssertEqual(p?.title, "Nothing to print yet")
         XCTAssertEqual(p?.terminal, true)
         XCTAssertNil(p?.remedy)
@@ -108,7 +114,7 @@ final class MacPrintGateTests: XCTestCase {
         XCTAssertEqual(evaluate(file: file("3mf"), hasStatus: false,
                                 loadedTrays: [], trayBySlot: [:])?.remedy, .slice,
                        "a sliceable file must not be reported as a printer problem")
-        XCTAssertEqual(evaluate(file: file("stl"), hasStatus: false,
+        XCTAssertEqual(evaluate(file: file("zip"), hasStatus: false,
                                 loadedTrays: [], trayBySlot: [:])?.title, "Nothing to print yet")
     }
 
@@ -231,7 +237,7 @@ final class MacPrintGateTests: XCTestCase {
     func testEveryRefusalCarriesBothATitleAndAMessage() {
         let cases: [MacPrintProblem?] = [
             evaluate(file: file("3mf")),
-            evaluate(file: file("stl")),
+            evaluate(file: file("zip")),
             evaluate(presetBySlot: [2: Preset(id: "a", name: "PLA")],
                      loadedTrays: [tray(0), tray(1)], usedSlots: [1, 2], trayBySlot: [1: 0, 2: 1]),
             evaluate(printerMismatch: true),

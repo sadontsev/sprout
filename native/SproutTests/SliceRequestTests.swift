@@ -167,10 +167,13 @@ final class SliceCapabilityTests: XCTestCase {
         XCTAssertFalse(SliceCapability.canSlice(file("gcode.3mf")))
     }
 
-    /// Unmeasured, so refused. See the doc comment: nothing in this repo records whether `/slice`
-    /// takes a bare mesh, and offering it on a guess is the recurring bug.
-    func testAnStlIsRefusedUntilSomebodyMeasuresIt() {
-        XCTAssertFalse(SliceCapability.canSlice(file("stl")))
+    /// Measured, not assumed. `POST /library/files/<stl>/slice` answers 202 on the live server and the
+    /// slicer runs it to "Generating G-code" exactly as it does a 3MF — and a control run with the same
+    /// presets against `cr.3mf` failed at the same stage with the same error. The two are
+    /// indistinguishable to this endpoint, so offering one and refusing the other was arbitrary.
+    func testAnStlIsSliceableBecauseTheServerTakesOne() {
+        XCTAssertTrue(SliceCapability.canSlice(file("stl")))
+        XCTAssertTrue(SliceCapability.canSlice(file("STL")))
     }
 
     /// The predicate is POSITIVE, so an unknown type is refused rather than offered.

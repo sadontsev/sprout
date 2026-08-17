@@ -349,6 +349,18 @@ struct WizardView: View {
         if step == 5 {
             return FooterAction(label: "Looks good", bg: c.accent, fg: c.accentInk, locked: false) { next() }
         }
+        // Material: refuse to continue while a used slot has no filament preset.
+        //
+        // `SliceRequest.orderedFilaments` compacts with `compactMap`, so a missing slot does not error —
+        // it SHORTENS the array, which then takes the singular `filament_preset` branch and slices the
+        // whole plate in one material. A plate needing slots [1, 2] with only slot 2 chosen printed the
+        // wrong material, silently, and nothing gated it: this footer was an unconditional Continue.
+        //
+        // Shown as locked rather than absent so the step still has a visible next action, and the
+        // reason is printed above it by `missingPresetNote`.
+        if step == 3, !missingPresetSlots.isEmpty {
+            return FooterAction(label: "Choose a material", bg: c.s3, fg: c.t3, locked: true) {}
+        }
         return FooterAction(label: "Continue", bg: c.s3, fg: c.t1, locked: false) { next() }
     }
 
@@ -1098,6 +1110,22 @@ struct WizardView: View {
 
     /// The filament slots this print has to bind to trays. `[1]` when the requirements could not be
     /// fetched — never `[]`, which `AmsMapping.isComplete` reads as "unknown" rather than "satisfied".
+    /// Used slots with no filament preset chosen — the gap `orderedFilaments` would swallow.
+    private var missingPresetSlots: [Int] {
+        SliceRequest.missingPresetSlots(mappedSlots: mappedSlots, presetBySlot: filaments)
+    }
+
+    /// What to say about it. One slot is named; several are listed.
+    private var missingPresetNote: String? {
+        let missing = missingPresetSlots
+        guard !missing.isEmpty else { return nil }
+        return missing.count == 1
+            ? "Choose the material for filament \(missing[0]) before slicing — without it the whole "
+              + "plate would be sliced in one material."
+            : "Choose a material for " + missing.map { "filament \($0)" }.joined(separator: ", ")
+              + " before slicing — without them the plate would be sliced in one material."
+    }
+
     private var mappedSlots: [Int] {
         let ids = requirements?.usedSlotIds ?? []
         return ids.isEmpty ? [1] : ids

@@ -16,6 +16,13 @@ enum SliceRequest {
     // MARK: - Preset references
 
     /// How the server wants a preset named: `{id, name}`, plus `source` when the row carried one.
+    ///
+    /// **`source` is REQUIRED by the server, not optional** — measured: a ref of `{id, name}` alone
+    /// comes back `422 {"loc": ["body","printer_preset","source"], "msg": "Field required"}`. It is
+    /// still emitted conditionally here because every real row from `GET /slicer/presets` carries one
+    /// (`"source": "standard"` on the stock groups), so the conditional has never fired in practice.
+    /// If a row ever arrives without it this will 422, and that is worth knowing before it happens
+    /// rather than after.
     static func presetRef(_ p: Preset) -> JSONValue {
         var o: [String: JSONValue] = ["id": .string(p.id), "name": .string(p.name)]
         if let source = p.source { o["source"] = .string(source) }
@@ -115,11 +122,18 @@ enum SliceCapability {
     ///    "Creality K2 Pro" in `slicedForModel` is `isSliced == true` and sliceable at the same time.
     ///  - `!LibraryFileCaps.isStl(f)` — admits every unknown type.
     ///
-    /// **STL is refused for now because nobody has measured it.** Slicing a project 3MF is confirmed
-    /// on the live server (`cr.3mf` → three `cr.gcode.3mf`, see `ThumbSource`); whether `/slice`
-    /// accepts a bare mesh is not recorded anywhere in this repo. Guessing yes would ship row 1 of
-    /// CLAUDE.md's table. When it is measured, this gains a case and so does its test.
+    /// **STL is included, and that is measured rather than assumed.** Probed against the live server:
+    /// `POST /library/files/<stl>/slice` answers **202** and the slicer runs it to "Generating G-code",
+    /// exactly as it does a project 3MF. A control run — the same presets against `cr.3mf` — failed at
+    /// the same stage with the same error, which is what makes the result trustworthy: the two inputs
+    /// are indistinguishable to this endpoint, so refusing one while offering the other was arbitrary.
+    ///
+    /// The failure both runs hit is a SERVER problem and not ours to encode: Bambuddy rejects the
+    /// slicer's output because the sidecar image is too old to read the companion profile holding the
+    /// real start G-code, and it refuses to save a file that "would heat the printer and extrude
+    /// nothing". Correct of it, and equally true for both file types — so it must not become a
+    /// capability predicate here.
     static func canSlice(_ f: LibraryFile) -> Bool {
-        (f.fileType ?? "").lowercased() == "3mf"
+        ["3mf", "stl"].contains((f.fileType ?? "").lowercased())
     }
 }
