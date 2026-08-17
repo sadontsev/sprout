@@ -430,6 +430,22 @@ struct MacPrintSheet: View {
     /// The slicer presets, once fetched. `nil` means "not asked yet or the ask failed" — the
     /// distinction is `presetsError`.
     @State private var presets: SlicePresets?
+    /// The library file the slice PRODUCED, once it has. Nil before that.
+    ///
+    /// Slicing creates a NEW row rather than mutating the input — there is no parent link in the API
+    /// (`sliced_from_library_file_id` does not exist) — so from here on the sheet has two subjects: the
+    /// file the user opened, and the file that will actually be printed. `printFileId` is the second.
+    /// Quality, bed and supports. `nil` quality means "not chosen yet" and resolves to
+    /// `PresetSelect.pickDefaultQuality` once the presets land.
+    @State private var quality: Preset?
+    @State private var bedTypeId: String?
+    @State private var supports = false
+
+    @State private var slicedFileId: Int?
+    @State private var slicePct = 0
+    @State private var sliceFailure: String?
+    @State private var slicing = false
+
     /// Why the preset fetch failed, if it did.
     ///
     /// A presets failure must NOT block printing: the tray Menu renders perfectly without them, and
@@ -448,6 +464,15 @@ struct MacPrintSheet: View {
 
     private var status: PrinterStatus? { model.status?.status }
     private var profile: PrinterProfile { PrinterProfile.forPrinter(model.printer) }
+
+    /// The file that will actually be PRINTED — the slice output when there is one.
+    ///
+    /// Every fetch below the presentation layer keys on this, and the enqueue body uses it. Missing one
+    /// site enqueues the UNSLICED source, which is the single worst outcome available here: the printer
+    /// accepts a file it cannot execute. `grep -n "file\.id"` in this file is the checklist, and the
+    /// three sites that legitimately keep `file.id` are the ones that NAME the file to the user (the
+    /// title, the share name) plus the preset fetch, which is keyed on the source's sliceability.
+    private var printFileId: Int { slicedFileId ?? file.id }
 
     /// Every tray across EVERY unit. Reading `status.ams[0].tray` here once made 5 of the 9 slots on
     /// a three-unit machine invisible and unprintable.
@@ -493,7 +518,12 @@ struct MacPrintSheet: View {
 
     /// Whether the file already carries toolpaths — `hasGcode`, the capability, never `isSliced`,
     /// the label.
-    private var alreadySliced: Bool { LibraryFileCaps.hasGcode(file) }
+    /// Does the file that will be PRINTED carry toolpaths?
+    ///
+    /// `slicedFileId != nil` is the whole of the answer once a slice has run: the output is a
+    /// `gcode.3mf` by construction, and asking `hasGcode` of the ORIGINAL would keep saying no for ever
+    /// — the sheet would refuse to send the very file it had just produced.
+    private var alreadySliced: Bool { slicedFileId != nil || LibraryFileCaps.hasGcode(file) }
     private var slicedFor: String? { plates?.embeddedPrinter ?? file.slicedForModel }
     private var printerMismatch: Bool { alreadySliced && !profile.matchesSlicedFor(slicedFor) }
 
@@ -530,6 +560,119 @@ struct MacPrintSheet: View {
     ///
     /// `getPresets()` returns raw `Data`, not a decoded response — the decode belongs to the caller,
     /// and until now the only caller was the iOS wizard.
+    /// Slice on the server, then become a print sheet for the output.
+    ///
+    /// The body is `SliceRequest.body` — the same function the iOS wizard uses, so the two platforms
+    /// cannot send different bytes for the same choices.
+    ///
+    /// Cancellation is LOCAL only. Leaving the sheet stops the poll; the server job keeps running,
+    /// exactly as iOS behaves, and `MacSliceCopy.leavingNote` says so on screen rather than leaving a
+    /// user to conclude nothing happened.
+    private func runSlice() async {
+        guard let client = model.client, let presets, !slicing else { return }
+
+        // Refuse rather than send a short array. `orderedFilaments` compacts with `compactMap`, so a
+        // used slot with no preset would silently vanish and the plate would slice in the wrong
+        // material — the bug iOS still ships. Gate 5b shows this on screen too; this is the belt.
+        let presetBySlot = filamentPresetBySlot
+        guard SliceRequest.missingPresetSlots(mappedSlots: usedSlots, presetBySlot: presetBySlot).isEmpty else { return }
+
+        slicing = true
+        slicePct = 5
+        sliceFailure = nil
+        defer { slicing = false }
+
+        do {
+            let chosenQuality = supports ? (supportTwin ?? quality) : quality
+            let body = SliceRequest.body(
+                plate: selectedPlate,
+                bedType: resolvedBedType,
+                printer: presets.printer,
+                process: chosenQuality.map { SliceRequest.presetRef($0) },
+                filaments: SliceRequest.orderedFilaments(mappedSlots: usedSlots, presetBySlot: presetBySlot)
+            )
+            let jobId = try await client.slice(file.id, body: body)
+
+            // Bounded by wall clock rather than by a job state we might never see — 90 × 1.5 s, the
+            // same budget the wizard uses against the same server.
+            for _ in 0..<90 {
+                try Task.checkCancellation()
+                try? await Task.sleep(for: .milliseconds(1500))
+                let job = try await client.getSliceJob(jobId)
+                slicePct = job.progress?.double.map { Int($0) } ?? slicePct
+                if let done = job.result, let newId = done.libraryFileId?.double.map({ Int($0) }) {
+                    slicePct = 100
+                    // The subject changes here. Everything below the presentation layer keys on
+                    // `printFileId`, so the two `.task(id:)`s re-fire on their own: plates and the
+                    // detail re-read against the OUTPUT, requirements re-ask for the new (file, plate)
+                    // pair, and `onChange(of: usedSlots)` drops bindings the new slot set does not use
+                    // and re-runs auto-fill. That machinery already existed and is already correct.
+                    slicedFileId = newId
+                    // So the new row appears in Files without a manual refresh. `LibraryStore` has no
+                    // poller; `MacFileImport` sets the precedent.
+                    await model.library.load()
+                    return
+                }
+                if let failure = job.result?.error ?? job.rootError {
+                    sliceFailure = failure
+                    return
+                }
+            }
+            sliceFailure = "The slice is taking longer than expected. It may still finish on the "
+                + "server — check Files in a few minutes."
+        } catch is CancellationError {
+            return
+        } catch {
+            sliceFailure = JobsStore.failureText(error)
+        }
+    }
+
+    /// Can the slice actually be sent right now?
+    ///
+    /// This is NOT `problem == nil`. Guard 1 short-circuits the print gate the moment there are no
+    /// toolpaths, so the print gate never reaches its tray checks for a file that has yet to be
+    /// sliced — and a Slice button gated on `problem?.remedy == .slice` alone was therefore LIVE while
+    /// `runSlice` would return immediately at its own guard. A control that looks live and does
+    /// nothing is the failure this codebase keeps rediscovering, and it arrived here by the usual
+    /// route: reusing a predicate that answers the neighbouring question.
+    ///
+    /// The remedy is already on screen — the mapping row for an unbound slot says "Choose it" in
+    /// orange — so this disables the button and names the reason in its tooltip rather than adding a
+    /// second notice that repeats the row.
+    private var sliceBlocked: String? {
+        if presets == nil { return presetsError ?? "Still reading the slicer presets." }
+        guard presets?.canSlice == true else {
+            return "No machine preset for this printer, so there is nothing to slice for."
+        }
+        let missing = SliceRequest.missingPresetSlots(mappedSlots: usedSlots, presetBySlot: filamentPresetBySlot)
+        guard missing.isEmpty else {
+            return missing.count == 1
+                ? "Choose a tray for filament \(missing[0]) first — slicing needs to know the material."
+                : "Choose a tray for " + missing.map { "filament \($0)" }.joined(separator: ", ")
+                    + " first — slicing needs to know each material."
+        }
+        return nil
+    }
+
+    /// Slot → the slicer preset its chosen tray resolves to.
+    ///
+    /// Built from `loaded`, which is where a tray's preset comes from now that the real preset list is
+    /// passed to `FilamentMatch.loaded` — the tray Menu IS the material picker, so there is no separate
+    /// per-slot preset state to keep in step with it.
+    private var filamentPresetBySlot: [Int: Preset] {
+        var out: [Int: Preset] = [:]
+        for slot in usedSlots {
+            guard let trayId = trayBySlot[slot],
+                  // `slot` IS the global tray id on `LoadedFilament` — the doc comment there is
+                  // explicit that it is not a local index, because with three units fitted local ids
+                  // collide three ways.
+                  let match = loaded.first(where: { $0.slot == trayId }),
+                  let preset = match.preset else { continue }
+            out[slot] = preset
+        }
+        return out
+    }
+
     private func loadPresets() async {
         guard SliceCapability.canSlice(file), let client = model.client else { return }
         do {
@@ -543,6 +686,10 @@ struct MacPrintSheet: View {
                 nozzle: nozzle
             )
             presetsError = nil
+            // Default the quality, or the menu reads "Quality" for ever and `supportTwin` can never
+            // resolve — so the supports toggle would never appear either. Only when the user has not
+            // already chosen, so a re-fetch does not overwrite them.
+            if quality == nil { quality = PresetSelect.pickDefaultQuality(presets?.qualities ?? []) }
         } catch {
             guard !Task.isCancelled else { return }
             presets = nil
@@ -561,7 +708,9 @@ struct MacPrintSheet: View {
             hasStatus: status != nil,
             loadedTrays: trays,
             usedSlots: usedSlots,
-            trayBySlot: trayBySlot
+            trayBySlot: trayBySlot,
+            // Only while there is something to slice — an ordinary print must not be asked for presets.
+            presetBySlot: SliceCapability.canSlice(file) && slicedFileId == nil ? filamentPresetBySlot : [:]
         )
     }
 
@@ -592,6 +741,7 @@ struct MacPrintSheet: View {
                 VStack(alignment: .leading, spacing: m.sectionGap) {
                     topRow
                     plateChips
+                    sliceSection
                     // The refusal comes BEFORE the options, and that ordering is the fix for a real
                     // defect rather than a preference.
                     //
@@ -621,7 +771,18 @@ struct MacPrintSheet: View {
             footer
         }
         .background(c.sheet)
-        .task(id: file.id) { await loadFile() }
+        .task(id: printFileId) { await loadFile() }
+        #if DEBUG
+        // Press Slice headlessly. Same justification as `SPROUT_PRINT_FILE`: a click is the one thing
+        // the probe cannot do, and without this the progress and post-slice states of the flow are
+        // unreviewable — which on a Mac means unreviewable by anyone.
+        .task(id: "autoslice-\(printFileId)") {
+            guard ProcessInfo.processInfo.environment["SPROUT_AUTO_SLICE"] != nil else { return }
+            for _ in 0..<40 where presets == nil { try? await Task.sleep(for: .milliseconds(250)) }
+            guard problem?.remedy == .slice else { return }
+            await runSlice()
+        }
+        #endif
         // Presets are fetched ONLY for a file that can actually be sliced.
         //
         // `GET /slicer/presets` is 189 rows on an H2C, and the overwhelmingly common case here is an
@@ -632,7 +793,7 @@ struct MacPrintSheet: View {
         // Per PLATE, and keyed on the exact (file, plate) pair that will be enqueued. Unfiltered,
         // `filament-requirements` reports every slot in the FILE — a different question, and the one
         // that maps trays this plate never asks for.
-        .task(id: "\(file.id)-\(selectedPlate)") { await loadRequirements() }
+        .task(id: "\(printFileId)-\(selectedPlate)") { await loadRequirements() }
         .onChange(of: usedSlots) { _, slots in
             // A different plate is a different question. Bindings for slots this plate does not use
             // are dropped rather than carried forward into an array they would mis-index.
@@ -695,7 +856,7 @@ struct MacPrintSheet: View {
         guard let client = model.client,
               plates?.plates.first(where: { $0.index == vm.plateIndex })?.hasThumbnail == true
         else { return nil }
-        return client.plateThumbUrl(file.id, plateIndex: vm.plateIndex, token: model.cameraToken)
+        return client.plateThumbUrl(printFileId, plateIndex: vm.plateIndex, token: model.cameraToken)
     }
 
     private var platePreview: some View {
@@ -883,6 +1044,79 @@ struct MacPrintSheet: View {
 
     // MARK: Options
 
+    /// Quality, bed and supports — the only three choices that change the slice AND that the server
+    /// will honour.
+    ///
+    /// What is deliberately NOT here, each for its own reason:
+    ///
+    ///  - a NOZZLE picker. The choice selects a preset FAMILY, not machine behaviour, and
+    ///    `nozzle_mapping` is absent from `PrintQueueItemCreate` — so the app cannot say which nozzle
+    ///    runs which material regardless (`MacPrintScope.nozzleChoiceNote`). The resolved nozzle is
+    ///    NAMED in the note below instead of being a secret.
+    ///  - the advanced `SliceOverrides`. Eight controls that ride an ephemeral local preset and need a
+    ///    Bambuddy admin login; offering them makes a 403 reachable for a remedy a TestFlight stranger
+    ///    cannot act on. Nothing here consults `hasAdminLogin`, so no 403 is reachable at all.
+    ///  - a filament picker. The tray Menu above already is one — see `loaded`.
+    @ViewBuilder
+    private var sliceSection: some View {
+        if SliceCapability.canSlice(file), slicedFileId == nil {
+            VStack(alignment: .leading, spacing: 8) {
+                monoLabel("SLICING")
+                if let presetsError {
+                    note("Couldn’t read the slicer presets — \(presetsError) Slicing needs them; an "
+                         + "already-sliced file can still be printed.")
+                } else if presets == nil {
+                    note("Reading the slicer presets…")
+                } else {
+                    HStack(spacing: 8) {
+                        Menu {
+                            ForEach(presets?.qualities ?? []) { q in
+                                Button(MacSliceCopy.qualityLabel(q, token: profile.presetToken)) { quality = q }
+                            }
+                        } label: {
+                            Text(verbatim: quality.map {
+                                MacSliceCopy.qualityLabel($0, token: profile.presetToken)
+                            } ?? "Quality")
+                        }
+                        .disabled(presets?.qualities.isEmpty ?? true)
+
+                        Menu {
+                            ForEach(profile.bedTypes) { b in
+                                Button(b.label) { bedTypeId = b.id }
+                            }
+                        } label: {
+                            Text(verbatim: profile.bedTypes.first { $0.id == resolvedBedType }?.label ?? "Bed")
+                        }
+                    }
+                    // Only when a twin actually exists for the chosen quality. `hasSupportProfile ==
+                    // false` means the server answered and none are provisioned — say so; `nil` means
+                    // the request failed, and blaming the preset library for a network error is the
+                    // thing the tri-state exists to prevent.
+                    if supportTwin != nil {
+                        Toggle("Print supports", isOn: $supports)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    } else if presets?.hasSupportProfile == false {
+                        note("No “+ Supports” profiles are provisioned on this server, so supports "
+                             + "can’t be switched on from here.")
+                    }
+                    note(MacSliceCopy.nozzleNote(nozzle))
+                }
+            }
+        }
+    }
+
+    /// The support-enabled twin of the chosen quality, when one is provisioned.
+    private var supportTwin: Preset? {
+        guard let quality else { return nil }
+        return presets?.supportByBase[quality.name]
+    }
+
+    /// The bed the slice is for. Falls back to the profile's first, which is what iOS does at init.
+    private var resolvedBedType: String {
+        bedTypeId ?? profile.bedTypes.first?.id ?? "Textured PEI Plate"
+    }
+
     private var optionsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             monoLabel("PRINT OPTIONS")
@@ -974,7 +1208,7 @@ struct MacPrintSheet: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text(verbatim: estimate)
+            Text(verbatim: slicing ? MacSliceCopy.progress(slicePct) : (sliceFailure ?? estimate))
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(c.t2)
                 .monospacedDigit()
@@ -998,11 +1232,20 @@ struct MacPrintSheet: View {
             // Disabled for now, because the slice call itself is the next step — a sliceable file
             // shows the note and a dimmed Slice button rather than a live one that does nothing,
             // which is the failure this codebase keeps rediscovering.
-            if problem?.remedy == .slice {
-                Button {} label: { Text("Slice…") }
-                    .buttonStyle(MacPrimaryButtonStyle())
-                    .disabled(true)
-                    .help("Slicing on the Mac is not in this build yet.")
+            if slicing {
+                Button("Stop watching") { isPresented = false }
+                    .buttonStyle(MacSecondaryButtonStyle())
+                    .help(MacSliceCopy.leavingNote)
+            } else if problem?.remedy == .slice {
+                Button {
+                    Task { await runSlice() }
+                } label: {
+                    Text("Slice…")
+                }
+                .buttonStyle(MacPrimaryButtonStyle())
+                .disabled(sliceBlocked != nil)
+                .help(sliceBlocked ?? "Slice this plate on your Bambuddy server")
+                .keyboardShortcut(.defaultAction)
             } else {
                 Button {
                     locked.press(.startPrint) { start() }()
@@ -1083,8 +1326,8 @@ struct MacPrintSheet: View {
     private func loadFile() async {
         guard let client = model.client else { return }
         loadingPlate = true
-        async let platesTask = client.getPlates(file.id)
-        async let detailTask = client.getFileDetail(file.id)
+        async let platesTask = client.getPlates(printFileId)
+        async let detailTask = client.getFileDetail(printFileId)
         async let assignTask = client.listAssignments(printerId: model.printerId)
         let p = try? await platesTask
         let d = try? await detailTask
@@ -1106,7 +1349,7 @@ struct MacPrintSheet: View {
     /// list that had already said "3 filaments".
     private func loadRequirements() async {
         guard let client = model.client else { return }
-        let fetched = try? await client.filamentRequirements(file.id, plate: selectedPlate)
+        let fetched = try? await client.filamentRequirements(printFileId, plate: selectedPlate)
         guard !Task.isCancelled else { return }
         requirements = fetched
     }
@@ -1142,7 +1385,7 @@ struct MacPrintSheet: View {
                 // `MacPrintScope.optionsReason`.
                 try await client.enqueue([
                     "printer_id": .int(printerId),
-                    "library_file_id": .int(file.id),
+                    "library_file_id": .int(printFileId),
                     "use_ams": .bool(true),
                     "ams_mapping": .array(mapping.map { .int($0) }),
                     "plate_id": .int(plate),
@@ -1200,3 +1443,38 @@ extension View {
     }
 }
 #endif
+
+/// Copy for the slicing controls, kept out of the view so it can be read as prose.
+enum MacSliceCopy {
+
+    /// A quality preset without its machine suffix. "0.20mm Standard @BBL H2C" is what the server
+    /// calls it; "0.20mm Standard" is what the user calls it, and the suffix is the same on every row
+    /// in the menu so it carries no information there.
+    static func qualityLabel(_ p: Preset, token: String) -> String {
+        p.name.replacingOccurrences(of: " \(token)", with: "")
+    }
+
+    /// Names the nozzle the presets were resolved for.
+    ///
+    /// Visible rather than a control: the choice picks a preset family, and the app cannot express
+    /// which nozzle runs which material because `nozzle_mapping` is not on the queue create shape. On
+    /// a machine with two unequal nozzles mounted this is the one that was chosen for you, and saying
+    /// which beats leaving it to be discovered.
+    static func nozzleNote(_ nozzle: NozzleSize) -> String {
+        "Slicing with the \(nozzle.rawValue) mm nozzle presets."
+    }
+
+    /// While the server works. The percentage is the job's own.
+    static func progress(_ pct: Int) -> String {
+        pct <= 0 ? "Slicing on the server…" : "Slicing on the server… \(pct) %"
+    }
+
+    /// What closing the sheet mid-slice actually does.
+    ///
+    /// The SERVER job keeps running — only the local poll is cancelled, exactly as iOS behaves. Saying
+    /// so matters: a user who closes and reopens sees the source file and would otherwise conclude
+    /// nothing happened, when in fact a slice is finishing without them.
+    static let leavingNote =
+        "Closing this window stops Sprout watching, but the server keeps slicing — the finished file "
+        + "will appear in Files."
+}
