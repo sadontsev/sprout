@@ -42,11 +42,26 @@ enum MacPrintScope {
     /// TODO(mac-slice): a `MacSliceSheet` (or a slicing step inside this one, behind its own
     /// progress state) reusing `PresetSelect` + `SliceOverrides` — the two domain types this sheet
     /// therefore does not touch. When it lands, this branch becomes "Slice and print…".
-    static func notSlicedReason(_ file: LibraryFile) -> String {
-        let kind = LibraryFileCaps.isStl(file) ? "An STL is a bare mesh" : "This .3mf carries no toolpaths"
-        return "\(kind), so there is nothing for the printer to run. Sprout for Mac can’t slice yet — "
-            + "slice it in the iPhone app or in Bambu Studio, then print the sliced file from here."
+    /// Why this file can never print from here — the TERMINAL branch.
+    ///
+    /// It kept its old sentence naming the iPhone app and Bambu Studio, but only for the files that
+    /// genuinely need it. A sliceable `.3mf` gets `willSliceNote` instead; sending someone to another
+    /// app for something this sheet is about to offer was the whole complaint.
+    static func cannotSliceReason(_ file: LibraryFile) -> String {
+        let kind = LibraryFileCaps.isStl(file)
+            ? "An STL is a bare mesh, and Bambuddy hasn’t been confirmed to slice one"
+            : "This file carries no toolpaths and isn’t a project Bambuddy can slice"
+        return "\(kind), so there is nothing for the printer to run. Slice it in the iPhone app or in "
+            + "Bambu Studio, then print the sliced file from here."
     }
+
+    /// Why the button says Slice — the ACTIONABLE branch.
+    ///
+    /// Short on purpose: it sits above a footer whose button already names the action, and the sheet's
+    /// job at that moment is to say what will happen, not to explain slicing.
+    static let willSliceNote =
+        "This is a project file, so it has no toolpaths yet. Slicing runs on your Bambuddy server and "
+        + "produces a new file next to this one; the printer isn’t involved until you send it."
 
     // MARK: Per-print options
 
@@ -126,6 +141,19 @@ struct MacPrintProblem: Equatable, Sendable {
     /// True for a condition the user cannot fix from this sheet — draws in `error` rather than
     /// `heating`, because "load a spool" and "this file can never print here" deserve different weight.
     var terminal: Bool = false
+
+    /// What the user can DO about it, when the answer is an action this sheet offers.
+    ///
+    /// A separate field rather than a third `terminal` state, because `terminal` answers "can this be
+    /// fixed here at all" and this answers "and if so, with which button" — two questions, and
+    /// overloading one Bool to carry both is the shape CLAUDE.md's table is made of. `nil` means the
+    /// notice is informational: fix the thing it names and the gate clears itself.
+    var remedy: Remedy?
+
+    enum Remedy: Equatable, Sendable {
+        /// There is nothing to print, but there IS something to slice. The footer offers Slice.
+        case slice
+    }
 }
 
 /// Every precondition for pressing Send, evaluated in the order the user should hear them.
@@ -140,25 +168,46 @@ enum MacPrintGate {
     ///     `filament-requirements?plate_id=`, never the unfiltered file-wide list.
     ///   - trayBySlot: slot → global tray id. A slot with no entry is "not chosen yet".
     ///   - loadedTrays: the AMS as it is right now, so a spool pulled since the choice is caught.
+    /// - Parameters:
+    ///   - hasToolpaths: `LibraryFileCaps.hasGcode` of the file that would actually be PRINTED — the
+    ///     slice output once one exists, not the file the sheet was opened with. Passed in rather than
+    ///     derived here for exactly that reason: this function must not assume the two are the same.
+    ///   - canSlice: `SliceCapability.canSlice` of the file the sheet was opened with. Decides whether
+    ///     "nothing to print" is a dead end or a first step.
+    ///   - presetBySlot: the filament preset chosen for each used slot, when slicing. Empty when there
+    ///     is nothing to slice; see guard 5b.
     static func evaluate(
         file: LibraryFile,
+        hasToolpaths: Bool,
+        canSlice: Bool,
         printerMismatch: Bool,
         slicedFor: String?,
         printerName: String?,
         hasStatus: Bool,
         loadedTrays: [AmsTrayRef],
         usedSlots: [Int],
-        trayBySlot: [Int: Int]
+        trayBySlot: [Int: Int],
+        presetBySlot: [Int: Preset] = [:]
     ) -> MacPrintProblem? {
-        // 1. Is there anything to print at all? `hasGcode`, NOT `isSliced` — a plain project .3mf
-        //    carries a `slicedForModel` and no toolpaths, and `isSliced` would wave it through. That
-        //    is the exact pair CLAUDE.md's table names.
-        guard LibraryFileCaps.hasGcode(file) else {
-            return MacPrintProblem(
-                title: "Nothing to print yet",
-                message: MacPrintScope.notSlicedReason(file),
-                terminal: true
-            )
+        // 1. Is there anything to print at all — and if not, is there anything to SLICE?
+        //
+        // `hasToolpaths` is `hasGcode`, NOT `isSliced`: a plain project .3mf carries a
+        // `slicedForModel` and no toolpaths, and `isSliced` would wave it through. That is the exact
+        // pair CLAUDE.md's table names. What is new is the second question — the same file that
+        // cannot be printed is usually precisely the file that can be sliced, and saying only "this
+        // cannot print" of a file one button would fix is a refusal that answers the wrong question.
+        guard hasToolpaths else {
+            return canSlice
+                ? MacPrintProblem(
+                    title: "Not sliced yet",
+                    message: MacPrintScope.willSliceNote,
+                    remedy: .slice
+                  )
+                : MacPrintProblem(
+                    title: "Nothing to print yet",
+                    message: MacPrintScope.cannotSliceReason(file),
+                    terminal: true
+                  )
         }
         // 2. Is it G-code for THIS machine? Another machine's toolpaths can crash the head.
         if printerMismatch {
@@ -210,6 +259,24 @@ enum MacPrintGate {
                         + unmapped.map { "filament \($0)" }.joined(separator: ", ") + " above."
                     : "Choose which AMS tray to print from."
             )
+        }
+        // 5b. "…and every one of those trays resolves to a filament preset." Only when slicing.
+        //
+        // This is the gap `SliceRequest.orderedFilaments` would swallow: `compactMap` closes it, so a
+        // plate needing slots [1, 2] with a preset for only slot 2 produces a ONE-element list, takes
+        // the SINGULAR `filament_preset` branch, and slices the whole plate in the wrong material.
+        // iOS has shipped that bug — its step-3 footer is an unconditional Continue — and the Mac
+        // refuses instead. Skipped entirely when `presetBySlot` is empty, which is the print-only path.
+        if !presetBySlot.isEmpty {
+            let missing = SliceRequest.missingPresetSlots(mappedSlots: usedSlots, presetBySlot: presetBySlot)
+            if !missing.isEmpty {
+                return MacPrintProblem(
+                    title: missing.count == 1 ? "Filament \(missing[0]) has no material" : "Some filaments have no material",
+                    message: "Slicing needs to know which material each filament is. Choose a tray whose "
+                        + "spool the slicer recognises for "
+                        + missing.map { "filament \($0)" }.joined(separator: ", ") + "."
+                )
+            }
         }
         // 6. "…and those trays still hold filament." The AMS is live while this sheet is open.
         let stale = AmsMapping.stale(trays: trayBySlot, loaded: loadedTrays)
@@ -486,6 +553,8 @@ struct MacPrintSheet: View {
     private var problem: MacPrintProblem? {
         MacPrintGate.evaluate(
             file: file,
+            hasToolpaths: alreadySliced,
+            canSlice: SliceCapability.canSlice(file),
             printerMismatch: printerMismatch,
             slicedFor: slicedFor,
             printerName: model.printer?.name,
@@ -899,17 +968,33 @@ struct MacPrintSheet: View {
             // The LAN gate keeps the button CLICKABLE when it is the thing blocking — the click is
             // what surfaces the explanation. Every other refusal is already printed above the
             // footer, so those disable it instead of hiding behind a press.
-            Button {
-                locked.press(.startPrint) { start() }()
-            } label: {
-                Text(starting ? "Starting…" : "Send to printer")
+            // The verb comes from the gate, so the button and the notice above it cannot disagree
+            // about what the next step is. `.slice` is NOT LAN-gated: slicing happens on the user's
+            // own Bambuddy and the printer is never contacted, which is the same reasoning
+            // `Lan.isBlocked` already gives for `.plateCleared` and `.queueRemove`. Only the send
+            // carries `.startPrint`.
+            //
+            // Disabled for now, because the slice call itself is the next step — a sliceable file
+            // shows the note and a dimmed Slice button rather than a live one that does nothing,
+            // which is the failure this codebase keeps rediscovering.
+            if problem?.remedy == .slice {
+                Button {} label: { Text("Slice…") }
+                    .buttonStyle(MacPrimaryButtonStyle())
+                    .disabled(true)
+                    .help("Slicing on the Mac is not in this build yet.")
+            } else {
+                Button {
+                    locked.press(.startPrint) { start() }()
+                } label: {
+                    Text(starting ? "Starting…" : "Send to printer")
+                }
+                .buttonStyle(MacPrimaryButtonStyle())
+                .disabled(problem != nil || starting)
+                .locked(.startPrint, by: locked)
+                // ⏎. Inert while the button is disabled, which is the correct behaviour for a sheet
+                // whose reason for refusing is on screen.
+                .keyboardShortcut(.defaultAction)
             }
-            .buttonStyle(MacPrimaryButtonStyle())
-            .disabled(problem != nil || starting)
-            .locked(.startPrint, by: locked)
-            // ⏎. Inert while the button is disabled, which is the correct behaviour for a sheet
-            // whose reason for refusing is on screen.
-            .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, m.gutter)
         .padding(.vertical, 14)

@@ -32,6 +32,9 @@ final class MacPrintGateTests: XCTestCase {
     /// The healthy case: sliced, this machine, status in, one tray, one slot, mapped and loaded.
     private func evaluate(
         file f: LibraryFile? = nil,
+        hasToolpaths: Bool? = nil,
+        canSlice: Bool? = nil,
+        presetBySlot: [Int: Preset] = [:],
         printerMismatch: Bool = false,
         slicedFor: String? = nil,
         hasStatus: Bool = true,
@@ -39,15 +42,21 @@ final class MacPrintGateTests: XCTestCase {
         usedSlots: [Int] = [1],
         trayBySlot: [Int: Int]? = nil
     ) -> MacPrintProblem? {
-        MacPrintGate.evaluate(
-            file: f ?? file("gcode.3mf"),
+        let subject = f ?? file("gcode.3mf")
+        return MacPrintGate.evaluate(
+            file: subject,
+            // Default to asking the real predicates of the real file, so every pre-existing test keeps
+            // meaning what it meant.
+            hasToolpaths: hasToolpaths ?? LibraryFileCaps.hasGcode(subject),
+            canSlice: canSlice ?? SliceCapability.canSlice(subject),
             printerMismatch: printerMismatch,
             slicedFor: slicedFor,
             printerName: "H2C",
             hasStatus: hasStatus,
             loadedTrays: loadedTrays ?? [tray(0)],
             usedSlots: usedSlots,
-            trayBySlot: trayBySlot ?? [1: 0]
+            trayBySlot: trayBySlot ?? [1: 0],
+            presetBySlot: presetBySlot
         )
     }
 
@@ -61,23 +70,46 @@ final class MacPrintGateTests: XCTestCase {
 
     /// `hasGcode`, never `isSliced`. A plain project .3mf naming a machine is `isSliced == true` and
     /// has nothing to run; waving it through is the pair CLAUDE.md's table names.
-    func testAPlainProjectThreeMFIsRefusedEvenThoughItLooksSliced() {
+    ///
+    /// It is now refused with a REMEDY rather than terminally, because the same file that cannot print
+    /// is exactly the file that can be sliced.
+    func testAPlainProjectThreeMFIsRefusedButOfferedASlice() {
         let f = file("3mf", slicedForModel: "Creality K2 Pro")
         XCTAssertTrue(LibraryFileCaps.isSliced(f), "precondition: the label says sliced")
         let p = evaluate(file: f)
+        XCTAssertEqual(p?.title, "Not sliced yet")
+        XCTAssertEqual(p?.remedy, .slice)
+        XCTAssertNotEqual(p?.terminal, true, "one button fixes it — that is not terminal")
+    }
+
+    /// An STL is terminal until somebody measures whether Bambuddy slices one. `canSlice` says no, so
+    /// the gate must NOT offer a button that would fail.
+    func testAnStlIsTerminalWithNoRemedy() {
+        let p = evaluate(file: file("stl"))
         XCTAssertEqual(p?.title, "Nothing to print yet")
         XCTAssertEqual(p?.terminal, true)
+        XCTAssertNil(p?.remedy)
     }
 
-    func testAnStlIsRefused() {
-        XCTAssertEqual(evaluate(file: file("stl"))?.title, "Nothing to print yet")
+    /// The two branches of guard 1 are chosen by `canSlice` alone, and the terminal copy must not
+    /// send a user to another app for something this sheet is about to offer.
+    func testTheTerminalCopyOnlyAppearsWhenThereIsNoRemedy() {
+        let sliceable = evaluate(file: file("3mf"))
+        XCTAssertFalse(sliceable!.message.contains("Bambu Studio"),
+                       "a sliceable file must not be sent to another app")
+        XCTAssertTrue(sliceable!.message.contains("Bambuddy"), "say where slicing runs")
+
+        let dead = evaluate(file: file("zip"), canSlice: false)
+        XCTAssertTrue(dead!.message.contains("Bambu Studio"), "the dead end keeps its directions")
     }
 
-    /// ORDER: the file's own problem outranks every fact about the printer.
+    /// ORDER: the file's own problem outranks every fact about the printer, in BOTH branches.
     func testNoToolpathsOutranksNoTraysAndNoStatus() {
-        let p = evaluate(file: file("3mf"), hasStatus: false, loadedTrays: [], trayBySlot: [:])
-        XCTAssertEqual(p?.title, "Nothing to print yet",
-                       "a file that can never print here must not be reported as a printer problem")
+        XCTAssertEqual(evaluate(file: file("3mf"), hasStatus: false,
+                                loadedTrays: [], trayBySlot: [:])?.remedy, .slice,
+                       "a sliceable file must not be reported as a printer problem")
+        XCTAssertEqual(evaluate(file: file("stl"), hasStatus: false,
+                                loadedTrays: [], trayBySlot: [:])?.title, "Nothing to print yet")
     }
 
     // MARK: 2 — the wrong machine
@@ -145,6 +177,39 @@ final class MacPrintGateTests: XCTestCase {
         XCTAssertEqual(p?.message, "Choose which AMS tray to print from.")
     }
 
+    // MARK: 5b — every used slot resolves to a filament preset
+
+    /// The gap `SliceRequest.orderedFilaments` swallows. Two used slots with a preset for only one
+    /// produce a one-element list, which takes the SINGULAR filament_preset branch and slices the
+    /// whole plate in the wrong material. iOS ships that bug; the Mac refuses.
+    func testAMappedTrayWithNoFilamentPresetRefuses() {
+        let p = evaluate(presetBySlot: [2: Preset(id: "a", name: "PLA")],
+                         loadedTrays: [tray(0), tray(1)],
+                         usedSlots: [1, 2], trayBySlot: [1: 0, 2: 1])
+        XCTAssertEqual(p?.title, "Filament 1 has no material")
+    }
+
+    func testSeveralSlotsWithNoMaterialShareOneTitle() {
+        let p = evaluate(presetBySlot: [3: Preset(id: "a", name: "PLA")],
+                         loadedTrays: [tray(0), tray(1), tray(2)],
+                         usedSlots: [1, 2, 3], trayBySlot: [1: 0, 2: 1, 3: 2])
+        XCTAssertEqual(p?.title, "Some filaments have no material")
+        for n in [1, 2] { XCTAssertTrue(p!.message.contains("filament \(n)")) }
+    }
+
+    /// Skipped entirely on the print-only path — an empty `presetBySlot` is "not slicing", not
+    /// "nothing resolved". Every pre-existing test in this file relies on that.
+    func testTheMaterialGuardIsSkippedWhenNotSlicing() {
+        XCTAssertNil(evaluate(presetBySlot: [:]), "an ordinary print must not be asked for presets")
+    }
+
+    /// ORDER: an unmapped TRAY outranks a missing material — you cannot be told a slot has no
+    /// material when it has no tray either.
+    func testNoTrayOutranksNoMaterial() {
+        let p = evaluate(presetBySlot: [:], usedSlots: [1, 2], trayBySlot: [1: 0])
+        XCTAssertEqual(p?.title, "Filament 2 has no tray")
+    }
+
     // MARK: 6 — the tray still holds filament
 
     /// The AMS is live while the sheet is open, so a spool pulled AFTER the choice must be caught.
@@ -166,6 +231,9 @@ final class MacPrintGateTests: XCTestCase {
     func testEveryRefusalCarriesBothATitleAndAMessage() {
         let cases: [MacPrintProblem?] = [
             evaluate(file: file("3mf")),
+            evaluate(file: file("stl")),
+            evaluate(presetBySlot: [2: Preset(id: "a", name: "PLA")],
+                     loadedTrays: [tray(0), tray(1)], usedSlots: [1, 2], trayBySlot: [1: 0, 2: 1]),
             evaluate(printerMismatch: true),
             evaluate(hasStatus: false),
             evaluate(loadedTrays: []),
