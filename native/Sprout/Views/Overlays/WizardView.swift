@@ -1396,8 +1396,8 @@ struct WizardView: View {
             // Ascending slot order, compacted to the slots the plate uses — measured: the server
             // consumes `filament_presets` positionally against the USED slots, not the raw slot
             // numbers (a plate whose only slot is 2, given [PLA, PETG], printed PLA).
-            let ordered = mappedSlots.compactMap { filaments[$0] }
-            var filamentRef = ordered.first.map { presetRef($0) }
+            let ordered = SliceRequest.orderedFilaments(mappedSlots: mappedSlots, presetBySlot: filaments)
+            var filamentRef: JSONValue? = nil
 
             // Advanced overrides ride an ephemeral LOCAL preset that inherits the chosen profile and
             // carries only the changed keys, so stock presets are never touched.
@@ -1406,7 +1406,7 @@ struct WizardView: View {
                 let id = try await client.upsertLocalPreset(
                     name: "Sprout Custom \(token)", presetType: "process", setting: setting
                 )
-                processRef = .object(["source": .string("local"), "id": .string(String(id))])
+                processRef = SliceRequest.localRef(id: id)
             }
             if client.hasAdminLogin, let filament = ordered.first, ordered.count == 1,
                adv.hasFilamentOverrides {
@@ -1421,25 +1421,22 @@ struct WizardView: View {
                     let id = try await client.upsertLocalPreset(
                         name: "Sprout Custom Filament \(token)", presetType: "filament", setting: setting
                     )
-                    filamentRef = .object(["source": .string("local"), "id": .string(String(id))])
+                    filamentRef = SliceRequest.localRef(id: id)
                 }
             }
 
-            var body: [String: JSONValue] = [
-                "plate": .int(selectedPlate),
-                "bed_type": .string(bedType),
-                "export_3mf": .bool(true),
-            ]
-            if let p = presets?.printer { body["printer_preset"] = presetRef(p) }
-            if let processRef { body["process_preset"] = processRef }
-            // Singular for one filament — byte-identical to what has always shipped and is proven
-            // against this server. Plural only when there is genuinely more than one, so the common
-            // path is not changed on an untested hunch.
-            if ordered.count > 1 {
-                body["filament_presets"] = .array(ordered.map { presetRef($0) })
-            } else if let filamentRef {
-                body["filament_preset"] = filamentRef
-            }
+            // The body is `SliceRequest.body` — shared, and tested, which it was not while it lived
+            // here as local variables. macOS assembles the identical thing from the identical
+            // function; a second copy of a wire format is the mechanism behind every row of
+            // CLAUDE.md's recurring-bug table.
+            let body = SliceRequest.body(
+                plate: selectedPlate,
+                bedType: bedType,
+                printer: presets?.printer,
+                process: processRef,
+                filaments: ordered,
+                filamentOverride: filamentRef
+            )
 
             let jobId = try await client.slice(file.id, body: body)
 
@@ -1475,11 +1472,10 @@ struct WizardView: View {
         }
     }
 
-    private func presetRef(_ p: Preset) -> JSONValue {
-        var o: [String: JSONValue] = ["id": .string(p.id), "name": .string(p.name)]
-        if let source = p.source { o["source"] = .string(source) }
-        return .object(o)
-    }
+    /// Forwards to `SliceRequest.presetRef`. Kept as a one-liner rather than deleted because a dozen
+    /// call sites in this file read better without the type name, and the point of the extraction is
+    /// that there is one IMPLEMENTATION, not one spelling.
+    private func presetRef(_ p: Preset) -> JSONValue { SliceRequest.presetRef(p) }
 
     // MARK: - Start
 
