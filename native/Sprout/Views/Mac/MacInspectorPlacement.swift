@@ -77,6 +77,21 @@ enum MacInspectorPlacement {
         min(320, max(140, available * 0.42))
     }
 
+    /// Should a detail panel lay its preview BESIDE its details rather than above them?
+    ///
+    /// The same panel has two homes with opposite proportions. The inspector **column** is 236–320 pt
+    /// wide and as tall as the window: a vertical stack is the only thing that fits. The bottom
+    /// **drawer** is as wide as the window and capped at `drawerHeight` — 320 pt — where a stack puts
+    /// a square preview over the whole drawer and leaves the action row below the fold. Buttons you
+    /// can only reach by scrolling, in the panel whose purpose is those buttons, is the same as not
+    /// having them.
+    ///
+    /// The threshold is deliberately well above the widest column (320) so a column never trips it,
+    /// and well below a plausible drawer, so the two placements never disagree about which they are.
+    nonisolated static func detailIsHorizontal(width: CGFloat) -> Bool {
+        width >= 520
+    }
+
     // MARK: - The stored preference, and what may write it
 
     /// Is the inspector on screen as a column?

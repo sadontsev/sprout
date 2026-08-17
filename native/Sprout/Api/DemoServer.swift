@@ -88,6 +88,23 @@ struct DemoServer: Sendable {
             // "Couldn't reach the server" — the route matched and the decode threw. Every shape here
             // is now copied from a real response.
             return json(Self.libraryFiles)
+        // The printer's own storage. Before these, demo mode had no SD route at all: the Printer SD
+        // segment rendered "Nothing to show" whatever was built behind it, so the whole half of the
+        // Files section was unreviewable — and on a platform whose windows cannot be inspected from
+        // the shell, unreviewable means unreviewed. The `/plates` route comes first for the same
+        // reason it does on the library side: a `hasPrefix` on the parent swallows every sub-path.
+        //
+        // Thumbnails are deliberately NOT modelled and cannot be: `CachedThumb` fetches through
+        // `ThumbCache`, which never passes through `send(_:path:)` where this server is consulted. So
+        // an SD card in demo mode draws the generic missing-image well, exactly as a library card
+        // does. That is a limit of the demo, not of the feature — the plate and poster URLs are only
+        // exercised against a real Bambuddy.
+        case ("GET", let p) where p.hasPrefix("/api/v1/printers/") && p.contains("/files/plates"):
+            return json(PrinterFilePlates(printerId: 1, path: Self.query("path", in: path),
+                                          filename: nil, plates: [Self.printerPlate]))
+        case ("GET", let p) where p.hasPrefix("/api/v1/printers/") && p.contains("/files"):
+            let at = Self.query("path", in: path) ?? "/"
+            return json(PrinterFileList(path: at, files: Self.printerFiles(at: at)))
         case ("GET", let p) where p.hasPrefix("/api/v1/queue/"):
             return json(Self.queue)
         case ("GET", let p) where p.hasPrefix("/api/v1/print-log/"):
@@ -154,7 +171,71 @@ struct DemoServer: Sendable {
         return Int(tail.prefix { $0.isNumber })
     }
 
+    /// One query parameter's decoded value.
+    ///
+    /// `respond` strips the query before matching a route, because tokens and ids vary per call — but
+    /// the SD endpoints carry their whole subject in `?path=`, so those routes have to read it back
+    /// out of the unstripped path.
+    static func query(_ name: String, in path: String) -> String? {
+        guard let queryPart = path.split(separator: "?", maxSplits: 1).dropFirst().first else { return nil }
+        for pair in queryPart.split(separator: "&") {
+            let halves = pair.split(separator: "=", maxSplits: 1)
+            guard halves.first.map(String.init) == name else { continue }
+            let raw = halves.dropFirst().first.map(String.init) ?? ""
+            return raw.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? raw
+        }
+        return nil
+    }
+
     // MARK: Fixtures
+
+    /// A small but REPRESENTATIVE SD card: folders at the root, sliced prints in one, and recordings
+    /// in the two media folders — because every one of those exercises a different branch of the
+    /// section (folder navigation, plate preview, poster + Play, and the plain-file fallback).
+    ///
+    /// The recordings carry real printer-style timestamps so `mediaLabel` has something to read; a
+    /// fixture named `clip1.mp4` would have shown the raw-name fallback and called it working.
+    static func printerFiles(at path: String) -> [PrinterFile] {
+        switch path.hasSuffix("/") && path.count > 1 ? String(path.dropLast()) : path {
+        case "/cache":
+            return [
+                PrinterFile(name: "planter-lattice.gcode.3mf", isDirectory: false, size: 24_180_000, path: "/cache/planter-lattice.gcode.3mf", mtime: nil),
+                PrinterFile(name: "desk-hook.gcode.3mf", isDirectory: false, size: 11_400_000, path: "/cache/desk-hook.gcode.3mf", mtime: nil),
+                // A plain project 3MF: sliced-looking to a careless predicate, and refused by the
+                // exact one. It is here so the "no layers" branch has a subject.
+                PrinterFile(name: "hinge-bracket.3mf", isDirectory: false, size: 4_020_000, path: "/cache/hinge-bracket.3mf", mtime: nil),
+                PrinterFile(name: "notes.txt", isDirectory: false, size: 1_200,
+                            path: "/cache/notes.txt", mtime: nil),
+            ]
+        case "/timelapse":
+            return [
+                PrinterFile(name: "video_2026-07-05_15-16-02.mp4", isDirectory: false, size: 48_300_000, path: "/timelapse/video_2026-07-05_15-16-02.mp4", mtime: nil),
+                PrinterFile(name: "video_2026-07-04_09-02-41.mp4", isDirectory: false, size: 39_100_000, path: "/timelapse/video_2026-07-04_09-02-41.mp4", mtime: nil),
+                PrinterFile(name: "thumbnail", isDirectory: true, size: nil,
+                            path: "/timelapse/thumbnail", mtime: nil),
+            ]
+        case "/ipcam":
+            return [
+                PrinterFile(name: "ipcam-record.2026-04-21_22-12-16.0.mp4", isDirectory: false, size: 252_400_000, path: "/ipcam/ipcam-record.2026-04-21_22-12-16.0.mp4", mtime: nil),
+                PrinterFile(name: "thumbnail", isDirectory: true, size: nil, path: "/ipcam/thumbnail", mtime: nil),
+            ]
+        case "/timelapse/thumbnail", "/ipcam/thumbnail":
+            return []
+        default:
+            return [
+                PrinterFile(name: "cache", isDirectory: true, size: nil, path: "/cache", mtime: nil),
+                PrinterFile(name: "timelapse", isDirectory: true, size: nil, path: "/timelapse", mtime: nil),
+                PrinterFile(name: "ipcam", isDirectory: true, size: nil, path: "/ipcam", mtime: nil),
+            ]
+        }
+    }
+
+    /// What `/files/plates` says about a sliced file on the card — time and weight, which is what the
+    /// inspector reads. Not filaments: nothing has ever been observed reading one from this endpoint,
+    /// and a fixture that invents them would licence a UI that prints them.
+    static let printerPlate = PlateInfo(index: 1, name: "Plate 1", objects: nil, objectCount: 2,
+                                        hasThumbnail: true, thumbnailUrl: nil,
+                                        printTimeSeconds: 7_380, filamentUsedGrams: 46)
 
     private func json(_ value: some Encodable) -> Data? {
         let e = JSONEncoder()

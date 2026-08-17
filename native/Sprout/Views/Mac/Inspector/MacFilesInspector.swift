@@ -40,6 +40,19 @@ struct MacFilesInspector: View {
     @State private var confirmingSdDelete = false
     @State private var lanAlert = false
 
+    /// The selected SD file's first plate, when it has one.
+    ///
+    /// Fetched here rather than held on the store because it belongs to the SELECTION, not to the
+    /// listing: it is re-asked whenever the panel shows a different path, and it is best-effort — a
+    /// file the printer cannot describe still has to render its name, size and buttons.
+    @State private var plate: PlateInfo?
+
+    /// How wide this panel actually is, which decides whether the SD detail stacks or sits side by
+    /// side. Measured rather than inferred from the section, because the panel has two homes of very
+    /// different proportions and only it knows which one it is in — see
+    /// `MacInspectorPlacement.detailIsHorizontal`.
+    @State private var panelWidth: CGFloat = 280
+
     private var store: LibraryStore { model.library }
     private var locked: LockedActions { LockedActions(mode: model.lanMode, explaining: $lanAlert) }
 
@@ -123,7 +136,10 @@ struct MacFilesInspector: View {
     private var placeholderMessage: String {
         if store.source == .printer {
             return selectedSdPath == nil
-                ? "Pick a file on the printer’s storage to see what it is and remove it."
+                // "…and remove it" was accurate when Delete was the only thing this panel could do.
+                // It now plays recordings, scrubs layers and downloads, so the sentence would be
+                // describing a smaller app than the one on screen.
+                ? "Pick a file on the printer’s storage to preview it, play it, or download it."
                 : "It is no longer in this folder on the printer."
         }
         if selectedId == nil {
@@ -437,64 +453,198 @@ struct MacFilesInspector: View {
 
     // MARK: - A file on the printer's SD card
 
+    /// The panel for an entry on the printer's own storage.
+    ///
+    /// It used to be a name, a size, a path and one Delete button, under a sentence ending
+    /// *"Deleting is the only action available here."* That sentence was true of the panel and false
+    /// of the printer: the card serves a plate render, a poster JPEG, the file's bytes and the G-code
+    /// of a sliced print, and iOS had been using all four for as long as the SD browser existed.
+    ///
+    /// So the panel now mirrors the library's — preview, identity, stats, action row, reasons — and
+    /// the reasons that remain are the two that are actually true. See `SdFileCaps`.
     private func printerDetail(_ pf: PrinterFile) -> some View {
-        VStack(alignment: .leading, spacing: m.cardGap) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(verbatim: pf.name)
-                    .font(.system(size: m.cardTitle, weight: .semibold))
-                    .foregroundStyle(c.t1)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(verbatim: pf.isDirectory ? "Folder" : MacFileBrowse.bytes(pf.size?.double))
-                    .font(.mono(11, weight: .medium))
-                    .foregroundStyle(c.t3)
-                    .monospacedDigit()
+        Group {
+            if MacInspectorPlacement.detailIsHorizontal(width: panelWidth), !pf.isDirectory {
+                // The drawer: wide and short. Preview on the left, everything else beside it.
+                HStack(alignment: .top, spacing: m.cardGap) {
+                    sdPreview(pf)
+                    VStack(alignment: .leading, spacing: m.cardGap) {
+                        sdIdentity(pf)
+                        sdPathCard(pf)
+                        sdActions(pf)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                // The column: narrow and tall, and the shape the library panel next door uses.
+                VStack(alignment: .leading, spacing: m.cardGap) {
+                    if !pf.isDirectory { sdPreview(pf) }
+                    sdIdentity(pf)
+                    sdPathCard(pf)
+                    if pf.isDirectory {
+                        reason("Double-click in the list to open this folder.")
+                    } else {
+                        sdActions(pf)
+                    }
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { panelWidth = $0 }
+        // Only a sliced 3MF has plates to describe, and the fetch is best-effort: a file the printer
+        // cannot describe still has to show its name, size and buttons. Keyed on the path so
+        // selecting a different entry re-asks rather than keeping the previous file's numbers.
+        .task(id: pf.path) {
+            plate = nil
+            guard SdFileCaps.canViewLayers(pf), let client = model.client else { return }
+            plate = try? await client.getPrinterFilePlates(model.printerId, path: pf.path).plates.first
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 9) {
-                Text(verbatim: pf.path)
-                    .font(.mono(11))
-                    .foregroundStyle(c.t2)
-                    .lineLimit(2)
-                    .truncationMode(.head)
-                    .fixedSize(horizontal: false, vertical: true)
-                Divider().overlay(c.line)
-                Text(verbatim: sdLimitations(pf))
-                    .font(.system(size: 11))
-                    .lineSpacing(2)
-                    .foregroundStyle(c.t3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    private func sdIdentity(_ pf: PrinterFile) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(verbatim: plate?.name ?? SdFileCaps.displayName(pf))
+                .font(.system(size: m.cardTitle, weight: .semibold))
+                .foregroundStyle(c.t1)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(verbatim: sdMeta(pf))
+                .font(.mono(11, weight: .medium))
+                .foregroundStyle(c.t3)
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func sdPathCard(_ pf: PrinterFile) -> some View {
+        Text(verbatim: pf.path)
+            .font(.mono(11))
+            .foregroundStyle(c.t2)
+            .lineLimit(2)
+            .truncationMode(.head)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(m.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous).fill(c.s1))
             .overlay(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous).strokeBorder(c.line))
+    }
 
-            if !pf.isDirectory {
-                // Deleting is the ONE thing this panel can actually do to an SD entry, so it is the
-                // only button on it — and it confirms, like every other destructive path here.
+    /// The plate render for a sliced file, the printer's poster for a recording, a glyph otherwise.
+    ///
+    /// Headers, not a token: the printer's images are `X-API-Key` gated and the bare URL 401s, which
+    /// is the exact inverse of the library thumbnails a few lines up.
+    @ViewBuilder
+    private func sdPreview(_ pf: PrinterFile) -> some View {
+        let shape = RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous)
+        Group {
+            switch SdFileCaps.preview(pf) {
+            case .plate:
+                CachedThumb(url: model.client?.printerPlateThumbUrl(model.printerId, path: pf.path),
+                            aspect: 1, contentMode: .fit,
+                            headers: model.client?.authHeaders() ?? [:],
+                            fallbackSymbol: SdFileCaps.symbol(pf))
+            case .poster(let path):
+                CachedThumb(url: model.client?.printerFileDownloadUrl(model.printerId, path: path),
+                            aspect: 16.0 / 9.0,
+                            headers: model.client?.authHeaders() ?? [:],
+                            fallbackSymbol: SdFileCaps.symbol(pf))
+                    .overlay {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.white)
+                            .offset(x: 1)
+                            .frame(width: 34, height: 34)
+                            .background(Circle().fill(Color.black.opacity(0.45)))
+                    }
+            case .glyph:
+                Rectangle()
+                    .fill(c.thumb)
+                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                    .overlay {
+                        Image(systemName: SdFileCaps.symbol(pf))
+                            .font(.system(size: 26, weight: .light))
+                            .foregroundStyle(c.t3)
+                    }
+            }
+        }
+        // Capped, unlike the library's preview above, because this panel has two homes and they are
+        // very different widths. In the inspector COLUMN (236–320 pt) the cap never binds. In the
+        // bottom DRAWER the panel is as wide as the window, and an unconstrained square plate render
+        // became a ~1400 pt image that pushed every action below the fold of a 320 pt drawer — the
+        // buttons were reachable only by scrolling, which for the panel whose whole point is those
+        // buttons is the same as not having them.
+        .frame(maxWidth: 280, alignment: .leading)
+        // On the composite, never inside the overlay — an overlay is not clipped to its base, and a
+        // `.fill` image is flexible enough to escape one.
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(c.line))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Size, plus whatever the plates endpoint could tell us.
+    ///
+    /// Print time and weight only. `PlateInfo` also declares `filaments`, but nothing has ever read
+    /// one from this endpoint, and a materials list is exactly the kind of claim that must be measured
+    /// before it is printed — see the wizard's brown spool labelled "Orange".
+    private func sdMeta(_ pf: PrinterFile) -> String {
+        if pf.isDirectory { return "Folder" }
+        var parts = [MacFileBrowse.bytes(pf.size?.double)]
+        if let seconds = plate?.printTimeSeconds?.double, seconds > 0 {
+            parts.append(Dash.fmtDuration(seconds / 60))
+        }
+        if let grams = plate?.filamentUsedGrams?.double, grams > 0 {
+            parts.append("\(Int(grams.rounded())) g")
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: "  ·  ")
+    }
+
+    /// The action row, in the library panel's order so the two panels read as one design.
+    ///
+    /// Play and View layers are mutually exclusive in practice — an `.mp4` is never a `.gcode.3mf` —
+    /// so the headline row is one button wide, and Share/Delete pair underneath exactly as they do for
+    /// a library file.
+    @ViewBuilder
+    private func sdActions(_ pf: PrinterFile) -> some View {
+        VStack(spacing: 7) {
+            if SdFileCaps.canPlay(pf) {
+                Button { MacVideoWindow.open(pf, printerId: model.printerId, using: openWindow) } label: {
+                    Text("Play").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(MacPrimaryButtonStyle())
+            }
+            if SdFileCaps.canViewLayers(pf) {
+                Button { MacViewer.open(sd: pf, printerId: model.printerId, using: openWindow) } label: {
+                    Text("View layers").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(MacPrimaryButtonStyle())
+            }
+
+            HStack(spacing: 7) {
+                Button { Task { await shareSd(pf) } } label: {
+                    Text("Share…").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(MacSecondaryButtonStyle())
+                .disabled(store.downloadBusy)
+
                 Button { confirmingSdDelete = true } label: {
-                    Text("Delete from printer").frame(maxWidth: .infinity)
+                    Text("Delete").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(MacSecondaryButtonStyle(role: .destructive))
             }
+
+            // The two things that genuinely cannot be done, said plainly and separately. They are
+            // separate because they are refused for different reasons, and the single sentence that
+            // used to bundle them ("printing and layer preview work on library files") was half true
+            // — which is worse than either half alone, because it taught the reader to disbelieve the
+            // accurate part too.
+            reason(SdFileCaps.noPrintNote)
+            reason(SdFileCaps.canViewLayers(pf) || SdFileCaps.canPlay(pf) ? nil : SdFileCaps.noLayersNote)
         }
     }
 
-    /// Says what this panel cannot offer, and why — rather than showing dead buttons for both.
-    ///
-    /// Neither limitation is a bug to route around: the print flow is built on `LibraryFile` (an SD
-    /// entry has only a path, no library id), and `MacViewerRequest` is keyed by `fileId` for the
-    /// same reason, so the viewer window cannot currently be opened on an SD path at all.
-    private func sdLimitations(_ pf: PrinterFile) -> String {
-        if pf.isDirectory { return "Double-click in the list to open this folder." }
-        if PrinterFiles.isPlayableVideo(pf.name) {
-            return "Timelapse and camera recordings play in the iPhone app. Deleting is the only action available here."
-        }
-        if PrinterFiles.isSliced3mf(pf.name) {
-            return "Printing and layer preview work on library files, not on the printer’s own storage. Deleting is the only action available here."
-        }
-        return "Printing works on library files, not on the printer’s own storage. Deleting is the only action available here."
+    /// Shares a file off the printer's storage. Same re-entrancy guard as the library's `share`, and
+    /// for the same reason: two downloads race on the store's single `shareItem`.
+    private func shareSd(_ pf: PrinterFile) async {
+        guard !store.downloadBusy else { return }
+        await store.shareSd(pf)
     }
 
     // MARK: - Plumbing

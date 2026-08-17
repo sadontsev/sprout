@@ -113,11 +113,14 @@ enum MacFileBrowse {
 
     /// Display names are user-derived and may contain path separators that a cache filename would
     /// misread as directories.
+    ///
+    /// Delegates to `LibraryDownloadName.fileName`, which is the same rule the download-URL sanitiser
+    /// applies plus `:`. It was a private regex here, a second copy in the iOS view and a third in
+    /// `LibraryDownloadName`; the SD share needed the rule too, and a fourth copy is how three copies
+    /// disagree. Behaviour is unchanged — runs of separators still collapse to one `-`, and an empty
+    /// name is still `file`.
     static func safeShareName(_ name: String) -> String {
-        let n = name
-            .replacingOccurrences(of: "[/\\\\:]+", with: "-", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return n.isEmpty ? "file" : n
+        LibraryDownloadName.fileName(name, fallback: "file")
     }
 
     /// The query matches BOTH the decoded display name and the raw filename, so "hexagon" finds
@@ -351,6 +354,10 @@ struct MacFilesSection: View {
     /// small bug.
     @State private var scrollTarget: Int?
 
+    /// The SD grid's equivalent, keyed by path. Two properties rather than one because the two
+    /// selections are two different types and only one segment is ever on screen.
+    @State private var sdScrollTarget: String?
+
     /// `onDeleteCommand` is delivered through the responder chain, so the file surface has to be
     /// focusable for the Delete key to reach it. Clicking a card takes focus, which is also what
     /// makes the selection ring mean something — see `cardStroke`.
@@ -444,7 +451,30 @@ struct MacFilesSection: View {
         // Also handled on `.task`, not just `.onChange`: a hit that LAUNCHES the app delivers its
         // URL before this view exists, so there is no change to observe.
         .onChange(of: model.pendingOpen) { _, request in consumePendingOpen(request) }
-        .task { consumePendingOpen(model.pendingOpen) }
+        .task {
+            consumePendingOpen(model.pendingOpen)
+            #if DEBUG
+            // Preselect an SD entry by path, so the inspector's SD panel can be photographed.
+            //
+            // Selecting is a CLICK, and a click is the one thing `MacWindowProbe` cannot do — the same
+            // gap `SPROUT_PRINT_FILE` fills for the print sheet. Without it the panel that carries the
+            // whole action row is unreachable in demo mode, and on this platform unreachable means
+            // unreviewed. Written here rather than in `MacWindow` because this view owns the
+            // `@SceneStorage` the inspector reads back.
+            //
+            //     SPROUT_FILES_SOURCE=printer SPROUT_FILES_PATH=/cache \
+            //     SPROUT_FILES_SELECT=/cache/planter-lattice.gcode.3mf
+            if let wanted = ProcessInfo.processInfo.environment["SPROUT_FILES_SELECT"], !wanted.isEmpty {
+                for _ in 0..<40 {
+                    if sdAll.contains(where: { $0.path == wanted }) {
+                        selectedSdPath = wanted
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+            }
+            #endif
+        }
         // Quick Look is a SYSTEM panel: it floats above the app and outlives the view that opened
         // it. Leaving Files left it showing a file the app was no longer displaying — and after a
         // delete, a file that no longer exists. `MacQuickLook.dismiss()` was written for exactly
@@ -454,9 +484,14 @@ struct MacFilesSection: View {
             if store.source == .library {
                 MacQuickLook.toggle(file: shown.first { $0.id == selectedId }, model: model)
             } else {
+                // The second clause used to read "the printer's own storage carries no preview",
+                // which is now visibly false — the grid beside this message draws plate renders and
+                // recording posters. The true reason is narrower: Quick Look previews a file on
+                // DISK, and an SD entry has not been downloaded. Naming the real constraint also
+                // names the remedy, which the old sentence did not have.
                 MacQuickLook.toggle(
                     file: nil, model: model,
-                    unavailable: "Quick Look reads library files. The printer's own storage carries no preview."
+                    unavailable: "Quick Look previews a local file, and this one is still on the printer. Use Share… to download it first."
                 )
             }
             return .handled
@@ -890,48 +925,172 @@ struct MacFilesSection: View {
                     message: "Nothing in this folder matches “\(query)”."
                 )
             }
+        } else if layout == .grid {
+            // The layout segment governs BOTH segments now. It used to be library-only, on the
+            // reasoning that "the library's card grid would be claiming thumbnails that this listing
+            // does not carry" — which was simply not true. `/files/plate-thumbnail/{n}?path=…` renders
+            // a sliced 3MF's plate, and the printer writes a poster JPEG beside every recording; iOS
+            // has drawn both for as long as the SD browser has existed. The control was honest about a
+            // constraint the server does not have.
+            ScrollView {
+                ScrollViewReader { proxy in
+                    sdGrid(rows)
+                        .padding(.bottom, 8)
+                        .onChange(of: sdScrollTarget) { _, target in
+                            guard let target else { return }
+                            withAnimation(Motion.standard(0.2)) { proxy.scrollTo(target, anchor: .center) }
+                            sdScrollTarget = nil
+                        }
+                }
+            }
+            .scrollIndicators(.automatic)
         } else {
-            // Always a table: the SD card is a filesystem, and the library's card grid would be
-            // claiming thumbnails that this listing does not carry.
-            Table(rows, selection: $selectedSdPath) {
-                TableColumn("Name") { pf in
-                    HStack(spacing: 8) {
-                        Image(systemName: sdSymbol(pf))
-                            .font(.system(size: 12))
-                            .foregroundStyle(pf.isDirectory ? c.accent : c.t3)
-                            .frame(width: 16)
-                        Text(verbatim: pf.name)
-                            .foregroundStyle(c.t1)
-                            .lineLimit(1)
-                    }
-                    .frame(minHeight: m.rowHeight)
-                }
-                .width(min: 200, ideal: 380)
+            sdTable(rows)
+        }
+    }
 
-                TableColumn("Size") { pf in
-                    Text(verbatim: pf.isDirectory ? "—" : MacFileBrowse.bytes(pf.size?.double))
-                        .font(.mono(10.5, weight: .medium))
-                        .foregroundStyle(c.t3)
-                        .monospacedDigit()
+    private func sdGrid(_ rows: [PrinterFile]) -> some View {
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.flexible(minimum: 118), spacing: m.cardGap),
+                count: Self.gridColumns
+            ),
+            spacing: m.cardGap
+        ) {
+            ForEach(rows) { sdCard($0) }
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($filesFocused)
+        .onMoveCommand { moveSdSelection($0, in: rows) }
+    }
+
+    /// One SD entry as a card. Same geometry as the library's `card`, deliberately — this is one
+    /// browser with two sources, and a grid whose cards changed size when you flipped the segment
+    /// would read as two half-built screens.
+    private func sdCard(_ pf: PrinterFile) -> some View {
+        let on = selectedSdPath == pf.id
+        let inset: CGFloat = 9
+        return VStack(alignment: .leading, spacing: 0) {
+            sdThumb(pf)
+                .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: Metrics.concentric(inside: m.cardRadius, inset: inset),
+                                            style: .continuous))
+                .overlay(alignment: .topLeading) { sdTypeChip(pf) }
+                .overlay { if SdFileCaps.canPlay(pf) { playBadge } }
+
+            Text(verbatim: SdFileCaps.displayName(pf))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(c.t1)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.top, 9)
+            Text(verbatim: pf.isDirectory ? "Folder" : MacFileBrowse.bytes(pf.size?.double))
+                .font(.mono(10.5, weight: .medium))
+                .foregroundStyle(c.t3)
+                .monospacedDigit()
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(inset)
+        .background(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous).fill(c.s1))
+        .overlay(
+            RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous)
+                .strokeBorder(cardStroke(selected: on), lineWidth: on ? 1.5 : 1)
+        )
+        .contentShape(.rect)
+        .onTapGesture(count: 2) { sdPrimaryAction(pf) }
+        .onTapGesture { selectSd(pf) }
+        .contextMenu { sdMenu(pf) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(on ? [.isSelected] : [])
+    }
+
+    /// The card's picture, or the honest absence of one.
+    ///
+    /// `CachedThumb` with **headers**: the printer's images are `X-API-Key` gated and 401 on the bare
+    /// URL, which is the exact opposite of the library's thumbnails (stream token in `?token=`, and the
+    /// header is refused). Getting that backwards fails the same way in both directions — a 401 that
+    /// renders as a missing image — so the two call sites state their credential explicitly.
+    @ViewBuilder
+    private func sdThumb(_ pf: PrinterFile) -> some View {
+        switch SdFileCaps.preview(pf) {
+        case .plate:
+            CachedThumb(url: model.client?.printerPlateThumbUrl(model.printerId, path: pf.path),
+                        contentMode: .fit,
+                        headers: model.client?.authHeaders() ?? [:],
+                        fallbackSymbol: SdFileCaps.symbol(pf))
+        case .poster(let path):
+            CachedThumb(url: model.client?.printerFileDownloadUrl(model.printerId, path: path),
+                        headers: model.client?.authHeaders() ?? [:],
+                        fallbackSymbol: SdFileCaps.symbol(pf))
+        case .glyph:
+            Rectangle()
+                .fill(c.thumb)
+                .overlay {
+                    Image(systemName: SdFileCaps.symbol(pf))
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundStyle(pf.isDirectory ? c.accent : c.t3)
                 }
-                .width(min: 60, ideal: 90, max: 140)
+        }
+    }
+
+    private func sdTypeChip(_ pf: PrinterFile) -> some View {
+        let text = SdFileCaps.typeLabel(pf)
+        return Group {
+            if !text.isEmpty {
+                Text(verbatim: text)
+                    .font(.mono(8.5))
+                    .tracking(0.5)
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: m.chipRadius, style: .continuous).fill(Color.black.opacity(0.5)))
+                    .padding(6)
             }
-            .focused($filesFocused)
-            .contextMenu(forSelectionType: PrinterFile.ID.self) { ids in
-                if let pf = rows.first(where: { ids.contains($0.id) }), !pf.isDirectory {
-                    Button(role: .destructive) { pendingSdDelete = pf } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
+        }
+    }
+
+    private var playBadge: some View {
+        Image(systemName: "play.fill")
+            .font(.system(size: 13))
+            .foregroundStyle(.white)
+            .offset(x: 1)
+            .frame(width: 30, height: 30)
+            .background(Circle().fill(Color.black.opacity(0.45)))
+    }
+
+    private func sdTable(_ rows: [PrinterFile]) -> some View {
+        Table(rows, selection: $selectedSdPath) {
+            TableColumn("Name") { pf in
+                HStack(spacing: 8) {
+                    Image(systemName: SdFileCaps.symbol(pf))
+                        .font(.system(size: 12))
+                        .foregroundStyle(pf.isDirectory ? c.accent : c.t3)
+                        .frame(width: 16)
+                    Text(verbatim: SdFileCaps.displayName(pf))
+                        .foregroundStyle(c.t1)
+                        .lineLimit(1)
                 }
-            } primaryAction: { ids in
-                // Double-click opens a folder. A FILE deliberately does nothing here: this app
-                // cannot print from the printer's own storage — the wizard takes a `LibraryFile` and
-                // an SD entry has only a path — so the inspector says so in words rather than a
-                // double-click quietly failing.
-                if let pf = rows.first(where: { ids.contains($0.id) }), pf.isDirectory {
-                    Task { await store.loadPrinter(pf.path) }
-                }
+                .frame(minHeight: m.rowHeight)
             }
+            .width(min: 200, ideal: 380)
+
+            TableColumn("Size") { pf in
+                Text(verbatim: pf.isDirectory ? "—" : MacFileBrowse.bytes(pf.size?.double))
+                    .font(.mono(10.5, weight: .medium))
+                    .foregroundStyle(c.t3)
+                    .monospacedDigit()
+            }
+            .width(min: 60, ideal: 90, max: 140)
+        }
+        .focused($filesFocused)
+        // One menu builder for both layouts, exactly as the library half does it, so right-click
+        // cannot mean two different things depending on which segment of the layout control is lit.
+        .contextMenu(forSelectionType: PrinterFile.ID.self) { ids in
+            if let pf = rows.first(where: { ids.contains($0.id) }) { sdMenu(pf) }
+        } primaryAction: { ids in
+            if let pf = rows.first(where: { ids.contains($0.id) }) { sdPrimaryAction(pf) }
         }
     }
 
@@ -956,13 +1115,6 @@ struct MacFilesSection: View {
             message: "This folder is empty, or the printer didn’t answer — an unreadable folder and an empty one arrive here identically.",
             retry: { Task { await store.loadPrinter(store.printerPath) } }
         )
-    }
-
-    private func sdSymbol(_ pf: PrinterFile) -> String {
-        if pf.isDirectory { return PrinterFiles.isMediaFolder(pf.path) ? "film" : "folder" }
-        if PrinterFiles.isSliced3mf(pf.name) { return "shippingbox" }
-        if PrinterFiles.isPlayableVideo(pf.name) { return "film" }
-        return "doc"
     }
 
     // MARK: Menus and actions
@@ -1001,6 +1153,119 @@ struct MacFilesSection: View {
             // pill for exactly as long as this is grey.
             .disabled(store.downloadBusy)
         Button(role: .destructive) { pendingDelete = f } label: { Label("Delete", systemImage: "trash") }
+    }
+
+    /// Right-click on the printer's own storage — the same menu shape as the library's, carrying
+    /// everything the printer will actually serve.
+    ///
+    /// It used to hold `Delete` and nothing else, which read as "an SD entry is a second-class row".
+    /// It is not: the card serves a plate render, a poster, the bytes, and the G-code of a sliced
+    /// file. Only two library items are missing here, and both are missing because **no endpoint
+    /// takes a printer path** rather than because this is the SD segment:
+    ///
+    ///  - `Print…` — there is no path-based print or enqueue. Omitted rather than shown disabled,
+    ///    which is this codebase's established answer in a menu for a request that cannot succeed; the
+    ///    inspector carries the sentence, because a disabled `NSMenuItem` can explain itself nowhere.
+    ///  - `View in 3D` — the mesh export is keyed by library id, and the card holds sliced output
+    ///    rather than source models.
+    ///
+    /// `Play` and `View layers` are mutually exclusive in practice — an `.mp4` is never a
+    /// `.gcode.3mf` — so this is never more than three items plus the separator.
+    @ViewBuilder
+    private func sdMenu(_ pf: PrinterFile) -> some View {
+        if pf.isDirectory {
+            Button { Task { await store.loadPrinter(pf.path) } } label: {
+                Label("Open", systemImage: "folder")
+            }
+        }
+        if SdFileCaps.canPlay(pf) {
+            Button { playSd(pf) } label: { Label("Play", systemImage: "play.fill") }
+        }
+        if SdFileCaps.canViewLayers(pf) {
+            Button { openSdLayers(pf) } label: {
+                Label("View layers", systemImage: "square.3.layers.3d")
+            }
+        }
+        if SdFileCaps.canDownload(pf) {
+            Divider()
+            Button { Task { await shareSd(pf) } } label: {
+                Label("Share…", systemImage: "square.and.arrow.up")
+            }
+            .disabled(store.downloadBusy)
+        }
+        if SdFileCaps.canDelete(pf) {
+            Button(role: .destructive) { pendingSdDelete = pf } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
+    /// Double-click on an SD entry: whatever this entry's headline action is.
+    ///
+    /// Every branch does something. The old behaviour was that a folder opened and a **file did
+    /// nothing at all** — a dead gesture, justified in a comment by the fact that printing is
+    /// impossible. Printing is indeed impossible, but it was never the only thing a double-click could
+    /// mean, and the library half of this very file records the same mistake being fixed: a
+    /// double-click that silently returns is the failure this section refuses everywhere else.
+    ///
+    /// The order matches what the iOS sheet makes its accent button: Play for a recording, Layers for
+    /// a sliced file, and Share for anything else — download is the headline action precisely when
+    /// there is no other one.
+    private func sdPrimaryAction(_ pf: PrinterFile) {
+        selectSd(pf)
+        if pf.isDirectory {
+            Task { await store.loadPrinter(pf.path) }
+        } else if SdFileCaps.canPlay(pf) {
+            playSd(pf)
+        } else if SdFileCaps.canViewLayers(pf) {
+            openSdLayers(pf)
+        } else {
+            Task { await shareSd(pf) }
+        }
+    }
+
+    private func selectSd(_ pf: PrinterFile) {
+        selectedSdPath = pf.id
+        filesFocused = true
+    }
+
+    /// Arrow keys over the SD grid. The library's `moveSelection` in every respect except the id type
+    /// — `PrinterFile.ID` is its path, not an `Int` — which is also why the two cannot be one generic
+    /// function without making the selection storage generic too.
+    private func moveSdSelection(_ direction: MoveCommandDirection, in rows: [PrinterFile]) {
+        guard !rows.isEmpty else { return }
+        let step: Int
+        switch direction {
+        case .left: step = -1
+        case .right: step = 1
+        case .up: step = -Self.gridColumns
+        case .down: step = Self.gridColumns
+        @unknown default: return
+        }
+        guard let current = rows.firstIndex(where: { $0.id == selectedSdPath }) else {
+            selectedSdPath = rows.first?.id
+            sdScrollTarget = selectedSdPath
+            return
+        }
+        let next = current + step
+        guard rows.indices.contains(next) else { return }
+        selectedSdPath = rows[next].id
+        sdScrollTarget = rows[next].id
+    }
+
+    private func playSd(_ pf: PrinterFile) {
+        MacVideoWindow.open(pf, printerId: model.printerId, using: openWindow)
+    }
+
+    private func openSdLayers(_ pf: PrinterFile) {
+        MacViewer.open(sd: pf, printerId: model.printerId, using: openWindow)
+    }
+
+    /// The SD half of `share`, with the same re-entrancy guard and for the same reason: two downloads
+    /// in flight race on the store's single `shareItem`.
+    private func shareSd(_ pf: PrinterFile) async {
+        guard !store.downloadBusy else { return }
+        await store.shareSd(pf)
     }
 
     /// Honour a `.file` request from outside the view tree, then clear it.

@@ -283,6 +283,40 @@ final class LibraryStore {
             problem = LibProblem(title: "Couldn’t download", message: error.localizedDescription)
         }
     }
+
+    /// Download a file from the printer's own storage and hand it to the same `shareItem`.
+    ///
+    /// Deliberately a sibling of `share(_:cacheName:)` rather than a branch inside it: the two differ
+    /// in the one place that matters most, and merging them would put a credential decision behind an
+    /// `if`. A library share **mints a single-use slicer token into the URL and sends no headers**; an
+    /// SD download is authenticated by the `X-API-Key` **header** and 401s on the bare URL. Getting
+    /// that backwards fails identically in both directions — a 401 that looks like a missing file.
+    ///
+    /// `downloadBusy` is shared with the library share on purpose. It is what both platforms' Share
+    /// buttons already disable on, and two downloads in flight race on the single `shareItem`: the
+    /// sheet can end up pointing at the other file's local copy. One flag, one at a time, either kind.
+    ///
+    /// The cache name comes from the entry's own `name` — a `PrinterFile`'s name is its display name,
+    /// with no percent-encoding — but it still goes through the separator sanitiser, because the value
+    /// is whatever the printer's listing said and it lands in a filename.
+    func shareSd(_ pf: PrinterFile) async {
+        guard let client, SdFileCaps.canDownload(pf) else { return }
+        downloadBusy = true
+        defer { downloadBusy = false }
+        guard let url = client.printerFileDownloadUrl(printerId, path: pf.path) else {
+            problem = LibProblem(title: "Couldn’t download",
+                                 message: "That file’s path can’t be turned into a URL.")
+            return
+        }
+        var request = URLRequest(url: url)
+        for (key, value) in client.authHeaders() { request.setValue(value, forHTTPHeaderField: key) }
+        do {
+            let dest = LibCache.url(for: LibraryDownloadName.fileName(pf.name, fallback: "printer-file"))
+            shareItem = LibShareItem(url: try await FileDownloadDelegate.run(request, to: dest))
+        } catch {
+            problem = LibProblem(title: "Couldn’t download", message: error.localizedDescription)
+        }
+    }
 }
 
 // MARK: - Downloads and cache

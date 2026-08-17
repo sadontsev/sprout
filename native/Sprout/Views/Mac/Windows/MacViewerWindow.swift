@@ -39,14 +39,54 @@ struct MacViewerRequest: Codable, Hashable, Identifiable {
         var titleSuffix: String { self == .layers ? "layers" : "3D model" }
     }
 
-    let fileId: Int
+    /// WHICH file, and therefore which endpoint serves its G-code.
+    ///
+    /// This used to be a bare `fileId: Int`, and that single field is the entire reason the Mac
+    /// refused "View layers" for a file on the printer's card while iOS had offered it all along. The
+    /// inspector even said so as though it were a fact about the server —
+    /// *"layer preview work on library files, not on the printer's own storage"* — when
+    /// `GET /printers/{id}/files/gcode?path=…` exists and answers. The limitation was this type.
+    ///
+    /// Two cases rather than an optional path, so a request cannot be half of each: a library file has
+    /// no path and an SD entry has no id, and every branch that builds a URL must state which it is.
+    enum Target: Codable, Hashable {
+        case library(fileId: Int)
+        case printer(printerId: Int, path: String)
+
+        /// The identity string. Prefixed per case so a library file with id 7 and a printer path that
+        /// happens to stringify the same way can never collide.
+        var key: String {
+            switch self {
+            case .library(let fileId): "library:\(fileId)"
+            case .printer(let printerId, let path): "printer:\(printerId):\(path)"
+            }
+        }
+
+        /// The library id, when there is one. The mesh viewer and the library listing both need it,
+        /// and both must get `nil` — not a sentinel — for an SD entry.
+        var libraryFileId: Int? {
+            if case .library(let fileId) = self { return fileId }
+            return nil
+        }
+    }
+
+    let target: Target
     let name: String
     var mode: Mode = .layers
 
-    var id: Int { fileId }
+    var id: String { target.key }
 
-    static func == (lhs: MacViewerRequest, rhs: MacViewerRequest) -> Bool { lhs.fileId == rhs.fileId }
-    func hash(into hasher: inout Hasher) { hasher.combine(fileId) }
+    /// **Identity is the file, and only the file.** `openWindow(id:value:)` reuses a window when the
+    /// value compares equal, so a synthesised `Hashable` over the target, `name` *and* `mode` made
+    /// "View in 3D" then "View layers" on one file open two windows — which §5.4 explicitly does not
+    /// want. The value answers two questions — "which window is this?" and "which segment does it open
+    /// on?" — and only the first may take part in identity.
+    ///
+    /// The second question is then carried by `MacViewerRoute`, because equal values do not deliver a
+    /// new `mode`: without it, clicking the other menu item on a file whose window is already open
+    /// would merely raise that window, which is the same silent no-op in a different costume.
+    static func == (lhs: MacViewerRequest, rhs: MacViewerRequest) -> Bool { lhs.target == rhs.target }
+    func hash(into hasher: inout Hasher) { hasher.combine(target) }
 }
 
 /// Which segment a viewer window was last ASKED for, per file.
@@ -66,12 +106,14 @@ final class MacViewerRoute {
         var seq: Int
     }
 
-    private(set) var asks: [Int: Ask] = [:]
+    /// Keyed by `MacViewerRequest.Target.key`, not by a library id — an SD entry has no id, and this
+    /// map has to hold both kinds for the same reason the request does.
+    private(set) var asks: [String: Ask] = [:]
     private var seq = 0
 
-    func ask(_ mode: MacViewerRequest.Mode, for fileId: Int) {
+    func ask(_ mode: MacViewerRequest.Mode, for target: MacViewerRequest.Target) {
         seq += 1
-        asks[fileId] = Ask(mode: mode, seq: seq)
+        asks[target.key] = Ask(mode: mode, seq: seq)
     }
 }
 
@@ -80,11 +122,31 @@ final class MacViewerRoute {
 enum MacViewer {
     @MainActor
     static func open(_ f: LibraryFile, mode: MacViewerRequest.Mode, using openWindow: OpenWindowAction) {
-        MacViewerRoute.shared.ask(mode, for: f.id)
-        openWindow(
-            id: "viewer",
-            value: MacViewerRequest(fileId: f.id, name: MacFileBrowse.displayName(f), mode: mode)
-        )
+        open(target: .library(fileId: f.id), name: MacFileBrowse.displayName(f), mode: mode, using: openWindow)
+    }
+
+    /// Open the viewer on a file that lives on the printer's own storage.
+    ///
+    /// Always `.layers`: the mesh page reads an STL and no endpoint turns a printer path into one, so
+    /// there is no mode to choose. `MacViewerWindow` refuses the 3D segment for this target rather
+    /// than trusting every caller to remember, because "the caller always passes the right mode" is
+    /// not a gate — it is a convention, and this file already records what happens when identity is
+    /// left to a convention.
+    @MainActor
+    static func open(sd pf: PrinterFile, printerId: Int, using openWindow: OpenWindowAction) {
+        open(target: .printer(printerId: printerId, path: pf.path),
+             name: SdFileCaps.displayName(pf), mode: .layers, using: openWindow)
+    }
+
+    @MainActor
+    private static func open(
+        target: MacViewerRequest.Target,
+        name: String,
+        mode: MacViewerRequest.Mode,
+        using openWindow: OpenWindowAction
+    ) {
+        MacViewerRoute.shared.ask(mode, for: target)
+        openWindow(id: "viewer", value: MacViewerRequest(target: target, name: name, mode: mode))
     }
 }
 
@@ -179,9 +241,19 @@ struct MacViewerWindow: View {
 
     /// The library record behind the request, or nil while it cannot be resolved. `resolution` below
     /// is what says WHY it is nil — the three reasons are not interchangeable.
+    ///
+    /// Always nil for a printer target, and that is not a failure: an SD entry has no library record
+    /// to find. `resolution` knows the difference, so "there is no `LibraryFile`" is never rendered as
+    /// "the file is missing".
     private var file: LibraryFile? {
-        guard let fileId = request?.fileId else { return nil }
+        guard let fileId = request?.target.libraryFileId else { return nil }
         return store.files?.first { $0.id == fileId }
+    }
+
+    /// The printer path behind the request, when the request is for one.
+    private var printerTarget: (printerId: Int, path: String)? {
+        guard case .printer(let printerId, let path) = request?.target else { return nil }
+        return (printerId, path)
     }
 
     /// Why there is nothing to show yet. Deliberately four cases, not one empty state: "the listing
@@ -198,8 +270,12 @@ struct MacViewerWindow: View {
     }
 
     private var resolution: Resolution {
-        guard request != nil else { return .noRequest }
+        guard let request else { return .noRequest }
         guard model.client != nil else { return .notConnected }
+        // A printer target needs no library listing at all — the path IS the address, and the G-code
+        // endpoint takes it directly. Running it through the library's three not-found states would
+        // report a file that is right there as `.missing`.
+        if case .printer = request.target { return .found }
         if file != nil { return .found }
         if store.files == nil { return store.loadFailed ? .listingFailed : .loading }
         return .missing
@@ -208,7 +284,7 @@ struct MacViewerWindow: View {
     // MARK: Mode
 
     private var ask: MacViewerRoute.Ask? {
-        request.flatMap { MacViewerRoute.shared.asks[$0.fileId] }
+        request.flatMap { MacViewerRoute.shared.asks[$0.target.key] }
     }
 
     private var mode: MacViewerRequest.Mode {
@@ -219,17 +295,43 @@ struct MacViewerWindow: View {
     /// plain project `.3mf` carries a `slicedForModel` and no toolpaths at all, and asking it for
     /// `/gcode` returns 404. This is the exact predicate CLAUDE.md's recurring-bug table names
     /// against this exact feature.
+    ///
+    /// The printer branch asks the same question of a name rather than of a type field, because that
+    /// is all an SD listing carries: `.gcode.3mf` and not any `.3mf`, which is the identical
+    /// distinction under a different spelling. The 3D segment is refused outright there — nothing
+    /// turns a printer path into a mesh.
     private func supports(_ mode: MacViewerRequest.Mode) -> Bool {
+        if let printerTarget {
+            return mode == .layers && PrinterFiles.isSliced3mf(printerTarget.path)
+        }
         guard let file else { return false }
         return mode == .layers ? LibraryFileCaps.hasGcode(file) : LibraryFileCaps.isStl(file)
+    }
+
+    /// Why one segment is refused, or nil when it is not.
+    ///
+    /// The single source for both the banner across the canvas and the tooltip on the dimmed segment.
+    /// They used to be written out separately, and the tooltip's copy was the library's wording
+    /// unconditionally — so an SD file would have been told *"a .3mf is a zip container it can't
+    /// open"*, which is true of nothing here. Two wordings of one refusal is how a user learns to
+    /// distrust both.
+    private func reason(for mode: MacViewerRequest.Mode) -> String? {
+        guard !supports(mode) else { return nil }
+        // For a printer target the 3D segment is not something this file *happens* to lack — no
+        // endpoint serves a mesh for a path at all — so it gets the reason that says so.
+        if printerTarget != nil {
+            return mode == .model ? SdFileCaps.noMeshNote : MacViewerCopy.noLayers
+        }
+        return mode == .layers ? MacViewerCopy.noLayers : MacViewerCopy.noMesh
     }
 
     private var refusal: String? {
         guard !supports(mode) else { return nil }
         // "Neither" is its own sentence: offering the other segment when that one is refused too
-        // would be the dead affordance this window exists to avoid.
-        if !supports(.layers), !supports(.model) { return MacViewerCopy.neither }
-        return mode == .layers ? MacViewerCopy.noLayers : MacViewerCopy.noMesh
+        // would be the dead affordance this window exists to avoid. Library-only — a printer target
+        // never has two halves to lose, so the pair of sentences would read as one missing feature.
+        if printerTarget == nil, !supports(.layers), !supports(.model) { return MacViewerCopy.neither }
+        return reason(for: mode)
     }
 
     private var other: MacViewerRequest.Mode { mode == .layers ? .model : .layers }
@@ -409,7 +511,7 @@ struct MacViewerWindow: View {
             // reason on it. Omitting it would hide that the window has two halves at all; leaving it
             // live would be a control that fails when clicked.
             enabled: { self.resolution != .found || self.supports($0) },
-            help: { self.supports($0) ? nil : ($0 == .layers ? MacViewerCopy.noLayers : MacViewerCopy.noMesh) },
+            help: { self.reason(for: $0) },
             selection: Binding(get: { self.mode }, set: { self.picked = $0 })
         )
     }
@@ -779,7 +881,7 @@ struct MacViewerWindow: View {
     /// Everything a rebuild depends on. `.task(id:)` reruns on any change to it and on nothing else
     /// — in particular not on a redraw, which would restart the download.
     private struct BuildKey: Equatable {
-        var fileId: Int?
+        var target: String?
         var mode: MacViewerRequest.Mode
         var attempt: Int
         var connected: Bool
@@ -788,23 +890,44 @@ struct MacViewerWindow: View {
 
     private var buildKey: BuildKey {
         BuildKey(
-            fileId: request?.fileId,
+            target: request?.target.key,
             mode: mode,
             attempt: attempt,
+            // A printer target is resolved the moment there is a client: there is no listing to wait
+            // for. Keying on `file != nil` would leave it permanently unresolved and never build.
             connected: model.client != nil,
-            resolved: file != nil
+            resolved: resolution == .found
         )
     }
 
     private func build() async {
         // The window can be opened with the main window closed — from the menu bar, from a restored
         // scene — in which case nothing has ever listed the library. Ask once; `load()` is a no-op
-        // for a listing already in hand.
-        if model.client != nil, store.files == nil, !store.loadFailed {
+        // for a listing already in hand. Skipped entirely for a printer target, which needs no
+        // listing and should not pull one down to show a file it can already address.
+        if printerTarget == nil, model.client != nil, store.files == nil, !store.loadFailed {
             await store.load()
         }
-        guard let file, refusal == nil, let client = model.client else { return }
+        guard refusal == nil, let client = model.client else { return }
         guard case .idle = page else { return }
+
+        // The printer's own storage: one endpoint, one mode. Same page, same headers, same origin as
+        // the library's layers — only the URL differs, which is the whole of what this branch is.
+        if let printerTarget {
+            let url = client.baseUrl + client.printerGcodePath(printerTarget.printerId, path: printerTarget.path)
+            pageUrl = url
+            page = .ready(
+                html: LayerPage.html(
+                    url: url,
+                    headers: client.authHeaders(),
+                    plate: PrinterProfile.forPrinter(model.printer).plate
+                ),
+                base: ViewerJS.documentBase(of: client.baseUrl)
+            )
+            return
+        }
+
+        guard let file else { return }
 
         switch mode {
         case .layers:

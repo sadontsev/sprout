@@ -41,6 +41,15 @@ extension SproutApp {
         }
         .defaultSize(width: 960, height: 600)
 
+        // Timelapse and ipcam recordings. Its own window rather than a segment of the viewer: that
+        // one hosts a WKWebView showing one file two ways, and a recording is neither of those ways.
+        // Keyed by path, so re-opening a recording raises its window instead of starting a second
+        // download of the same video.
+        WindowGroup(id: "video", for: MacVideoRequest.self) { $request in
+            MacVideoWindowView(model: model, request: request)
+        }
+        .defaultSize(width: 860, height: 560)
+
         // §5.1. `.window` style rather than `.menu` because the panel carries a progress bar and
         // two controls; a menu of rows cannot draw either.
         MenuBarExtra {

@@ -100,6 +100,28 @@ struct CachedThumb: View {
     var aspect: CGFloat?
     var size: CGSize?
     var contentMode: ContentMode = .fill
+    /// Request headers for images behind header auth.
+    ///
+    /// The library's thumbnails are gated by a camera stream token in `?token=` and **reject**
+    /// `X-API-Key`, so they pass nothing and this stays empty. The printer's own storage is the exact
+    /// opposite — its plate renders and video posters are `X-API-Key` gated and the bare URL 401s —
+    /// which is why this parameter exists at all.
+    ///
+    /// `ThumbCache.image(for:headers:)` has taken headers since it was written; this view simply never
+    /// forwarded them, which is the whole reason SD thumbnails were impossible on macOS while iOS grew
+    /// a private `PrinterFileImage` with its own second cache to work around it.
+    ///
+    /// Not part of the cache key, deliberately: the key is the URL, and two callers asking for the
+    /// same URL with different credentials would be a bug in the caller rather than two images.
+    var headers: [String: String] = [:]
+
+    /// The symbol drawn when there is no image — a broken-picture `photo` by default.
+    ///
+    /// Callers that know what the thing IS should say so instead. A sliced print whose plate render
+    /// 404s reads better as a `shippingbox` than as a torn photograph: the first says "this is a
+    /// print, without a picture", the second says "something is broken", and only one of those is
+    /// true.
+    var fallbackSymbol: String = "photo"
 
     @Environment(\.palette) private var c
     @State private var image: PlatformImage?
@@ -119,7 +141,7 @@ struct CachedThumb: View {
                         // than inside the overlay — an overlay does not clip to its base.
                         .transition(.opacity)
                 } else if failed || url == nil {
-                    Image(systemName: "photo")
+                    Image(systemName: fallbackSymbol)
                         .font(.system(size: 16, weight: .light))
                         .foregroundStyle(c.t3)
                 }
@@ -132,7 +154,7 @@ struct CachedThumb: View {
                 image = nil
                 failed = false
                 guard let url else { return }
-                let loaded = await ThumbCache.shared.image(for: url)
+                let loaded = await ThumbCache.shared.image(for: url, headers: headers)
                 guard !Task.isCancelled else { return }
                 image = loaded
                 failed = loaded == nil

@@ -223,6 +223,20 @@ struct MacWindow: View {
             // do — so without this the whole slice-and-print surface is unreviewable, which for a Mac
             // app means unreviewable by anyone. Waits for the library because the id has to resolve to
             // a row; gives up rather than hanging if it never arrives.
+            // Open Files on the PRINTER SD segment, and optionally inside a folder.
+            //
+            // `SPROUT_SECTION=files` alone always lands on Library, so the SD half — grid, cards,
+            // plate previews, the action row — could not be photographed at all. Same reasoning as
+            // `SPROUT_PRINT_FILE` below: the segment is reached by a click, and a click is the one
+            // thing the probe cannot do.
+            //
+            //     SPROUT_FILES_SOURCE=printer SPROUT_FILES_PATH=/timelapse
+            if ProcessInfo.processInfo.environment["SPROUT_FILES_SOURCE"] == "printer" {
+                model.library.source = .printer
+                if let path = ProcessInfo.processInfo.environment["SPROUT_FILES_PATH"], !path.isEmpty {
+                    await model.library.loadPrinter(path)
+                }
+            }
             if let raw = ProcessInfo.processInfo.environment["SPROUT_PRINT_FILE"], let id = Int(raw) {
                 for _ in 0..<40 {
                     if let f = model.library.files?.first(where: { $0.id == id }) {
