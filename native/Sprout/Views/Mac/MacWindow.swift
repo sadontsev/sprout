@@ -217,6 +217,21 @@ struct MacWindow: View {
                let key = TabKey(rawValue: raw) {
                 section = key
             }
+            // Open the PRINT SHEET on a library file, for the same reason.
+            //
+            // The sheet is reached by clicking a button, and a click is the one thing the probe cannot
+            // do — so without this the whole slice-and-print surface is unreviewable, which for a Mac
+            // app means unreviewable by anyone. Waits for the library because the id has to resolve to
+            // a row; gives up rather than hanging if it never arrives.
+            if let raw = ProcessInfo.processInfo.environment["SPROUT_PRINT_FILE"], let id = Int(raw) {
+                for _ in 0..<40 {
+                    if let f = model.library.files?.first(where: { $0.id == id }) {
+                        model.pendingPrint = f
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+            }
             #endif
         }
         .toolbar {

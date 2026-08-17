@@ -62,6 +62,27 @@ struct DemoServer: Sendable {
         // in a switch where the first match wins.
         case ("GET", let p) where p.hasPrefix("/api/v1/printers/") && p.hasSuffix("/status"):
             return json(status(at: now))
+        // Per-file routes come BEFORE the list, because a `switch` matches in order and
+        // `hasPrefix("/api/v1/library/files")` swallows every sub-path.
+        //
+        // It did. `/plates` returned the file LIST, which cannot decode as `PlatesResponse`, so the
+        // print sheet reported "Couldn't read this plate's details" against a server that had answered
+        // 200 — a demo that lies in exactly the way the real thing is careful not to.
+        case ("GET", let p) where p.hasPrefix("/api/v1/library/files/") && p.hasSuffix("/plates"):
+            let id = Self.fileId(in: p)
+            return json(DemoPlates.plates(
+                forFileId: id,
+                fileType: Self.libraryFiles.first { $0.id == id }?.fileType
+            ))
+        case ("GET", let p) where p.hasPrefix("/api/v1/library/files/") && p.contains("/filament-requirements"):
+            // A raw mesh has no slots either — same fiction as the plate, and it put a PLA row and a
+            // tray picker on a file the sheet had already refused.
+            let rid = Self.fileId(in: p)
+            let isStl = Self.libraryFiles.first { $0.id == rid }?.fileType == "stl"
+            return json(isStl ? FilamentRequirements(filaments: []) : DemoPlates.requirements)
+        case ("GET", let p) where p.hasPrefix("/api/v1/library/files/")
+            && Self.fileId(in: p) != nil && !p.contains("/"):
+            return json(Self.libraryFiles.first { $0.id == Self.fileId(in: p) })
         case ("GET", let p) where p.hasPrefix("/api/v1/library/files"):
             // A BARE LIST, not `{files: […]}`. Guessed wrong first time and the Files tab said
             // "Couldn't reach the server" — the route matched and the decode threw. Every shape here
@@ -91,7 +112,19 @@ struct DemoServer: Sendable {
         case ("GET", "/api/v1/cloud/status"):
             return json(["connected": true] as [String: Bool])
         case ("GET", let p) where p.hasPrefix("/api/v1/slicer/presets"):
-            return json([DemoPreset]())
+            // A real `PresetsResponse` OBJECT. This used to answer `[DemoPreset]()` — a JSON array —
+            // which `PresetsResponse` cannot decode, so the demo threw on every preset fetch and the
+            // slice path could never be looked at without a live Bambuddy. Given that a Mac app's
+            // windows cannot be inspected from the shell, "the demo cannot reach this screen" means
+            // "nobody can review this screen".
+            return json(DemoPresets.response)
+        // Slicing. A real job that completes on the second poll, so the progress state is reachable
+        // rather than instantaneous — a fixture that finishes immediately hides its own UI.
+        case ("POST", let p) where p.hasSuffix("/slice") && p.hasPrefix("/api/v1/library/files/"):
+            DemoSliceProgress.shared.restart()
+            return json(["job_id": DemoPresets.sliceJobId] as [String: Int])
+        case ("GET", let p) where p.hasPrefix("/api/v1/slice-jobs/"):
+            return json(DemoPresets.job(poll: DemoSliceProgress.shared.nextPoll()))
         case ("GET", let p) where p.hasPrefix("/api/v1/printer-sensor-history/"):
             return json(["points": []] as [String: [String]])
         case ("GET", "/api/v1/archives/stats"):
@@ -114,6 +147,12 @@ struct DemoServer: Sendable {
     /// A control that appears to work and silently does nothing is this codebase's oldest bug; the
     /// reviewer sees a real refusal with a real reason instead.
     static let writeRefusal = "Not available in the demo. Connect your own Bambuddy server to control a printer."
+
+    /// The library file id in `/api/v1/library/files/<id>/…`, or nil if that segment is not a number.
+    static func fileId(in path: String) -> Int? {
+        let tail = path.dropFirst("/api/v1/library/files/".count)
+        return Int(tail.prefix { $0.isNumber })
+    }
 
     // MARK: Fixtures
 
@@ -173,7 +212,12 @@ struct DemoServer: Sendable {
         DemoFile(id: 102, filename: "hinge-bracket.3mf", fileType: "3mf", fileSize: 4_020_000),
         DemoFile(id: 103, filename: "cable-clip-v3.3mf", fileType: "3mf", fileSize: 812_000),
         DemoFile(id: 104, filename: "desk-hook.gcode.3mf", fileType: "gcode.3mf", fileSize: 11_400_000),
-        DemoFile(id: 105, filename: "vase-spiral.stl", fileType: "stl", fileSize: 2_640_000)
+        DemoFile(id: 105, filename: "vase-spiral.stl", fileType: "stl", fileSize: 2_640_000),
+        // The slice OUTPUT (`DemoPresets.slicedFileId`). A real row, because the sheet re-reads its
+        // subject the moment slicing completes and a dangling id would 404 there. Deliberately a
+        // different id from the 102 it is sliced from: the sheet has to survive its subject changing
+        // identity mid-flow, and a fixture that reused the input id would hide the riskiest part.
+        DemoFile(id: 106, filename: "hinge-bracket.gcode.3mf", fileType: "gcode.3mf", fileSize: 5_310_000)
     ]
 
     /// A BARE ARRAY: `listQueue()` decodes `[QueueItem]` straight from `/api/v1/queue/`. Wrapping it
@@ -333,3 +377,138 @@ private struct DemoArchiveStats: Encodable {
 private struct DemoSpool: Encodable { var id: Int }
 private struct DemoRecentImport: Encodable { var libraryFileId: Int }
 private struct DemoPreset: Encodable { var name: String }
+
+// MARK: - Demo slicing fixtures
+
+/// How far along the demo's slice job is.
+///
+/// `DemoServer` is a `struct` and its responder is non-mutating, so the poll count cannot live there.
+/// A locked box rather than an actor because the responder is synchronous: an `await` here would
+/// change every call site to serve a fixture.
+final class DemoSliceProgress: @unchecked Sendable {
+    static let shared = DemoSliceProgress()
+
+    private let lock = NSLock()
+    private var polls = 0
+
+    /// Called by the POST that starts a slice, so the demo can be sliced more than once per session.
+    func restart() {
+        lock.lock(); defer { lock.unlock() }
+        polls = 0
+    }
+
+    func nextPoll() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        polls += 1
+        return polls
+    }
+}
+
+/// The slicer presets and slice job the demo answers with.
+///
+/// Named for a real H2C so `PresetSelect` and `SlicePresets.build` do their actual matching rather
+/// than being handed something that trivially fits: the printer preset carries the `0.4 nozzle`
+/// suffix the picker looks for, the qualities carry the `@BBL H2C` token, and one quality has a
+/// `+ Supports` twin so the supports toggle has something to switch to.
+enum DemoPresets {
+
+    static let sliceJobId = 4001
+
+    /// The file the completed job points at — `hinge-bracket.3mf` sliced. It is a DIFFERENT id from
+    /// every file in the demo library on purpose: the sheet has to survive its subject changing
+    /// identity mid-flow, which is the riskiest part of slicing, and a fixture that returned the
+    /// input id would hide exactly that.
+    static let slicedFileId = 106
+
+    static var response: PresetsResponse {
+        PresetsResponse(standard: PresetsResponse.Group(
+            printer: [
+                Preset(id: "p1", name: "Bambu Lab H2C 0.4 nozzle", source: "system"),
+                Preset(id: "p2", name: "Bambu Lab H2C 0.6 nozzle", source: "system"),
+            ],
+            process: [
+                Preset(id: "q1", name: "0.20mm Standard @BBL H2C", source: "system"),
+                Preset(id: "q2", name: "0.20mm Standard + Supports @BBL H2C", source: "system"),
+                Preset(id: "q3", name: "0.16mm Optimal @BBL H2C", source: "system"),
+                Preset(id: "q4", name: "0.28mm Draft @BBL H2C", source: "system"),
+            ],
+            filament: [
+                Preset(id: "f1", name: "Bambu PLA Basic @BBL H2C", source: "system"),
+                Preset(id: "f2", name: "Bambu PETG HF @BBL H2C", source: "system"),
+                Preset(id: "f3", name: "Bambu PA-CF @BBL H2C", source: "system"),
+                Preset(id: "f4", name: "Bambu Support For PLA @BBL H2C", source: "system"),
+            ]
+        ))
+    }
+
+    /// The job, which finishes on the THIRD poll rather than the first.
+    ///
+    /// A fixture that completes immediately hides its own progress UI, and the progress state is the
+    /// part nobody can otherwise look at — the sheet is only in it for a couple of seconds against a
+    /// real server. Three polls at 1.5 s is about four seconds of visible slicing.
+    static func job(poll: Int) -> SliceJob {
+        guard poll >= 3 else {
+            return SliceJob(id: sliceJobId, status: "running", progress: LooseNumber(Double(poll) * 30))
+        }
+        return SliceJob(
+            id: sliceJobId,
+            status: "completed",
+            progress: LooseNumber(100),
+            result: SliceJob.Result(
+                status: "success",
+                libraryFileId: LooseNumber(Double(slicedFileId)),
+                printTimeSeconds: LooseNumber(3_120),
+                filamentUsedG: LooseNumber(18.4)
+            )
+        )
+    }
+}
+
+/// Plates and per-plate filament requirements for the demo library.
+///
+/// One plate, one filament, so the sheet's auto-fill has something to bind and the mapping row shows a
+/// real spool instead of "No tray chosen" — which is what it showed while these routes were shadowed.
+enum DemoPlates {
+
+    /// PLA, because the demo AMS has Purple PLA in slot 1 and auto-fill matches on material. A
+    /// requirement the inventory cannot satisfy would leave the sheet permanently refusing, which is a
+    /// state worth being able to reach deliberately but a poor default.
+    static let requirements = FilamentRequirements(filaments: [
+        FilamentRequirements.Requirement(
+            slotId: 1, type: "PLA", color: "#8E7CC3",
+            usedGrams: LooseNumber(18.4), usedInPlate: true
+        )
+    ])
+
+    /// A raw mesh has NO plates, and the demo must not invent one.
+    ///
+    /// The first version of this fixture returned the same plate for every id, which gave
+    /// `vase-spiral.stl` a plate, a filament requirement and a "52 min · 18 g" estimate — a print
+    /// estimate for a file with nothing to estimate. A demo that lies is worse than a demo that
+    /// refuses, because the refusals are exactly what needs reviewing.
+    static func plates(forFileId id: Int?, fileType: String?) -> PlatesResponse {
+        guard let id, fileType != "stl" else {
+            return PlatesResponse(fileId: id, plates: [], isMultiPlate: false)
+        }
+        return PlatesResponse(
+            fileId: id,
+            plates: [
+                PlateInfo(
+                    index: 1,
+                    name: "Plate 1",
+                    objectCount: 1,
+                    hasThumbnail: false,
+                    printTimeSeconds: LooseNumber(3_120),
+                    filamentUsedGrams: LooseNumber(18.4),
+                    filaments: [PlateFilament(slotId: 1, type: "PLA", color: "#8E7CC3",
+                                              usedGrams: LooseNumber(18.4))]
+                )
+            ],
+            isMultiPlate: false,
+            // The machine the file claims. Matching the demo printer keeps `printerMismatch` false —
+            // a fixture naming another printer would park the sheet on a terminal refusal.
+            embeddedPrinter: "H2C",
+            embeddedProcess: "0.20mm Standard @BBL H2C"
+        )
+    }
+}

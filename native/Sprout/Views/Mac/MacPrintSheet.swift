@@ -592,11 +592,27 @@ struct MacPrintSheet: View {
                 VStack(alignment: .leading, spacing: m.sectionGap) {
                     topRow
                     plateChips
-                    optionsSection
+                    // The refusal comes BEFORE the options, and that ordering is the fix for a real
+                    // defect rather than a preference.
+                    //
+                    // The scroll is capped at 460 pt. With `notices` last, a terminal refusal — the
+                    // tallest notice there is — ran off the bottom and the user had to SCROLL to read
+                    // why the print could not happen. Measured in demo mode on an .stl: the sentence
+                    // ended "…then print the sliced file from he", clipped by the footer.
+                    //
+                    // Everything in `optionsSection` is padlocked and informational; the notice is the
+                    // one thing on this sheet that is both actionable and load-bearing. The actionable
+                    // thing goes where it will be read.
                     notices
+                    optionsSection
                 }
                 .padding(.horizontal, m.gutter)
-                .padding(.vertical, 16)
+                .padding(.top, 16)
+                // Deeper at the bottom than the top, so the LAST thing in the scroll clears the
+                // footer. A terminal refusal is the tallest notice and the last child, and at an even
+                // 16 its final line sat under the footer's edge — an explanation of why the print
+                // cannot happen, with the sentence cut off. Measured in demo mode on an .stl.
+                .padding(.bottom, 28)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             // A cap, not a height: a single-filament plate makes a short sheet and a nine-slot one
@@ -783,7 +799,12 @@ struct MacPrintSheet: View {
                 ? "No tray chosen. Pick one."
                 : "No loaded spool matches \(want). Load one, or choose a tray anyway."
         }
-        return "\(row.candidateCount) loaded spools match. Choose which one."
+        // Singular at one. "1 loaded spools match" shipped because nothing had rendered this sentence
+        // with a count of exactly one until the demo could reach this sheet — which is most of the
+        // argument for the fixtures existing.
+        return row.candidateCount == 1
+            ? "One loaded spool matches. Choose it."
+            : "\(row.candidateCount) loaded spools match. Choose which one."
     }
 
     private func accessibilityLabel(_ row: MacFilamentRow) -> String {
