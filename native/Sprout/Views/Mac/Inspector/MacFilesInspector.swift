@@ -581,9 +581,15 @@ struct MacFilesInspector: View {
 
     /// Size, plus whatever the plates endpoint could tell us.
     ///
-    /// Print time and weight only. `PlateInfo` also declares `filaments`, but nothing has ever read
-    /// one from this endpoint, and a materials list is exactly the kind of claim that must be measured
-    /// before it is printed — see the wizard's brown spool labelled "Orange".
+    /// Print time and weight only — the same two iOS shows.
+    ///
+    /// `PlateInfo.filaments` **is** populated here, and that is measured rather than assumed: a real
+    /// `/printers/2/files/plates?path=/02_basket.gcode.3mf` answers
+    /// `filaments: [{slot_id: 1, type: "PETG", color: "#000000", used_grams: 82.8}]` alongside
+    /// `print_time_seconds: 13967`. So drawing a materials row is now a question of design rather than
+    /// of evidence, and it is deliberately not drawn yet: this panel is one line of monospace, and
+    /// naming a material next to a colour swatch is the surface that produced the wizard's brown spool
+    /// labelled "Orange". Whatever shows filament here should read inventory, not just this record.
     private func sdMeta(_ pf: PrinterFile) -> String {
         if pf.isDirectory { return "Folder" }
         var parts = [MacFileBrowse.bytes(pf.size?.double)]

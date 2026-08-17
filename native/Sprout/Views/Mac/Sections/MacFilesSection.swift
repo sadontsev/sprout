@@ -43,17 +43,21 @@ enum MacFilesLayout: String, CaseIterable, Identifiable, Sendable {
 ///   per-file detail record — so the control would have to sort on `id` descending and *call* that a
 ///   date.
 /// - **Printer SD.** `PrinterFile` *declares* an `mtime`, so the library's reason is simply false
-///   here. But "the field is on the model" and "the server sends a value this app can read" are two
-///   different questions, and only the second one may gate a control. Nothing in this app has ever
-///   read a value out of `mtime`: it is undocumented (`docs/native-rewrite/01-api.md:494` lists it
-///   as `mtime?` and stops), no probe has recorded one, and a string of unknown shape sorts
-///   correctly only by luck — `"1700000000"` and `"999999999"` compare backwards as text. Shipping
-///   a `Date modified` order over that is the same bet as calling `id` descending a date.
+///   here. "The field is on the model" and "the server sends a value this app can read" are two
+///   different questions, and only the second one may gate a control — but that second question now
+///   has an answer.
 ///
-/// TODO(mtime): capture one real `GET /printers/{id}/files` response, write the format down in
-/// `docs/native-rewrite/01-api.md`, then add a `.date` case gated on the loaded rows actually
-/// carrying readable stamps — with the unreadable ones kept in a trailing group in the printer's own
-/// order, the way `VersionGrouping` handles versions that publish no settings.
+/// **MEASURED (2026-08-17), which closes the open half of this note.** A real
+/// `GET /printers/2/files?path=/` returns `"mtime": "2026-07-26T17:13:00"` on every row — ISO 8601,
+/// second precision, no zone. So it is readable, and it sorts correctly as a plain string as well as
+/// a parsed date. What has NOT been established is whether every firmware writes that shape, and
+/// whether the stamp is ever absent; both matter because a mixed listing sorted as text puts a
+/// malformed value in an arbitrary place rather than an obvious one.
+///
+/// TODO(mtime): add a `.date` case, gated on the loaded rows actually carrying parseable stamps, with
+/// the unparseable ones kept in a trailing group in the printer's own order — the way
+/// `VersionGrouping` handles versions that publish no settings. Library rows still carry no timestamp
+/// at all, so the case must hide itself on that segment rather than silently sorting by `id`.
 ///
 /// A predicate that answers a nearby question is the recurring bug in this codebase, so the default
 /// is named for what it actually is: the order the server sent. Same discipline, and deliberately
