@@ -359,13 +359,27 @@ struct MacFilesInspector: View {
         return VStack(alignment: .leading, spacing: 7) {
             Button {
                 guard printBlocked == nil else { return }
-                locked.press(.startPrint) { MacFilesPrint.start(f, model: model) }()
+        // Opening the sheet is NOT printing, so it is not gated on `.startPrint`.
+        //
+        // It was, and that made Mac slicing unreachable on the machine it was built for. With LAN
+        // Developer Mode off the printer refuses `.startPrint`, `locked.press` therefore intercepted
+        // this click and raised "Printer controls are locked" — and `MacFilesPrint.start` never ran,
+        // so the sheet never opened, so the Slice button inside it could never be pressed. Slicing
+        // runs on Bambuddy and needs no permission from the printer at all; the thing that DOES need
+        // it is Send, which the sheet gates itself and correctly.
+        //
+        // The recurring bug, one step further out than usual: not a control gated on a nearby
+        // capability, but a DOOR gated on what lies beyond it.
+                MacFilesPrint.start(f, model: model)
             } label: {
-                Text("Print…").frame(maxWidth: .infinity)
+                // Named for what the sheet will OFFER, so the route to slicing is visible from here.
+                // A project file's next step is a slice, and calling that button "Print…" is how the
+                // whole feature stayed hidden even once the door was open.
+                Text(SliceCapability.canSlice(f) && !LibraryFileCaps.hasGcode(f) ? "Slice…" : "Print…")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(MacPrimaryButtonStyle())
             .disabled(printBlocked != nil)
-            .locked(.startPrint, by: locked)
 
             HStack(spacing: 7) {
                 Button { openViewer(f, mode: .model) } label: {

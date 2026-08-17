@@ -354,7 +354,18 @@ final class AppModel {
         cameraToken = nil
         // `.lan` would offer LAN-only controls that cannot work here; `.unknown` leaves the gates
         // that already exist to explain themselves, which is the honest state for "no printer".
+        //
+        // `SPROUT_LAN_OFF=1` forces `.off` instead, because `.unknown` blocks NOTHING and the demo
+        // therefore could not reach the state a real H2C is usually in. That gap hid a real bug: the
+        // Files "Print…" button was gated on `.startPrint`, so with Developer Mode off the print sheet
+        // would not open at all and Mac slicing was unreachable — and every demo run looked fine,
+        // because `.unknown` let the door through. A fixture that cannot express the common
+        // configuration is a fixture that certifies the wrong thing.
+        #if DEBUG
+        lanMode = ProcessInfo.processInfo.environment["SPROUT_LAN_OFF"] != nil ? .off : .unknown
+        #else
         lanMode = .unknown
+        #endif
 
         // The same stores the real session uses. The status store's socket attempt fails (the demo
         // refuses to mint a ws token) and it falls back to its REST poll, which the demo DOES

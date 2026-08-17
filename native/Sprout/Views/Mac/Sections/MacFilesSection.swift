@@ -1059,9 +1059,18 @@ struct MacFilesSection: View {
             model.toast = .failure(reason)
             return
         }
-        // LAN Developer Mode off means the printer refuses `.startPrint` outright. The gate keeps
-        // the control clickable so the tap is what surfaces the explanation.
-        locked.press(.startPrint) { MacFilesPrint.start(f, model: model) }()
+        // Opening the sheet is NOT printing, so it is not gated on `.startPrint`.
+        //
+        // It was, and that made Mac slicing unreachable on the machine it was built for. With LAN
+        // Developer Mode off the printer refuses `.startPrint`, `locked.press` therefore intercepted
+        // this click and raised "Printer controls are locked" — and `MacFilesPrint.start` never ran,
+        // so the sheet never opened, so the Slice button inside it could never be pressed. Slicing
+        // runs on Bambuddy and needs no permission from the printer at all; the thing that DOES need
+        // it is Send, which the sheet gates itself and correctly.
+        //
+        // The recurring bug, one step further out than usual: not a control gated on a nearby
+        // capability, but a DOOR gated on what lies beyond it.
+        MacFilesPrint.start(f, model: model)
     }
 
     /// Layers and the mesh viewer are meant to be ONE window with a segment (§5.4, spec line 82).
