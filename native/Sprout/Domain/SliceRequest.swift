@@ -122,17 +122,18 @@ enum SliceCapability {
     ///    "Creality K2 Pro" in `slicedForModel` is `isSliced == true` and sliceable at the same time.
     ///  - `!LibraryFileCaps.isStl(f)` — admits every unknown type.
     ///
-    /// **STL is included, and that is measured rather than assumed.** Probed against the live server:
-    /// `POST /library/files/<stl>/slice` answers **202** and the slicer runs it to "Generating G-code",
-    /// exactly as it does a project 3MF. A control run — the same presets against `cr.3mf` — failed at
-    /// the same stage with the same error, which is what makes the result trustworthy: the two inputs
-    /// are indistinguishable to this endpoint, so refusing one while offering the other was arbitrary.
+    /// **STL is included, and it is proven end to end rather than inferred.** Measured against the live
+    /// server: slicing a `.stl` completes and produces a new library file, with a print time and a
+    /// filament weight, exactly as a project 3MF does. The two were first shown to be
+    /// indistinguishable to the endpoint (both 202, both reaching "Generating G-code"), and then both
+    /// shown to succeed once the server was fixed.
     ///
-    /// The failure both runs hit is a SERVER problem and not ours to encode: Bambuddy rejects the
-    /// slicer's output because the sidecar image is too old to read the companion profile holding the
-    /// real start G-code, and it refuses to save a file that "would heat the printer and extrude
-    /// nothing". Correct of it, and equally true for both file types — so it must not become a
-    /// capability predicate here.
+    /// The failure seen before that fix was a SERVER problem and deliberately not encoded here:
+    /// Bambuddy rejected the slicer's output because the sidecar image was two months stale and could
+    /// not read the companion profile holding the real start G-code, so it refused to save a file that
+    /// "would heat the printer and extrude nothing". Correct of it, and equally true for both file
+    /// types — which is exactly why it must not become a capability predicate. A server that is
+    /// misconfigured today is not a file that can never be sliced.
     static func canSlice(_ f: LibraryFile) -> Bool {
         ["3mf", "stl"].contains((f.fileType ?? "").lowercased())
     }
