@@ -646,7 +646,10 @@ struct MacPrinterSection: View {
         MacPrinterCard(padding: 15) {
             VStack(alignment: .leading, spacing: 13) {
                 HStack(spacing: 10) {
-                    MacPrinterMonoLabel(PrinterProfile.forPrinter(model.printer).amsLabel.uppercased())
+                    MacPrinterMonoLabel(MacPrinterCopy.amsHeading(
+                        units: vm.amsUnits,
+                        profileLabel: PrinterProfile.forPrinter(model.printer).amsLabel
+                    ).uppercased())
                     Text(MacPrinterCopy.amsSummary(slots: vm.ams, units: vm.amsUnits))
                         .font(.system(size: caption, weight: .medium))
                         .foregroundStyle(c.t3)
@@ -1577,16 +1580,42 @@ enum MacPrinterCopy {
 
     // MARK: AMS
 
-    /// Loaded count, plus the WORST humidity across units.
+    /// The card's LABEL — a model name only when it actually names everything below it.
     ///
-    /// The maximum rather than unit 0's: an AMS 2 Pro and an AMS HT sit at very different readings,
-    /// and the one worth a single summary line is the one the triage card would flag.
+    /// `PrinterProfile.amsLabel` is the model the printer ships with ("AMS 2 Pro"), and using it as the
+    /// heading for the whole block is wrong the moment a second MODEL is fitted. With two AMS 2 Pro and
+    /// one AMS HT the card read "AMS 2 PRO" over nine slots, one of which is an HT tray — so it claimed
+    /// a unit type for a row that does not have it. The rows themselves were always right ("AMS HT · 1");
+    /// only the heading lied.
+    ///
+    /// So: the model name when there is exactly one unit, where it is precise, and the bare family name
+    /// otherwise. Which unit each slot is in is on the slot, and the models are one click away behind
+    /// the Hardware link this card already carries.
+    nonisolated static func amsHeading(units: [AmsUnitVM], profileLabel: String) -> String {
+        units.count == 1 ? profileLabel : "AMS"
+    }
+
+    /// How many units, how many slots are loaded, and the worst humidity — each said as what it is.
+    ///
+    /// Two things were previously implicit and both misread:
+    ///
+    ///  - the UNIT COUNT was absent, so nine slots under one model name looked like one improbably
+    ///    large unit rather than three.
+    ///  - the humidity is the MAXIMUM across units, chosen because an AMS 2 Pro and an AMS HT sit at
+    ///    very different readings and the one worth a single line is the one triage would flag. Printed
+    ///    bare it reads as *the* humidity. "up to" is the whole fix, and only when more than one unit
+    ///    is actually reporting — with one reading there is nothing to be "up to".
     nonisolated static func amsSummary(slots: [AmsSlotVM], units: [AmsUnitVM]) -> String {
         guard !slots.isEmpty else { return "not reporting" }
         let loaded = slots.filter { !$0.empty }.count
-        var parts = ["\(loaded) of \(slots.count) slots loaded"]
-        if let rh = units.compactMap(\.humidity).max() {
-            parts.append("\(Int(rh.rounded())) % RH")
+        var parts: [String] = []
+        if units.count > 1 { parts.append("\(units.count) units") }
+        parts.append("\(loaded) of \(slots.count) slots loaded")
+        let readings = units.compactMap(\.humidity)
+        if let rh = readings.max() {
+            parts.append(readings.count > 1
+                         ? "up to \(Int(rh.rounded())) % RH"
+                         : "\(Int(rh.rounded())) % RH")
         }
         return parts.joined(separator: " · ")
     }
