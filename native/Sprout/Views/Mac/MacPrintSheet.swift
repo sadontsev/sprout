@@ -314,6 +314,20 @@ enum MacFilamentMatching {
     ///   inventory spool names nothing beyond the bare material, so matching on `product` alone can
     ///   never match an ordinary "PLA" tray. The colour still has to be exact, and a match is only
     ///   ever *used* when there is exactly one — see `autoFill`.
+    /// A value that changes when the plate's requirement is ANSWERED, distinguishing the three states
+    /// `requirements: FilamentRequirements?` collapses into two.
+    ///
+    /// "unasked", "asked and empty" and "asked and here are the slots" are three different situations
+    /// and only the first means wait. `usedSlots` erases the difference by falling back to `[1]`.
+    static func requirementKey(_ requirements: FilamentRequirements?, asked: Bool) -> String {
+        guard asked else { return "unasked" }
+        guard let rows = requirements?.usedSlots, !rows.isEmpty else { return "asked-empty" }
+        return rows
+            .map { "\($0.slotId ?? 1):\($0.type ?? "")/\($0.color ?? "")" }
+            .sorted()
+            .joined(separator: ",")
+    }
+
     static func candidates(
         for want: FilamentRequirements.Requirement?,
         in loaded: [LoadedFilament]
@@ -419,6 +433,12 @@ struct MacPrintSheet: View {
     /// What the file about to be printed asks for. `nil` while unasked or unanswerable — which is
     /// **not** the same as "needs nothing"; `usedSlots` falls back to `[1]` for exactly that reason.
     @State private var requirements: FilamentRequirements?
+    /// Has `filament-requirements` come back — either with an answer or with a failure?
+    ///
+    /// `requirements == nil` conflates "not asked yet" with "asked and it failed", and auto-fill must
+    /// treat those differently: the first means WAIT, the second licenses the `activeTray` fallback.
+    /// Without this it would decide before the question had been answered.
+    @State private var requirementsAsked = false
     @State private var loadingPlate = true
     /// Both plate requests came back empty-handed. Kept apart from "the plate records nothing",
     /// which is what an answered-but-sparse file looks like — see `estimate`.
@@ -535,6 +555,21 @@ struct MacPrintSheet: View {
     }
 
     private var isMultiFilament: Bool { usedSlots.count > 1 }
+
+    /// What the plate asks for, as a value that CHANGES when the answer arrives.
+    ///
+    /// `usedSlots` cannot do this job and that is the bug this exists to fix: it returns `[1]` both
+    /// when requirements are unasked and when the plate genuinely uses slot 1, so
+    /// `.onChange(of: usedSlots)` never fires for the single-filament case — which is the
+    /// overwhelmingly common one. Auto-fill therefore ran once against an unanswered question, found
+    /// nothing to match, latched, and never ran again: every one-filament print on the Mac asked the
+    /// user to choose a tray by hand even when exactly one spool matched.
+    ///
+    /// It looked intermittent because it is a race — whether `filament-requirements` returns before or
+    /// after the inventory decides whether auto-fill ever sees a requirement at all.
+    private var requirementKey: String {
+        MacFilamentMatching.requirementKey(requirements, asked: requirementsAsked)
+    }
 
     private func requirement(for slot: Int) -> FilamentRequirements.Requirement? {
         requirements?.usedSlots.first { ($0.slotId ?? 1) == slot }
@@ -802,6 +837,12 @@ struct MacPrintSheet: View {
             applyAutoFill()
         }
         .onChange(of: loadedKey, initial: true) { _, _ in applyAutoFill() }
+        // Keyed on the ANSWER rather than on `usedSlots`, which cannot distinguish "unasked" from
+        // "slot 1" — see `requirementKey`.
+        .onChange(of: requirementKey) { _, _ in
+            autoFilled = false
+            applyAutoFill()
+        }
         .alert("Couldn’t start", isPresented: presentingFailure) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -1349,13 +1390,19 @@ struct MacPrintSheet: View {
     /// list that had already said "3 filaments".
     private func loadRequirements() async {
         guard let client = model.client else { return }
+        requirementsAsked = false
         let fetched = try? await client.filamentRequirements(printFileId, plate: selectedPlate)
         guard !Task.isCancelled else { return }
         requirements = fetched
+        // Set even when `fetched` is nil: the question has been ASKED, and that is what auto-fill
+        // waits for. Conflating a failure with silence is what made it decide too early.
+        requirementsAsked = true
     }
 
     private func applyAutoFill() {
-        guard !autoFilled, !loaded.isEmpty else { return }
+        // Not before the requirement has been asked. Deciding against an unanswered question is how
+        // this latched on an empty match and never ran again.
+        guard requirementsAsked, !autoFilled, !loaded.isEmpty else { return }
         MacFilamentMatching.autoFill(
             usedSlots: usedSlots,
             requirement: { requirement(for: $0) },
