@@ -42,7 +42,7 @@ NATIVE = "native"
 # decodes those with decodeIfPresent, and a print card must not claim to be a drying card.
 NATIVE_BASE: dict[str, Any] = {
     "printerName": "", "name": "", "stateLabel": "", "progress": 0, "layer": 0, "totalLayers": 0,
-    "etaEpochMs": 0, "finished": False, "symbol": "printer.fill", "iconUri": "",
+    "etaEpochMs": 0, "finished": False, "symbol": "square.stack.3d.up.fill", "iconUri": "",
     # = COLORS["running"] in app.py, = LAColors.running in Swift. Only ever used to pad a sparse
     # payload; every real content state carries its own tint.
     "tint": "#30D158",

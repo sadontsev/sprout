@@ -8,6 +8,15 @@ import WidgetKit
 /// card pushed by the server has no idea what theme the phone is on and must look identical either
 /// way.
 struct PrintActivityWidget: Widget {
+    /// Horizontal breathing room for content that sits near the expanded Dynamic Island's rounded
+    /// corners.
+    ///
+    /// The system does not inset for the corner ARC, only for the bounds, so a glyph in the top or
+    /// bottom row gets sliced by the curve while the middle of the same row is fine. Seen in the
+    /// field as "Layer 379/590" rendering as "ayer 379/590" and a countdown losing its last digit.
+    /// Applied to the text near the corners, never to the whole region — see the bottom region.
+    static let cornerInset: CGFloat = 10
+
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: PrintActivityAttributes.self) { context in
             LockScreenCard(state: context.state)
@@ -30,6 +39,7 @@ struct PrintActivityWidget: Widget {
                         maxWidth: 64
                     )
                     .foregroundStyle(tint)
+                    .padding(.trailing, Self.cornerInset)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text(context.state.name)
@@ -50,6 +60,10 @@ struct PrintActivityWidget: Widget {
                             }
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
+                            // Only the TEXT is inset, not the bar. The bar is a rectangle whose ends
+                            // read as deliberate against the curve; a glyph half-eaten by it reads as
+                            // a bug — "Layer" was arriving as "ayer".
+                            .padding(.horizontal, Self.cornerInset)
                         }
                     }
                 }

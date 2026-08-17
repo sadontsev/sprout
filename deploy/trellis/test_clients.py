@@ -18,7 +18,7 @@ from clients import EXPO, NATIVE, NATIVE_BASE, client_of, envelope, key_ids, nor
 PRINT_CS = {
     "printerName": "H2C", "iconUri": "file:///nozzle.png", "name": "cube.3mf",
     "stateLabel": "Printing", "tint": "#30D158", "progress": 42, "layer": 88, "totalLayers": 210,
-    "etaEpochMs": 1_700_000_000_000, "finished": False, "symbol": "printer.fill",
+    "etaEpochMs": 1_700_000_000_000, "finished": False, "symbol": "square.stack.3d.up.fill",
     "nozzle": 220, "nozzleTarget": 220, "nozzle2": 0, "nozzle2Target": 0, "hasNozzle2": False,
     "activeNozzle": 0, "bed": 60, "bedTarget": 60, "modelUri": "", "queueCount": 0, "nextName": "",
 }

@@ -91,8 +91,13 @@ TENANT_FILE = DATA_DIR / "tenant.json"
 
 # ---- state → content-state (mirrors present.ts + toContentState) ----
 COLORS = {"running": "#30D158", "heating": "#FF9F0A", "paused": "#0A84FF", "error": "#FF453A", "idle": "#8E9398"}
+# Layers stacking upward, which is what an FDM machine actually does; "printer.fill" is a sheet-fed
+# office printer and read as the wrong appliance. Kept in step with the app's own map in
+# LiveActivityController — whichever of the two published last wins on the lock screen, so a change
+# in one place only would flicker back on the next push.
 SYMBOLS = {
-    "Printing": "printer.fill", "Heating": "thermometer.medium", "Paused": "pause.circle.fill",
+    "Printing": "square.stack.3d.up.fill", "Heating": "thermometer.medium",
+    "Paused": "pause.circle.fill",
     "Complete": "checkmark.circle.fill", "Error": "exclamationmark.triangle.fill",
 }
 
@@ -174,7 +179,7 @@ def classify(status: dict) -> tuple[dict, str]:
         "stateLabel": label, "tint": color,
         "progress": progress, "layer": layer, "totalLayers": total,
         "etaEpochMs": eta, "finished": finished,
-        "symbol": SYMBOLS.get(label, SYMBOLS["Error"] if kind == "error" else "printer.fill"),
+        "symbol": SYMBOLS.get(label, SYMBOLS["Error"] if kind == "error" else SYMBOLS["Printing"]),
         "nozzle": n1, "nozzleTarget": n1t, "nozzle2": n2, "nozzle2Target": n2t,
         "hasNozzle2": has_n2, "activeNozzle": active_idx, "bed": bed, "bedTarget": bed_t,
         "modelUri": "", "queueCount": 0, "nextName": "",

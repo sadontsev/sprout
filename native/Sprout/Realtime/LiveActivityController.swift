@@ -178,7 +178,9 @@ final class LiveActivityController {
     }
 
     nonisolated private static let symbols: [String: String] = [
-        "Printing": "printer.fill",
+        // Layers stacking upward, which is what an FDM machine actually does. `printer.fill`
+        // is a sheet-fed office printer and read as the wrong appliance entirely.
+        "Printing": "square.stack.3d.up.fill",
         "Heating": "thermometer.medium",
         "Paused": "pause.circle.fill",
         "Complete": "checkmark.circle.fill",
@@ -215,7 +217,7 @@ final class LiveActivityController {
         s.totalLayers = status.totalLayers?.int ?? 0
         s.etaEpochMs = (!finished && remainingMin > 0) ? now.addingTimeInterval(remainingMin * 60).timeIntervalSince1970 * 1000 : 0
         s.finished = finished
-        s.symbol = symbols[vm.stateLabel] ?? (vm.kind == .error ? "exclamationmark.triangle.fill" : "printer.fill")
+        s.symbol = symbols[vm.stateLabel] ?? (vm.kind == .error ? "exclamationmark.triangle.fill" : "square.stack.3d.up.fill")
         s.tint = tint(vm)
         s.nozzle = Int((t?.nozzle?.double ?? 0).rounded())
         s.nozzleTarget = Int((t?.nozzleTarget?.double ?? 0).rounded())
