@@ -14,8 +14,16 @@ struct MacMenuBarLabel: View {
     var body: some View {
         // No `Image` fallback with `Text`: mixing them makes the item's width jump every time the
         // print starts or ends. The mark is the template asset the iOS tab bar uses.
-        if let percent {
-            Text(verbatim: "\(percent) %").monospacedDigit()
+        // Branch on the STATE, not on whether a number happens to exist.
+        //
+        // This read `if let percent`, which answers "is there a percentage to display?" — a different
+        // question from "does this state replace the glyph with a number?", and `MacStatusMark`
+        // already answers the second one. The two diverge exactly where `showWhenIdle` is on: an idle
+        // machine then has a percentage, so the old branch showed `62 %` and the idle mark never
+        // rendered. `showsGlyph` existed and nothing consulted it — both halves of CLAUDE.md's
+        // recurring bug in four lines.
+        if !state.showsGlyph || (showWhenIdle && percent != nil) {
+            Text(verbatim: "\(percent ?? 0) %").monospacedDigit()
         } else if let mark = MacStatusMarkArt.image(state) {
             Image(nsImage: mark)
         } else if let glyph = Self.glyph {

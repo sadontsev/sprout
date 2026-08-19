@@ -386,6 +386,15 @@ final class LiveActivityController {
     /// and passed in as plain strings. They are not fetched here on purpose: the images need the
     /// library listing and a camera token, and giving this controller a network client would make the
     /// card subsystem depend on the browsing subsystem to draw a thumbnail.
+    /// The brand glyph's App Group URI, handed down by `AppModel` and remembered.
+    ///
+    /// Registration happens on paths that have no `sync` arguments in scope — `/register-start` fires
+    /// from a token stream and `flushPending` from a retry queue — so the value has to be held rather
+    /// than threaded. Both used to post `iconUri: ""` with a comment calling it a known gap, and that
+    /// gap is why the new App Group artwork would have reached nothing in SERVER mode, which is the
+    /// shipping configuration: Trellis owns the card there, and it renders what registration gave it.
+    private(set) var glyphUri: String = ""
+
     func sync(
         printerId: Int,
         printerName: String,
@@ -394,6 +403,8 @@ final class LiveActivityController {
         iconUri: String = "",
         modelUri: String = ""
     ) async {
+        // Remembered for the registration paths, which run outside this call.
+        if !iconUri.isEmpty { glyphUri = iconUri }
         // Cards also appear without us: in SERVER mode Trellis starts them remotely, and cards from a
         // previous launch outlive the process. Sweeping here — not only from `activityUpdates`, whose
         // replay of already-live activities is not something to bet a subsystem on — is what
@@ -525,11 +536,12 @@ final class LiveActivityController {
                     // a POST that failed here used to be the end of it: the server then had nothing
                     // to push a start to and the lock screen stayed empty for the whole print.
                     self.pending.add(token: token, kind: .start)
-                    // `icon_uri` is empty until the brand glyph is written to the App Group (a known
-                    // gap); Trellis treats an empty value as "keep what you have" for start tokens.
+                    // The glyph, when we have one. Trellis treats an empty value as "keep what you
+                    // have", so a registration that races the first `sync` is not destructive — the
+                    // next one carries it.
                     let claim = await self.buildClaim(token: token, kind: .start, vouchNonce: nil)
                     let result = await self.postWithReason("/register-start", token: token, body: StartRegistration(
-                        pushToken: token, iconUri: "", deviceId: self.deviceID, claim: claim
+                        pushToken: token, iconUri: self.glyphUri, deviceId: self.deviceID, claim: claim
                     ))
                     if result.ok && result.bound {
                         self.pending.remove(token: token)
@@ -798,7 +810,7 @@ final class LiveActivityController {
             case ClaimBuilder.BindingKind.start.rawValue:
                 let claim = await buildClaim(token: intent.token, kind: .start, vouchNonce: intent.vouchNonce)
                 let result = await postWithReason("/register-start", token: intent.token, body: StartRegistration(
-                    pushToken: intent.token, iconUri: "", deviceId: deviceID, claim: claim
+                    pushToken: intent.token, iconUri: glyphUri, deviceId: deviceID, claim: claim
                 ))
                 if result.ok && result.bound {
                     pending.remove(token: intent.token)

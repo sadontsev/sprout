@@ -7,10 +7,13 @@ import SwiftUI
 /// on a lock screen has been told the machine is wet. The spool says what is actually being acted on,
 /// and the rising strokes say heat is being applied to it.
 ///
-/// Drawn rather than shipped as an asset because it is needed at wildly different sizes and in three
-/// rendering contexts — a SwiftUI card, a tinted widget slot, and an AppKit template image for the
-/// menu bar. One `Shape` serves all of them, and the stroke weight is a function of the size rather
-/// than a fixed value scaled up (see `strokeWidth`).
+/// Drawn rather than shipped as an asset because it is needed at very different sizes: the stroke
+/// weight is a function of the size rather than a fixed value scaled up (see `strokeWidth`), which no
+/// static asset can do.
+///
+/// One consumer today — the drying card's 56 pt leading tile in `PrintActivityWidget`. The Mac menu
+/// bar's drying badge draws its own smaller ring in `MacStatusMark`, because a 10 pt badge cannot
+/// carry the heat strokes and an `NSBezierPath` is what that context needs.
 ///
 /// Geometry is specified on a 24×24 grid and scaled to whatever size it is asked for, so the
 /// proportions hold from 14 pt to 200 pt.
@@ -20,9 +23,9 @@ struct SpoolMark: Shape {
     static let grid: CGFloat = 24
 
     // The spool body.
-    private static let ringCentre = CGPoint(x: 12, y: 15.2)
+    fileprivate static let ringCentre = CGPoint(x: 12, y: 15.2)
     private static let ringRadius: CGFloat = 6.3
-    private static let hubRadius: CGFloat = 1.9
+    fileprivate static let hubRadius: CGFloat = 1.9
 
     /// Heat, rising. Three strokes of different lengths — equal ones read as a barcode.
     private static let heat: [(x: CGFloat, from: CGFloat, to: CGFloat)] = [
@@ -85,10 +88,13 @@ struct SpoolMarkHub: Shape {
         let k = side / SpoolMark.grid
         let originX = rect.minX + (rect.width - side) / 2
         let originY = rect.minY + (rect.height - side) / 2
-        let r: CGFloat = 1.9
+        // Read from `SpoolMark`, not restated. These were three bare literals that happened to equal
+        // the ring's centre and the hub's radius; nudging the ring would have moved the stroked
+        // circle and left the filled hub behind, with a green build and green tests.
+        let r = SpoolMark.hubRadius
         return Path(ellipseIn: CGRect(
-            x: originX + (12 - r) * k,
-            y: originY + (15.2 - r) * k,
+            x: originX + (SpoolMark.ringCentre.x - r) * k,
+            y: originY + (SpoolMark.ringCentre.y - r) * k,
             width: r * 2 * k,
             height: r * 2 * k
         ))

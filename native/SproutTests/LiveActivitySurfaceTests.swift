@@ -112,24 +112,34 @@ final class ExtrusionRiderTests: XCTestCase {
     /// failed print says the machine is still laying plastic — a lie told by a decoration, in exactly
     /// the states someone is anxiously checking.
     func testTheNozzleRidesOnlyWhileExtruding() {
-        XCTAssertTrue(ExtrusionRider.rides(tintHex: LAColors.running))
-        XCTAssertTrue(ExtrusionRider.rides(tintHex: LAColors.heating))
-        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.paused))
-        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.error))
-        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.idle))
-        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.drying))
+        XCTAssertTrue(ExtrusionRider.rides(tintHex: LAColors.running, finished: false))
+        XCTAssertTrue(ExtrusionRider.rides(tintHex: LAColors.heating, finished: false))
+        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.paused, finished: false))
+        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.error, finished: false))
+        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.idle, finished: false))
+        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.drying, finished: false))
+    }
+
+    /// **The tint alone cannot answer this**, which is why `finished` is a parameter.
+    /// `LAState.complete.tintHex` IS `LAColors.running` — the same green — and Trellis sends that hex
+    /// for FINISH/FINISHED/FINISHING. A tint-only predicate parked the nozzle at the end of a full bar
+    /// on a completed print and told the user the machine was still laying plastic.
+    func testAFinishedPrintDoesNotExtrude() {
+        XCTAssertEqual(LAState.complete.tintHex, LAColors.running, "the premise of this test")
+        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.running, finished: true))
+        XCTAssertFalse(ExtrusionRider.rides(tintHex: LAColors.heating, finished: true))
     }
 
     /// Case-insensitive, because the hex arrives as a string off the wire and nothing guarantees the
     /// server's casing matches the constant's.
     func testTheTintComparisonIgnoresCase() {
-        XCTAssertTrue(ExtrusionRider.rides(tintHex: LAColors.running.lowercased()))
-        XCTAssertTrue(ExtrusionRider.rides(tintHex: LAColors.running.uppercased()))
+        XCTAssertTrue(ExtrusionRider.rides(tintHex: LAColors.running.lowercased(), finished: false))
+        XCTAssertTrue(ExtrusionRider.rides(tintHex: LAColors.running.uppercased(), finished: false))
     }
 
     func testAnUnknownTintDoesNotRide() {
-        XCTAssertFalse(ExtrusionRider.rides(tintHex: "#123456"))
-        XCTAssertFalse(ExtrusionRider.rides(tintHex: ""))
+        XCTAssertFalse(ExtrusionRider.rides(tintHex: "#123456", finished: false))
+        XCTAssertFalse(ExtrusionRider.rides(tintHex: "", finished: false))
     }
 }
 

@@ -230,6 +230,10 @@ struct MacVideoWindowView: View {
 
     private func fetch() async {
         guard let request, let client = model.client else { return }
+        // Cleared alongside the download's own error, or the window can never leave the failure
+        // branch: `deleteFailed` was written once and by nothing else, so "Try again" re-fetched
+        // underneath an error that stayed on screen forever.
+        deleteFailed = nil
         download.failure = nil
         download.written = 0
         download.total = 0
@@ -294,7 +298,9 @@ struct MacVideoWindowView: View {
             // where the action was taken.
             store.problem = nil
             deleteFailed = problem.message
-            attempt += 1        // re-fetch, so the window is not left on a dead player
+            // Deliberately NOT `attempt += 1`: the recording is still there and still playable, and
+            // re-fetching would clear the very message the user needs to read. "Try again" is theirs
+            // to press.
             return
         }
         dismiss()

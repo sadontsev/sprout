@@ -34,7 +34,18 @@ enum ExtrusionRider {
     /// Keyed on the tint rather than on `stateLabel`, because the label is free-form server text
     /// (Trellis writes it, and it is localised for humans) while the tint is a fixed enumeration both
     /// sides agree on. A predicate on prose would drift the first time the server reworded a state.
-    static func rides(tintHex: String) -> Bool {
+    static func rides(tintHex: String, finished: Bool) -> Bool {
+        // `finished` is not decoration. The tint alone CANNOT answer this: `LAState.complete.tintHex`
+        // is `LAColors.running`, the same green as printing, and Trellis sends that same hex for
+        // FINISH/FINISHED/FINISHING. So a tint-only predicate answers "is this a green state?" — and
+        // it parked the nozzle at the end of a full bar on a completed print, telling the user the
+        // machine was still laying plastic onto a finished plate.
+        //
+        // The exact nearby-question shape CLAUDE.md's table is made of, written into the comment that
+        // claimed to have avoided it: "complete is excluded — the bar is full, nothing is moving".
+        // It was not excluded. `finished` is a `ContentState` field both the app and Trellis already
+        // populate, and it is the capability rather than a proxy for it.
+        guard !finished else { return false }
         let hex = tintHex.uppercased()
         return hex == LAColors.running.uppercased() || hex == LAColors.heating.uppercased()
     }
@@ -93,12 +104,5 @@ struct ExtrusionBar<Rider: View>: View {
         // pad shows up as a decapitated nozzle, which reads as a rendering bug rather than a spacing
         // one.
         .padding(.top, riding ? glyphSize.height - barHeight : 0)
-    }
-}
-
-extension ExtrusionBar where Rider == EmptyView {
-    /// The plain bar, for the states that do not extrude.
-    init(progress: Double, tint: Color, barHeight: CGFloat = 5) {
-        self.init(progress: progress, tint: tint, riding: false, barHeight: barHeight) { EmptyView() }
     }
 }

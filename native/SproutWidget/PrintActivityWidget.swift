@@ -55,7 +55,7 @@ struct PrintActivityWidget: Widget {
                             ExtrusionBar(
                                 progress: Double(context.state.progress) / 100,
                                 tint: tint,
-                                riding: ExtrusionRider.rides(tintHex: context.state.tint)
+                                riding: ExtrusionRider.rides(tintHex: context.state.tint, finished: context.state.finished)
                             ) {
                                 IslandRider(uri: context.state.iconUri, tint: tint)
                             }
@@ -202,7 +202,7 @@ private struct LockScreenCard: View {
                     ExtrusionBar(
                         progress: Double(state.progress) / 100,
                         tint: tint,
-                        riding: ExtrusionRider.rides(tintHex: state.tint)
+                        riding: ExtrusionRider.rides(tintHex: state.tint, finished: state.finished)
                     ) { riderGlyph }
 
                     // One line, and it fills the width instead of splitting to both margins.
@@ -364,24 +364,6 @@ private struct IslandRider: View {
                 .scaledToFit()
                 .foregroundStyle(tint)
         }
-    }
-}
-
-/// The plain bar, kept for surfaces that must not imply extrusion — see `ExtrusionRider.rides`.
-/// `ExtrusionBar` falls back to exactly this shape when `riding` is false, so this remains only for
-/// call sites that never ride at all.
-private struct ProgressBar: View {
-    let progress: Double
-    let tint: Color
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.tertiary)
-                Capsule().fill(tint).frame(width: geo.size.width * min(max(progress, 0), 1))
-            }
-        }
-        .frame(height: 5)
     }
 }
 
