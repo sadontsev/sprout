@@ -60,17 +60,43 @@ final class LiveActivityArtResolver {
     /// Best-effort by design: no library listing, no match, no token, no network — every one of those
     /// returns "" and the card shows the brand glyph instead. A missing picture is a smaller failure
     /// than a delayed card, so nothing here is allowed to block `sync`.
-    func plate(printerId: Int, jobName: String, library: [LibraryFile], client: BambuddyClient?, token: String?) async -> String {
+    func plate(
+        printerId: Int,
+        jobName: String,
+        library: [LibraryFile],
+        sdFiles: [PrinterFile] = [],
+        client: BambuddyClient?,
+        token: String?
+    ) async -> String {
         guard !jobName.isEmpty else { return "" }
         // Same job as last time and already written — the common case on a 4-second loop.
         if let hit = cached[printerId], hit.jobName == jobName, !hit.modelUri.isEmpty {
             return hit.modelUri
         }
-        guard let client, let token, !library.isEmpty,
-              let file = PrintArt.artFile(jobName: jobName, in: library),
-              let url = client.fileThumbUrl(file.id, token: token, thumbnailPath: file.thumbnailPath) else {
-            return ""
+        guard let client else { return "" }
+
+        // Two sources, in order. The LIBRARY first — its thumbnails are the richer image, and
+        // `ThumbSource` can borrow the source model's render when the sliced file's own is a flat
+        // silhouette. Then the printer's OWN CARD, which is where most jobs actually come from.
+        //
+        // The second rung is not a nicety. Measured on the live machine: the running job was
+        // `kid34_slide_A_76`, no library row matched it, and `/kid34_slide_A_76.gcode.3mf` was sitting
+        // on the card with a plate render that returns 200. A library-only ladder would have shown the
+        // brand glyph for every print not started from the library.
+        //
+        // The two rungs authenticate DIFFERENTLY and that is easy to get backwards: a library
+        // thumbnail is gated by the camera stream token in `?token=` and 401s on the header, while the
+        // printer's plate render is gated by the `X-API-Key` HEADER and 401s on the bare URL.
+        var url: URL?
+        var headers: [String: String] = [:]
+        if let token, !library.isEmpty,
+           let file = PrintArt.artFile(jobName: jobName, in: library) {
+            url = client.fileThumbUrl(file.id, token: token, thumbnailPath: file.thumbnailPath)
+        } else if let entry = PrintArt.matchSd(jobName: jobName, in: sdFiles) {
+            url = client.printerPlateThumbUrl(printerId, path: entry.path)
+            headers = client.authHeaders()
         }
+        guard let url else { return "" }
         let name = LiveActivityArt.plateName(printerId: printerId, fileName: jobName)
         // Written already this launch for this job? Then the file is on disk and nothing needs the
         // network.
@@ -81,7 +107,7 @@ final class LiveActivityArtResolver {
         }
         // Through `ThumbCache`, so a plate the Files grid already fetched is not fetched again — the
         // library thumbnail endpoint is token-gated and the token rotates hourly.
-        guard let image = await ThumbCache.shared.image(for: url),
+        guard let image = await ThumbCache.shared.image(for: url, headers: headers),
               let data = image.pngData() else { return "" }
         let uri = LiveActivityArt.write(data, name: name)
         cached[printerId] = Resolved(jobName: jobName, modelUri: uri)

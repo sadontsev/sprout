@@ -51,6 +51,23 @@ enum PrintArt {
         return matches.max(by: { $0.id < $1.id })
     }
 
+    /// The entry on the printer's own storage that matches the running job, if any.
+    ///
+    /// **This is the rung that actually fires for most prints, and it was missing.** Measured against
+    /// the live machine: the running job was `kid34_slide_A_76`, the library held nine rows with
+    /// thumbnails and NONE of them matched, and the printer's own card held
+    /// `/kid34_slide_A_76.gcode.3mf` whose plate render returns 200. A library-only ladder shows the
+    /// brand glyph for every print that was not started from the library — which for a machine driven
+    /// from Bambu Studio or its own screen is most of them.
+    ///
+    /// Same exact-stem rule as `match`, and for the same reason: a near-match puts the wrong model on
+    /// the lock screen, which is worse than the honest glyph.
+    static func matchSd(jobName: String, in files: [PrinterFile]) -> PrinterFile? {
+        let wanted = stem(jobName)
+        guard !wanted.isEmpty else { return nil }
+        return files.first { !$0.isDirectory && stem($0.name) == wanted }
+    }
+
     /// The file whose THUMBNAIL should be shown for a job — the match, or the model it was sliced
     /// from when the match's own image is Bambuddy's flat silhouette.
     ///

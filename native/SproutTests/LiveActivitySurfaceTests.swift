@@ -276,6 +276,31 @@ final class PrintArtTests: XCTestCase {
         XCTAssertEqual(PrintArt.artFile(jobName: "cube.gcode.3mf", in: library)?.id, 10)
     }
 
+    /// The rung that actually fires for most prints. Measured on the live machine: the running job
+    /// `kid34_slide_A_76` matched NO library row, and sat on the printer's card as
+    /// `kid34_slide_A_76.gcode.3mf`.
+    func testTheRunningJobIsFoundOnTheCard() {
+        let card = [
+            PrinterFile(name: "02_basket.gcode.3mf", isDirectory: false, size: nil, path: "/02_basket.gcode.3mf", mtime: nil),
+            PrinterFile(name: "kid34_slide_A_76.gcode.3mf", isDirectory: false, size: nil, path: "/kid34_slide_A_76.gcode.3mf", mtime: nil),
+        ]
+        XCTAssertEqual(PrintArt.matchSd(jobName: "kid34_slide_A_76", in: card)?.path,
+                       "/kid34_slide_A_76.gcode.3mf")
+    }
+
+    /// A folder never supplies a plate, even one named like the job.
+    func testAFolderOnTheCardIsNotAMatch() {
+        let card = [PrinterFile(name: "cube", isDirectory: true, size: nil, path: "/cube", mtime: nil)]
+        XCTAssertNil(PrintArt.matchSd(jobName: "cube", in: card))
+    }
+
+    /// Exact stems on the card too — a near-match puts the wrong model on the lock screen.
+    func testTheCardMatchIsExact() {
+        let card = [PrinterFile(name: "kid34_slide_B_76.gcode.3mf", isDirectory: false, size: nil,
+                                path: "/kid34_slide_B_76.gcode.3mf", mtime: nil)]
+        XCTAssertNil(PrintArt.matchSd(jobName: "kid34_slide_A_76", in: card))
+    }
+
     func testAnUnmatchedJobHasNoArt() {
         XCTAssertNil(PrintArt.artFile(jobName: "nothing", in: [file(1, "cube.3mf")]))
     }

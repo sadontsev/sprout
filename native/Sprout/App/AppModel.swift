@@ -537,6 +537,10 @@ final class AppModel {
                         printerId: id,
                         jobName: s.subtaskName ?? "",
                         library: self.library.files ?? [],
+                        // The card's second source. Only the SELECTED printer's listing is loaded, so
+                        // this is empty for the others — which is honest: their cards fall to the
+                        // brand glyph rather than being handed some other machine's plate.
+                        sdFiles: id == self.printerId ? (self.library.printerList?.files ?? []) : [],
                         client: self.client,
                         token: self.cameraToken
                     )
