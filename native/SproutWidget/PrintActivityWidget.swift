@@ -82,6 +82,18 @@ struct PrintActivityWidget: Widget {
                         compact: true
                     )
                     .foregroundStyle(tint)
+                } else if countdown != .hidden {
+                    // The finish time, not the percentage. A number that only moves once every few
+                    // minutes tells you nothing at a glance; "when will it be done" is the reason
+                    // anyone looks at this slot at all. Progress is still on the expanded card.
+                    CountdownSlot(
+                        countdown: countdown,
+                        font: .caption2.monospacedDigit(),
+                        maxWidth: 58,
+                        compact: true,
+                        style: .finishClock
+                    )
+                    .foregroundStyle(tint)
                 } else {
                     Text("\(context.state.progress)%")
                         .font(.caption2.monospacedDigit())
@@ -107,11 +119,22 @@ private struct CountdownSlot: View {
     let maxWidth: CGFloat
     /// The compact island slot is too narrow for the word, so it gets the short label.
     var compact: Bool = false
+    /// Duration or wall-clock finish. See `LiveActivityCountdown.Style` for why the small slots
+    /// differ from the roomy ones.
+    var style: LiveActivityCountdown.Style = .remaining
 
     var body: some View {
         switch countdown {
         case .ticking(let range):
-            text(Text(timerInterval: range, countsDown: true))
+            switch style {
+            case .remaining:
+                text(Text(timerInterval: range, countsDown: true))
+            case .finishClock:
+                // `range.upperBound` IS the ETA — `countdown()` builds `now...eta`. Rendered with
+                // `style: .time` so it follows the phone's 12/24-hour setting rather than a format
+                // this widget picks, and so it needs no push to stay correct.
+                text(Text(range.upperBound, style: .time))
+            }
         case .overdue:
             text(Text(compact ? LiveActivityCountdown.overdueLabelCompact : LiveActivityCountdown.overdueLabel))
         case .hidden:
@@ -151,7 +174,8 @@ private struct LockScreenCard: View {
                     CountdownSlot(
                         countdown: state.countdown(),
                         font: .system(size: 13, weight: .semibold).monospacedDigit(),
-                        maxWidth: 70
+                        maxWidth: 82,
+                        style: .finishClock
                     )
                     .foregroundStyle(.primary)
                 }
@@ -160,16 +184,25 @@ private struct LockScreenCard: View {
                     Text(state.name)
                         .font(.system(size: 12))
                         .lineLimit(1)
+                        .truncationMode(.middle)
                         .foregroundStyle(.secondary)
                 }
 
                 if state.dry == true {
                     DryReadout(state: state, tint: tint)
                 } else {
-                    ProgressBar(progress: Double(state.progress) / 100, tint: tint)
-                    HStack(spacing: 10) {
+                    // Percent sits ON the bar's row rather than under it. It was one of four
+                    // competing values on the line below, where the eye had to hunt for the one
+                    // number the bar is already showing; beside the bar it reads as its label, and
+                    // the line below is left to say what the bar cannot.
+                    HStack(spacing: 8) {
+                        ProgressBar(progress: Double(state.progress) / 100, tint: tint)
                         Text("\(state.progress)%")
-                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(.primary)
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                    HStack(spacing: 10) {
                         if state.totalLayers > 0 {
                             Text("Layer \(state.layer)/\(state.totalLayers)")
                                 .font(.system(size: 11).monospacedDigit())

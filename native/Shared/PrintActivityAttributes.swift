@@ -117,6 +117,20 @@ struct PrintActivityAttributes: ActivityAttributes {
 /// app is backgrounded. Clamping the ETA when it is *computed* cannot help — nothing keeps it in the
 /// future until it is *rendered*. So no render site forms a range itself; they all switch on this.
 enum LiveActivityCountdown: Equatable, Sendable {
+    /// How a live ETA should read.
+    ///
+    /// A duration answers "how long until I can stop waiting", which is the wrong question for a
+    /// print: nobody stands over a ten-hour job. A wall-clock finish answers "when do I come back",
+    /// which is what the small slots are glanced at for, and it matches what the app's own dashboard
+    /// already says ("done ~ 9:22 PM"). The roomy slots keep the ticking duration, where watching it
+    /// move is the point.
+    enum Style: Equatable, Sendable {
+        /// A ticking duration, e.g. "1:21:04".
+        case remaining
+        /// The wall-clock time the print is expected to end, e.g. "21:47".
+        case finishClock
+    }
+
     /// No ETA at all. The slot renders nothing, as it always has.
     case hidden
     /// A well-formed future range, safe to hand to `Text(timerInterval:countsDown:)`.
