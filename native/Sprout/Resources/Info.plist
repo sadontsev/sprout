@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Sprout</string>
+	<string>$(SPROUT_APP_NAME)</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
