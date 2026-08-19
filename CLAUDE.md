@@ -136,8 +136,23 @@ apart.
 - The dev build gets **no push** — APNs topics are bundle ids and Canopy binds `com.mvks5.bambu`.
 - It starts with an **empty Keychain**, so the base URL and API key are entered once. That is the
   isolation working.
-- `PRODUCT_NAME` is deliberately still `Sprout`, so every script and probe path in this repo —
-  `Sprout.app/Contents/MacOS/Sprout` — keeps working.
+- The **bundle** is `Sprout Dev.app`, because Spotlight labels an app from `kMDItemFSName` — the
+  filename — and ignores `CFBundleDisplayName`. Renaming the display name alone produced a plist
+  reading "Sprout Dev" under a Spotlight tile still saying "Sprout"; `mdls` is what settled it.
+- The **executable** is still `Sprout`, via a separate `EXECUTABLE_NAME` override. So a Debug probe
+  run is `"…/Debug/Sprout Dev.app/Contents/MacOS/Sprout"` — new wrapper, same binary, and the quotes
+  matter now that the path has a space.
+
+**`PRODUCT_NAME` drives THREE things, and renaming it broke two of them in turn.** Each failure was
+loud, but only because the suite was run; none of them shows up in a plain `build`:
+
+1. the bundle wrapper — the point of the exercise;
+2. the **executable**, so `SproutTests`' `TEST_HOST` stopped resolving — *"Could not find test host"*.
+   Both that setting and `PRODUCT_NAME` now read one project-level `SPROUT_MAC_APP`, so the two
+   cannot drift again;
+3. the **Swift module name**, which quietly became `Sprout_Dev` and failed all 1,293 tests on
+   `@testable import Sprout`. `PRODUCT_MODULE_NAME` is pinned to `Sprout` for that reason — a module
+   is an identifier in source, and must never follow a user-facing name.
 - The overrides live in `project.yml` under `targets.Sprout.settings.configs.Debug`, as
   `[sdk=macosx*]` conditionals. **Put them under `settings:`, not after `preBuildScripts:`** — an
   unknown key there is dropped WITHOUT AN ERROR, same failure mode as the `macos:` key this file
@@ -154,7 +169,7 @@ healthy app reports as having none.
 ```bash
 SPROUT_DEMO=1 SPROUT_SECTION=jobs SPROUT_WINDOW_SIZE=1120x900 \
   SPROUT_SHOT=/tmp/shot SPROUT_SHOT_DELAY=9 \
-  /path/to/Sprout.app/Contents/MacOS/Sprout
+  "/path/to/Sprout Dev.app/Contents/MacOS/Sprout"   # Debug; Release is still Sprout.app
 ```
 
 **`SPROUT_DEMO=1` is what makes this useful** — it starts the in-process fake server, so sections

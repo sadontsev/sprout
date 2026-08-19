@@ -23,6 +23,16 @@ settings:
     # setting has no meaning — harmless, but it reads as a claim that the Mac app is an iPhone app.
     "TARGETED_DEVICE_FAMILY[sdk=iphone*]": "1"
     ENABLE_MODULE_VERIFIER: NO
+    # What the macOS app bundle is CALLED. Defined once here because two targets have to agree about
+    # it: the app names its product with it, and SproutTests points TEST_HOST at the result. They were
+    # briefly two literals, and the moment the Debug name changed the Mac test action stopped building
+    # with "Could not find test host" — a coupling worth having exactly one source for.
+    SPROUT_MAC_APP: Sprout
+
+  configs:
+    Debug:
+      # See `targets.Sprout.settings.configs.Debug` for why a Debug Mac build is a separate app.
+      SPROUT_MAC_APP: Sprout Dev
 
 targets:
   Sprout:
@@ -58,6 +68,12 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu
         PRODUCT_NAME: Sprout
+        # Pinned, because `PRODUCT_NAME` drives THREE things and the Debug Mac build changes it:
+        # the bundle wrapper, the executable, and the Swift MODULE name. Renaming the product to
+        # "Sprout Dev" silently renamed the module to `Sprout_Dev`, and every one of the 1,293 tests
+        # failed to compile on `@testable import Sprout`. The module is an identifier in source, not
+        # a user-facing name, so it must never follow the product name.
+        PRODUCT_MODULE_NAME: Sprout
         INFOPLIST_FILE: Sprout/Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: Sprout
         # Substituted into CFBundleDisplayName below, so a CONFIGURATION can change what the app is
@@ -108,6 +124,18 @@ targets:
           "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": com.mvks5.bambu.dev
           "SPROUT_APP_NAME[sdk=macosx*]": Sprout Dev
           "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=macosx*]": SproutDev
+          # The BUNDLE is renamed too, and it has to be: Spotlight labels an app from
+          # `kMDItemFSName` — the filename on disk — not from `CFBundleDisplayName`. Setting the
+          # display name alone produced a bundle whose plist read "Sprout Dev" while Spotlight
+          # cheerfully listed a third identical "Sprout". Measured with `mdls`, which also showed the
+          # index still holding the OLD bundle id for that path after a rebuild; renaming the wrapper
+          # sidesteps that staleness, because it becomes a different path.
+          "PRODUCT_NAME[sdk=macosx*]": "$(SPROUT_MAC_APP)"
+          # …but the EXECUTABLE keeps its name, so `Contents/MacOS/Sprout` is still the binary and the
+          # probe invocations in CLAUDE.md need only the new wrapper name. `EXECUTABLE_NAME` defaults
+          # to `PRODUCT_NAME`; splitting them is what lets the app be renamed without renaming the
+          # thing every script in this repo executes.
+          "EXECUTABLE_NAME[sdk=macosx*]": Sprout
     preBuildScripts:
       # Derive the macOS Info.plist from the iOS one, minus the single key macOS refuses.
       #
@@ -258,8 +286,12 @@ targets:
         # points at a path that does not exist and the Mac test action fails before running a
         # single case ("Could not find test host for SproutTests"). Conditionals win over the
         # unconditional setting, so naming both layouts fixes macOS without touching iOS.
-        "TEST_HOST[sdk=macosx*]": "$(BUILT_PRODUCTS_DIR)/Sprout.app/Contents/MacOS/Sprout"
-        "BUNDLE_LOADER[sdk=macosx*]": "$(BUILT_PRODUCTS_DIR)/Sprout.app/Contents/MacOS/Sprout"
+        #
+        # `$(SPROUT_MAC_APP)`, not a literal `Sprout`: the Debug Mac app is `Sprout Dev.app`, and a
+        # hard-coded name here points at a bundle that exists in Release and not in Debug. The
+        # EXECUTABLE is still `Sprout` in both, which is why only the wrapper is substituted.
+        "TEST_HOST[sdk=macosx*]": "$(BUILT_PRODUCTS_DIR)/$(SPROUT_MAC_APP).app/Contents/MacOS/Sprout"
+        "BUNDLE_LOADER[sdk=macosx*]": "$(BUILT_PRODUCTS_DIR)/$(SPROUT_MAC_APP).app/Contents/MacOS/Sprout"
 
 schemes:
   Sprout:
