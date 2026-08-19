@@ -41,6 +41,19 @@ import AppKit
 /// so it costs nothing when it is not wanted:
 ///
 ///     SPROUT_WINDOW_PROBE=1 Sprout.app/Contents/MacOS/Sprout          # report, then exit
+///
+/// **Measuring the MENU BAR item.** It is the one piece of UI no capture can reach — it is not in
+/// the `contentView` `cacheDisplay` renders, and photographing the real menu bar needs Screen
+/// Recording. `SPROUT_WINDOW_PROBE` reports the `NSStatusBarWindow` frame, and its WIDTH is the
+/// usable signal: sizing the glyph from its intrinsic 26 pt down to a 16 pt frame took the item from
+/// 44 pt wide to 34 pt. Reading the glyph itself does not work — `MenuBarExtra` hosts a SwiftUI view,
+/// so there is no `NSImageView.image` to interrogate, and a walk looking for one finds nothing.
+///
+/// Two traps, both of which produced a confident wrong answer first:
+///  - **`SPROUT_DEMO=1` always has a live print**, so the label renders its PERCENTAGE branch and the
+///    glyph never appears. Measure the glyph with demo OFF.
+///  - The window frame is identical (44 x 39) across a change to the text branch, so an A/B that
+///    happens to compare two text renders "confirms" a fix that was never exercised.
 ///     SPROUT_SHOT=/tmp/sprout Sprout.app/Contents/MacOS/Sprout        # write /tmp/sprout-<n>.png
 ///     SPROUT_SHOT_DELAY=8 …                                           # wait longer before shooting
 enum MacWindowProbe {

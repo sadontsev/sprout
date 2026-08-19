@@ -17,9 +17,33 @@ struct MacMenuBarLabel: View {
         if let percent {
             Text(verbatim: "\(percent) %").monospacedDigit()
         } else {
-            Image("TabNozzle").renderingMode(.template)
+            Image("TabNozzle")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(height: Self.glyphHeight)
         }
     }
+
+    /// How tall the nozzle mark is drawn in the menu bar.
+    ///
+    /// **It used to be drawn at its INTRINSIC size**, which for this asset is a 17.6 x 26 pt SVG — 26
+    /// pt of artwork in a menu bar whose slot is 22 pt on most Macs. That is why it read as enormous
+    /// beside every system item. The two other Mac call sites for the same asset (`MacSidebar`,
+    /// `MacJobsSection`) both `.resizable().scaledToFit()` into a frame; this one did not, and it is
+    /// the one place where nothing else constrains it — a `MenuBarExtra` label has no container to
+    /// shrink it to fit.
+    ///
+    /// 14, and the number is smaller than it first looks like it should be because **this asset has
+    /// no internal padding**. An SF Symbol at 16 pt draws perhaps 12 pt of actual ink — the rest of
+    /// the box is margin the symbol carries with it, which is why the system's own menu bar glyphs sit
+    /// comfortably. `TabNozzle` is a bare 17.6 x 26 pt outline that fills its own bounds, so its frame
+    /// height IS its ink height. Matching the neighbours' ink, not their nominal point size, is what
+    /// makes it stop standing out; at 16 it was still visibly the tallest thing in the bar.
+    ///
+    /// At 14 the mark is about 9.5 pt wide, which also keeps the item from taking more width than it
+    /// needs — measured through `SPROUT_WINDOW_PROBE`, the status item goes from 44 pt to 34 pt.
+    static let glyphHeight: CGFloat = 14
 
     private var percent: Int? {
         let vm = model.vm

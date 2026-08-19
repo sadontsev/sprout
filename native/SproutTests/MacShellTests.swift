@@ -76,6 +76,22 @@ final class MacShellTests: XCTestCase {
 
     #if os(macOS)
 
+    // MARK: - Menu bar glyph
+
+    /// The nozzle mark has to fit the menu bar's slot, with air.
+    ///
+    /// It was drawn at the asset's INTRINSIC size — a 17.6 x 26 pt SVG — so 26 pt of artwork went
+    /// into a 22 pt slot and it dwarfed every system item beside it. Measured through
+    /// `SPROUT_WINDOW_PROBE`: framing it took the status item from 44 pt wide to 34 pt.
+    ///
+    /// The upper bound is the real invariant. 22 is the slot on a standard Mac, and a glyph that
+    /// fills it edge to edge looks wrong even where it is not clipped, so the cap is set below that
+    /// deliberately rather than at it.
+    func testTheMenuBarGlyphFitsTheBarWithAir() {
+        XCTAssertLessThanOrEqual(MacMenuBarLabel.glyphHeight, 18)
+        XCTAssertGreaterThanOrEqual(MacMenuBarLabel.glyphHeight, 12)
+    }
+
     // MARK: - Collapse rules (§1)
 
     /// The default window is 1440 wide: everything fits.
