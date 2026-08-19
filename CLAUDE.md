@@ -121,6 +121,28 @@ Things here fail **silently** — they compile, run, and pass the suite:
   window hid the inspector permanently, on every later launch, at every width. Both halves are pure
   rules on `MacInspectorPlacement` now, and tested.
 
+### A macOS Debug build is a DIFFERENT APP from the one on TestFlight
+
+`com.mvks5.bambu.dev`, called **Sprout Dev**, with an amber icon instead of the slate one. macOS
+Debug only — iOS keeps the production id so APNs, App Attest and Live Activity testing are
+untouched, and Release is unchanged on both platforms.
+
+This is not cosmetic. Every build used to share one bundle id, so they shared one **preferences
+domain**: running a local build to take a screenshot read and wrote the same `mac.section` and
+inspector state as the installed TestFlight app. A probe run could leave the real app on a different
+screen, and did. Spotlight also listed three identical "Sprout" entries with no way to tell them
+apart.
+
+- The dev build gets **no push** — APNs topics are bundle ids and Canopy binds `com.mvks5.bambu`.
+- It starts with an **empty Keychain**, so the base URL and API key are entered once. That is the
+  isolation working.
+- `PRODUCT_NAME` is deliberately still `Sprout`, so every script and probe path in this repo —
+  `Sprout.app/Contents/MacOS/Sprout` — keeps working.
+- The overrides live in `project.yml` under `targets.Sprout.settings.configs.Debug`, as
+  `[sdk=macosx*]` conditionals. **Put them under `settings:`, not after `preBuildScripts:`** — an
+  unknown key there is dropped WITHOUT AN ERROR, same failure mode as the `macos:` key this file
+  already warns about, and the build stays green while nothing changes.
+
 ### Seeing the Mac app — the probe, and its three blind spots
 
 **You cannot inspect a Mac app from the shell.** `System Events` needs Accessibility and returns

@@ -60,6 +60,11 @@ targets:
         PRODUCT_NAME: Sprout
         INFOPLIST_FILE: Sprout/Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: Sprout
+        # Substituted into CFBundleDisplayName below, so a CONFIGURATION can change what the app is
+        # called without changing PRODUCT_NAME. `PRODUCT_NAME` is deliberately left alone: it names
+        # the bundle and the executable, and every script and probe invocation in this repo says
+        # `Sprout.app/Contents/MacOS/Sprout`.
+        SPROUT_APP_NAME: Sprout
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
         SDKROOT: auto
@@ -81,6 +86,28 @@ targets:
         "SPROUT_PRINCIPAL_CLASS[sdk=iphone*]": UIApplication
         # macOS builds from a DERIVED copy of the shared plist — see the preBuildScript.
         "INFOPLIST_FILE[sdk=macosx*]": "$(DERIVED_FILE_DIR)/Info-macOS.plist"
+      configs:
+        # A macOS Debug build is a DIFFERENT APP from the one on TestFlight.
+        #
+        # All builds shared one bundle id, which meant one Launch Services identity and — the part
+        # that actually bit — one preferences domain. Running a local build to take a screenshot
+        # read and wrote the same `mac.section` and inspector state as the installed TestFlight app,
+        # so a probe run could leave the real app on a different screen. Spotlight listed three
+        # identical "Sprout" entries with no way to tell which was which.
+        #
+        # macOS only, and Debug only:
+        #   - iOS keeps the production id, so APNs, App Attest and Live Activity testing on a real
+        #     iPhone are untouched. Those are iOS-only subjects anyway.
+        #   - Release is untouched on both platforms, so nothing about shipping changes.
+        #
+        # The cost, stated because it is easy to forget later: a Mac dev build will not receive
+        # push. APNs topics are bundle ids and Canopy binds `com.mvks5.bambu`, so a push aimed at
+        # the real app cannot arrive here. It also starts with an empty Keychain, so the server URL
+        # and API key are entered once — which is the isolation working, not a fault.
+        Debug:
+          "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": com.mvks5.bambu.dev
+          "SPROUT_APP_NAME[sdk=macosx*]": Sprout Dev
+          "ASSETCATALOG_COMPILER_APPICON_NAME[sdk=macosx*]": SproutDev
     preBuildScripts:
       # Derive the macOS Info.plist from the iOS one, minus the single key macOS refuses.
       #
@@ -112,7 +139,7 @@ targets:
     info:
       path: Sprout/Resources/Info.plist
       properties:
-        CFBundleDisplayName: Sprout
+        CFBundleDisplayName: "$(SPROUT_APP_NAME)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         # NSApplication on macOS, UIApplication on iOS — see SPROUT_PRINCIPAL_CLASS above for why
