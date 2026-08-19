@@ -9,6 +9,7 @@ package keystore
 import (
 	"crypto/ecdsa"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/sadontsev/sprout/canopy/internal/appattest"
@@ -35,6 +36,37 @@ const MaxTenantsPerKey = 3
 type Service struct {
 	Store    *store.Store
 	Verifier *appattest.Verifier
+
+	// Serialises verify-and-bump PER KEY.
+	//
+	// VerifyAssertion is a read-modify-write: it reads the stored counter, checks
+	// the assertion against it, then persists the new one. Two requests carrying
+	// the same key interleaved there both read the old counter, both verified
+	// against it, and both wrote — so the higher counter could be overwritten by
+	// the lower and a replay of an already-spent assertion would then pass. The
+	// window is small and entirely reachable: the app registers three token kinds
+	// around the same moment, and a client that retries on timeout doubles every
+	// request.
+	//
+	// Per key rather than one global lock: two phones share nothing here, and a
+	// slow verification for one must not stall every other tenant's claim.
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+// keyLock returns the mutex guarding one key id, creating it on first use.
+func (s *Service) keyLock(keyID string) *sync.Mutex {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.locks == nil {
+		s.locks = make(map[string]*sync.Mutex)
+	}
+	l, ok := s.locks[keyID]
+	if !ok {
+		l = &sync.Mutex{}
+		s.locks[keyID] = l
+	}
+	return l
 }
 
 // VerifyAttestation checks a first-use attestation and persists the key,
@@ -56,6 +88,11 @@ func (s *Service) VerifyAttestation(attestation []byte, keyID string, clientData
 // VerifyAssertion checks a later assertion against the stored key and advances
 // the counter.
 func (s *Service) VerifyAssertion(assertion []byte, keyID string, clientData []byte, now time.Time) error {
+	// Held across the whole read-check-write. See `locks`.
+	l := s.keyLock(keyID)
+	l.Lock()
+	defer l.Unlock()
+
 	rec, err := s.Store.GetAttestKey(keyID)
 	if err != nil {
 		return err

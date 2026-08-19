@@ -13,6 +13,7 @@ import (
 	"errors"
 	"math/big"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -255,5 +256,64 @@ func TestAttestKeysSurviveBindingDeletion(t *testing.T) {
 	}
 	if err := svc.VerifyAssertion(buildAssertion(t, dev, 1), keyID, clientData, tNow); err != nil {
 		t.Errorf("the attest key must survive binding churn: %v", err)
+	}
+}
+
+// A replay racing the assertion it replays must still lose.
+//
+// VerifyAssertion is a read-modify-write over the stored counter. Without a lock
+// held across the whole of it, two requests carrying the same key both read the
+// old counter, both check against it and both write — so an already-spent
+// assertion can be accepted, and the higher counter can be overwritten by the
+// lower. That is not theoretical here: the app registers three token kinds at
+// once and retries on timeout, so the same key arrives twice within milliseconds.
+func TestConcurrentAssertionsCannotReplayOrRewindTheCounter(t *testing.T) {
+	c := newCA(t)
+	svc := newService(t, c)
+	obj, keyID, dev := buildAttestation(t, c)
+	if err := svc.VerifyAttestation(obj, keyID, clientData, tNow); err != nil {
+		t.Fatalf("attest: %v", err)
+	}
+
+	const n = 24
+	// Every worker sends counter 1. Exactly one may win; the rest are replays.
+	as := buildAssertion(t, dev, 1)
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		accepted int
+	)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := svc.VerifyAssertion(as, keyID, clientData, tNow); err == nil {
+				mu.Lock()
+				accepted++
+				mu.Unlock()
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if accepted != 1 {
+		t.Errorf("accepted %d of %d identical assertions, want exactly 1", accepted, n)
+	}
+	rec, err := svc.Store.GetAttestKey(keyID)
+	if err != nil {
+		t.Fatalf("get key: %v", err)
+	}
+	if rec.Counter != 1 {
+		t.Errorf("stored counter = %d, want 1 — a concurrent write rewound it", rec.Counter)
+	}
+
+	// The key must still be usable afterwards: a race that left it wedged would
+	// brick the install exactly as a lost update would.
+	if err := svc.VerifyAssertion(buildAssertion(t, dev, 2), keyID, clientData, tNow); err != nil {
+		t.Errorf("key unusable after the race: %v", err)
 	}
 }
