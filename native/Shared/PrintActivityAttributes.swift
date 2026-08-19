@@ -6,23 +6,6 @@
 import ActivityKit
 import Foundation
 
-/// Fixed palette for Live Activity content — deliberately NOT the app's theme tokens.
-///
-/// A card lives on the lock screen, which has no relationship to the in-app theme, and Trellis
-/// (which owns cards in server mode) has no idea what theme the phone is on: it always sends these
-/// values. Reading the themed colour meant a light-mode app produced #23B24A while an identical card
-/// pushed from the server produced #30D158 — the same print rendering in two different greens
-/// depending on which side created it. **These MUST equal Trellis's COLORS.**
-enum LAColors {
-    static let running = "#30D158"
-    static let heating = "#FF9F0A"
-    static let paused = "#0A84FF"
-    static let error = "#FF453A"
-    static let idle = "#8E9398"
-    /// Drying amber — matches Trellis's `dry_state`.
-    static let drying = "#FFB86C"
-}
-
 /// Shared between the app (which starts/updates activities) and the widget extension (which renders
 /// them). Lives in `Shared/` so both targets compile one definition — a mismatch silently produces a
 /// blank card.

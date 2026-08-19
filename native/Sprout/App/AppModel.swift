@@ -78,6 +78,13 @@ final class AppModel {
     /// which reads `status` directly rather than pushing a card.
     #if os(iOS)
     private(set) var liveActivity: LiveActivityController?
+
+    #if os(iOS)
+    /// Writes the card's images into the App Group and remembers what it wrote. Held for the app's
+    /// lifetime rather than per sync, because its whole job is to avoid re-downloading and
+    /// re-writing the same PNG every four seconds.
+    let liveActivityArt = LiveActivityArtResolver()
+    #endif
     #endif
 
     // MARK: Section stores
@@ -521,12 +528,25 @@ final class AppModel {
                 // machine's card the moment the user switched — and left it up for good, since
                 // nothing would then be called with that printer's id to end it.
                 #if os(iOS)
+                // The card's images, resolved here because this is where the library and the camera
+                // token live. Best-effort throughout: an unresolved image yields "" and the card
+                // falls back down its ladder rather than waiting.
+                let glyphUri = self.liveActivityArt.glyph()
                 for (id, s) in self.status?.statuses ?? [:] {
+                    let modelUri = await self.liveActivityArt.plate(
+                        printerId: id,
+                        jobName: s.subtaskName ?? "",
+                        library: self.library.files ?? [],
+                        client: self.client,
+                        token: self.cameraToken
+                    )
                     await self.liveActivity?.sync(
                         printerId: id,
                         printerName: self.printers.first { $0.id == id }?.name ?? "",
                         vm: Dash.present(s),
-                        status: s
+                        status: s,
+                        iconUri: glyphUri,
+                        modelUri: modelUri
                     )
                 }
                 #endif

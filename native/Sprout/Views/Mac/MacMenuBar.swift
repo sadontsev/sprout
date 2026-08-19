@@ -16,6 +16,8 @@ struct MacMenuBarLabel: View {
         // print starts or ends. The mark is the template asset the iOS tab bar uses.
         if let percent {
             Text(verbatim: "\(percent) %").monospacedDigit()
+        } else if let mark = MacStatusMarkArt.image(state) {
+            Image(nsImage: mark)
         } else if let glyph = Self.glyph {
             Image(nsImage: glyph)
         } else {
@@ -61,6 +63,18 @@ struct MacMenuBarLabel: View {
         sized.isTemplate = true
         return sized
     }()
+
+    /// Which mark this label should draw. Drying is read off the AMS units rather than the dashboard
+    /// kind, because a dry cycle is a concurrent activity and not a `DashKind` — on an otherwise idle
+    /// machine it is the only thing the bar has to report.
+    private var state: MacStatusMark {
+        // `dryingMinLeft > 0` is THE active signal, and it is the same one `Dryer` and
+        // `LiveActivityController.dryingUnitIds` use — `dryStatus` was measured stuck at 0 mid-cycle
+        // on the live machine. Asking the question a second way here would eventually disagree with
+        // the card on the phone about whether the same machine is drying.
+        MacStatusMark.mark(LAState.of(vm: model.vm,
+                                      drying: model.vm.amsUnits.contains { $0.dryingMinLeft > 0 }))
+    }
 
     private var percent: Int? {
         let vm = model.vm

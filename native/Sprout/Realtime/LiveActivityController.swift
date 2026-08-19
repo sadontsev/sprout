@@ -223,11 +223,10 @@ final class LiveActivityController {
     /// Theme-independent tint for a print card, derived from the semantic state rather than a themed
     /// colour, so the same print looks identical whoever built the card.
     nonisolated static func tint(_ vm: DashVM) -> String {
-        if vm.kind == .error { return LAColors.error }
-        if vm.isPaused { return LAColors.paused }
-        if vm.kind == .idle || vm.kind == .offline || vm.kind == .connecting { return LAColors.idle }
-        if vm.kind == .complete { return LAColors.running }
-        return vm.stateColor == .heating ? LAColors.heating : LAColors.running
+        // Delegated, not re-derived. The Mac menu bar picks a GLYPH from the same ladder, and two
+        // switches over the same inputs written a month apart is how the phone ends up saying
+        // "paused" while the Mac says "printing" about one machine. See `LAState`.
+        LAState.of(vm: vm).tintHex
     }
 
     nonisolated private static let symbols: [String: String] = [
@@ -375,7 +374,18 @@ final class LiveActivityController {
     ///
     /// `offline` and `connecting` are deliberately no-ops: a WebSocket blip must never kill a card
     /// that represents a print still running.
-    func sync(printerId: Int, printerName: String, vm: DashVM, status: PrinterStatus?) async {
+    /// `iconUri` / `modelUri` are resolved by the CALLER (`LiveActivityArtResolver`, via `AppModel`)
+    /// and passed in as plain strings. They are not fetched here on purpose: the images need the
+    /// library listing and a camera token, and giving this controller a network client would make the
+    /// card subsystem depend on the browsing subsystem to draw a thumbnail.
+    func sync(
+        printerId: Int,
+        printerName: String,
+        vm: DashVM,
+        status: PrinterStatus?,
+        iconUri: String = "",
+        modelUri: String = ""
+    ) async {
         // Cards also appear without us: in SERVER mode Trellis starts them remotely, and cards from a
         // previous launch outlive the process. Sweeping here — not only from `activityUpdates`, whose
         // replay of already-live activities is not something to bet a subsystem on — is what
@@ -399,7 +409,8 @@ final class LiveActivityController {
         guard vm.kind != .offline, vm.kind != .connecting else { return }
 
         let shouldHavePrintCard = vm.kind == .live || vm.kind == .complete || vm.kind == .error
-        let printState = Self.content(vm: vm, status: status, printerName: printerName)
+        let printState = Self.content(vm: vm, status: status, printerName: printerName,
+                                      iconUri: iconUri, modelUri: modelUri)
 
         if shouldHavePrintCard {
             await upsert(printerId: printerId, amsId: nil, content: printState, ended: vm.kind == .complete)
@@ -410,7 +421,7 @@ final class LiveActivityController {
         // One card per drying unit — a per-printer key silently hid the second concurrent cycle.
         let drying = Set(Self.dryingUnitIds(status))
         for unitId in drying {
-            if let dry = Self.dryContent(status, amsId: unitId, printerName: printerName) {
+            if let dry = Self.dryContent(status, amsId: unitId, printerName: printerName, iconUri: iconUri) {
                 await upsert(printerId: printerId, amsId: unitId, content: dry, ended: false)
             }
         }

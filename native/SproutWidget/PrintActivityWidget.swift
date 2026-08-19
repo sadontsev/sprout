@@ -52,7 +52,13 @@ struct PrintActivityWidget: Widget {
                         DryReadout(state: context.state, tint: tint)
                     } else {
                         VStack(spacing: 5) {
-                            ProgressBar(progress: Double(context.state.progress) / 100, tint: tint)
+                            ExtrusionBar(
+                                progress: Double(context.state.progress) / 100,
+                                tint: tint,
+                                riding: ExtrusionRider.rides(tintHex: context.state.tint)
+                            ) {
+                                IslandRider(uri: context.state.iconUri, tint: tint)
+                            }
                             HStack {
                                 Text("Layer \(context.state.layer)/\(context.state.totalLayers)")
                                 Spacer()
@@ -193,7 +199,11 @@ private struct LockScreenCard: View {
                 if state.dry == true {
                     DryReadout(state: state, tint: tint)
                 } else {
-                    ProgressBar(progress: Double(state.progress) / 100, tint: tint)
+                    ExtrusionBar(
+                        progress: Double(state.progress) / 100,
+                        tint: tint,
+                        riding: ExtrusionRider.rides(tintHex: state.tint)
+                    ) { riderGlyph }
 
                     // One line, and it fills the width instead of splitting to both margins.
                     HStack(spacing: 8) {
@@ -237,21 +247,47 @@ private struct LockScreenCard: View {
         .padding(14)
     }
 
-    /// Plate thumbnail when we have one, else the brand glyph, else the SF Symbol. All three live in
-    /// the App Group because the widget is a separate process and cannot reach the app's sandbox.
+    /// 56 pt, up from 44: the slot shows the PRINT, not the app.
+    ///
+    /// Fallback ladder, first that loads wins — `modelUri` (the plate render), then `iconUri` (the
+    /// brand glyph), then the SF Symbol. All three live in the App Group because the widget is a
+    /// separate process and cannot reach the app's sandbox; see `LiveActivityArt`, which is what
+    /// finally puts them there. Until that landed every card fell to step 3, so the "fallback" was
+    /// the only thing anyone ever saw.
+    ///
+    /// A drying card never has a plate to show, so it gets the spool tile instead of an empty well.
     @ViewBuilder
     private var leadingVisual: some View {
-        if let image = loadImage(state.modelUri) ?? loadImage(state.iconUri) {
+        if state.dry == true {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(tint.opacity(0.14))
+                .frame(width: 56, height: 56)
+                .overlay { SpoolGlyph(size: 28, tint: tint) }
+        } else if let image = Self.loadImage(state.modelUri) ?? Self.loadImage(state.iconUri) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 44, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         } else {
             Image(systemName: state.symbol)
-                .font(.system(size: 24))
+                .font(.system(size: 26))
                 .foregroundStyle(tint)
-                .frame(width: 44, height: 44)
+                .frame(width: 56, height: 56)
+        }
+    }
+
+    /// The nozzle that rides the bar, loaded from the App Group. Falls back to an SF Symbol so the
+    /// rider never silently disappears when the glyph has not been written yet.
+    @ViewBuilder
+    private var riderGlyph: some View {
+        if let image = Self.loadImage(state.iconUri) {
+            Image(uiImage: image).resizable().scaledToFit()
+        } else {
+            Image(systemName: "arrowtriangle.down.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(tint)
         }
     }
 
@@ -273,7 +309,7 @@ private struct LockScreenCard: View {
             .foregroundStyle(active ? AnyShapeStyle(tint) : AnyShapeStyle(.tertiary))
     }
 
-    private func loadImage(_ uri: String) -> UIImage? {
+    static func loadImage(_ uri: String) -> UIImage? {
         guard !uri.isEmpty, let url = URL(string: uri), let data = try? Data(contentsOf: url) else { return nil }
         return UIImage(data: data)
     }
@@ -313,6 +349,27 @@ private struct DryReadout: View {
     }
 }
 
+/// The island's rider. A free function's worth of view, but it cannot reuse `LockScreenCard`'s
+/// because that one is a member of the card and the island builds its regions outside it.
+private struct IslandRider: View {
+    let uri: String
+    let tint: Color
+
+    var body: some View {
+        if let image = LockScreenCard.loadImage(uri) {
+            Image(uiImage: image).resizable().scaledToFit()
+        } else {
+            Image(systemName: "arrowtriangle.down.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(tint)
+        }
+    }
+}
+
+/// The plain bar, kept for surfaces that must not imply extrusion — see `ExtrusionRider.rides`.
+/// `ExtrusionBar` falls back to exactly this shape when `riding` is false, so this remains only for
+/// call sites that never ride at all.
 private struct ProgressBar: View {
     let progress: Double
     let tint: Color
