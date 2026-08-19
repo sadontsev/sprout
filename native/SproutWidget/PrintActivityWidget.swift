@@ -157,27 +157,29 @@ private struct LockScreenCard: View {
     private var tint: Color { Color(hexString: state.tint) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 13) {
+        // THREE COLUMNS, not four stacked rows.
+        //
+        // The old card was a leading glyph and then everything else in one column: title, name,
+        // bar, and a stats row. Every one of those lines pinned something to the left edge and
+        // something to the right, so the card read as two ragged margins with a hole down the
+        // middle, and the one value worth glancing at — when it finishes — was the same size as
+        // the nozzle temperatures.
+        //
+        // Now the middle column carries the identity and the progress, and the trailing column is
+        // a single block for the answer. Nothing is pinned to a corner for want of anywhere else.
+        HStack(alignment: .center, spacing: 12) {
             leadingVisual
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(state.stateLabel)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(tint)
                     if !state.printerName.isEmpty {
                         Text(state.printerName)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    CountdownSlot(
-                        countdown: state.countdown(),
-                        font: .system(size: 13, weight: .semibold).monospacedDigit(),
-                        maxWidth: 82,
-                        style: .finishClock
-                    )
-                    .foregroundStyle(.primary)
                 }
 
                 if !state.name.isEmpty {
@@ -191,24 +193,16 @@ private struct LockScreenCard: View {
                 if state.dry == true {
                     DryReadout(state: state, tint: tint)
                 } else {
-                    // Percent sits ON the bar's row rather than under it. It was one of four
-                    // competing values on the line below, where the eye had to hunt for the one
-                    // number the bar is already showing; beside the bar it reads as its label, and
-                    // the line below is left to say what the bar cannot.
+                    ProgressBar(progress: Double(state.progress) / 100, tint: tint)
+
+                    // One line, and it fills the width instead of splitting to both margins.
                     HStack(spacing: 8) {
-                        ProgressBar(progress: Double(state.progress) / 100, tint: tint)
-                        Text("\(state.progress)%")
-                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(.primary)
-                            .frame(width: 38, alignment: .trailing)
-                    }
-                    HStack(spacing: 10) {
                         if state.totalLayers > 0 {
                             Text("Layer \(state.layer)/\(state.totalLayers)")
                                 .font(.system(size: 11).monospacedDigit())
                         }
-                        Spacer()
                         temps
+                        Spacer(minLength: 0)
                     }
                     .foregroundStyle(.secondary)
 
@@ -219,6 +213,25 @@ private struct LockScreenCard: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // The answer, given the weight it earns. Percentage sits under the time as its
+            // subtitle rather than competing with the layer counter for the same line.
+            if state.dry != true {
+                VStack(alignment: .trailing, spacing: 1) {
+                    CountdownSlot(
+                        countdown: state.countdown(),
+                        font: .system(size: 19, weight: .semibold).monospacedDigit(),
+                        maxWidth: 92,
+                        style: .finishClock
+                    )
+                    .foregroundStyle(.primary)
+                    Text("\(state.progress)%")
+                        .font(.system(size: 12, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: true, vertical: false)
             }
         }
         .padding(14)
