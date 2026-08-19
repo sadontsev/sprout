@@ -349,11 +349,18 @@ struct MacViewerWindow: View {
                 .frame(width: 236)
         }
         .background(c.bg)
-        .macSceneChrome(model, systemScheme: scheme)
         .navigationTitle(windowTitle)
         .toolbar {
             ToolbarItem(placement: .primaryAction) { modeSegment }
         }
+        // AFTER the toolbar, for the same reason `MacRoot` applies it after the drop target: the
+        // environment written by `macSceneChrome` only reaches views BELOW it, and `.toolbar`
+        // content attached above it sits outside. `MacViewerSegment` reads `@Environment(\.palette)`,
+        // so on the light theme the Layers/3D control drew dark-palette tokens — a charcoal track and
+        // near-white label — in a light titlebar, while the IDENTICAL segment 40 pt away in the
+        // sidebar drew correctly. The toolbar is also the one region `MacWindowProbe` cannot
+        // photograph, so no screenshot review would ever have caught it.
+        .macSceneChrome(model, systemScheme: scheme)
         .background { keyEquivalents }
         .task(id: buildKey) { await build() }
         .onChange(of: ask) { _, new in

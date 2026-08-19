@@ -127,6 +127,21 @@ struct MacMenuBarPanel: View {
             case .idle, .connecting:
                 EmptyView()      // §5.1: idle collapses to name, state and Open Sprout
             }
+
+            // The panel's OWN failure line.
+            //
+            // Pause, Stop and Camera report failure through `AppModel.perform`, which writes
+            // `model.toast` — and the only macOS presenter of a toast is `MacToast` inside `MacRoot`,
+            // i.e. inside the main WINDOW. This panel is documented to keep working with that window
+            // closed, and that is its whole point: a menu bar extra is what you use when the app is
+            // not open. So the one surface most likely to have no window was the one whose failures
+            // had nowhere to render. Clicking Pause on a printer that refuses it did nothing, said
+            // nothing, and looked exactly like success.
+            //
+            // Row 5 of CLAUDE.md's recurring-bug table is this panel, for the neighbouring reason.
+            if let toast = model.toast {
+                panelToast(toast)
+            }
             Divider().padding(.vertical, 11)
             actions
         }
@@ -135,6 +150,35 @@ struct MacMenuBarPanel: View {
         .background(c.sheet)
         .macSceneChrome(model, systemScheme: scheme)
         .lockedActionAlert($explainingLock)
+    }
+
+    /// A failure, said inside the panel, with a way to dismiss it.
+    ///
+    /// Deliberately not the full `MacToast`: that is a floating banner sized for a window, and this
+    /// is a 300 pt popover. Same source of truth, same copy, appropriate shape.
+    private func panelToast(_ toast: Toast) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: toast.kind == .failure ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(toast.kind == .failure ? c.error : c.running)
+            Text(verbatim: toast.text)
+                .font(.system(size: 11))
+                .foregroundStyle(c.t2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button {
+                model.toast = nil
+            } label: {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(c.t3)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Metrics.mac.controlRadius, style: .continuous).fill(c.s2))
+        .padding(.top, 10)
     }
 
     private var header: some View {

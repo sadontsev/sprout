@@ -181,9 +181,17 @@ final class LiveActivityController {
             attest: { [attestor] data in try await attestor.proof(for: data) }
         )
         do {
-            return try await builder.build(token: token, kind: kind, challenge: challenge, vouchNonce: vouchNonce)
+            let claim = try await builder.build(token: token, kind: kind, challenge: challenge, vouchNonce: vouchNonce)
+            // **The success path never said so.** `claimHealth` was written by all three `guard`
+            // failures above and by nothing else, so `.ok` had zero writers: once a device had failed
+            // to claim, the readout kept reporting that failure through every later success, and a
+            // recovered device looked permanently broken. The three failures are only three quarters
+            // of the outcomes.
+            claimHealth = .ok
+            return claim
         } catch {
             NSLog("[claim] build failed for %@ token: %@", kind.rawValue, String(describing: error))
+            claimHealth = .unclaimed("This device couldn't prove itself to Trellis. Push will keep working if it is already bound; a fresh install may need Trellis restarted.")
             return nil
         }
     }

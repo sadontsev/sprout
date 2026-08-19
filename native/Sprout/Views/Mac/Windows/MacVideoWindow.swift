@@ -89,6 +89,16 @@ struct MacVideoWindowView: View {
     @State private var confirmingDelete = false
     @State private var attempt = 0
 
+    /// Presented HERE, not through the store.
+    ///
+    /// `shareDownloaded` used to set `store.shareItem`, whose only presenter is inside
+    /// `MacFilesSection` — so sharing a recording from a window opened off the menu bar, with Files
+    /// never visited, set a value nothing was watching and the button did nothing at all. The same
+    /// shape as every row in CLAUDE.md's table, written by me a few hours after quoting it.
+    @State private var shareItem: LibShareItem?
+    /// A delete that failed, kept so the window can say so itself.
+    @State private var deleteFailed: String?
+
     /// A window scene inherits nothing from `MacRoot`, so the palette is resolved rather than read
     /// from `@Environment` — see `MacViewerWindow`, which carries the same note for the same trap.
     private var c: Palette { Palette.forScheme(model.theme.colorScheme ?? scheme) }
@@ -116,6 +126,9 @@ struct MacVideoWindowView: View {
             player?.pause()
             player = nil
         }
+        .sheet(item: $shareItem) { item in
+            MacShareSheet(url: item.url)
+        }
         .alert(MacFilesDelete.printerTitle, isPresented: $confirmingDelete) {
             Button("Delete", role: .destructive) { Task { await deleteAndClose() } }
             Button("Cancel", role: .cancel) {}
@@ -130,7 +143,7 @@ struct MacVideoWindowView: View {
     private var content: some View {
         if request == nil {
             centred { Text(verbatim: "No recording.").font(.system(size: 12)).foregroundStyle(c.t3) }
-        } else if let failure = download.failure {
+        } else if let failure = deleteFailed ?? download.failure {
             centred {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
@@ -254,7 +267,7 @@ struct MacVideoWindowView: View {
     /// so the presentation is the Files section's and not a second one written here.
     private func shareDownloaded() {
         guard let local = download.localURL else { return }
-        store.shareItem = LibShareItem(url: local)
+        shareItem = LibShareItem(url: local)
     }
 
     /// Stops playback and closes the window BEFORE the delete lands.
@@ -262,14 +275,29 @@ struct MacVideoWindowView: View {
     /// An error from the store raises an alert on the Files section, and a player window left open
     /// over a file that no longer exists is the same defect Quick Look had — a panel describing
     /// something deleted.
+    /// Stops playback, deletes, and only THEN closes.
+    ///
+    /// It used to `dismiss()` before awaiting the delete, which meant a failure had nowhere to land:
+    /// `store.deleteSd` reports by setting `store.problem`, whose only presenter is in
+    /// `MacFilesSection`, and this window was already gone. A recording that could not be deleted
+    /// reported success by vanishing. Now the window stays up and says so.
     private func deleteAndClose() async {
         guard let request else { return }
         player?.pause()
         player = nil
         let entry = PrinterFile(name: (request.path as NSString).lastPathComponent,
                                 isDirectory: false, size: nil, path: request.path, mtime: nil)
-        dismiss()
+        let before = store.problem
         await store.deleteSd(entry)
+        if let problem = store.problem, problem != before {
+            // Claim the store's error so the Files section does not ALSO raise it later, and show it
+            // where the action was taken.
+            store.problem = nil
+            deleteFailed = problem.message
+            attempt += 1        // re-fetch, so the window is not left on a dead player
+            return
+        }
+        dismiss()
     }
 }
 #endif

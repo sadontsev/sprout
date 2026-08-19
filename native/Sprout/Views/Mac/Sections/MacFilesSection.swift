@@ -1712,7 +1712,10 @@ private struct FilesPresentations: ViewModifier {
 /// equivalent presentation: `ShareLink` is a *button*, not something you present, so the finished
 /// download has to land somewhere the user can act on. A small sheet carrying the real system share
 /// button and a Finder reveal is that somewhere — and Finder is the answer a Mac user usually wants.
-private struct MacShareSheet: View {
+/// Not `private`: the video window presents this too. It raised `store.shareItem` and relied on the
+/// presenter below, which is mounted by the FILES SECTION — so a recording shared from a window
+/// opened straight off the menu bar, with Files never visited, set a value nothing was watching.
+struct MacShareSheet: View {
     let url: URL
 
     @Environment(\.dismiss) private var dismiss

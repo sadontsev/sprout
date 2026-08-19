@@ -38,9 +38,16 @@ struct MacRoot: View {
             }
             .animation(Motion.standard(0.28), value: model.toast)
         }
-        .macSceneChrome(model, systemScheme: scheme)
         // §5.3, on the ROOT so a drop is accepted anywhere in the window.
+        //
+        // BEFORE the chrome, and the order is the fix rather than a style choice. `macSceneChrome` is
+        // `self.environment(…)`, which writes DOWNWARD only; a `ViewModifier` applied after it wraps
+        // that subtree from OUTSIDE, so `MacDropTarget`'s own `@Environment(\.palette)` resolved to
+        // the key's default — `Palette.dark` — whatever the theme was. On the light theme the drop
+        // veil drew near-white text on a pale wash: the same "text that was simply not there" the
+        // chrome exists to prevent, reintroduced by modifier order instead of by a missing call.
         .macDropTarget(model: model)
+        .macSceneChrome(model, systemScheme: scheme)
         .task { await model.load() }
         // Notifications attach HERE, not from the Settings pane.
         //

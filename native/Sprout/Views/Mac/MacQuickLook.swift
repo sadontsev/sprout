@@ -109,7 +109,12 @@ private final class MacQuickLookController: NSObject, @preconcurrency QLPreviewP
         renderTask?.cancel()
         showingFileId = file.id
         let title = MacFileBrowse.displayName(file)
-        let palette = Palette.forScheme(model.theme.colorScheme ?? .dark)
+        // `?? .dark` here would light-theme users a dark preview panel: this is the one resolution site
+        // with no view to read `@Environment(\.colorScheme)` from, so the system half comes from AppKit
+        // directly rather than being assumed.
+        let systemScheme: ColorScheme =
+            NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .dark : .light
+        let palette = Palette.forScheme(model.theme.colorScheme ?? systemScheme)
 
         // Phase one, synchronous: the facts are already in hand, so the panel opens on the keypress
         // rather than after a fetch. A space bar that pauses before showing anything is not a quick
