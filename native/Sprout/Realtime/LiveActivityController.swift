@@ -94,6 +94,33 @@ final class LiveActivityController {
     /// Registrations still owed to the server, across all three token kinds.
     private var pending = PendingClaims()
 
+    /// Whether this device can prove itself to the relay — read by Settings.
+    ///
+    /// Exists because the failure it reports is otherwise completely silent. A registration sent
+    /// without a claim is ACCEPTED by the relay and then never pushed to, so every component reports
+    /// success and the only symptom is a lock-screen card that never moves. One install spent hours
+    /// that way. This repo's rule is that an absent capability says so rather than being discovered
+    /// by hitting it.
+    enum ClaimHealth: Equatable, Sendable {
+        /// Nothing to prove yet — push is off, or no token has needed a claim.
+        case idle
+        /// The last claim was built and accepted.
+        case ok
+        /// The last claim could not be built. Registrations are going out unclaimed.
+        case unclaimed(String)
+
+        /// Copy for Settings. States what is wrong and what it costs, never a stack trace.
+        var message: String? {
+            switch self {
+            case .idle, .ok: nil
+            case .unclaimed(let why): why
+            }
+        }
+    }
+
+    /// Last known claim health. Written by `buildClaim` and the registration paths.
+    private(set) var claimHealth: ClaimHealth = .idle
+
     init(config: AppConfig) {
         pushUrl = ConfigRules.resolvePushUrl(config)
         apiKey = config.apiKey
@@ -128,10 +155,14 @@ final class LiveActivityController {
         // never updates.
         guard let identity else {
             NSLog("[claim] no pairing identity; registration will go out unclaimed")
+            // Almost always a Keychain read refused because the phone is locked. It heals by itself
+            // on the next attempt after an unlock, so the copy says "waiting", not "broken".
+            claimHealth = .unclaimed("Waiting for this iPhone to be unlocked. Lock-screen cards start updating once it has been unlocked at least once since it restarted.")
             return nil
         }
         guard attestor.isSupported else {
             NSLog("[claim] App Attest unsupported on this device; registration will go out unclaimed")
+            claimHealth = .unclaimed("This device can't use App Attest, so the relay can't verify it. Lock-screen cards won't update while the app is closed.")
             return nil
         }
         // Reserve the proof kind first: the challenge must be requested for the purpose the claim
@@ -139,6 +170,7 @@ final class LiveActivityController {
         let plan = await attestor.planProof()
         guard let challenge = await fetchChallenge(attesting: plan == .attestation) else {
             NSLog("[claim] could not obtain a challenge; registration will go out unclaimed")
+            claimHealth = .unclaimed("Couldn't reach Trellis to verify this device. Check the Trellis URL in Push, and that Trellis is running.")
             return nil
         }
 

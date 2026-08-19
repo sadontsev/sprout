@@ -227,6 +227,25 @@ struct SettingsView: View {
                 Spacer()
             }
 
+            // A claim that cannot be built is otherwise INVISIBLE: the relay accepts the
+            // registration and then never pushes to it, so nothing errors and the only symptom is a
+            // lock-screen card that never moves. Shown here rather than logged, per this repo's
+            // rule that an absent capability says so instead of being discovered by hitting it.
+            if let claimIssue = model.liveActivity?.claimHealth.message {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(c.paused)
+                    Text(claimIssue)
+                        .font(.system(size: 12))
+                        .foregroundStyle(c.t2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(c.s2))
+            }
+
             if showTrellisInfo {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Trellis is a small service you run next to Bambuddy, on your own machine. "
