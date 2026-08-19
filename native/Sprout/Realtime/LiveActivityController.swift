@@ -68,16 +68,37 @@ final class LiveActivityController {
 
     var isServerOwned: Bool { pushUrl != nil }
 
-    /// This device's durable identity. Loaded once: it is what owns every push binding this phone
-    /// holds, so a failure to load must not silently regenerate it.
-    private let identity: PairingIdentity?
+    /// This device's durable identity — what owns every push binding this phone holds.
+    ///
+    /// Resolved lazily and RETRIED while nil, not fixed at init. It used to be a `let` assigned with
+    /// `try?`, and the failure that mattered was invisible: iOS grants this app background runtime
+    /// while the phone is locked — a push-to-start in a pocket is the canonical case — and a Keychain
+    /// read then fails with `errSecInteractionNotAllowed`. `try?` turned that into nil, and because
+    /// it was a `let`, nil for the entire lifetime of the process. Every registration that process
+    /// went on to make was sent unclaimed, so the relay accepted it and refused to push to it, and
+    /// the card the push-to-start had just created froze at its opening state for the whole print.
+    /// Unlocking the phone did not help: the value was already decided.
+    ///
+    /// Measured against the author's own server before this fix: ~1000 registrations produced 14
+    /// claims, the 14 being processes that happened to start while the phone was unlocked.
+    ///
+    /// Still never regenerates. A locked Keychain THROWS from `load()` rather than reporting the
+    /// item absent, so `loadOrCreate` cannot mistake "cannot read it yet" for "there isn't one" and
+    /// mint a second identity that orphans every binding this phone holds.
+    private var resolvedIdentity: PairingIdentity?
+    private var identity: PairingIdentity? {
+        if let resolvedIdentity { return resolvedIdentity }
+        resolvedIdentity = try? PairingStore.loadOrCreate()
+        return resolvedIdentity
+    }
     /// Registrations still owed to the server, across all three token kinds.
     private var pending = PendingClaims()
 
     init(config: AppConfig) {
         pushUrl = ConfigRules.resolvePushUrl(config)
         apiKey = config.apiKey
-        identity = try? PairingStore.loadOrCreate()
+        // Not assigned here: see `identity`. A read that fails because the phone is locked must be
+        // retried, not frozen into the process.
         startObserving()
     }
 
