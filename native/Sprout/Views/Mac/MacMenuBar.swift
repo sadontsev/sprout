@@ -16,34 +16,51 @@ struct MacMenuBarLabel: View {
         // print starts or ends. The mark is the template asset the iOS tab bar uses.
         if let percent {
             Text(verbatim: "\(percent) %").monospacedDigit()
+        } else if let glyph = Self.glyph {
+            Image(nsImage: glyph)
         } else {
-            Image("TabNozzle")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(height: Self.glyphHeight)
+            // The asset is missing from the bundle. Say something rather than draw an empty item that
+            // cannot be clicked because it has no width.
+            Text(verbatim: "Sprout")
         }
     }
 
-    /// How tall the nozzle mark is drawn in the menu bar.
+    /// The nozzle mark, sized for the menu bar.
     ///
-    /// **It used to be drawn at its INTRINSIC size**, which for this asset is a 17.6 x 26 pt SVG — 26
-    /// pt of artwork in a menu bar whose slot is 22 pt on most Macs. That is why it read as enormous
-    /// beside every system item. The two other Mac call sites for the same asset (`MacSidebar`,
-    /// `MacJobsSection`) both `.resizable().scaledToFit()` into a frame; this one did not, and it is
-    /// the one place where nothing else constrains it — a `MenuBarExtra` label has no container to
-    /// shrink it to fit.
+    /// **A SwiftUI `.frame(height:)` does not work here, and appearing to work is the trap.** The
+    /// asset is a 17.6 x 26 pt SVG and the label used to draw it at that intrinsic size — 26 pt of
+    /// artwork in a 22 pt bar, towering over every system item. The obvious fix is
+    /// `.resizable().scaledToFit().frame(height:)`, which is exactly what the other two Mac call
+    /// sites for this asset do, and in a `MenuBarExtra` label it changes NOTHING: the status item
+    /// takes its size from the `NSImage`, so the modifier is discarded and the glyph stays 26 pt.
     ///
-    /// 14, and the number is smaller than it first looks like it should be because **this asset has
-    /// no internal padding**. An SF Symbol at 16 pt draws perhaps 12 pt of actual ink — the rest of
-    /// the box is margin the symbol carries with it, which is why the system's own menu bar glyphs sit
-    /// comfortably. `TabNozzle` is a bare 17.6 x 26 pt outline that fills its own bounds, so its frame
-    /// height IS its ink height. Matching the neighbours' ink, not their nominal point size, is what
-    /// makes it stop standing out; at 16 it was still visibly the tallest thing in the bar.
+    /// That was shipped once as a fix. It was "verified" by watching the status item's window shrink
+    /// from 44 pt to 34 pt — but 44 was the PERCENTAGE branch (demo mode always has a live print, so
+    /// the glyph never rendered) and 34 is simply what the unfixed glyph occupies. The A/B compared
+    /// two different branches and called it a result. The way to actually settle it is to set an
+    /// absurd height and look: at 4 pt the item still measured 34, which is the proof that the frame
+    /// is inert.
     ///
-    /// At 14 the mark is about 9.5 pt wide, which also keeps the item from taking more width than it
-    /// needs — measured through `SPROUT_WINDOW_PROBE`, the status item goes from 44 pt to 34 pt.
+    /// So the size is set on the image itself. `isTemplate` is what lets the menu bar tint it for
+    /// light, dark and the highlighted state, and it must be re-set because it does not survive the
+    /// copy.
+    ///
+    /// 14 pt, which looks low until you notice the asset carries no internal padding. An SF Symbol at
+    /// 16 pt draws perhaps 12 pt of ink and keeps the rest as margin, which is why the system's own
+    /// glyphs sit comfortably; this one fills its bounds, so its height IS its ink. Matching the
+    /// neighbours' ink rather than their nominal size is what stops it standing out.
     static let glyphHeight: CGFloat = 14
+
+    /// Built once. `NSImage(named:)` hits the asset catalog on every call, and this is read on every
+    /// status update.
+    static let glyph: NSImage? = {
+        guard let base = NSImage(named: "TabNozzle") else { return nil }
+        guard let sized = base.copy() as? NSImage, base.size.height > 0 else { return nil }
+        let aspect = base.size.width / base.size.height
+        sized.size = NSSize(width: (glyphHeight * aspect).rounded(), height: glyphHeight)
+        sized.isTemplate = true
+        return sized
+    }()
 
     private var percent: Int? {
         let vm = model.vm

@@ -45,15 +45,24 @@ import AppKit
 /// **Measuring the MENU BAR item.** It is the one piece of UI no capture can reach — it is not in
 /// the `contentView` `cacheDisplay` renders, and photographing the real menu bar needs Screen
 /// Recording. `SPROUT_WINDOW_PROBE` reports the `NSStatusBarWindow` frame, and its WIDTH is the
-/// usable signal: sizing the glyph from its intrinsic 26 pt down to a 16 pt frame took the item from
-/// 44 pt wide to 34 pt. Reading the glyph itself does not work — `MenuBarExtra` hosts a SwiftUI view,
-/// so there is no `NSImageView.image` to interrogate, and a walk looking for one finds nothing.
+/// usable signal. Reading the glyph itself does not work: `MenuBarExtra` hosts a SwiftUI view, so
+/// there is no `NSImageView.image` to interrogate and a walk looking for one finds nothing.
 ///
-/// Two traps, both of which produced a confident wrong answer first:
-///  - **`SPROUT_DEMO=1` always has a live print**, so the label renders its PERCENTAGE branch and the
+/// Calibrated by sweeping `MacMenuBarLabel.glyphHeight` and watching the width move — 6 pt gives a
+/// 20 pt item, 14 gives 26, 26 gives 34.
+///
+/// **Sweep it. Do not A/B one change.** Three traps here each produced a confident wrong answer, and
+/// the first two combined to "confirm" a fix that did nothing at all:
+///  - `SPROUT_DEMO=1` **always has a live print**, so the label renders its PERCENTAGE branch and the
 ///    glyph never appears. Measure the glyph with demo OFF.
-///  - The window frame is identical (44 x 39) across a change to the text branch, so an A/B that
-///    happens to compare two text renders "confirms" a fix that was never exercised.
+///  - The percentage branch happens to measure 44 pt, and the unfixed glyph 34 pt, so an A/B that
+///    accidentally compares text against glyph shows a tidy "44 -> 34 improvement" that is nothing of
+///    the kind.
+///  - The item has a minimum width, so several nearby heights give the same number.
+///
+/// A sweep across an ABSURD range settles all three: if 4 pt and 26 pt measure the same, whatever is
+/// being changed is not reaching the glyph. That is how `.frame(height:)` was found to be inert on a
+/// `MenuBarExtra` label — see `MacMenuBarLabel.glyph`, which sets the size on the `NSImage` instead.
 ///     SPROUT_SHOT=/tmp/sprout Sprout.app/Contents/MacOS/Sprout        # write /tmp/sprout-<n>.png
 ///     SPROUT_SHOT_DELAY=8 …                                           # wait longer before shooting
 enum MacWindowProbe {

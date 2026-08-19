@@ -84,7 +84,13 @@ struct MacOnboardingView: View {
         .padding(.horizontal, 64)
         .padding(.top, 14)
         .padding(.bottom, 24)
+        // The CONTENT is 660 x 470 — a form wider than this reads as a stretched dialog.
         .frame(width: 660, height: 470)
+        // …but the BACKGROUND has to be the whole window. These were one modifier, so the app
+        // painted a 660 x 470 island of `c.bg` and left the rest as the bare `NSWindow` grey: a
+        // hard-edged black slab floating on a lighter field, which is not a look anyone chose. The
+        // onboarding window shares the main window's frame, so it is whatever size that is.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(c.bg)
         .onAppear {
             baseUrl = model.config?.baseUrl ?? ""
