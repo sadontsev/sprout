@@ -1,3 +1,4 @@
+import time
 """Integration tests for the multi-device registry, through the real endpoints.
 
 app.py has never had tests. That matters more than usual here because its poll
@@ -694,3 +695,53 @@ class PushToStartSpendsItsOneShotWisely(unittest.TestCase):
     def test_a_dead_token_is_still_dropped(self):
         self.run_start({"unbound": 410})
         self.assertNotIn("unbound", la._p2s_tokens)
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class TestAggregateDryState(unittest.TestCase):
+    """Two or more drying units collapse into one card. Must agree with the app's
+    `aggregateDryContent` field for field — Trellis pushes this JSON straight into the widget."""
+
+    @staticmethod
+    def _unit(uid, mins, temp=50, target=65, hum=24, fil="PETG", ht=False):
+        return {"id": uid, "dry_time": mins, "temp": temp, "dry_target_temp": target,
+                "humidity": hum, "dry_filament": fil, "is_ams_ht": ht}
+
+    def test_one_unit_keeps_its_own_card(self):
+        # An aggregate of one is a worse version of the card it replaces.
+        st = {"ams": [self._unit(0, 120)]}
+        self.assertIsNone(la.aggregate_dry_state(st))
+
+    def test_two_units_aggregate(self):
+        st = {"ams": [self._unit(0, 120), self._unit(1, 45)]}
+        got = la.aggregate_dry_state(st)
+        self.assertIsNotNone(got)
+        self.assertEqual(len(got["dryUnits"]), 2)
+        self.assertTrue(got["dry"])
+
+    def test_rows_sort_soonest_first(self):
+        st = {"ams": [self._unit(0, 300), self._unit(1, 45), self._unit(2, 120)]}
+        rows = la.aggregate_dry_state(st)["dryUnits"]
+        self.assertEqual([r["minutesLeft"] for r in rows], [45, 120, 300])
+
+    def test_headline_is_the_longest_not_the_soonest(self):
+        # The header answers "when is the whole batch done"; the rows answer "which is next".
+        st = {"ams": [self._unit(0, 300), self._unit(1, 45)]}
+        got = la.aggregate_dry_state(st)
+        eta_minutes = (got["etaEpochMs"] / 1000 - time.time()) / 60
+        self.assertAlmostEqual(eta_minutes, 300, delta=1)
+
+    def test_idle_units_are_not_rows(self):
+        st = {"ams": [self._unit(0, 120), self._unit(1, 0), self._unit(2, 45)]}
+        rows = la.aggregate_dry_state(st)["dryUnits"]
+        self.assertEqual({r["amsId"] for r in rows}, {0, 2})
+
+    def test_the_ht_is_not_ams_3(self):
+        st = {"ams": [self._unit(0, 120), self._unit(128, 45, ht=True)]}
+        rows = la.aggregate_dry_state(st)["dryUnits"]
+        self.assertEqual({r["label"] for r in rows}, {"AMS 1", "AMS HT"})
+
+    def test_the_sentinel_cannot_be_a_real_unit_id(self):
+        # Unit ids are indices, so a negative sentinel can never collide and let the aggregate
+        # replace a unit's own card.
+        self.assertLess(la.AGGREGATE_AMS_ID, 0)

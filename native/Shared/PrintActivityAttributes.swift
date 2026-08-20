@@ -62,6 +62,20 @@ struct PrintActivityAttributes: ActivityAttributes {
         var amsTarget: Int?
         var humidity: Int?
 
+        /// One row per unit, when this card AGGREGATES several drying cycles.
+        ///
+        /// Empty or nil on a single-unit card, which keeps using the flat `amsTemp`/`amsTarget`/
+        /// `humidity` fields above — so an old client, or a Trellis that has not been redeployed yet,
+        /// renders exactly what it did before rather than a blank card. That matters because the two
+        /// halves ship separately in practice however hard we try.
+        ///
+        /// **A new field is invisible to the card until it is in `meaningfulChange`.** Every push is
+        /// gated on that comparison, so a row whose temperature moved while nothing else did would
+        /// never reach the widget.
+        var dryUnits: [DryUnitState]?
+
+
+
         /// `nil` when there is no ETA. Finiteness is checked because this number arrives as JSON off
         /// the wire: an infinity would otherwise build a nonsense `Date` that compares as a perfectly
         /// good future one.
@@ -83,12 +97,37 @@ struct PrintActivityAttributes: ActivityAttributes {
         }
     }
 
+
+    /// One unit's line on an aggregate drying card.
+    ///
+    /// Names are wire format, same as `ContentState`'s — Trellis builds these server-side.
+    struct DryUnitState: Codable, Hashable, Sendable, Identifiable {
+        var amsId: Int
+        /// `AMS 1`, `AMS HT` — the printer's own label, not derived, because the HT is not "AMS 3".
+        var label: String = ""
+        var filament: String = ""
+        var temp: Int = 0
+        var target: Int = 0
+        var humidity: Int = 0
+        /// Minutes remaining. The rows sort by this, soonest first.
+        var minutesLeft: Int = 0
+
+        var id: Int { amsId }
+    }
+
     /// Identifies the card. `printerId` alone was not enough: a drying cycle and a print run
     /// concurrently on the same machine, and with three drying-capable units fitted so do multiple
     /// dry cycles — so the AMS unit is part of the identity too.
     var printerId: Int
-    /// nil for a print card; the AMS unit id for a drying card.
+    /// nil for a print card; the AMS unit id for a drying card; `aggregateAmsId` for one card
+    /// standing in for several units.
     var amsId: Int?
+
+    /// The sentinel identity for an aggregate drying card, and Trellis's `dry:<printerId>:all`.
+    ///
+    /// Negative because unit ids are indices and can never be: a real id colliding with the sentinel
+    /// would make the aggregate replace a unit's own card.
+    static let aggregateAmsId = -1
 }
 
 /// What a card's countdown slot can show — the only sanctioned way to build a range for

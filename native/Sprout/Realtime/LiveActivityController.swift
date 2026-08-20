@@ -333,6 +333,61 @@ final class LiveActivityController {
         return s
     }
 
+    /// **Two or more units drying collapse into ONE card.**
+    ///
+    /// Three drying-capable units are fitted, so three concurrent cycles is ordinary — and one card
+    /// each plus the print card is four cards for a single machine, which buries the print under the
+    /// thing that matters least. iOS orders the lock-screen stack by start time and that is not
+    /// controllable, so the only lever is how many cards exist.
+    ///
+    /// One unit keeps its own card: an aggregate of one is a worse version of the card it replaces.
+    nonisolated static let aggregateDryingThreshold = 2
+
+    /// The aggregate card's content, or nil when fewer than two units are drying.
+    ///
+    /// Rows sort by time remaining, soonest first, and the HEADLINE is the LONGEST — the two answer
+    /// different questions and the header's is "when is the whole batch done".
+    nonisolated static func aggregateDryContent(
+        _ status: PrinterStatus,
+        now: Date = Date(),
+        printerName: String = "",
+        iconUri: String = ""
+    ) -> PrintActivityAttributes.ContentState? {
+        let units = status.ams ?? []
+        let drying = units.filter { ($0.dryTime?.double ?? 0) > 0 }
+        guard drying.count >= aggregateDryingThreshold else { return nil }
+
+        let rows = drying.map { ams -> PrintActivityAttributes.DryUnitState in
+            let isHt = ams.isAmsHt == true || ams.id >= 128
+            return PrintActivityAttributes.DryUnitState(
+                amsId: ams.id,
+                label: isHt ? "AMS HT" : "AMS \(ams.id + 1)",
+                filament: ams.dryFilament?.isEmpty == false ? ams.dryFilament! : "Filament",
+                temp: Int((ams.temp?.double ?? 0).rounded()),
+                target: Int((ams.dryTargetTemp?.double ?? 0).rounded()),
+                humidity: Int((ams.humidity?.double ?? 0).rounded()),
+                minutesLeft: Int((ams.dryTime?.double ?? 0).rounded())
+            )
+        }
+        .sorted { $0.minutesLeft < $1.minutesLeft }
+
+        var s = PrintActivityAttributes.ContentState()
+        s.printerName = printerName
+        s.iconUri = iconUri
+        s.dry = true
+        s.stateLabel = "Drying"
+        s.name = "\(rows.count) units"
+        s.tint = LAColors.drying
+        s.symbol = "humidity.fill"
+        s.finished = false
+        s.progress = 0
+        // The LONGEST, not the soonest: the card answers "when is the batch done".
+        let longest = rows.map(\.minutesLeft).max() ?? 0
+        s.etaEpochMs = now.addingTimeInterval(Double(longest) * 60).timeIntervalSince1970 * 1000
+        s.dryUnits = rows
+        return s
+    }
+
     /// Whether a change is worth spending an update on.
     ///
     /// The rule for this list: **every field the widget renders belongs in it**, with a threshold only
@@ -350,6 +405,7 @@ final class LiveActivityController {
             || a.stateLabel != b.stateLabel
             || a.name != b.name
             || a.printerName != b.printerName
+            || a.dryUnits != b.dryUnits
             || a.modelUri != b.modelUri
             || a.iconUri != b.iconUri
             || a.queueCount != b.queueCount
@@ -451,12 +507,25 @@ final class LiveActivityController {
         }
 
         // One card per drying unit — a per-printer key silently hid the second concurrent cycle.
-        let drying = Set(Self.dryingUnitIds(status))
-        for unitId in drying {
-            if let dry = Self.dryContent(status, amsId: unitId, printerName: printerName, iconUri: iconUri) {
-                await upsert(printerId: printerId, amsId: unitId, content: dry, ended: false)
+        // Which drying cards SHOULD exist right now: either one per unit, or one aggregate standing
+        // in for all of them. Computed as a set first so the sweep below has one thing to compare
+        // against — an aggregate that appears must also end the per-unit cards it replaced, and a
+        // batch dropping back to one unit must end the aggregate.
+        var wanted = Set<Int>()
+        if let aggregate = Self.aggregateDryContent(status, printerName: printerName, iconUri: iconUri) {
+            wanted.insert(PrintActivityAttributes.aggregateAmsId)
+            await upsert(printerId: printerId,
+                         amsId: PrintActivityAttributes.aggregateAmsId,
+                         content: aggregate, ended: false)
+        } else {
+            for unitId in Set(Self.dryingUnitIds(status)) {
+                if let dry = Self.dryContent(status, amsId: unitId, printerName: printerName, iconUri: iconUri) {
+                    wanted.insert(unitId)
+                    await upsert(printerId: printerId, amsId: unitId, content: dry, ended: false)
+                }
             }
         }
+        let drying = wanted
         for activity in Activity<PrintActivityAttributes>.activities {
             if let amsId = activity.attributes.amsId,
                activity.attributes.printerId == printerId,

@@ -90,7 +90,11 @@ REG_FILE = DATA_DIR / "registrations.json"
 TENANT_FILE = DATA_DIR / "tenant.json"
 
 # ---- state → content-state (mirrors present.ts + toContentState) ----
-COLORS = {"running": "#30D158", "heating": "#FF9F0A", "paused": "#0A84FF", "error": "#FF453A", "idle": "#8E9398"}
+# "drying" was the one semantic missing here while `dry_state` hardcoded #FFB86C inline — so the
+# per-unit card and the aggregate card could have drifted to two different ambers for the same
+# machine. Must equal the app's `LAColors`.
+COLORS = {"running": "#30D158", "heating": "#FF9F0A", "paused": "#0A84FF", "error": "#FF453A",
+          "idle": "#8E9398", "drying": "#FFB86C"}
 # Layers stacking upward, which is what an FDM machine actually does; "printer.fill" is a sheet-fed
 # office printer and read as the wrong appliance. Kept in step with the app's own map in
 # LiveActivityController — whichever of the two published last wins on the lock screen, so a change
@@ -726,6 +730,62 @@ def drying_unit_ids(status: dict) -> list[int]:
     return [int(_f(u.get("id"))) for u in (status.get("ams") or []) if _f(u.get("dry_time")) > 0]
 
 
+AGGREGATE_AMS_ID = -1
+"""Sentinel unit id for a card standing in for SEVERAL drying units.
+
+Must equal `PrintActivityAttributes.aggregateAmsId` in the app; negative because real unit ids are
+indices, so a collision would let the aggregate replace a unit's own card.
+"""
+
+AGGREGATE_DRYING_THRESHOLD = 2
+"""Two or more units drying collapse into one card.
+
+Three drying-capable units are fitted, so one card each plus the print card is four cards for a
+single machine — which buries the print under the thing that matters least. iOS orders the lock
+screen by start time and that is not controllable, so the only lever is how many cards exist. One
+unit keeps its own card: an aggregate of one is a worse version of the card it replaces.
+"""
+
+
+def aggregate_dry_state(status: dict) -> dict | None:
+    """One card's ContentState for ALL drying units, or None below the threshold.
+
+    Mirrors the app's `aggregateDryContent`. Rows sort soonest-first; the HEADLINE is the LONGEST,
+    because the header answers "when is the whole batch done" while the rows answer "which is next".
+    """
+    units = [u for u in (status.get("ams") or []) if _f(u.get("dry_time")) > 0]
+    if len(units) < AGGREGATE_DRYING_THRESHOLD:
+        return None
+
+    rows = []
+    for u in units:
+        uid = int(_f(u.get("id")))
+        is_ht = bool(u.get("is_ams_ht")) or uid >= 128
+        rows.append({
+            "amsId": uid,
+            "label": "AMS HT" if is_ht else f"AMS {uid + 1}",
+            "filament": (u.get("dry_filament") or "Filament"),
+            "temp": int(_f(u.get("temp"))),
+            "target": int(_f(u.get("dry_target_temp"))),
+            "humidity": int(_f(u.get("humidity"))),
+            "minutesLeft": int(_f(u.get("dry_time"))),
+        })
+    rows.sort(key=lambda r: r["minutesLeft"])
+    longest = max(r["minutesLeft"] for r in rows)
+
+    return {
+        "dry": True,
+        "stateLabel": "Drying",
+        "name": f"{len(rows)} units",
+        "tint": COLORS["drying"],
+        "symbol": "humidity.fill",
+        "finished": False,
+        "progress": 0,
+        "etaEpochMs": (time.time() + longest * 60) * 1000,
+        "dryUnits": rows,
+    }
+
+
 def dry_state(status: dict, ams_id: int | None = None) -> dict | None:
     """One unit's drying card ContentState, or None when that unit is idle. Mirrors the app's
     toDryContentState: dry_time (minutes remaining) > 0 is THE active signal; the countdown itself
@@ -754,7 +814,7 @@ def dry_state(status: dict, ams_id: int | None = None) -> dict | None:
     return {
         "dry": True, "stateLabel": "Drying",
         "name": " · ".join(x for x in (unit_label, f"{fil} @ {target}°" if target > 0 else fil) if x),
-        "tint": "#FFB86C", "symbol": "humidity.fill",
+        "tint": COLORS["drying"], "symbol": "humidity.fill",
         "progress": 0, "layer": 0, "totalLayers": 0,
         "etaEpochMs": now_ms + int(mins * 60000), "finished": False,
         "amsTemp": int(_f(ams.get("temp"))), "amsTarget": target, "humidity": int(_f(ams.get("humidity"))),
@@ -813,7 +873,9 @@ async def _tick(client: httpx.AsyncClient) -> None:
             # Legacy per-printer registrations (no ams id) keep working: fall back to "any unit".
             parts = dkey.split(":")
             d_ams = int(parts[2]) if len(parts) > 2 and parts[2].lstrip("-").isdigit() else None
-            ds = dry_state(status, d_ams)
+            # The sentinel key is an AGGREGATE, not a unit. `dry_state(status, -1)` finds no such unit
+            # and returns None, which would have ended the card on its first poll.
+            ds = aggregate_dry_state(status) if d_ams == AGGREGATE_AMS_ID else dry_state(status, d_ams)
             dirty = False
             for dreg in dregs:
                 # Every payload is built per element: the end state merges over THIS device's
@@ -898,6 +960,11 @@ async def _tick(client: httpx.AsyncClient) -> None:
             # Push-to-start one card per DRYING UNIT, so a second concurrent cycle also gets a card
             # when the app is closed.
             drying = drying_unit_ids(status)
+            aggregate = aggregate_dry_state(status)
+            if aggregate is not None:
+                # One card for the batch. The per-unit keys below are skipped entirely, and any that
+                # are already live get swept by the `live_dry_keys` reconciliation.
+                drying = []
             units = {int(_f(u.get("id"))): u for u in (status.get("ams") or [])}
             live_dry_keys = set()
             for a_id in drying:
@@ -912,6 +979,17 @@ async def _tick(client: httpx.AsyncClient) -> None:
                     await _remote_start(client, dkey, {"printerName": name, **ds0}, f"dry {pid}:{a_id}")
                 _p2s_started[dkey] = dident
             # Forget cycles that ended, so the NEXT cycle on that unit starts a card again.
+            if aggregate is not None:
+                akey = f"dry:{pid}:{AGGREGATE_AMS_ID}"
+                live_dry_keys.add(akey)
+                # Identity is the SET of cycles: a unit joining or leaving the batch is a new card,
+                # because the rows it shows are different ones.
+                aident = "agg:" + ",".join(str(r["amsId"]) for r in aggregate["dryUnits"])
+                if _p2s_started.get(akey) != aident and should_start(_p2s_tokens, akey):
+                    if await _remote_start(client, akey, {"printerName": name, **aggregate},
+                                           f"dry {pid}:all"):
+                        _p2s_started[akey] = aident
+
             for k in [k for k in list(_p2s_started) if k.startswith(f"dry:{pid}:")]:
                 if k not in live_dry_keys:
                     _p2s_started.pop(k, None)

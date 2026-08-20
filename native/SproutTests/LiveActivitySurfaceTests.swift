@@ -356,3 +356,104 @@ final class MacStatusMarkTests: XCTestCase {
     }
 }
 #endif
+
+
+#if os(iOS)
+// MARK: - Aggregate drying
+//
+// iOS-only: `LiveActivityController` and `PrintActivityAttributes` are both `#if os(iOS)` because
+// ActivityKit does not exist on macOS. A smaller iOS count is a regression; a smaller macOS one is
+// not — see CLAUDE.md.
+
+/// Two or more drying units collapse into one card.
+///
+/// Three drying-capable units are fitted, so one card each PLUS the print card is four cards for a
+/// single machine — and iOS orders the lock-screen stack by start time, which is not controllable.
+/// The only lever is how many cards exist.
+final class AggregateDryingTests: XCTestCase {
+
+    private func unit(_ id: Int, mins: Double, temp: Double = 50, target: Double = 65,
+                      humidity: Double = 24, filament: String = "PETG", ht: Bool = false) -> AmsUnitRaw {
+        var u = AmsUnitRaw(id: id)
+        u.dryTime = LooseNumber(mins)
+        u.temp = LooseNumber(temp)
+        u.dryTargetTemp = LooseNumber(target)
+        u.humidity = LooseNumber(humidity)
+        u.dryFilament = filament
+        u.isAmsHt = ht
+        return u
+    }
+
+    private func status(_ units: [AmsUnitRaw]) -> PrinterStatus {
+        var s = PrinterStatus()
+        s.ams = units
+        return s
+    }
+
+    /// An aggregate of one is a worse version of the card it replaces.
+    func testOneUnitKeepsItsOwnCard() {
+        XCTAssertNil(LiveActivityController.aggregateDryContent(status([unit(0, mins: 120)])))
+    }
+
+    func testTwoUnitsCollapse() {
+        let got = LiveActivityController.aggregateDryContent(status([unit(0, mins: 120), unit(1, mins: 45)]))
+        XCTAssertEqual(got?.dryUnits?.count, 2)
+        XCTAssertEqual(got?.dry, true)
+    }
+
+    /// Soonest first — the rows answer "which finishes next".
+    func testRowsSortSoonestFirst() {
+        let got = LiveActivityController.aggregateDryContent(
+            status([unit(0, mins: 300), unit(1, mins: 45), unit(2, mins: 120)]))
+        XCTAssertEqual(got?.dryUnits?.map(\.minutesLeft), [45, 120, 300])
+    }
+
+    /// The HEADLINE is the longest — the header answers "when is the whole batch done", which is a
+    /// different question from the one the rows answer.
+    func testTheHeadlineIsTheLongest() {
+        let now = Date()
+        let got = LiveActivityController.aggregateDryContent(
+            status([unit(0, mins: 300), unit(1, mins: 45)]), now: now)
+        let minutes = ((got?.etaEpochMs ?? 0) / 1000 - now.timeIntervalSince1970) / 60
+        XCTAssertEqual(minutes, 300, accuracy: 1)
+    }
+
+    func testIdleUnitsAreNotRows() {
+        let got = LiveActivityController.aggregateDryContent(
+            status([unit(0, mins: 120), unit(1, mins: 0), unit(2, mins: 45)]))
+        XCTAssertEqual(Set(got?.dryUnits?.map(\.amsId) ?? []), [0, 2])
+    }
+
+    /// The HT is not "AMS 3" — it has its own label, which is why the row carries one rather than
+    /// deriving it from the index.
+    func testTheHtIsNotAmsThree() {
+        let got = LiveActivityController.aggregateDryContent(
+            status([unit(0, mins: 120), unit(128, mins: 45, ht: true)]))
+        XCTAssertEqual(Set(got?.dryUnits?.map(\.label) ?? []), ["AMS 1", "AMS HT"])
+    }
+
+    /// Unit ids are indices, so a negative sentinel can never collide — an aggregate that took a
+    /// real unit's identity would replace that unit's own card.
+    func testTheSentinelCannotBeARealUnitId() {
+        XCTAssertLessThan(PrintActivityAttributes.aggregateAmsId, 0)
+    }
+
+    /// **A new field is invisible until it is in `meaningfulChange`.** Every push is gated on that
+    /// comparison, so rows whose temperatures moved while nothing else did would never reach the card.
+    func testRowChangesAreWorthAPush() {
+        var a = PrintActivityAttributes.ContentState()
+        a.dryUnits = [PrintActivityAttributes.DryUnitState(amsId: 0, temp: 50)]
+        var b = a
+        b.dryUnits = [PrintActivityAttributes.DryUnitState(amsId: 0, temp: 58)]
+        XCTAssertTrue(LiveActivityController.meaningfulChange(from: a, to: b))
+    }
+
+    /// Single-unit cards keep the flat fields, so a Trellis that has not been redeployed renders
+    /// exactly what it did before rather than a blank card.
+    func testASingleUnitCardCarriesNoRows() {
+        let got = LiveActivityController.dryContent(status([unit(0, mins: 120)]), amsId: 0)
+        XCTAssertNil(got?.dryUnits)
+        XCTAssertEqual(got?.amsTemp, 50)
+    }
+}
+#endif

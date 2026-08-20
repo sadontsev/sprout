@@ -54,7 +54,10 @@ struct PrintActivityWidget: Widget {
                         .foregroundStyle(.secondary)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    if context.state.dry == true {
+                    if let rows = context.state.dryUnits, !rows.isEmpty {
+                        DryUnitRows(rows: rows, tint: tint)
+                            .padding(.horizontal, Self.cornerInset)
+                    } else if context.state.dry == true {
                         // The same 10 pt inset the counters get. Without it TEMP/HUMIDITY sit where
                         // the corner arc slices — the "ayer 379/590" failure this file documents.
                         DryReadout(state: context.state, tint: tint)
@@ -248,7 +251,9 @@ private struct LockScreenCard: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if state.dry == true {
+                if let rows = state.dryUnits, !rows.isEmpty {
+                    DryUnitRows(rows: rows, tint: tint)
+                } else if state.dry == true {
                     DryReadout(state: state, tint: tint)
                 } else {
                     ExtrusionBar(
@@ -392,6 +397,55 @@ private struct PreviewTile: ViewModifier {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.12))
             )
+    }
+}
+
+/// The aggregate card's body: one line per drying unit.
+///
+/// Replaces `DryReadout`'s two big numbers, because at three units those numbers belong to three
+/// different machines and stacking them says nothing about which. A row per unit, sorted soonest
+/// first, is the only layout that answers "which one finishes next".
+private struct DryUnitRows: View {
+    let rows: [PrintActivityAttributes.DryUnitState]
+    let tint: Color
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(rows) { row in
+                if row.id != rows.first?.id {
+                    Divider().overlay(Color.white.opacity(0.08))
+                }
+                HStack(spacing: 8) {
+                    // Fixed column, so the labels line up rather than shifting with filament names.
+                    Text(row.label)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(tint)
+                        .frame(width: 52, alignment: .leading)
+                    Text(row.filament)
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                    Text("\(row.temp)°→\(row.target)°")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Text("\(row.humidity)%")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 4)
+                    Text(Self.short(row.minutesLeft))
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 52, alignment: .trailing)
+                }
+                .padding(.vertical, 3)
+            }
+        }
+    }
+
+    /// `5h 44m`, or `44m` under the hour. A duration, never a clock — a dry cycle has no appointment.
+    static func short(_ minutes: Int) -> String {
+        let m = max(0, minutes)
+        return m >= 60 ? "\(m / 60)h \(m % 60)m" : "\(m)m"
     }
 }
 
