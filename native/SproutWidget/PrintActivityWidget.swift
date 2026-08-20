@@ -26,16 +26,18 @@ struct PrintActivityWidget: Widget {
             let tint = Color(hexString: context.state.tint)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label {
-                        Text(context.state.stateLabel).font(.caption).foregroundStyle(.secondary)
-                    } icon: {
-                        Image(systemName: context.state.symbol).foregroundStyle(tint)
+                    HStack(spacing: 6) {
+                        IslandPreview(state: context.state, tint: tint)
+                        IslandMark(state: context.state, tint: tint, size: 16)
+                        Text(context.state.stateLabel)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     CountdownSlot(
                         countdown: context.state.countdown(),
-                        font: .caption.monospacedDigit(),
+                        font: .system(size: 12, weight: .medium).monospacedDigit(),
                         maxWidth: 64
                     )
                     .foregroundStyle(tint)
@@ -49,7 +51,10 @@ struct PrintActivityWidget: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     if context.state.dry == true {
+                        // The same 10 pt inset the counters get. Without it TEMP/HUMIDITY sit where
+                        // the corner arc slices — the "ayer 379/590" failure this file documents.
                         DryReadout(state: context.state, tint: tint)
+                            .padding(.horizontal, Self.cornerInset)
                     } else {
                         VStack(spacing: 5) {
                             ExtrusionBar(
@@ -57,7 +62,7 @@ struct PrintActivityWidget: Widget {
                                 tint: tint,
                                 riding: ExtrusionRider.rides(tintHex: context.state.tint, finished: context.state.finished)
                             ) {
-                                IslandRider(uri: context.state.iconUri, tint: tint)
+                                NozzleMark(bead: tint)
                             }
                             HStack {
                                 Text("Layer \(context.state.layer)/\(context.state.totalLayers)")
@@ -74,7 +79,13 @@ struct PrintActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                Image(systemName: context.state.symbol).foregroundStyle(tint)
+                // The BRAND mark, tinted — not `state.symbol`. The design is explicit that the
+                // preview is "dropped entirely in the compact island where only a tinted glyph fits",
+                // and that the glyph is the nozzle; an SF Symbol here made the app's own island slot
+                // look like any other app's. A dry cycle gets the spool, because in minimal and
+                // compact the silhouette plus the tint is the entire message and the two must not be
+                // confusable.
+                IslandMark(state: context.state, tint: tint, size: 17)
             } compactTrailing: {
                 // Drying cards pin progress to 0, so a percentage says nothing about them — they get
                 // the countdown instead. Resolved once so the visibility check and the text that
@@ -83,7 +94,7 @@ struct PrintActivityWidget: Widget {
                 if context.state.dry == true, countdown != .hidden {
                     CountdownSlot(
                         countdown: countdown,
-                        font: .caption2.monospacedDigit(),
+                        font: .system(size: 13, weight: .semibold).monospacedDigit(),
                         maxWidth: 44,
                         compact: true
                     )
@@ -94,7 +105,7 @@ struct PrintActivityWidget: Widget {
                     // anyone looks at this slot at all. Progress is still on the expanded card.
                     CountdownSlot(
                         countdown: countdown,
-                        font: .caption2.monospacedDigit(),
+                        font: .system(size: 13, weight: .semibold).monospacedDigit(),
                         maxWidth: 58,
                         compact: true,
                         style: .finishClock
@@ -102,13 +113,47 @@ struct PrintActivityWidget: Widget {
                     .foregroundStyle(tint)
                 } else {
                     Text("\(context.state.progress)%")
-                        .font(.caption2.monospacedDigit())
+                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
                         .foregroundStyle(tint)
                 }
             } minimal: {
-                Image(systemName: context.state.symbol).foregroundStyle(tint)
+                IslandMark(state: context.state, tint: tint, size: 17)
             }
             .keylineTint(tint)
+        }
+    }
+}
+
+/// The expanded island's 30 pt preview. Same ladder as the card's, one size down; absent entirely
+/// when there is no image, because a 30 pt empty tile beside a 16 pt glyph is just clutter.
+private struct IslandPreview: View {
+    let state: PrintActivityAttributes.ContentState
+    let tint: Color
+
+    var body: some View {
+        if state.dry != true,
+           let image = LockScreenCard.loadImage(state.modelUri) ?? LockScreenCard.loadImage(state.iconUri) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 30, height: 30)
+                .clipped()
+                .modifier(PreviewTile(radius: 7))
+        }
+    }
+}
+
+/// The tinted brand mark for the island's small slots — nozzle for a print, spool for a dry cycle.
+private struct IslandMark: View {
+    let state: PrintActivityAttributes.ContentState
+    let tint: Color
+    let size: CGFloat
+
+    var body: some View {
+        if state.dry == true {
+            SpoolGlyph(size: size, tint: tint)
+        } else {
+            TintedNozzle(tint: tint, size: size)
         }
     }
 }
@@ -177,7 +222,7 @@ private struct LockScreenCard: View {
             leadingVisual
 
             VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(state.stateLabel)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(tint)
@@ -209,7 +254,7 @@ private struct LockScreenCard: View {
                     HStack(spacing: 8) {
                         if state.totalLayers > 0 {
                             Text("Layer \(state.layer)/\(state.totalLayers)")
-                                .font(.system(size: 11).monospacedDigit())
+                                .font(.system(size: 11, weight: .medium).monospacedDigit())
                         }
                         temps
                         Spacer(minLength: 0)
@@ -220,7 +265,7 @@ private struct LockScreenCard: View {
                         Text("Up next · \(state.nextName)")
                             .font(.system(size: 10))
                             .lineLimit(1)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.white.opacity(0.38))
                     }
                 }
             }
@@ -264,32 +309,31 @@ private struct LockScreenCard: View {
                 .frame(width: 56, height: 56)
                 .overlay { SpoolGlyph(size: 28, tint: tint) }
         } else if let image = Self.loadImage(state.modelUri) ?? Self.loadImage(state.iconUri) {
+            // `scaledToFill` + clip, not `scaledToFit`: a plate render is rarely square and fitting it
+            // letterboxed the model into a corner of an empty slot.
             Image(uiImage: image)
                 .resizable()
-                .scaledToFit()
+                .scaledToFill()
                 .frame(width: 56, height: 56)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipped()
+                .modifier(PreviewTile())
         } else {
             Image(systemName: state.symbol)
                 .font(.system(size: 26))
                 .foregroundStyle(tint)
                 .frame(width: 56, height: 56)
+                .background(Color(red: 0.075, green: 0.082, blue: 0.090))
+                .modifier(PreviewTile())
         }
     }
 
-    /// The nozzle that rides the bar, loaded from the App Group. Falls back to an SF Symbol so the
-    /// rider never silently disappears when the glyph has not been written yet.
-    @ViewBuilder
-    private var riderGlyph: some View {
-        if let image = Self.loadImage(state.iconUri) {
-            Image(uiImage: image).resizable().scaledToFit()
-        } else {
-            Image(systemName: "arrowtriangle.down.fill")
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(tint)
-        }
-    }
+    /// The nozzle that rides the bar.
+    ///
+    /// DRAWN, not the App Group PNG. That PNG is the tab asset, which carries the bed plate as its
+    /// fifth shape — riding the bar with it stacked the artwork's own plate line on the bar's line.
+    /// `NozzleMark` is the design's crop, and being a view rather than a file is also what lets the
+    /// bead take the tint while the body stays grey.
+    private var riderGlyph: some View { NozzleMark(bead: tint) }
 
     private var temps: some View {
         HStack(spacing: 8) {
@@ -303,8 +347,11 @@ private struct LockScreenCard: View {
         }
     }
 
+    /// `N 148° → 220°` while a target is being chased, `N 220°` once it is reached. The target was
+    /// accepted and dropped, so a heating card said nothing about what it was heating TO — which on
+    /// the one card that exists to answer "how long" is the number that answers it.
     private func tempPair(_ label: String, _ now: Int, _ target: Int, active: Bool) -> some View {
-        Text("\(label) \(now)°")
+        Text(target > 0 && target != now ? "\(label) \(now)° → \(target)°" : "\(label) \(now)°")
             .font(.system(size: 10, weight: active ? .semibold : .regular).monospacedDigit())
             .foregroundStyle(active ? AnyShapeStyle(tint) : AnyShapeStyle(.tertiary))
     }
@@ -312,6 +359,21 @@ private struct LockScreenCard: View {
     static func loadImage(_ uri: String) -> UIImage? {
         guard !uri.isEmpty, let url = URL(string: uri), let data = try? Data(contentsOf: url) else { return nil }
         return UIImage(data: data)
+    }
+}
+
+/// Every rung of the leading ladder is a TILE — same corner, same hairline. Without it the fallback
+/// steps read as a picture that failed to load rather than as the slot's own state.
+private struct PreviewTile: ViewModifier {
+    var radius: CGFloat = 10
+
+    func body(content: Content) -> some View {
+        content
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.12))
+            )
     }
 }
 
@@ -330,12 +392,12 @@ private struct DryReadout: View {
     }
 
     private func reading(_ label: String, value: String, target: String?) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.system(size: 8, weight: .semibold))
                 .tracking(0.8)
                 .foregroundStyle(.tertiary)
-            HStack(spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
                     .font(.system(size: 13, weight: .semibold).monospacedDigit())
                     .foregroundStyle(tint)
@@ -345,24 +407,6 @@ private struct DryReadout: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-        }
-    }
-}
-
-/// The island's rider. A free function's worth of view, but it cannot reuse `LockScreenCard`'s
-/// because that one is a member of the card and the island builds its regions outside it.
-private struct IslandRider: View {
-    let uri: String
-    let tint: Color
-
-    var body: some View {
-        if let image = LockScreenCard.loadImage(uri) {
-            Image(uiImage: image).resizable().scaledToFit()
-        } else {
-            Image(systemName: "arrowtriangle.down.fill")
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(tint)
         }
     }
 }

@@ -29,7 +29,10 @@ struct PrintActivityAttributes: ActivityAttributes {
         var etaEpochMs: Double = 0
         var finished: Bool = false
         /// SF Symbol name.
-        var symbol: String = "printer.fill"
+        /// `square.stack.3d.up.fill` — layers stacking upward, which is what an FDM machine does.
+        /// NOT `printer.fill`, a sheet-fed office printer that reads as the wrong appliance; the app
+        /// already sends the right value, but a Trellis push that omits `symbol` fell back to it.
+        var symbol: String = "square.stack.3d.up.fill"
         /// `file://` URI of the brand nozzle glyph in the App Group ("" falls back to `symbol`).
         var iconUri: String = ""
         /// Hex accent — one of `LAColors`.

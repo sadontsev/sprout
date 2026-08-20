@@ -229,10 +229,21 @@ struct MacMenuBarPanel: View {
             }
             .padding(.top, 10)
 
-            ProgressView(value: Double(vm.progressInt), total: 100)
-                .progressViewStyle(.linear)
-                .tint(vm.stateColor.resolve(c))
-                .padding(.top, 8)
+            // The same extrusion bar the phone card draws (design 1e), not a stock `ProgressView`.
+            // 13x17 glyph and 10 pt of headroom here rather than the card's 15x20 and 11 — the panel
+            // is denser. `ExtrusionBar` had no Mac call site at all until now, which is why this was
+            // the one surface still showing a plain track.
+            ExtrusionBar(
+                progress: Double(vm.progressInt) / 100,
+                tint: vm.stateColor.resolve(c),
+                riding: ExtrusionRider.rides(tintHex: LAState.of(vm: vm).tintHex,
+                                             finished: vm.kind == .complete),
+                glyphSize: CGSize(width: 13, height: 17),
+                headroom: 10
+            ) {
+                NozzleMark(bead: vm.stateColor.resolve(c))
+            }
+            .padding(.top, 8)
 
             HStack(spacing: 16) {
                 temp("NOZZLE", "\(vm.nozzleNow)°")

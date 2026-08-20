@@ -66,18 +66,39 @@ struct ExtrusionBar<Rider: View>: View {
     var riding: Bool = true
     var barHeight: CGFloat = 5
     var glyphSize: CGSize = CGSize(width: 15, height: 20)
+    /// Space reserved ABOVE the bar. The mock's `margin-top: 11px`; the glyph is absolutely
+    /// positioned there and is allowed to overflow it slightly, which is why this is a reservation
+    /// rather than `glyphSize.height`. Design gives 11 on the lock screen and expanded island, 20 in
+    /// StandBy, 10 in the Mac panel.
+    var headroom: CGFloat = 11
     @ViewBuilder var rider: () -> Rider
+
+    /// How far the tip sinks into the bar — the mock's `bottom: 1px`.
+    private static var tipInset: CGFloat { 1 }
+
+    /// Total height the view claims, bar plus the headroom the glyph needs.
+    ///
+    /// **Computed, not padded.** This was `.frame(height: barHeight)` followed by
+    /// `.padding(.top, glyph - bar)`, which reported one height and drew at another: the counters
+    /// underneath were laid out against the bar alone and rendered straight on top of it, and the
+    /// track filled the padded box so a 5 pt bar came out about 15 pt tall.
+    private var totalHeight: CGFloat {
+        riding ? barHeight + headroom : barHeight
+    }
 
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
             let fill = width * CGFloat(min(max(progress.isFinite ? progress : 0, 0), 1))
-            ZStack(alignment: .leading) {
+            // Bottom-aligned: the bar sits on the baseline and the glyph rises out of it, so the
+            // headroom is above the bar where the design puts it.
+            ZStack(alignment: .bottomLeading) {
                 Capsule()
                     .fill(Color.white.opacity(0.22))
+                    .frame(height: barHeight)
                 Capsule()
                     .fill(tint)
-                    .frame(width: fill)
+                    .frame(width: fill, height: barHeight)
                     // The glow the design asks for. A shadow rather than a blurred duplicate: one
                     // layer, and it tracks the fill's shape for free.
                     .shadow(color: tint.opacity(0.5), radius: 4)
@@ -86,23 +107,18 @@ struct ExtrusionBar<Rider: View>: View {
                     rider()
                         .frame(width: glyphSize.width, height: glyphSize.height)
                         .shadow(color: .black.opacity(0.55), radius: 3, x: 0, y: 2)
-                        // Tip touching the bar's TOP, so the glyph reads as depositing onto the fill
-                        // rather than floating above it or being impaled by it.
                         .offset(
                             x: ExtrusionRider.centreX(progress: progress,
                                                       width: width,
                                                       glyphWidth: glyphSize.width) - glyphSize.width / 2,
-                            y: -glyphSize.height / 2 - barHeight / 2 + 1
+                            // Tip one point above the bar's BOTTOM, so the cone ends inside the fill
+                            // it is laying down rather than floating over it.
+                            y: -(barHeight - Self.tipInset)
                         )
                 }
             }
+            .frame(width: width, height: geo.size.height, alignment: .bottomLeading)
         }
-        .frame(height: barHeight)
-        // The glyph is drawn ABOVE the bar and a `GeometryReader` clips to its own bounds, so the
-        // headroom has to be reserved by the caller's layout — the design specifies it per surface
-        // (11 pt on the lock card, 20 in StandBy, 10 in the Mac panel). Stated here because a missing
-        // pad shows up as a decapitated nozzle, which reads as a rendering bug rather than a spacing
-        // one.
-        .padding(.top, riding ? glyphSize.height - barHeight : 0)
+        .frame(height: totalHeight)
     }
 }
