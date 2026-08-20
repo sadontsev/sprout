@@ -414,11 +414,24 @@ final class LiveActivityController {
         // Deliberately not awaited: this loop runs every 4 s and also drives the cooldown readout, so
         // a slow Trellis must not stall it. `lastRegisterAttempt` is stamped BEFORE the request, so an
         // overlapping flush cannot double-POST.
-        if isServerOwned, !tokens.isEmpty { Task { [weak self] in await self?.flushRegistrations() } }
+        // `identity != nil` gates both flushes. Without an identity a registration cannot carry a
+        // claim, and the relay states what it does with those: "registered WITHOUT a claim; it
+        // cannot be pushed to until the device claims it". So the POST buys nothing — and it costs
+        // something, because `deviceID` is derived from the identity and goes out EMPTY, which is
+        // exactly the case the field exists to prevent (two phones on one Bambuddy key become
+        // indistinguishable and one phone's reconcile deregisters the other's cards).
+        //
+        // The usual reason it is nil is a locked phone, so this is a wait, not a failure: `identity`
+        // retries the Keychain read on every access and the flush resumes the moment it succeeds.
+        // Measured before this guard: ~200 registrations against 13 claims over an hour, the other
+        // ~190 being unclaimed POSTs repeating every 33 s for the life of the process.
+        let canClaim = identity != nil
+
+        if isServerOwned, canClaim, !tokens.isEmpty { Task { [weak self] in await self?.flushRegistrations() } }
         // The queue covers the registrations that have no stream to re-emit them: a start or
         // device token is handed over once, so a POST that failed is otherwise the end of it, and
         // the server is left with nothing to push a start to for the rest of the process.
-        if isServerOwned, !pending.isEmpty { Task { [weak self] in await self?.flushPending() } }
+        if isServerOwned, canClaim, !pending.isEmpty { Task { [weak self] in await self?.flushPending() } }
         // Reconcile even with no tokens held: "this device now sees no cards" is exactly the report
         // that frees a ghost registration, and gating it on a non-empty set would withhold the one
         // message that matters most.
