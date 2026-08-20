@@ -27,8 +27,12 @@ struct PrintActivityWidget: Widget {
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 6) {
-                        IslandPreview(state: context.state, tint: tint)
-                        IslandMark(state: context.state, tint: tint, size: 16)
+                        // ONE mark, not two. The preview and the glyph are rungs of the SAME ladder —
+                        // the glyph is what the slot falls back to when there is no plate — so drawing
+                        // both put two nozzles side by side on every job without a matched plate,
+                        // which is most of them. The preview wins when there is one; otherwise the
+                        // tinted mark stands in for it.
+                        IslandLeading(state: context.state, tint: tint)
                         Text(context.state.stateLabel)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
@@ -126,19 +130,22 @@ struct PrintActivityWidget: Widget {
 
 /// The expanded island's 30 pt preview. Same ladder as the card's, one size down; absent entirely
 /// when there is no image, because a 30 pt empty tile beside a 16 pt glyph is just clutter.
-private struct IslandPreview: View {
+private struct IslandLeading: View {
     let state: PrintActivityAttributes.ContentState
     let tint: Color
 
     var body: some View {
-        if state.dry != true,
-           let image = LockScreenCard.loadImage(state.modelUri) ?? LockScreenCard.loadImage(state.iconUri) {
+        // The PLATE only. `iconUri` is deliberately not a fallback here: it is the brand nozzle, and
+        // showing it in the tile would put the same mark in the tile and beside it.
+        if state.dry != true, let image = LockScreenCard.loadImage(state.modelUri) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
                 .frame(width: 30, height: 30)
                 .clipped()
                 .modifier(PreviewTile(radius: 7))
+        } else {
+            IslandMark(state: state, tint: tint, size: 16)
         }
     }
 }
@@ -273,21 +280,32 @@ private struct LockScreenCard: View {
 
             // The answer, given the weight it earns. Percentage sits under the time as its
             // subtitle rather than competing with the layer counter for the same line.
-            if state.dry != true {
-                VStack(alignment: .trailing, spacing: 1) {
-                    CountdownSlot(
-                        countdown: state.countdown(),
-                        font: .system(size: 19, weight: .semibold).monospacedDigit(),
-                        maxWidth: 92,
-                        style: .finishClock
-                    )
-                    .foregroundStyle(.primary)
+            // Both kinds get the trailing block. The drying card used to be the ONLY card with no
+            // time on it — `DryReadout` replaced the block entirely — even though `etaEpochMs` is
+            // populated for a dry cycle and the island already showed it.
+            //
+            // A DURATION, not a wall clock, and that is the whole distinction: a print has an
+            // appointment ("come back at 21:47"), a dry cycle has a length ("another 5h 44m"). Nobody
+            // plans their evening around when the filament finishes drying.
+            VStack(alignment: .trailing, spacing: 1) {
+                CountdownSlot(
+                    countdown: state.countdown(),
+                    font: .system(size: 19, weight: .semibold).monospacedDigit(),
+                    maxWidth: 92,
+                    style: state.dry == true ? .remaining : .finishClock
+                )
+                .foregroundStyle(state.dry == true ? AnyShapeStyle(tint) : AnyShapeStyle(.primary))
+                if state.dry == true {
+                    Text("left")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.45))
+                } else {
                     Text("\(state.progress)%")
                         .font(.system(size: 12, weight: .medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                .fixedSize(horizontal: true, vertical: false)
             }
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(14)
     }
