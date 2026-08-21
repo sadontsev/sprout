@@ -913,7 +913,8 @@ struct MacPrintSheet: View {
         // A 180×150 media surface is card-scale, so it takes `cardRadius`. It is not nested inside
         // another rounded shape — it sits on the sheet's flat background — so there is nothing here
         // to be concentric with.
-        CachedThumb(url: thumbURL, size: CGSize(width: 180, height: 150), contentMode: .fit)
+        CachedThumb(url: thumbURL, size: CGSize(width: 180, height: 150), contentMode: .fit,
+                    revalidates: true)
             .clipShape(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: m.cardRadius, style: .continuous).strokeBorder(c.line))
             .accessibilityLabel("Plate \(vm.plateIndex) preview")

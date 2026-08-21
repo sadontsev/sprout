@@ -13,9 +13,14 @@ import SwiftUI
 /// not — this is a grid of photographs, and holding every one of them is how a browse session ends
 /// in a jetsam.
 ///
-/// Keyed by the full URL. Bambuddy's thumbnail endpoint passes the CDN URL through as a query
-/// parameter and the CDN URL is content-addressed, so the key is stable and a hit is always the
-/// right image.
+/// Keyed by the full URL — which makes "does this URL identify its content?" a REQUIREMENT on
+/// whoever builds the URL, not an observation about this file. MakerWorld satisfies it for free:
+/// Bambuddy's proxy passes the CDN URL through as a query parameter and the CDN URL is
+/// content-addressed. Bambuddy's own `/library/files/{id}/thumbnail` does NOT — it is one address
+/// over whatever has most recently been rendered — which is why `BambuddyClient.thumbVersion`
+/// exists and why the session policy below is safe only alongside it.
+///
+/// A caller whose URL cannot carry its own identity passes `revalidate: true` and pays a 304.
 actor ThumbCache {
     static let shared = ThumbCache()
 
@@ -30,7 +35,9 @@ actor ThumbCache {
         cfg.urlCache = URLCache(memoryCapacity: 8 * 1024 * 1024,
                                 diskCapacity: 200 * 1024 * 1024,
                                 directory: nil)
-        // Use the disk copy when there is one; these images never change under their URL.
+        // Use the disk copy when there is one, without asking the server. Correct ONLY because
+        // every URL that reaches this session identifies its own content — see the note above. A
+        // caller that cannot promise that opts out per request with `revalidate:`.
         cfg.requestCachePolicy = .returnCacheDataElseLoad
         cfg.timeoutIntervalForRequest = 20
         return URLSession(configuration: cfg)
@@ -57,12 +64,24 @@ actor ThumbCache {
         return (image, verdict)
     }
 
-    func image(for url: URL, headers: [String: String] = [:]) async -> PlatformImage? {
+    /// - Parameters:
+    ///   - url: the image to fetch, and the cache key.
+    ///   - headers: request headers for images behind header auth. Not part of the key.
+    ///   - revalidate: ask the server whether the stored copy is still current instead of trusting
+    ///     it. For URLs that do not identify their own content. The in-memory hit above is
+    ///     deliberately still taken — it lives only as long as the process, and re-decoding a bitmap
+    ///     on every appearance to catch a change that happens monthly is the wrong trade.
+    /// - Returns: the decoded image, or nil when the fetch failed, the status was not 2xx, or the
+    ///   bytes did not decode. A non-2xx body is never cached: a 401 from an expired stream token
+    ///   would otherwise pin an error image in place for the rest of the session.
+    func image(for url: URL, headers: [String: String] = [:],
+               revalidate: Bool = false) async -> PlatformImage? {
         if let hit = memory.object(forKey: url as NSURL) { return hit }
         if let running = inFlight[url] { return await running.value }
 
         let task = Task<PlatformImage?, Never> { [session] in
             var req = URLRequest(url: url)
+            if revalidate { req.cachePolicy = .useProtocolCachePolicy }
             for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
             guard let (data, response) = try? await session.data(for: req) else { return nil }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 200
@@ -115,6 +134,13 @@ struct CachedThumb: View {
     /// same URL with different credentials would be a bug in the caller rather than two images.
     var headers: [String: String] = [:]
 
+    /// Ask the server whether the cached copy is still current.
+    ///
+    /// Default false, because almost every URL here identifies its own content and a conditional
+    /// request per tile would undo the point of the cache. True for the plate render, whose URL
+    /// cannot — see `BambuddyClient.plateThumbUrl`.
+    var revalidates: Bool = false
+
     /// The symbol drawn when there is no image — a broken-picture `photo` by default.
     ///
     /// Callers that know what the thing IS should say so instead. A sliced print whose plate render
@@ -154,7 +180,8 @@ struct CachedThumb: View {
                 image = nil
                 failed = false
                 guard let url else { return }
-                let loaded = await ThumbCache.shared.image(for: url, headers: headers)
+                let loaded = await ThumbCache.shared.image(for: url, headers: headers,
+                                                           revalidate: revalidates)
                 guard !Task.isCancelled else { return }
                 image = loaded
                 failed = loaded == nil

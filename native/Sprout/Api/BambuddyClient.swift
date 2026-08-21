@@ -444,6 +444,33 @@ final class BambuddyClient: Sendable {
         try await send(request("/api/v1/library/files/\(fileId)", method: "DELETE"), path: "/api/v1/library/files/\(fileId)")
     }
 
+    /// What makes a MUTABLE thumbnail behave like an immutable one.
+    ///
+    /// `/library/files/{id}/thumbnail` is a stable address over changing content: the server can
+    /// re-render a thumbnail at any time and the URL does not move. `ThumbCache` keys on the URL and
+    /// its session is `.returnCacheDataElseLoad` — it never revalidates — so a re-rendered thumbnail
+    /// was invisible to any install that had already seen the old one, from disk, across relaunches.
+    /// Found when every library preview was repainted server-side and the app kept drawing the old
+    /// colour; the URL had not changed, so as far as the cache was concerned nothing had happened.
+    ///
+    /// `thumbnail_path` is the server's own content-addressed filename — a fresh UUID per render —
+    /// so its last component is exactly the identity the URL was missing. Bambuddy ignores query
+    /// parameters it does not recognise (checked against 0.2.4.8 with a real token: same 200, same
+    /// 32 000 bytes, with and without).
+    ///
+    /// Callers pass `thumbnail_path` already, for the nil checks below. Nothing at a call site
+    /// changes.
+    private static func thumbVersion(_ thumbnailPath: String??) -> String? {
+        // `omittingEmptySubsequences: false`, because the default drops the empty component a
+        // trailing slash produces and hands back the DIRECTORY instead — so "thumbnails/" versioned
+        // every file in that folder identically, which is worse than not versioning them at all.
+        // The test that found it is `testATrailingSlashLeavesTheUrlUnversioned`.
+        guard case .some(.some(let path)) = thumbnailPath,
+              let name = path.split(separator: "/", omittingEmptySubsequences: false).last,
+              !name.isEmpty else { return nil }
+        return String(name)
+    }
+
     /// Library thumbnails are gated by a camera *stream* token (`?token=`), NOT X-API-Key — the same
     /// token type as `snapshotUrl`. Returns nil when there's no token or no server-side thumbnail.
     func fileThumbUrl(_ fileId: Int, token: String?, thumbnailPath: String??) -> URL? {
@@ -451,10 +478,18 @@ final class BambuddyClient: Sendable {
         // An explicitly-null thumbnail_path means the server has no thumbnail; a missing key means
         // "unknown", which is still worth attempting.
         if case .some(.none) = thumbnailPath { return nil }
-        return URL(string: "\(baseUrl)/api/v1/library/files/\(fileId)/thumbnail?token=\(esc(token))")
+        var url = "\(baseUrl)/api/v1/library/files/\(fileId)/thumbnail?token=\(esc(token))"
+        if let version = Self.thumbVersion(thumbnailPath) { url += "&v=\(esc(version))" }
+        return URL(string: url)
     }
 
     /// Rendered plate thumbnail (1-based index). Gated by the camera stream token.
+    ///
+    /// **This one cannot be versioned** the way `fileThumbUrl` is: a plate render has no
+    /// `thumbnail_path`, and nothing else the client holds identifies which render it is looking at.
+    /// Its two callers ask `CachedThumb` to revalidate instead — the endpoint sends an `ETag` and a
+    /// `Last-Modified`, so a repeat view costs a 304 rather than the image. Affordable here and only
+    /// here: this is one picture in a sheet, not a scrolling grid.
     func plateThumbUrl(_ fileId: Int, plateIndex: Int, token: String?) -> URL? {
         guard let token else { return nil }
         return URL(string: "\(baseUrl)/api/v1/library/files/\(fileId)/plate-thumbnail/\(plateIndex)?token=\(esc(token))")
@@ -604,11 +639,14 @@ final class BambuddyClient: Sendable {
 
     func getArchiveStats() async throws -> ArchiveStats { try await get("/api/v1/archives/stats") }
 
-    /// Print-log thumbnails are gated by the camera *stream* token — identical to `fileThumbUrl`.
+    /// Print-log thumbnails are gated by the camera *stream* token — identical to `fileThumbUrl`,
+    /// including the `v=` that keeps a re-rendered image from being masked by the cache.
     func printLogThumbUrl(_ entryId: Int, token: String?, thumbnailPath: String??) -> URL? {
         guard let token else { return nil }
         if case .some(.none) = thumbnailPath { return nil }
-        return URL(string: "\(baseUrl)/api/v1/print-log/\(entryId)/thumbnail?token=\(esc(token))")
+        var url = "\(baseUrl)/api/v1/print-log/\(entryId)/thumbnail?token=\(esc(token))"
+        if let version = Self.thumbVersion(thumbnailPath) { url += "&v=\(esc(version))" }
+        return URL(string: url)
     }
 
     // MARK: - Sensor history
