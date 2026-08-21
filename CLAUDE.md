@@ -343,6 +343,45 @@ and `altool -t`.
 - Distribution needs the App ID enabled for **macOS** on the developer portal. Unsigned local builds
   are unaffected.
 
+## Apple platform rules: check, never recall
+
+**Do not guess at platform behaviour, and do not answer from memory.** Every layout
+bug in the Live Activity was a confident guess: `.fixedSize` where the API has
+`DynamicIslandExpandedRegion(_:priority:)`, `lineLimit(1)` believed to cap width
+when it caps lines, `.frame(maxWidth:)` believed to stop a squeeze, a 22pt ring
+dropped into a 17pt compact slot and clipped against the sensor cutout. Each one
+shipped, was seen on a real phone, and cost a build.
+
+Two sources, both local, both authoritative:
+
+| what | where |
+|---|---|
+| Human Interface Guidelines, 120 pages, plain text | `~/.claude/reference/apple-hig/` |
+| This project's distilled Live Activity notes and traps | `~/.claude/reference/live-activity-dynamic-island.md` |
+
+For API facts — signatures, defaults, what a parameter is actually for — read the
+SDK, not the web:
+
+```bash
+SDK=/Applications/Xcode-26.3.0.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk
+find "$SDK/System/Library/Frameworks/WidgetKit.framework" -name "*.swiftinterface"
+```
+
+**`developer.apple.com` is JS-rendered and returns an EMPTY SHELL to any fetch.**
+A summary of a page fetched that way is invented. If the corpus above is missing a
+page, refresh it from the JSON backend that actually serves content:
+
+```bash
+curl -sL https://developer.apple.com/tutorials/data/design/human-interface-guidelines/live-activities.json
+curl -sL https://developer.apple.com/tutorials/data/documentation/activitykit.json
+```
+
+Before changing any platform-surface layout — Live Activity, widget, menu bar,
+toolbar, sidebar — read the relevant page first and cite it in the code comment or
+the commit. "It looked right in the screenshot" is not verification: **Live
+Activities do not start in the iOS Simulator at all**, so island and lock-screen
+work can only be confirmed on a device.
+
 ## The recurring bug in this codebase: offering what the backend will refuse
 
 This shape has now appeared many times, in unrelated code, written by different hands:
