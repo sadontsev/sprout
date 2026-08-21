@@ -343,6 +343,28 @@ and `altool -t`.
 - Distribution needs the App ID enabled for **macOS** on the developer portal. Unsigned local builds
   are unaffected.
 
+## Linting
+
+```bash
+./native/scripts-lint.sh                     # what this branch changed
+./native/scripts-lint.sh path/to/File.swift  # …or named files
+```
+
+There is no SwiftLint and no CI. The script wraps the `swift-format` that ships in the Xcode
+toolchain, with `.swift-format` at the repo root set to the house style (4-space indent, 110
+columns).
+
+**It reports SEMANTIC rules only, and that filter is deliberate.** swift-format's pretty-printer
+re-indents SwiftUI modifier chains to its own model, so an unfiltered run emits **~25 000
+`[Indentation]` warnings** against a style this project never adopted — the tool disagreeing with
+the codebase, not defects. `Indentation`, `AddLines`, `LineLength`, `Spacing`, `RemoveLine` and
+`TrailingWhitespace` are therefore filtered out. Do not "fix" them: accepting them means
+reformatting every file in the repo.
+
+What survives the filter is worth reading — `ValidateDocumentationComments` catches a doc comment
+whose parameters no longer match the function, which is the kind of rot this codebase's comments
+are load-bearing against.
+
 ## Apple platform rules: check, never recall
 
 **Do not guess at platform behaviour, and do not answer from memory.** Every layout

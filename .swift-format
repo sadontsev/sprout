@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "indentation": {
+    "spaces": 4
+  },
+  "lineLength": 110,
+  "respectsExistingLineBreaks": true,
+  "lineBreakBeforeEachArgument": false,
+  "rules": {
+    "AlwaysUseLowerCamelCase": true,
+    "NeverForceUnwrap": false,
+    "NeverUseForceTry": true,
+    "NeverUseImplicitlyUnwrappedOptionals": true,
+    "UseLetInEveryBoundCaseVariable": false,
+    "ReturnVoidInsteadOfEmptyTuple": true,
+    "UseShorthandTypeNames": true,
+    "UseSingleLinePropertyGetter": true,
+    "ValidateDocumentationComments": true,
+    "AmbiguousTrailingClosureOverload": true,
+    "NoEmptyTrailingClosureParentheses": true,
+    "NoLabelsInCasePatterns": true,
+    "NoParensAroundConditions": true,
+    "OneVariableDeclarationPerLine": true,
+    "UseEarlyExits": false,
+    "AlwaysUseLiteralForEmptyCollectionInit": false
+  }
+}
