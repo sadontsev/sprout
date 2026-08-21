@@ -20,6 +20,14 @@ struct PrintActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: PrintActivityAttributes.self) { context in
             LockScreenCard(state: context.state)
+                // The card pins ONE dark background for both appearances, but its text uses adaptive
+                // semantic styles (.primary/.secondary/.tertiary). In light appearance those resolve
+                // to black — the 19pt finish time, the card's headline, rendered near-black on a
+                // near-black card. live-activities.md:203: "If you use a custom background color,
+                // choose a color that works well in both modes or a different color for each
+                // appearance." The background is already committed to dark, so commit the scheme too
+                // rather than auditing every foreground.
+                .environment(\.colorScheme, .dark)
                 .activityBackgroundTint(Color.black.opacity(0.55))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -137,11 +145,10 @@ struct PrintActivityWidget: Widget {
                 IslandProgressMark(state: context.state, tint: tint)
             }
             .keylineTint(tint)
-            // The API's own margin, per presentation — `contentMargins(_:_:for:)`. Keeps the compact
-            // slots off the sensor cutout instead of relying on the content happening to be small
-            // enough.
-            .contentMargins(.trailing, 3, for: .compactLeading)
-            .contentMargins(.leading, 3, for: .compactTrailing)
+            // No contentMargins on the compact slots. live-activities.md:180 is explicit — "Keep
+            // content as narrow as possible and ensure it's snug against the TrueDepth camera …
+            // don't add padding between content and the TrueDepth camera." Sizing the ring to the
+            // slot is the fix; padding it away from the cutout is the thing the guideline forbids.
         }
     }
 }
@@ -341,7 +348,7 @@ private struct LockScreenCard: View {
                     .foregroundStyle(.secondary)
 
                     if state.queueCount > 0, !state.nextName.isEmpty {
-                        Text("Up next · \(state.nextName)")
+                        Text(verbatim: "Up next · \(state.nextName)")
                             .font(.system(size: 10))
                             .lineLimit(1)
                             .foregroundStyle(.white.opacity(0.38))

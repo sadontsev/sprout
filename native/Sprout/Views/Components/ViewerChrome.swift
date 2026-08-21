@@ -17,7 +17,9 @@ enum ViewerChrome {
     static let pill = Palette.dark.sheet
     static let ink = Color.white
     static let dim = Palette.dark.t3
-    static let glyph = Color(hex: 0x3A4046)
+    // 0x3A4046 measured 1.88:1 on the viewer background — effectively invisible, and it
+    // is the only feedback during a multi-second G-code parse.
+    static let glyph = Color(hex: 0x747A80)
     static let offDot = Color(hex: 0x4F555B)
     static let offInk = Color(hex: 0x9AA0A6)
 }

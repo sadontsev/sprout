@@ -51,7 +51,9 @@ struct Palette: Sendable, Equatable {
         line2: Color(white: 1, opacity: 0.12),
         t1: Color(hex: 0xF3F5F7),
         t2: Color(hex: 0xA4ABB2),
-        t3: Color(hex: 0x6B7177),
+        // 0x6B7177 measured 3.71:1 on s1 — below the 4.5:1 AA floor accessibility.md
+        // cites, and t3 is the colour of nearly every caption in the app.
+        t3: Color(hex: 0x797F85),
         accent: Color(hex: 0x2BD4C0),
         accentInk: Color(hex: 0x04201D),
         accentDim: Color(hex: 0x2BD4C0, opacity: 0.15),
@@ -82,7 +84,8 @@ struct Palette: Sendable, Equatable {
         line2: Color(white: 0, opacity: 0.13),
         t1: Color(hex: 0x0D1012),
         t2: Color(hex: 0x585E64),
-        t3: Color(hex: 0x878D94),
+        // 0x878D94 measured 3.35:1 on white. Same rule as the dark theme's t3.
+        t3: Color(hex: 0x71777E),
         accent: Color(hex: 0x0EAE9C),
         accentInk: Color(hex: 0xFFFFFF),
         accentDim: Color(hex: 0x0EAE9C, opacity: 0.14),

@@ -13,7 +13,9 @@ private enum Chrome {
     static let pill = Color(hex: 0x16181B, opacity: 0.55)
     static let panel = Color(hex: 0x16181B, opacity: 0.97)
     static let dim = Color(hex: 0x3A4046)
-    static let faint = Color(hex: 0x4F555B)
+    // 0x4F555B measured 2.36:1 on `panel` — and this is the copy explaining why the
+    // camera will not wake, so it is exactly the text that has to be readable.
+    static let faint = Color(hex: 0x7B8187)
     static let muted = Color(hex: 0x6B7177)
     static let label = Color(hex: 0x9AA0A6)
     static let hairline = Color.white.opacity(0.10)
