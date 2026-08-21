@@ -1,0 +1,115 @@
+# Publishes a prebuilt Trellis image so users deploy rather than build.
+#
+# Trellis is the one component every user runs on their own machine, and until now
+# docker-compose.yml said `build: .` — so every install compiled it, on hardware that is often a
+# NAS or a Pi. This publishes linux/amd64 + linux/arm64 to GHCR instead.
+#
+# Tag-triggered, and the tag is PREFIXED: this repo also holds the iOS/macOS app and Canopy, so a
+# bare `v1.2.3` would be ambiguous about what was released.
+#
+#   git tag trellis-v1.2.3 && git push origin trellis-v1.2.3
+name: Trellis release
+
+on:
+  push:
+    tags: ["trellis-v*"]
+  # Build without publishing when the service or this workflow changes, so a broken build is found
+  # on the commit that broke it rather than at release time.
+  pull_request:
+    paths:
+      - "deploy/trellis/**"
+      - ".github/workflows/trellis-release.yml"
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/trellis
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # the GitHub Release
+      packages: write   # GHCR
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the release notes are built from the range since the previous
+          # trellis-v* tag, which a shallow clone cannot see.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The gate. scripts-test.sh and NOT `python -m unittest discover`: 13 of the tests import the
+      # service's own fastapi/httpx, and the bare command SKIPS twelve and ERRORS on one wherever
+      # those are absent — which reads as a passing suite to anyone not counting the skips. The
+      # script makes a venv and runs everything.
+      - name: Test
+        run: ./deploy/trellis/scripts-test.sh
+
+      # arm64 is emulated on the amd64 runner; nothing here compiles, so it costs little.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `1` and `1.2` exist so a user can follow a line rather than a point. That is what makes the
+      # Watchtower overlay safe to offer: Watchtower re-pulls whatever tag the container was
+      # started with, so `latest` would deliver a major version unannounced.
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}},prefix=,value=${{ github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
+            type=semver,pattern={{major}},value=${{ github.ref_name }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=sha,prefix=sha-
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./deploy/trellis
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Notes from the commits that actually touched the service. A release listing app and Canopy
+      # work would be worse than no notes: it invites users to read changes that cannot affect them.
+      - name: Notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          previous=$(git tag -l 'trellis-v*' --sort=-v:refname | grep -Fxv "${GITHUB_REF_NAME}" | head -1)
+          range=${previous:+${previous}..}${GITHUB_REF_NAME}
+          {
+            echo "## Deploy"
+            echo
+            echo '```bash'
+            echo "cp -r deploy/trellis <deploy-dir>/trellis && cd <deploy-dir>/trellis"
+            echo "cp .env.example .env        # BAMBUDDY_API_KEY is the only value you must set"
+            echo "docker compose up -d"
+            echo '```'
+            echo
+            echo "Images: \`${IMAGE}:${GITHUB_REF_NAME#trellis-v}\` — linux/amd64, linux/arm64."
+            echo "Pin a line with \`TRELLIS_TAG\` in \`.env\` (\`1\` for majors, \`latest\` to always move)."
+            echo
+            echo "## Changes"
+            echo
+            git log --no-merges --pretty='- %s' "$range" -- deploy/trellis/ || true
+          } > NOTES.md
+          cat NOTES.md
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          body_path: NOTES.md

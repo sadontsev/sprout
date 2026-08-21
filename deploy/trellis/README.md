@@ -27,8 +27,8 @@ all**. In the base file that turned a collections misconfiguration into no push,
 `external volume "…" not found` — a volume name rather than the feature actually lost.
 
 ```bash
-docker compose up -d --build                                              # push only
-docker compose -f docker-compose.yml -f docker-compose.collections.yml up -d --build   # + collections
+docker compose up -d                                                # push only
+docker compose -f docker-compose.yml -f docker-compose.collections.yml up -d   # + collections
 ```
 
 **Collections need Bambuddy signed in to Bambu Cloud** (Bambuddy → Cloud Profiles). Every
@@ -70,16 +70,71 @@ bindings instead of enrolling as a stranger, and it is deliberately never served
 
 ## Deploy (on the home server)
 
+The image is **prebuilt** — `ghcr.io/sadontsev/sprout/trellis`, `linux/amd64` and `linux/arm64`.
+Nothing compiles on your box, so the only files you need are the compose file and your `.env`.
+
 ```bash
 mkdir -p <deploy-dir>/trellis && cd <deploy-dir>/trellis
-# copy EVERY *.py the Dockerfile COPYs, plus Dockerfile, docker-compose.yml, requirements.txt.
-# A module you forget fails at IMPORT, after the build reports success — the container restarts in a
-# loop and `docker logs` is the only place it says so. Adding a new module means editing the
-# Dockerfile's COPY line too; that has bitten this service already.
-cp .env.example .env    # then fill it in — the APNS_* values are required and YOURS
+curl -O https://raw.githubusercontent.com/sadontsev/sprout/main/deploy/trellis/docker-compose.yml
+curl -O https://raw.githubusercontent.com/sadontsev/sprout/main/deploy/trellis/.env.example
+cp .env.example .env    # then fill it in
 printf 'BAMBUDDY_API_KEY=%s\n' "$(tr -d '[:space:]' < <secrets-dir>/bb_apikey)" >> .env
-docker compose up -d --build
+docker compose up -d
 curl -s localhost:8911/health
+```
+
+Update by hand, whenever you feel like it:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+### Which version you follow
+
+`TRELLIS_TAG` in `.env` picks the line, defaulting to `latest`:
+
+| value | you get |
+|---|---|
+| `latest` | every release, including breaking ones |
+| `1` | patches and features within major 1, never a major bump |
+| `1.4.2` | exactly that, forever |
+
+### Automatic updates (optional)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.watchtower.yml up -d
+```
+
+**Watchtower needs the Docker socket, and the Docker socket is root on the host.** A container
+holding it can start any other container, mount any path, and read any secret on the machine. That
+is a real trade for never updating by hand, and it should be a decision rather than a default —
+which is why it is a separate file you have to name. `docker compose pull` costs two commands and
+no socket.
+
+If you do use it, **set `TRELLIS_TAG=1` first**. Watchtower re-pulls whatever tag the container was
+*started* with, so on `latest` it will eventually pull a major version with breaking changes,
+unattended, at whatever hour the interval lands on.
+
+### Building it yourself
+
+Contributors, and anyone running a modified Trellis:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+That overlay is also the answer if you distrust the published image — it builds from the source in
+front of you. Note the Dockerfile COPYs each `*.py` by name: a module you add and forget fails at
+IMPORT, after the build reports success, and the container restarts in a loop with `docker logs` as
+the only place it says so.
+
+### Releases
+
+Tagging `trellis-v*` builds both architectures, publishes to GHCR and opens a GitHub Release whose
+notes are the commits touching `deploy/trellis/` since the previous such tag:
+
+```bash
+git tag trellis-v1.0.0 && git push origin trellis-v1.0.0
 ```
 
 `BAMBUDDY_API_KEY` is the only required value, and compose's fail-hard `${VAR:?}` form aborts the

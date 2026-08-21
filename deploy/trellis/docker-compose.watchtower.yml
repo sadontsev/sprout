@@ -1,0 +1,37 @@
+# Keep Trellis updated automatically — OPT-IN, and read the warning first.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.watchtower.yml up -d
+#
+# ── the warning ────────────────────────────────────────────────────────────────────────────────
+#
+# Watchtower needs the Docker socket, and the Docker socket is root on the host. A container with
+# it can start any other container, mount any path, and read any secret on the machine. That is a
+# real trade for "I never have to update by hand", and it should be a decision rather than a
+# default — which is why this is a separate file you have to name.
+#
+# Updating by hand is two commands and no socket:
+#
+#   docker compose pull && docker compose up -d
+#
+# ── if you do use it ───────────────────────────────────────────────────────────────────────────
+#
+# Set TRELLIS_TAG=1 in .env first. Watchtower re-pulls whatever tag the container was STARTED with,
+# so on `latest` it will one day pull a major version with breaking changes, unattended, at
+# whatever hour the interval lands on. `1` takes patches and features and stops at the major.
+#
+# --label-enable scopes it to the container labelled below. Without that, Watchtower updates every
+# container on the host, including Bambuddy and anything else you run.
+services:
+  trellis:
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: bambu-trellis-watchtower
+    restart: unless-stopped
+    # 6 hours. Trellis is a push relay, not something that benefits from a tighter loop, and each
+    # check is a registry round trip.
+    command: --label-enable --cleanup --interval 21600
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

@@ -1,6 +1,15 @@
 services:
   trellis:
-    build: .
+    # PREBUILT, not built here. Every user runs this service on their own machine, and that was
+    # often a NAS or a Pi compiling it from source for no reason. Contributors who want the local
+    # build add the overlay:
+    #
+    #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+    #
+    # TRELLIS_TAG picks which line to follow. `latest` moves across majors; set it to `1` in .env
+    # to take patches and features but never a breaking change — which is what makes the Watchtower
+    # overlay safe, since Watchtower re-pulls whatever tag the container started with.
+    image: ghcr.io/sadontsev/sprout/trellis:${TRELLIS_TAG:-latest}
     container_name: bambu-trellis
     restart: unless-stopped
     # Host network so it reaches Bambuddy at localhost:8910 and exposes its own :8911 on the host.

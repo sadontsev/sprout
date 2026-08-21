@@ -1,0 +1,11 @@
+# Build Trellis from this checkout instead of pulling the published image.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# For contributors and for anyone running a modified Trellis. Users do not need this file: the base
+# compose pulls a prebuilt linux/amd64 + linux/arm64 image from GHCR.
+services:
+  trellis:
+    build: .
+    # Overrides the registry reference so compose tags the local build rather than trying to pull.
+    image: bambu-trellis:local
