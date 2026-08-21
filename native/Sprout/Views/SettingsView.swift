@@ -106,11 +106,11 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             NozzleIcon(color: c.accent, size: 44)
             Text("Sprout")
-                .font(.system(size: 30, weight: .bold))
+                .scaledFont(30, weight: .bold)
                 .tracking(-0.8)
                 .foregroundStyle(c.t1)
             Text("Point the app at your self-hosted Bambuddy server.")
-                .font(.system(size: 14))
+                .scaledFont(14)
                 .foregroundStyle(c.t2)
         }
         .padding(.bottom, 4)
@@ -127,7 +127,7 @@ struct SettingsView: View {
                 sectionLabel("BAMBUDDY")
                 Tap { withAnimation(Motion.standard(0.25)) { showBambuddyInfo.toggle() } } content: {
                     Image(systemName: showBambuddyInfo ? "info.circle.fill" : "info.circle")
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(c.accent)
                         .contentShape(.rect)
                 }
@@ -140,21 +140,21 @@ struct SettingsView: View {
                     Text("Bambuddy is the server that actually talks to your printer. You run it "
                          + "yourself, on a NAS, a Pi or any spare box that runs Docker. Sprout is a "
                          + "client for it and does nothing on its own.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.t2)
                         .fixedSize(horizontal: false, vertical: true)
                     bullet("Server URL – where Bambuddy is reachable, from this phone.")
                     bullet("API key – made in Bambuddy under Settings, and starts with bb_ .")
                     Text("No server yet? The demo below runs the whole app on sample data.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.t3)
                         .fixedSize(horizontal: false, vertical: true)
                     Link(destination: URL(string: "https://github.com/maziggy/bambuddy")!) {
                         HStack(spacing: 5) {
                             Text("Bambuddy on GitHub")
-                                .font(.system(size: 12.5, weight: .semibold))
+                                .scaledFont(12.5, weight: .semibold)
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 10, weight: .bold))
+                                .scaledFont(10, weight: .bold)
                         }
                         .foregroundStyle(c.accent)
                     }
@@ -169,7 +169,7 @@ struct SettingsView: View {
             field("API key", text: $apiKey, placeholder: "bb_…", secure: true)
             if !apiKey.isEmpty, !ConfigRules.isValidApiKey(apiKey) {
                 Text("That doesn't look like a Bambuddy key – they start with bb_ .")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(c.heating)
             }
         }
@@ -188,7 +188,7 @@ struct SettingsView: View {
                         withAnimation(Motion.standard(0.22)) { model.theme = option }
                     } content: {
                         Text(option.label)
-                            .font(.system(size: 14, weight: .semibold))
+                            .scaledFont(14, weight: .semibold)
                             .foregroundStyle(on ? c.accentInk : c.t2)
                             .frame(maxWidth: .infinity)
                             .frame(height: 40)
@@ -219,7 +219,7 @@ struct SettingsView: View {
                 sectionLabel("TRELLIS")
                 Tap { withAnimation(Motion.standard(0.25)) { showTrellisInfo.toggle() } } content: {
                     Image(systemName: showTrellisInfo ? "info.circle.fill" : "info.circle")
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(c.accent)
                         .contentShape(.rect)
                 }
@@ -234,10 +234,10 @@ struct SettingsView: View {
             if let claimIssue = model.liveActivity?.claimHealth.message {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.paused)
                     Text(claimIssue)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.t2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -250,7 +250,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Trellis is a small service you run next to Bambuddy, on your own machine. "
                          + "It does what this app cannot do alone:")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.t2)
                     // Push is BOTH kinds, and the app really does both now: PushRegistrar asks for
                     // alert/sound/badge and registers for remote notifications, and Trellis sends
@@ -264,15 +264,15 @@ struct SettingsView: View {
                     bullet("MakerWorld import (optional) – the download runs on your server, not here.")
                     Text("The MakerWorld parts are extras: push and the Live Activity work without "
                          + "them. Everything else in the app works without Trellis at all.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.t3)
                         .fixedSize(horizontal: false, vertical: true)
                     Link(destination: URL(string: "https://github.com/sadontsev/sprout/tree/main/deploy/trellis")!) {
                         HStack(spacing: 5) {
                             Text("Set it up on GitHub")
-                                .font(.system(size: 12.5, weight: .semibold))
+                                .scaledFont(12.5, weight: .semibold)
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 10, weight: .bold))
+                                .scaledFont(10, weight: .bold)
                         }
                         .foregroundStyle(c.accent)
                     }
@@ -291,7 +291,7 @@ struct SettingsView: View {
                 field("Trellis URL", text: $pushUrl, placeholder: derivedPushHint, keyboard: .URL)
                 // The resolved value, not a promise that one exists.
                 Text(pushResolutionNote)
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(c.t3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -311,11 +311,11 @@ struct SettingsView: View {
                 HStack {
                     sectionLabel("BAMBUDDY ADMIN")
                     Text("optional")
-                        .font(.mono(10))
+                        .scaledMono(10)
                         .foregroundStyle(c.t3)
                     Spacer()
                     Image(systemName: showAdvanced ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.t3)
                 }
                 .contentShape(.rect)
@@ -325,7 +325,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Only needed to save a custom print profile. Bambuddy stores a slicer "
                          + "override as a local preset, and it refuses to create one for an API key.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.t2)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("You need a custom profile when a stock Bambu preset does not describe what "
@@ -333,7 +333,7 @@ struct SettingsView: View {
                          + "or layer height you have tuned for one model, or a nozzle the stock "
                          + "profile doesn’t cover. Without admin you can still slice and print with "
                          + "every stock preset; you just cannot save a tweak for next time.")
-                        .font(.system(size: 11.5))
+                        .scaledFont(11.5)
                         .foregroundStyle(c.t3)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -342,7 +342,7 @@ struct SettingsView: View {
                     if !adminUsername.isEmpty {
                         Tap(action: verifyAdmin) {
                             Text(adminCheck ?? "Check admin login")
-                                .font(.system(size: 13, weight: .semibold))
+                                .scaledFont(13, weight: .semibold)
                                 .foregroundStyle(c.accent)
                         }
                     }
@@ -353,15 +353,15 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
                             Text("Model texturizer")
-                                .font(.system(size: 14, weight: .semibold))
+                                .scaledFont(14, weight: .semibold)
                                 .foregroundStyle(c.t3)
                             Spacer()
                             Text("Not in this build")
-                                .font(.mono(10))
+                                .scaledMono(10)
                                 .foregroundStyle(c.t3)
                         }
                         Text("The stl-texturize sidecar isn't wired up natively yet. Your setting is kept.")
-                            .font(.system(size: 11))
+                            .scaledFont(11)
                             .foregroundStyle(c.t3)
                     }
                 }
@@ -372,9 +372,9 @@ struct SettingsView: View {
 
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 7) {
-            Text(verbatim: "·").font(.system(size: 12, weight: .bold)).foregroundStyle(c.accent)
+            Text(verbatim: "·").scaledFont(12, weight: .bold).foregroundStyle(c.accent)
             Text(text)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(c.t2)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -385,7 +385,7 @@ struct SettingsView: View {
             HStack(spacing: 8) {
                 if connecting { ProgressView().tint(c.accentInk) }
                 Text(connecting ? "Connecting…" : (isOnboarding ? "Connect" : "Save"))
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(16, weight: .semibold)
                     .foregroundStyle(c.accentInk)
             }
             .frame(maxWidth: .infinity)
@@ -401,7 +401,7 @@ struct SettingsView: View {
             dismiss()
         } content: {
             Text("Disconnect")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(c.error)
                 .frame(maxWidth: .infinity)
                 .frame(height: 48)
@@ -421,9 +421,9 @@ struct SettingsView: View {
             } content: {
                 HStack(spacing: 8) {
                     Image(systemName: "play.rectangle")
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                     Text(isOnboarding ? "Explore the demo" : "Open the demo")
-                        .font(.system(size: 15, weight: .semibold))
+                        .scaledFont(15, weight: .semibold)
                 }
                 .foregroundStyle(c.accent)
                 .frame(maxWidth: .infinity)
@@ -438,7 +438,7 @@ struct SettingsView: View {
                  // clearing it, which is why the banner says "Exit demo" and not "Sign out".
                  : "Sample data, for showing the app to someone. Your connection is kept and comes "
                  + "back when you leave.")
-                .font(.system(size: 11.5))
+                .scaledFont(11.5)
                 .foregroundStyle(c.t3)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -449,7 +449,7 @@ struct SettingsView: View {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
         return Text("Sprout \(v) (\(b)) · native")
-            .font(.mono(10, weight: .medium))
+            .scaledMono(10, weight: .medium)
             .foregroundStyle(c.t3)
             .frame(maxWidth: .infinity)
             .padding(.top, 6)
@@ -458,12 +458,12 @@ struct SettingsView: View {
     // MARK: - Pieces
 
     private func sectionLabel(_ s: String) -> some View {
-        Text(s).font(.mono(10)).tracking(1).foregroundStyle(c.t3)
+        Text(s).scaledMono(10).tracking(1).foregroundStyle(c.t3)
     }
 
     private func field(_ label: String, text: Binding<String>, placeholder: String, secure: Bool = false, keyboard: UIKeyboardType = .default) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.system(size: 12, weight: .semibold)).foregroundStyle(c.t2)
+            Text(label).scaledFont(12, weight: .semibold).foregroundStyle(c.t2)
             Group {
                 if secure {
                     SecureField(placeholder, text: text)
@@ -471,7 +471,7 @@ struct SettingsView: View {
                     TextField(placeholder, text: text)
                 }
             }
-            .font(.system(size: 15))
+            .scaledFont(15)
             .foregroundStyle(c.t1)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
@@ -486,18 +486,18 @@ struct SettingsView: View {
     private func toggleRow(_ label: String, isOn: Binding<Bool>, hint: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text(label).font(.system(size: 14, weight: .semibold)).foregroundStyle(c.t1)
+                Text(label).scaledFont(14, weight: .semibold).foregroundStyle(c.t1)
                 Spacer()
                 PillToggle(value: isOn, onColor: c.accent, offColor: c.s3, knob: c.t1)
             }
-            Text(hint).font(.system(size: 11)).foregroundStyle(c.t3)
+            Text(hint).scaledFont(11).foregroundStyle(c.t3)
         }
     }
 
     private func errorBox(_ message: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 14)).foregroundStyle(c.error)
-            Text(message).font(.system(size: 13)).foregroundStyle(c.t1)
+            Image(systemName: "exclamationmark.triangle.fill").scaledFont(14).foregroundStyle(c.error)
+            Text(message).scaledFont(13).foregroundStyle(c.t1)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)

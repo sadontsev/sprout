@@ -68,21 +68,21 @@ struct ModelDetailView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.system(size: 20, weight: .bold))
+                .scaledFont(20, weight: .bold)
                 .foregroundStyle(c.t1)
 
             HStack(spacing: 8) {
                 if let creator {
                     Text(verbatim: "@\(creator)")
-                        .font(.mono(12, weight: .medium))
+                        .scaledMono(12, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
                 let stats = MakerWorldSearch.stats(hit)
                 if !stats.isEmpty {
                     Text(verbatim: "·")
-                        .font(.mono(12)).foregroundStyle(c.t3)
+                        .scaledMono(12).foregroundStyle(c.t3)
                     Text(stats)
-                        .font(.mono(12, weight: .medium))
+                        .scaledMono(12, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
             }
@@ -90,10 +90,10 @@ struct ModelDetailView: View {
             if let licence {
                 Tap { licenceExpanded.toggle() } content: {
                     HStack(spacing: 6) {
-                        Image(systemName: "doc.text").font(.system(size: 11, weight: .semibold))
-                        Text(licence.label).font(.system(size: 12.5, weight: .semibold))
+                        Image(systemName: "doc.text").scaledFont(11, weight: .semibold)
+                        Text(licence.label).scaledFont(12.5, weight: .semibold)
                         Image(systemName: licenceExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 10, weight: .bold))
+                            .scaledFont(10, weight: .bold)
                     }
                     .foregroundStyle(c.t2)
                     .padding(.horizontal, 11).padding(.vertical, 7)
@@ -104,7 +104,7 @@ struct ModelDetailView: View {
                     // MakerWorld's own words, verbatim — never paraphrased into something that
                     // might promise a permission the licence does not grant.
                     Text(verbatim: prose)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.t2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -126,9 +126,9 @@ struct ModelDetailView: View {
                             HStack(spacing: 4) {
                                 Text(descriptionExpanded ? "Show less" : "Read more")
                                 Image(systemName: descriptionExpanded ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .scaledFont(9, weight: .bold)
                             }
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .scaledFont(12.5, weight: .semibold)
                             .foregroundStyle(c.accent)
                             .contentShape(.rect)
                         }
@@ -140,7 +140,7 @@ struct ModelDetailView: View {
             if design?.isExclusive == true {
                 // Stated up front rather than discovered at the 502. See MakerWorld.failure.
                 Label("This model is marked exclusive. The import may be refused.", systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     // `heating`, not `paused`: paused is the print-state BLUE, and a caution painted
                     // in a status colour reads as status.
                     .foregroundStyle(c.heating)
@@ -159,7 +159,7 @@ struct ModelDetailView: View {
             // C2 — the wait has a shape that matches what will replace it.
             VStack(alignment: .leading, spacing: 10) {
                 Text("READING VERSIONS…")
-                    .font(.mono(11, weight: .bold))
+                    .scaledMono(11, weight: .bold)
                     .foregroundStyle(c.t3)
                 ForEach(0..<3, id: \.self) { _ in
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -178,22 +178,22 @@ struct ModelDetailView: View {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(picked == nil ? "Choose a version" : "Version")
-                            .font(.mono(11, weight: .bold))
+                            .scaledMono(11, weight: .bold)
                             .foregroundStyle(c.t3)
                         Text(picked?.title ?? "\(rows.count) available")
-                            .font(.system(size: 14, weight: .semibold))
+                            .scaledFont(14, weight: .semibold)
                             .foregroundStyle(c.t1)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                         if let d = picked?.detail {
                             Text(MakerWorld.metaLine(d))
-                                .font(.mono(11.5, weight: .medium))
+                                .scaledMono(11.5, weight: .medium)
                                 .foregroundStyle(c.t3)
                         }
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(c.t3)
                 }
                 .padding(13)
@@ -215,7 +215,7 @@ struct ModelDetailView: View {
                 HStack(spacing: 8) {
                     if importing { ProgressView().tint(.black) }
                     Text(importing ? "Importing…" : "Import to library")
-                        .font(.system(size: 16, weight: .bold))
+                        .scaledFont(16, weight: .bold)
                 }
                 .foregroundStyle(.black)
                 .frame(maxWidth: .infinity)
@@ -231,7 +231,7 @@ struct ModelDetailView: View {
             // look at, which is the whole value of `MakerWorldAccess`.
             if let why = explore.access.message {
                 Text(verbatim: why)
-                    .font(.system(size: 11.5))
+                    .scaledFont(11.5)
                     .foregroundStyle(c.t3)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 20)
@@ -278,8 +278,8 @@ struct ModelDetailView: View {
             if f.offerWebLink, let link = MakerWorld.webUrl(modelId: hit.id) {
                 Link(destination: link) {
                     HStack(spacing: 6) {
-                        Text("Open on MakerWorld").font(.system(size: 13, weight: .semibold))
-                        Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .bold))
+                        Text("Open on MakerWorld").scaledFont(13, weight: .semibold)
+                        Image(systemName: "arrow.up.right").scaledFont(11, weight: .bold)
                     }
                     .foregroundStyle(c.accent)
                 }

@@ -413,12 +413,12 @@ private struct MacQuickLookCard: View {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(verbatim: title)
-                        .font(.system(size: 19, weight: .semibold))
+                        .scaledFont(19, weight: .semibold)
                         .foregroundStyle(c.t1)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(verbatim: MacQuickLookFacts.identity(file))
-                        .font(.mono(12, weight: .medium))
+                        .scaledMono(12, weight: .medium)
                         .foregroundStyle(c.t3)
                         .monospacedDigit()
                 }
@@ -455,7 +455,7 @@ private struct MacQuickLookCard: View {
 
     private func heroNote(_ text: String) -> some View {
         Text(verbatim: text)
-            .font(.system(size: 13))
+            .scaledFont(13)
             .foregroundStyle(c.t3)
             .multilineTextAlignment(.center)
             .lineSpacing(4)
@@ -466,7 +466,7 @@ private struct MacQuickLookCard: View {
     private var materials: some View {
         HStack(spacing: 0) {
             Text("Materials")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             // Indexed, not by value: two slots of the same colour are ordinary, and identifying
@@ -482,11 +482,11 @@ private struct MacQuickLookCard: View {
     private func factRow(_ label: String, _ value: String) -> some View {
         HStack(spacing: 0) {
             Text(verbatim: label)
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(verbatim: value)
-                .font(.mono(12, weight: .medium))
+                .scaledMono(12, weight: .medium)
                 .foregroundStyle(c.t1)
                 .monospacedDigit()
         }

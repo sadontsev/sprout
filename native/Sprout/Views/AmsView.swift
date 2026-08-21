@@ -62,7 +62,7 @@ struct AmsView: View {
         @Bindable var hw = hw
         return VStack(alignment: .leading, spacing: 12) {
             Text("Hardware")
-                .font(.system(size: 30, weight: .bold))
+                .scaledFont(30, weight: .bold)
                 .kerning(-0.8)
                 .foregroundStyle(c.t1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -71,21 +71,21 @@ struct AmsView: View {
                 Tap { hw.segment = triage.first?.segment ?? hw.segment } content: {
                     HStack(spacing: 11) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 15))
+                            .scaledFont(15)
                             .foregroundStyle(c.heating)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(headline)
-                                .font(.system(size: 14, weight: .semibold))
+                                .scaledFont(14, weight: .semibold)
                                 .foregroundStyle(c.t1)
                             Text(verbatim: HardwareTriage.detail(triage))
-                                .font(.mono(11.5, weight: .medium))
+                                .scaledMono(11.5, weight: .medium)
                                 .foregroundStyle(c.t2)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                         }
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .bold))
+                            .scaledFont(12, weight: .bold)
                             .foregroundStyle(c.t3)
                     }
                     .padding(12)
@@ -180,24 +180,24 @@ struct AmsView: View {
     @ViewBuilder private var unitChips: some View {
         FlowLayout(spacing: 8, rowSpacing: 8) {
             Text("\(vm.ams.filter { !$0.empty }.count) of \(vm.ams.isEmpty ? 4 : vm.ams.count) slots loaded")
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(c.t3)
 
             ForEach(vm.amsUnits) { u in
                 HwChip {
-                    Text(u.label).font(.mono(10, weight: .bold)).foregroundStyle(c.t2)
+                    Text(u.label).scaledMono(10, weight: .bold).foregroundStyle(c.t2)
                     if let h = u.humidity, h > 0 {
-                        Image(systemName: "drop").font(.system(size: 10)).foregroundStyle(c.t3)
-                        Text("\(Int(h.rounded()))%").font(.mono(10.5)).foregroundStyle(c.t3)
+                        Image(systemName: "drop").scaledFont(10).foregroundStyle(c.t3)
+                        Text("\(Int(h.rounded()))%").scaledMono(10.5).foregroundStyle(c.t3)
                     }
                     if let t = u.tempC, t > 0 {
-                        Image(systemName: "thermometer.medium").font(.system(size: 10)).foregroundStyle(c.t3)
-                        Text(String(format: "%.1f°", t)).font(.mono(10.5)).foregroundStyle(c.t3)
+                        Image(systemName: "thermometer.medium").scaledFont(10).foregroundStyle(c.t3)
+                        Text(String(format: "%.1f°", t)).scaledMono(10.5).foregroundStyle(c.t3)
                     }
                     // Two AMS 2 Pro units are identical down to the label; the serial tail is the
                     // only thing that tells them apart when you are stood at the machine.
                     if vm.amsUnits.count > 1, !u.serialTail.isEmpty {
-                        Text("#\(u.serialTail)").font(.mono(9.5)).foregroundStyle(c.t3)
+                        Text("#\(u.serialTail)").scaledMono(9.5).foregroundStyle(c.t3)
                     }
                     // Extruder 0 is the RIGHT/main head on the H2 series — this chip shipped
                     // inverted once. With a Filament Track Switch fitted no unit has a fixed
@@ -205,10 +205,10 @@ struct AmsView: View {
                     // units and nothing for the others.
                     if vm.amsUnits.count > 1 {
                         if vm.amsRouting == .switch {
-                            Text("→ auto").font(.mono(10)).foregroundStyle(c.t3)
+                            Text("→ auto").scaledMono(10).foregroundStyle(c.t3)
                         } else if !AmsTopology.extruderSide(u.extruder).isEmpty {
                             Text("→ \(AmsTopology.extruderSide(u.extruder))")
-                                .font(.mono(10))
+                                .scaledMono(10)
                                 .foregroundStyle(c.t3)
                         }
                     }
@@ -314,7 +314,7 @@ private struct SlotCard: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 8) {
                         Text(title)
-                            .font(.system(size: 16, weight: .bold))
+                            .scaledFont(16, weight: .bold)
                             .foregroundStyle(c.t1)
                             .lineLimit(1)
                         if slot.active {
@@ -329,7 +329,7 @@ private struct SlotCard: View {
                         }
                     }
                     Text(slotName)
-                        .font(.mono(11, weight: .medium))
+                        .scaledMono(11, weight: .medium)
                         .foregroundStyle(c.t3)
                         .lineLimit(1)
                         .padding(.top, 5)
@@ -337,7 +337,7 @@ private struct SlotCard: View {
                     // stood at the printer, the spool name is what you need when you are choosing.
                     if !spoolLine.isEmpty {
                         Text(spoolLine)
-                            .font(.system(size: 11, weight: .medium))
+                            .scaledFont(11, weight: .medium)
                             .lineSpacing(4)
                             .foregroundStyle(c.t3)
                             .lineLimit(2)
@@ -350,12 +350,12 @@ private struct SlotCard: View {
                     VStack(alignment: .trailing, spacing: 2) {
                         if let grams {
                             Text("\(Int(grams.rounded()))g")
-                                .font(.mono(17, weight: .bold))
+                                .scaledMono(17, weight: .bold)
                                 .foregroundStyle(c.t1)
-                            Text(slot.pct).font(.mono(10)).foregroundStyle(c.t3)
+                            Text(slot.pct).scaledMono(10).foregroundStyle(c.t3)
                         } else {
                             Text(slot.pct)
-                                .font(.mono(17, weight: .bold))
+                                .scaledMono(17, weight: .bold)
                                 .foregroundStyle(c.t1)
                         }
                     }
@@ -429,7 +429,7 @@ private struct SlotCard: View {
 
     private func slotTag(_ text: String, ink: Color, fill: Color) -> some View {
         Text(text)
-            .font(.mono(8.5))
+            .scaledMono(8.5)
             .tracking(0.5)
             .foregroundStyle(ink)
             .padding(.horizontal, 7)
@@ -442,9 +442,9 @@ private struct SlotCard: View {
         Tap(action: locked.press(.amsUnload) { run("Unload failed") { try await $0.amsUnload($1) } }) {
             HStack(spacing: 7) {
                 if locked.blocked(.amsUnload) {
-                    Image(systemName: "lock").font(.system(size: 12)).foregroundStyle(c.t1)
+                    Image(systemName: "lock").scaledFont(12).foregroundStyle(c.t1)
                 }
-                Text("Unload").font(.system(size: 12, weight: .semibold)).foregroundStyle(c.t1)
+                Text("Unload").scaledFont(12, weight: .semibold).foregroundStyle(c.t1)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -461,9 +461,9 @@ private struct SlotCard: View {
         }) {
             HStack(spacing: 7) {
                 if locked.blocked(.amsLoad) {
-                    Image(systemName: "lock").font(.system(size: 13)).foregroundStyle(c.accent)
+                    Image(systemName: "lock").scaledFont(13).foregroundStyle(c.accent)
                 }
-                Text("Load filament").font(.system(size: 13, weight: .semibold)).foregroundStyle(c.accent)
+                Text("Load filament").scaledFont(13, weight: .semibold).foregroundStyle(c.accent)
             }
             .frame(maxWidth: .infinity)
             .frame(height: 44)
@@ -508,19 +508,19 @@ private struct IdleDryers: View {
             VStack(spacing: 0) {
                 Tap { open.toggle() } content: {
                     HStack(spacing: 12) {
-                        Image(systemName: "wind").font(.system(size: 17)).foregroundStyle(c.t2)
+                        Image(systemName: "wind").scaledFont(17).foregroundStyle(c.t2)
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Filament drying")
-                                .font(.system(size: 14, weight: .semibold))
+                                .scaledFont(14, weight: .semibold)
                                 .foregroundStyle(c.t1)
                             Text("\(dryers.count) units ready · \(names)")
-                                .font(.system(size: 11.5, weight: .medium))
+                                .scaledFont(11.5, weight: .medium)
                                 .foregroundStyle(c.t3)
                                 .lineLimit(1)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         Image(systemName: open ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 18))
+                            .scaledFont(18)
                             .foregroundStyle(c.t3)
                     }
                     .padding(14)
@@ -569,6 +569,8 @@ private struct DryTweak: Equatable, Sendable {
 /// per-type fallbacks), adjust, optional spool rotation; live cycle detail + Stop while running.
 @MainActor
 private struct DryerCard: View {
+    @ScaledMetric(relativeTo: .body) private var headlineSize: CGFloat = 15
+    @ScaledMetric(relativeTo: .body) private var unitSize: CGFloat = 12
     let model: AppModel
     let d: DryerVM
     /// nil on a single-unit machine.
@@ -631,7 +633,7 @@ private struct DryerCard: View {
 
                 Tap(disabled: busy, action: locked.press(.dryStop) { confirmStop = true }) {
                     Text("Stop")
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(13, weight: .semibold)
                         .foregroundStyle(c.t1)
                         .padding(.horizontal, 15)
                         .padding(.vertical, 8)
@@ -646,16 +648,16 @@ private struct DryerCard: View {
             FlowLayout(spacing: 8, rowSpacing: 8) {
                 if let stage = d.stage, let target = d.targetTemp {
                     HwChip(padV: 4) {
-                        Image(systemName: "thermometer.medium").font(.system(size: 11)).foregroundStyle(c.heating)
+                        Image(systemName: "thermometer.medium").scaledFont(11).foregroundStyle(c.heating)
                         Text(stage == .heating ? "heating to \(fmtTemp(target))°" : "holding \(fmtTemp(target))°")
-                            .font(.mono(11.5))
+                            .scaledMono(11.5)
                             .foregroundStyle(c.t2)
                     }
                 }
                 if let humidity = d.humidityPct {
                     HwChip(padV: 4) {
-                        Image(systemName: "drop").font(.system(size: 11)).foregroundStyle(c.t3)
-                        Text("\(humidity)%").font(.mono(11.5)).foregroundStyle(c.t2)
+                        Image(systemName: "drop").scaledFont(11).foregroundStyle(c.t3)
+                        Text("\(humidity)%").scaledMono(11.5).foregroundStyle(c.t2)
                     }
                 }
             }
@@ -669,22 +671,24 @@ private struct DryerCard: View {
     /// with it rather than being pushed onto its own line. Each run carries its own attributes, so
     /// the outer `Text` never has to override them.
     private var headline: Text {
+        // `@ScaledMetric` rather than `.scaledFont`: this CONCATENATES `Text`, so each piece has to
+        // stay a `Text`, and a ViewModifier returns `some View`. Same mechanism, one level up.
         let title = Text("Drying \(d.filament.isEmpty ? "filament" : d.filament)")
-            .font(.system(size: 15, weight: .bold))
+            .font(.system(size: headlineSize, weight: .bold))
             .foregroundStyle(c.t1)
         guard let unitLabel else { return title }
         let unit = Text(" · \(unitLabel)")
-            .font(.system(size: 12, weight: .semibold))
+            .font(.system(size: unitSize, weight: .semibold))
             .foregroundStyle(c.t3)
         return Text("\(title)\(unit)")
     }
 
     private var remaining: Text {
         let left = Text(d.remainingText)
-            .font(.mono(26, weight: .bold))
+            .scaledMono(26, weight: .bold)
             .foregroundStyle(c.t1)
         let unit = Text("  left")
-            .font(.system(size: 13, weight: .semibold))
+            .scaledFont(13, weight: .semibold)
             .foregroundStyle(c.t3)
         return Text("\(left)\(unit)")
     }
@@ -695,10 +699,10 @@ private struct DryerCard: View {
         VStack(spacing: 0) {
             Tap { open.toggle() } content: {
                 HStack(spacing: 12) {
-                    Image(systemName: "wind").font(.system(size: 17)).foregroundStyle(c.t2)
+                    Image(systemName: "wind").scaledFont(17).foregroundStyle(c.t2)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(unitLabel.map { "Filament drying · \($0)" } ?? "Filament drying")
-                            .font(.system(size: 14, weight: .semibold))
+                            .scaledFont(14, weight: .semibold)
                             .foregroundStyle(c.t1)
                         // A REASON when there is one, not a bare invitation to dry. "38 % is above
                         // the 30 % you'd want" tells you whether to bother; "Dry damp spools right
@@ -706,19 +710,19 @@ private struct DryerCard: View {
                         if let rh = d.humidityPct, Double(rh) >= HardwareTriage.dampRH, !open {
                             Text(verbatim: HardwareTriage.dryingReason(rh: Double(rh),
                                                                        maxDryTemp: d.maxTemp))
-                                .font(.system(size: 11.5, weight: .medium))
+                                .scaledFont(11.5, weight: .medium)
                                 .foregroundStyle(c.heating)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .multilineTextAlignment(.leading)
                         } else {
                             Text(open ? "This AMS dries up to \(d.maxTemp)°C." : "Dry damp spools right in the AMS.")
-                                .font(.system(size: 11.5, weight: .medium))
+                                .scaledFont(11.5, weight: .medium)
                                 .foregroundStyle(c.t3)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: open ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 16))
+                        .scaledFont(16)
                         .foregroundStyle(c.t3)
                 }
                 .padding(14)
@@ -746,10 +750,10 @@ private struct DryerCard: View {
                                 Circle().fill(fill).frame(width: 10, height: 10)
                             }
                             Text(o.type)
-                                .font(.system(size: 12, weight: .semibold))
+                                .scaledFont(12, weight: .semibold)
                                 .foregroundStyle(on ? c.accent : c.t2)
                             Text("\(o.temp)° · \(o.hours)h")
-                                .font(.mono(10.5, weight: .medium))
+                                .scaledMono(10.5, weight: .medium)
                                 .foregroundStyle(c.t3)
                         }
                         .padding(.horizontal, 10)
@@ -759,7 +763,7 @@ private struct DryerCard: View {
                 }
                 if d.options.isEmpty {
                     Text("No filament loaded.")
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
             }
@@ -773,9 +777,9 @@ private struct DryerCard: View {
 
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Rotate spool").font(.system(size: 13, weight: .semibold)).foregroundStyle(c.t1)
+                    Text("Rotate spool").scaledFont(13, weight: .semibold).foregroundStyle(c.t1)
                     Text("Turns the spool during drying for even heat.")
-                        .font(.system(size: 11, weight: .medium))
+                        .scaledFont(11, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -785,10 +789,10 @@ private struct DryerCard: View {
             ForEach(d.blockers, id: \.self) { blocker in
                 HStack(spacing: 7) {
                     Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(c.heating)
                     Text(blocker)
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                         .foregroundStyle(c.heating)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -806,10 +810,10 @@ private struct DryerCard: View {
         Tap(disabled: startDisabled, action: locked.press(.dryStart, start)) {
             HStack(spacing: 8) {
                 if locked.blocked(.dryStart) {
-                    Image(systemName: "lock").font(.system(size: 14)).foregroundStyle(c.accentInk)
+                    Image(systemName: "lock").scaledFont(14).foregroundStyle(c.accentInk)
                 }
                 Text("Start drying — \(effTemp)° for \(effHours)h")
-                    .font(.system(size: 14, weight: .bold))
+                    .scaledFont(14, weight: .bold)
                     .foregroundStyle(c.accentInk)
             }
             .frame(maxWidth: .infinity)
@@ -919,13 +923,13 @@ private struct HwStepper: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .semibold))
+                .scaledFont(10, weight: .semibold)
                 .tracking(0.6)
                 .foregroundStyle(c.t3)
             HStack {
                 button("minus", action: onMinus)
                 Spacer(minLength: 4)
-                Text(value).font(.mono(16, weight: .bold)).foregroundStyle(c.t1)
+                Text(value).scaledMono(16, weight: .bold).foregroundStyle(c.t1)
                 Spacer(minLength: 4)
                 button("plus", action: onPlus)
             }
@@ -942,7 +946,7 @@ private struct HwStepper: View {
     private func button(_ symbol: String, action: @escaping () -> Void) -> some View {
         Tap(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 14, weight: .medium))
+                .scaledFont(14, weight: .medium)
                 .foregroundStyle(c.t1)
                 .frame(width: 30, height: 30)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(c.s3))
@@ -1147,16 +1151,16 @@ private struct NozzlesSection: View {
         VStack(alignment: .leading, spacing: 0) {
             // Sub-header: which side, fixed vs vortex, and whether it's the active extruder.
             HStack(spacing: 8) {
-                Text(th.label).font(.system(size: 13, weight: .bold)).foregroundStyle(c.t1)
+                Text(th.label).scaledFont(13, weight: .bold).foregroundStyle(c.t1)
                 if th.side != "single" {
                     Text(th.swappable ? "VORTEX · \(th.nozzles.count)" : "FIXED")
-                        .font(.mono(10))
+                        .scaledMono(10)
                         .tracking(0.5)
                         .foregroundStyle(c.t3)
                 }
                 if th.active {
                     Text("ACTIVE")
-                        .font(.mono(8))
+                        .scaledMono(8)
                         .tracking(0.5)
                         .foregroundStyle(c.accent)
                         .padding(.horizontal, 6)
@@ -1169,7 +1173,7 @@ private struct NozzlesSection: View {
 
             if th.swappable {
                 Text("Engaged is in the head now; the rest are docked. Color chips show each nozzle's last filament.")
-                    .font(.system(size: 11.5, weight: .medium))
+                    .scaledFont(11.5, weight: .medium)
                     .lineSpacing(3.5)
                     .foregroundStyle(c.t3)
                     .padding(.horizontal, 20)
@@ -1210,7 +1214,7 @@ private struct NozzleCard: View {
         HStack(spacing: 11) {
             Swatch(value: n.colorHex, size: 30, radius: 8) {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 14, weight: .medium))
+                    .scaledFont(14, weight: .medium)
                     .foregroundStyle(FilamentColor.inkOn(n.colorHex))
             }
 
@@ -1219,7 +1223,7 @@ private struct NozzleCard: View {
                 // the last chip was being clipped at the card edge.
                 FlowLayout(spacing: 5, rowSpacing: 4) {
                     Text(n.diameter.isEmpty ? "Nozzle" : n.diameter)
-                        .font(.system(size: 14, weight: .bold))
+                        .scaledFont(14, weight: .bold)
                         .foregroundStyle(c.t1)
                     // Flow rate is a first-class spec on the H2 series — a high-flow and a standard
                     // nozzle of the same diameter print very differently — so it gets its own chip
@@ -1233,7 +1237,7 @@ private struct NozzleCard: View {
                     }
                 }
                 Text(subtitle)
-                    .font(.mono(10.5, weight: .medium))
+                    .scaledMono(10.5, weight: .medium)
                     .foregroundStyle(c.t3)
                     .lineLimit(1)
             }
@@ -1252,7 +1256,7 @@ private struct NozzleCard: View {
 
     private func chip(_ text: String, ink: Color, fill: Color) -> some View {
         Text(text)
-            .font(.mono(7.5))
+            .scaledMono(7.5)
             .tracking(0.4)
             .foregroundStyle(ink)
             .padding(.horizontal, 5)
@@ -1325,12 +1329,12 @@ private struct MaintenanceSection: View {
     private var failedCard: some View {
         HStack(spacing: 12) {
             Text("Couldn’t load maintenance.")
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Tap(action: onRetry) {
                 Text("Retry")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(c.t1)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -1360,17 +1364,17 @@ private struct MaintenanceSection: View {
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 13) {
                 Image(systemName: maintSymbol(item.maintenanceTypeIcon))
-                    .font(.system(size: 20))
+                    .scaledFont(20)
                     .foregroundStyle(st.urgent ? st.color : c.t2)
                     .frame(width: 42, height: 42)
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(st.urgent ? c.s3 : c.s2))
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.maintenanceTypeName)
-                        .font(.system(size: 15, weight: .bold))
+                        .scaledFont(15, weight: .bold)
                         .foregroundStyle(c.t1)
                     Text(fmtLastPerformed(item.lastPerformedAt))
-                        .font(.mono(11, weight: .medium))
+                        .scaledMono(11, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1378,17 +1382,17 @@ private struct MaintenanceSection: View {
                 VStack(alignment: .trailing, spacing: 3) {
                     if st.urgent {
                         Text(st.text.uppercased())
-                            .font(.mono(10.5, weight: .bold))
+                            .scaledMono(10.5, weight: .bold)
                             .tracking(0.4)
                             .foregroundStyle(st.color)
                             .padding(.horizontal, 9)
                             .padding(.vertical, 4)
                             .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(st.dim))
                     } else {
-                        Text(st.text).font(.mono(12)).foregroundStyle(c.t2)
+                        Text(st.text).scaledMono(12).foregroundStyle(c.t2)
                     }
                     Text("every \(hours(item.intervalHours)) h")
-                        .font(.mono(10, weight: .medium))
+                        .scaledMono(10, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
                 .fixedSize()
@@ -1415,11 +1419,11 @@ private struct MaintenanceSection: View {
                                 .tint(st.urgent ? c.accentInk : c.t1)
                         } else {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 14, weight: .medium))
+                                .scaledFont(14, weight: .medium)
                                 .foregroundStyle(st.urgent ? c.accentInk : c.t1)
                         }
                         Text("Mark done")
-                            .font(.system(size: 13, weight: .semibold))
+                            .scaledFont(13, weight: .semibold)
                             .foregroundStyle(st.urgent ? c.accentInk : c.t1)
                     }
                     .padding(.horizontal, 15)
@@ -1536,7 +1540,7 @@ private struct HwPage<Content: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
-                    .font(.system(size: 30, weight: .bold))
+                    .scaledFont(30, weight: .bold)
                     .kerning(-0.8)
                     .foregroundStyle(c.t1)
                     .padding(.horizontal, 20)
@@ -1563,10 +1567,10 @@ private struct HwSectionHead: View {
 
     var body: some View {
         HStack {
-            Text(label).font(.mono(11)).tracking(1.2).foregroundStyle(c.t3)
+            Text(label).scaledMono(11).tracking(1.2).foregroundStyle(c.t3)
             Spacer(minLength: 8)
             if let right, !right.isEmpty {
-                Text(right).font(.mono(11)).foregroundStyle(c.t3)
+                Text(right).scaledMono(11).foregroundStyle(c.t3)
             }
         }
         .padding(.horizontal, 20)
@@ -1603,10 +1607,10 @@ private struct HwEmptyCard: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: symbol).font(.system(size: 22)).foregroundStyle(c.t3)
-            Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(c.t1)
+            Image(systemName: symbol).scaledFont(22).foregroundStyle(c.t3)
+            Text(title).scaledFont(14, weight: .semibold).foregroundStyle(c.t1)
             Text(message)
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .lineSpacing(5)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(c.t3)

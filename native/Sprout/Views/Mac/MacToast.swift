@@ -35,7 +35,7 @@ struct MacToast: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(toast.kind == .success ? c.running : c.heating)
             Text(text)
                 .font(.system(size: m.body, weight: .medium))
@@ -46,7 +46,7 @@ struct MacToast: View {
                 onDismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
+                    .scaledFont(10, weight: .bold)
                     .foregroundStyle(c.t3)
             }
             .buttonStyle(.plain)

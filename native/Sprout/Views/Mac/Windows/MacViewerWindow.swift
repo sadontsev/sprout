@@ -451,7 +451,7 @@ struct MacViewerWindow: View {
     /// `1g`'s corner readout: "TOOLPATH · LAYER 128 / 207 · Z 25.60 MM".
     private var canvasBadge: some View {
         Text(verbatim: badgeText)
-            .font(.mono(10, weight: .medium))
+            .scaledMono(10, weight: .medium)
             .tracking(0.6)
             .monospacedDigit()
             .foregroundStyle(Palette.dark.t2)
@@ -482,10 +482,10 @@ struct MacViewerWindow: View {
     private func refusalCard(_ reason: String) -> some View {
         VStack(spacing: 0) {
             Image(systemName: mode == .layers ? "square.3.layers.3d" : "cube")
-                .font(.system(size: 30, weight: .regular))
+                .scaledFont(30, weight: .regular)
                 .foregroundStyle(ViewerChrome.glyph)
             Text(verbatim: reason)
-                .font(.system(size: 14))
+                .scaledFont(14)
                 .foregroundStyle(ViewerChrome.dim)
                 .multilineTextAlignment(.center)
                 .lineSpacing(6)
@@ -557,11 +557,11 @@ struct MacViewerWindow: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 Text(verbatim: total > 0 ? "\(layer)" : "—")
-                    .font(.mono(26, weight: .bold))
+                    .scaledMono(26, weight: .bold)
                     .monospacedDigit()
                     .foregroundStyle(c.t1)
                 Text(verbatim: total > 0 ? "of \(total)" : "")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t3)
                     .monospacedDigit()
             }
@@ -603,7 +603,7 @@ struct MacViewerWindow: View {
     private func stepButton(_ delta: Int, symbol: String, key: KeyEquivalent) -> some View {
         Button { step(delta) } label: {
             Image(systemName: symbol)
-                .font(.system(size: 10, weight: .semibold))
+                .scaledFont(10, weight: .semibold)
                 .frame(width: 22, height: m.primaryControlHeight)
         }
         .buttonStyle(.plain)
@@ -623,7 +623,7 @@ struct MacViewerWindow: View {
             .labelsHidden()
         } label: {
             Text(verbatim: Self.speedLabel(speed))
-                .font(.mono(11.5, weight: .semibold))
+                .scaledMono(11.5, weight: .semibold)
                 .foregroundStyle(c.t2)
         }
         .menuStyle(.borderlessButton)
@@ -708,7 +708,7 @@ struct MacViewerWindow: View {
             .padding(.top, 11)
 
             Text(verbatim: Self.legendNote)
-                .font(.system(size: 10.5))
+                .scaledFont(10.5)
                 .lineSpacing(2)
                 .foregroundStyle(c.t3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -741,12 +741,12 @@ struct MacViewerWindow: View {
         HStack(spacing: 9) {
             swatch
             Text(verbatim: label)
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(dim ? c.t3 : c.t1)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let trailing {
                 Text(verbatim: trailing)
-                    .font(.mono(9.5, weight: .medium))
+                    .scaledMono(9.5, weight: .medium)
                     .foregroundStyle(c.t3)
             }
         }
@@ -798,7 +798,7 @@ struct MacViewerWindow: View {
             .padding(.top, 11)
 
             Text(verbatim: Self.meshNote)
-                .font(.system(size: 10.5))
+                .scaledFont(10.5)
                 .lineSpacing(2)
                 .foregroundStyle(c.t3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -835,7 +835,7 @@ struct MacViewerWindow: View {
             ))
             .toggleStyle(.switch)
             .controlSize(.small)
-            .font(.system(size: 11.5, weight: .medium))
+            .scaledFont(11.5, weight: .medium)
             .foregroundStyle(c.t2)
             .disabled(!page.isReady)
             .padding(.top, 12)
@@ -873,11 +873,11 @@ struct MacViewerWindow: View {
     private func factRow(_ label: String, _ value: String) -> some View {
         HStack(spacing: 0) {
             Text(verbatim: label)
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(verbatim: value)
-                .font(.mono(11.5, weight: .medium))
+                .scaledMono(11.5, weight: .medium)
                 .foregroundStyle(c.t1)
                 .monospacedDigit()
         }
@@ -1128,7 +1128,7 @@ private struct MacViewerSegment<Value: Hashable>: View {
                 let live = enabled(option)
                 Button { selection = option } label: {
                     Text(verbatim: label(option))
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .scaledFont(11.5, weight: .semibold)
                         .foregroundStyle(on ? c.t1 : c.t3)
                         .opacity(live ? 1 : 0.45)
                         .padding(.horizontal, 12)

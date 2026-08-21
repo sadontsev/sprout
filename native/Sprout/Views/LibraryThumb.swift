@@ -76,7 +76,7 @@ struct LibraryThumb: View {
     /// at the tile, quiet enough not to shout on a grid where several files are silhouettes.
     private var outlineBadge: some View {
         Text("OUTLINE")
-            .font(.mono(9, weight: .bold))
+            .scaledMono(9, weight: .bold)
             .foregroundStyle(c.t3)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)

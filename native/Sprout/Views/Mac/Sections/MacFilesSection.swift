@@ -618,21 +618,21 @@ struct MacFilesSection: View {
     private var searchField: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(11, weight: .medium)
                 .foregroundStyle(c.t3)
             // A plain `TextField`, not `.searchable`: `.searchable` puts the field in the WINDOW
             // TOOLBAR, which `MacToolbar` owns, and the prototype draws it here — beside the source
             // picker whose contents it filters. Both segments, since both are filtered.
             TextField("Search files", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(c.t1)
             if !query.isEmpty {
                 Button {
                     query = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(c.t3)
                 }
                 .buttonStyle(.plain)
@@ -654,7 +654,7 @@ struct MacFilesSection: View {
             .labelsHidden()
         } label: {
             Text(verbatim: sort.summary(in: store.source))
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
         }
         .menuStyle(.borderlessButton)
@@ -699,7 +699,7 @@ struct MacFilesSection: View {
             }
             Spacer(minLength: 12)
             Text(verbatim: summaryLine(visible))
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .monospacedDigit()
         }
@@ -723,13 +723,13 @@ struct MacFilesSection: View {
 
     private func crumb(_ text: String, active: Bool) -> some View {
         Text(verbatim: text)
-            .font(.system(size: 11.5, weight: .medium))
+            .scaledFont(11.5, weight: .medium)
             .foregroundStyle(active ? c.t1 : c.t3)
     }
 
     private var separator: some View {
         Text(verbatim: "›")
-            .font(.system(size: 11.5, weight: .medium))
+            .scaledFont(11.5, weight: .medium)
             .foregroundStyle(c.line2)
     }
 
@@ -872,14 +872,14 @@ struct MacFilesSection: View {
             // row holding one two-line name would stand taller than its neighbours and the grid would
             // step up and down as you scrolled.
             Text(verbatim: MacFileBrowse.displayName(f))
-                .font(.system(size: 12, weight: .semibold))
+                .scaledFont(12, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .lineLimit(2, reservesSpace: true)
                 .truncationMode(.middle)
                 .multilineTextAlignment(.leading)
                 .padding(.top, 8)
             Text(verbatim: MacFileBrowse.bytes(f.fileSize?.double))
-                .font(.mono(10.5, weight: .medium))
+                .scaledMono(10.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .monospacedDigit()
                 .padding(.top, 4)
@@ -918,7 +918,7 @@ struct MacFilesSection: View {
 
     private func typeChip(_ f: LibraryFile) -> some View {
         Text(verbatim: (f.fileType ?? "").uppercased())
-            .font(.mono(8.5))
+            .scaledMono(8.5)
             .tracking(0.5)
             .foregroundStyle(Color.white.opacity(0.85))
             .padding(.horizontal, 5)
@@ -934,7 +934,7 @@ struct MacFilesSection: View {
     /// with `hasGcode`, the capability the layer viewer needs; the inspector gates on that one.
     private var slicedTick: some View {
         Image(systemName: "checkmark")
-            .font(.system(size: 8, weight: .bold))
+            .scaledFont(8, weight: .bold)
             .foregroundStyle(c.accentInk)
             .frame(width: 14, height: 14)
             .background(Circle().fill(c.accent))
@@ -966,14 +966,14 @@ struct MacFilesSection: View {
 
             TableColumn("Type") { f in
                 Text(verbatim: (f.fileType ?? "").uppercased())
-                    .font(.mono(10.5, weight: .medium))
+                    .scaledMono(10.5, weight: .medium)
                     .foregroundStyle(c.t3)
             }
             .width(min: 60, ideal: 84, max: 130)
 
             TableColumn("Size") { f in
                 Text(verbatim: MacFileBrowse.bytes(f.fileSize?.double))
-                    .font(.mono(10.5, weight: .medium))
+                    .scaledMono(10.5, weight: .medium)
                     .foregroundStyle(c.t3)
                     .monospacedDigit()
             }
@@ -1063,14 +1063,14 @@ struct MacFilesSection: View {
             // are the worst case: the printer keeps the slicer's full output name, plate suffix and
             // all.
             Text(verbatim: SdFileCaps.displayName(pf))
-                .font(.system(size: 12, weight: .semibold))
+                .scaledFont(12, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .lineLimit(2, reservesSpace: true)
                 .truncationMode(.middle)
                 .multilineTextAlignment(.leading)
                 .padding(.top, 8)
             Text(verbatim: pf.isDirectory ? "Folder" : MacFileBrowse.bytes(pf.size?.double))
-                .font(.mono(10.5, weight: .medium))
+                .scaledMono(10.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .monospacedDigit()
                 .padding(.top, 4)
@@ -1113,7 +1113,7 @@ struct MacFilesSection: View {
                 .fill(c.thumb)
                 .overlay {
                     Image(systemName: SdFileCaps.symbol(pf))
-                        .font(.system(size: 22, weight: .light))
+                        .scaledFont(22, weight: .light)
                         .foregroundStyle(pf.isDirectory ? c.accent : c.t3)
                 }
         }
@@ -1124,7 +1124,7 @@ struct MacFilesSection: View {
         return Group {
             if !text.isEmpty {
                 Text(verbatim: text)
-                    .font(.mono(8.5))
+                    .scaledMono(8.5)
                     .tracking(0.5)
                     .foregroundStyle(Color.white.opacity(0.85))
                     .padding(.horizontal, 5)
@@ -1137,7 +1137,7 @@ struct MacFilesSection: View {
 
     private var playBadge: some View {
         Image(systemName: "play.fill")
-            .font(.system(size: 13))
+            .scaledFont(13)
             .foregroundStyle(.white)
             .offset(x: 1)
             .frame(width: 30, height: 30)
@@ -1149,7 +1149,7 @@ struct MacFilesSection: View {
             TableColumn("Name") { pf in
                 HStack(spacing: 8) {
                     Image(systemName: SdFileCaps.symbol(pf))
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(pf.isDirectory ? c.accent : c.t3)
                         .frame(width: 16)
                     Text(verbatim: SdFileCaps.displayName(pf))
@@ -1162,7 +1162,7 @@ struct MacFilesSection: View {
 
             TableColumn("Size") { pf in
                 Text(verbatim: pf.isDirectory ? "—" : MacFileBrowse.bytes(pf.size?.double))
-                    .font(.mono(10.5, weight: .medium))
+                    .scaledMono(10.5, weight: .medium)
                     .foregroundStyle(c.t3)
                     .monospacedDigit()
             }
@@ -1497,7 +1497,7 @@ struct MacFilesSection: View {
     private var retryBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "wifi.slash")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(c.t3)
             Text("Couldn’t reach the server.")
                 .font(.system(size: m.body, weight: .medium))
@@ -1521,7 +1521,7 @@ struct MacFilesSection: View {
                 .progressViewStyle(.linear)
                 .tint(c.accent)
             Text(verbatim: "\(model.uploader.percent) %")
-                .font(.mono(11, weight: .bold))
+                .scaledMono(11, weight: .bold)
                 .foregroundStyle(c.accent)
                 .monospacedDigit()
                 .frame(width: 46, alignment: .trailing)
@@ -1540,7 +1540,7 @@ struct MacFilesSection: View {
                 model.uploader.error = nil
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
+                    .scaledFont(10, weight: .bold)
                     .foregroundStyle(c.t3)
                     .frame(width: 22, height: 22)
             }
@@ -1560,7 +1560,7 @@ struct MacFilesSection: View {
                 .tracking(1.1)
                 .foregroundStyle(c.t3)
             Text("Drop .3mf, .gcode or .stl anywhere in this window — or on the Dock icon — to add it here.")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t2)
             Spacer(minLength: 0)
         }
@@ -1583,7 +1583,7 @@ struct MacFilesSection: View {
     ) -> some View {
         VStack(spacing: 7) {
             Image(systemName: icon)
-                .font(.system(size: 22, weight: .light))
+                .scaledFont(22, weight: .light)
                 .foregroundStyle(c.t3)
             Text(verbatim: title)
                 .font(.system(size: m.cardTitle, weight: .semibold))
@@ -1728,7 +1728,7 @@ struct MacShareSheet: View {
                 .font(.system(size: m.cardTitle, weight: .semibold))
                 .foregroundStyle(c.t1)
             Text(verbatim: url.lastPathComponent)
-                .font(.mono(11, weight: .medium))
+                .scaledMono(11, weight: .medium)
                 .foregroundStyle(c.t3)
                 .lineLimit(1)
                 .truncationMode(.middle)

@@ -167,17 +167,17 @@ struct MacMenuBarPanel: View {
     private func panelToast(_ toast: Toast) -> some View {
         HStack(alignment: .top, spacing: 7) {
             Image(systemName: toast.kind == .failure ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(toast.kind == .failure ? c.error : c.running)
             Text(verbatim: toast.text)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(c.t2)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Button {
                 model.toast = nil
             } label: {
-                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(c.t3)
+                Image(systemName: "xmark").scaledFont(8, weight: .bold).foregroundStyle(c.t3)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss")
@@ -193,16 +193,16 @@ struct MacMenuBarPanel: View {
         HStack(spacing: 9) {
             PulseDot(color: vm.stateColor.resolve(c), size: 7, meaning: vm.stateLabel)
             Text(model.printer?.name ?? "Printer")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(c.t1)
             Spacer(minLength: 6)
             if vm.kind == .live {
                 Text(verbatim: "layer \(vm.layer)/\(vm.totalLayers)")
-                    .font(.mono(11, weight: .medium))
+                    .scaledMono(11, weight: .medium)
                     .foregroundStyle(c.t3)
             } else {
                 Text(vm.stateLabel)
-                    .font(.mono(11, weight: .medium))
+                    .scaledMono(11, weight: .medium)
                     .foregroundStyle(c.t3)
             }
         }
@@ -211,7 +211,7 @@ struct MacMenuBarPanel: View {
     private var liveBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(vm.heroSub.isEmpty ? "—" : vm.heroSub)
-                .font(.system(size: 12, weight: .semibold))
+                .scaledFont(12, weight: .semibold)
                 .foregroundStyle(c.t2)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -219,12 +219,12 @@ struct MacMenuBarPanel: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 9) {
                 Text(verbatim: "\(vm.progressInt) %")
-                    .font(.mono(22, weight: .bold))
+                    .scaledMono(22, weight: .bold)
                     .monospacedDigit()
                     .foregroundStyle(c.t1)
                 Spacer(minLength: 0)
                 Text(etaLine)
-                    .font(.system(size: 11.5))
+                    .scaledFont(11.5)
                     .foregroundStyle(c.t2)
             }
             .padding(.top, 10)
@@ -299,7 +299,7 @@ struct MacMenuBarPanel: View {
     private var offlineBody: some View {
         VStack(alignment: .leading, spacing: 9) {
             Text("Sprout can’t reach this printer.")
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(c.t2)
             Button("Retry") { Task { await model.refreshLanMode() } }
                 .buttonStyle(MacSecondaryButtonStyle())
@@ -315,10 +315,10 @@ struct MacMenuBarPanel: View {
     private func temp(_ label: String, _ value: String) -> some View {
         HStack(spacing: 5) {
             Text(label)
-                .font(.mono(11, weight: .medium))
+                .scaledMono(11, weight: .medium)
                 .foregroundStyle(c.t3)
             Text(value)
-                .font(.mono(11, weight: .medium))
+                .scaledMono(11, weight: .medium)
                 .foregroundStyle(c.t1)
         }
     }
@@ -351,11 +351,11 @@ struct MacMenuBarPanel: View {
         Button(action: action) {
             HStack {
                 Text(title)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(c.t1)
                 Spacer(minLength: 8)
                 Text(verbatim: shortcut)
-                    .font(.mono(10.5, weight: .medium))
+                    .scaledMono(10.5, weight: .medium)
                     .foregroundStyle(c.t3)
             }
             .padding(.horizontal, 8)

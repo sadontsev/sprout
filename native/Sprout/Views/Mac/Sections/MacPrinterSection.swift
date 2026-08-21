@@ -291,7 +291,7 @@ struct MacPrinterSection: View {
             } else {
                 VStack(spacing: 6) {
                     Image(systemName: "square.dashed")
-                        .font(.system(size: 17, weight: .light))
+                        .scaledFont(17, weight: .light)
                         .foregroundStyle(c.t3)
                     // The CAUSE, not the generic word. All six absences read "NO PREVIEW" before
                     // this, so a plate that simply is not written until the print ends looked
@@ -1209,7 +1209,7 @@ struct MacPrinterMonoLabel: View {
 struct MacPrinterButtonLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 7) {
-            configuration.icon.font(.system(size: 12, weight: .semibold))
+            configuration.icon.scaledFont(12, weight: .semibold)
             configuration.title
         }
     }

@@ -59,7 +59,7 @@ struct MacSidebar: View {
     @ViewBuilder
     private func icon(_ key: TabKey) -> some View {
         if let symbol = key.systemImage {
-            Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
+            Image(systemName: symbol).scaledFont(12, weight: .semibold)
         } else {
             // The brand nozzle mark — an asset-catalog template image, not an SF Symbol. Same asset
             // the iOS tab bar uses.
@@ -83,12 +83,12 @@ struct MacSidebar: View {
                     .foregroundStyle(c.t2)
             }
             Text(host)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(c.t3)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text(lanLine)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(c.t3)
                 .lineLimit(1)
         }

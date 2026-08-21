@@ -182,7 +182,7 @@ struct LayerViewerOverlay: View {
                 .fill(on ? Palette.dark.supports : ViewerChrome.offDot)
                 .frame(width: 7, height: 7)
             Text(on ? "Supports" : "No supports")
-                .font(.system(size: 12, weight: .semibold))
+                .scaledFont(12, weight: .semibold)
                 .foregroundStyle(on ? Palette.dark.supports : ViewerChrome.offInk)
         }
         .padding(.horizontal, 11)

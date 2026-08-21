@@ -63,7 +63,7 @@ struct VersionGallery: View {
         HStack {
             Button { dismiss() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .bold))
+                    .scaledFont(15, weight: .bold)
                     .foregroundStyle(.white)
                     .frame(width: 34, height: 34)
                     .background(Circle().fill(.black.opacity(0.45)))
@@ -71,7 +71,7 @@ struct VersionGallery: View {
             Spacer()
             // Position in the whole set, so the counter and the list agree.
             Text(verbatim: "\(index + 1) / \(items.count)")
-                .font(.mono(12, weight: .bold))
+                .scaledMono(12, weight: .bold)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 11).padding(.vertical, 6)
                 .background(Capsule().fill(.black.opacity(0.45)))
@@ -85,13 +85,13 @@ struct VersionGallery: View {
         if let current {
             VStack(alignment: .leading, spacing: 8) {
                 Text(current.row.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(.white)
                     .lineLimit(2)
 
                 if let d = current.row.detail {
                     Text(MakerWorld.metaLine(d))
-                        .font(.mono(11.5, weight: .medium))
+                        .scaledMono(11.5, weight: .medium)
                         .foregroundStyle(.white.opacity(0.7))
                 }
 
@@ -99,7 +99,7 @@ struct VersionGallery: View {
                     // The maker's own words. `plainText` already stripped the HTML upstream;
                     // `verbatim` keeps SwiftUI from reading what is left as Markdown.
                     Text(verbatim: notes)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(.white.opacity(0.85))
                         .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
@@ -110,7 +110,7 @@ struct VersionGallery: View {
                     dismiss()
                 } label: {
                     Text(picked?.id == current.row.id ? "Chosen" : "Use this")
-                        .font(.system(size: 14, weight: .bold))
+                        .scaledFont(14, weight: .bold)
                         .foregroundStyle(.black)
                         .frame(maxWidth: .infinity)
                         .frame(height: 44)
@@ -142,10 +142,10 @@ private struct VersionPhotoPage: View {
         if photos.isEmpty {
             VStack(spacing: 10) {
                 Image(systemName: "photo.on.rectangle.angled")
-                    .font(.system(size: 34, weight: .ultraLight))
+                    .scaledFont(34, weight: .ultraLight)
                     .foregroundStyle(.white.opacity(0.35))
                 Text("No photos published")
-                    .font(.system(size: 13, weight: .medium))
+                    .scaledFont(13, weight: .medium)
                     .foregroundStyle(.white.opacity(0.55))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

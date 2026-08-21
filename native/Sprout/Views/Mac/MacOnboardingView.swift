@@ -38,13 +38,13 @@ struct MacOnboardingView: View {
                 .padding(.bottom, 18)
 
             Text("Point Sprout at your server")
-                .font(.system(size: 25, weight: .bold))
+                .scaledFont(25, weight: .bold)
                 .tracking(-0.7)
                 .foregroundStyle(c.t1)
 
             Text("Bambuddy is the server that actually talks to your printer. You run it yourself — "
                + "Sprout never speaks to Bambu Lab’s cloud on its own.")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .lineSpacing(3)
                 .foregroundStyle(c.t2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -74,7 +74,7 @@ struct MacOnboardingView: View {
                 Spacer(minLength: 0)
 
                 Link("Bambuddy on GitHub ›", destination: URL(string: "https://github.com/JayFoxRox/bambuddy")!)
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     .tint(c.accent)
             }
             .padding(.top, 18)
@@ -103,7 +103,7 @@ struct MacOnboardingView: View {
     private func field(_ placeholder: String, text: Binding<String>, field: Field) -> some View {
         TextField("", text: text, prompt: Text(verbatim: placeholder).foregroundStyle(c.t3))
             .textFieldStyle(.plain)
-            .font(.mono(12.5, weight: .medium))
+            .scaledMono(12.5, weight: .medium)
             .foregroundStyle(c.t1)
             .focused($focus, equals: field)
             .padding(.horizontal, 12)
@@ -119,7 +119,7 @@ struct MacOnboardingView: View {
 
     private func errorBox(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12))
+            .scaledFont(12)
             .foregroundStyle(c.t2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(11)

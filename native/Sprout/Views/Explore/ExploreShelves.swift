@@ -75,7 +75,7 @@ struct ExploreShelves: View {
                                       @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.mono(11, weight: .bold))
+                .scaledMono(11, weight: .bold)
                 .foregroundStyle(c.t3)
                 .padding(.horizontal, 16)
             ScrollView(.horizontal) {
@@ -91,13 +91,13 @@ struct ExploreShelves: View {
             CachedThumb(url: client.makerworldThumbUrl(cover), size: CGSize(width: 132, height: 99))
                 .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
             Text(title)
-                .font(.system(size: 12.5, weight: .semibold))
+                .scaledFont(12.5, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
             if let sub {
                 Text(sub)
-                    .font(.mono(10.5, weight: .medium))
+                    .scaledMono(10.5, weight: .medium)
                     .foregroundStyle(c.t3)
             }
         }

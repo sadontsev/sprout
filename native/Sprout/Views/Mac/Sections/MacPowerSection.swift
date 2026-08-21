@@ -578,7 +578,7 @@ struct MacPowerSection: View {
                 .frame(width: 60, height: 60)
                 .overlay {
                     Image(systemName: "power")
-                        .font(.system(size: 26))
+                        .scaledFont(26)
                         .foregroundStyle(c.t3)
                 }
             Text("No plugs came back")

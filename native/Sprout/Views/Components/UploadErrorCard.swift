@@ -11,10 +11,10 @@ struct UploadErrorCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: "xmark.circle")
-                .font(.system(size: 16, weight: .medium))
+                .scaledFont(16, weight: .medium)
                 .foregroundStyle(c.error)
             Text(text)
-                .font(.system(size: 12.5, weight: .medium))
+                .scaledFont(12.5, weight: .medium)
                 .lineSpacing(3)
                 .foregroundStyle(c.t2)
                 .frame(maxWidth: .infinity, alignment: .leading)

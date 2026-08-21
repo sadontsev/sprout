@@ -159,7 +159,7 @@ private struct MacJobsNowPrinting: View {
                         .monospacedDigit()
                         .foregroundStyle(c.t1)
                     Text("left")
-                        .font(.system(size: 10.5, weight: .medium))
+                        .scaledFont(10.5, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
             }
@@ -259,7 +259,7 @@ private struct MacJobsLifetime: View {
                     color: c.t1
                 )
                 Text(verbatim: MacJobStats.successText(stats))
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     // Ticks as prints finish, so the percentage must not reflow the line beside it.
                     .monospacedDigit()
                     .foregroundStyle(c.running)
@@ -267,7 +267,7 @@ private struct MacJobsLifetime: View {
             .padding(.top, 10)
 
             Text(verbatim: MacJobStats.totalsText(stats))
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(11, weight: .medium)
                 .monospacedDigit()
                 .foregroundStyle(c.t3)
                 .padding(.top, 9)
@@ -275,7 +275,7 @@ private struct MacJobsLifetime: View {
             if stats.energyDataWarmingUp == true {
                 // Says why a cost column can read "—" on a machine that plainly used power.
                 Text("Energy data warming up")
-                    .font(.system(size: 10.5, weight: .medium))
+                    .scaledFont(10.5, weight: .medium)
                     .foregroundStyle(c.t3)
                     .padding(.top, 5)
                     .help("Costs appear after the next full job the smart plug meters end to end.")
@@ -286,7 +286,7 @@ private struct MacJobsLifetime: View {
 
     private func note(_ text: String) -> some View {
         Text(verbatim: text)
-            .font(.system(size: 11, weight: .medium))
+            .scaledFont(11, weight: .medium)
             .foregroundStyle(c.t3)
             .padding(.top, 10)
     }
@@ -336,7 +336,7 @@ private struct MacJobsUpNext: View {
             if !elsewhere.isEmpty {
                 let names = JobsStore.otherPrinterNames(elsewhere, printers: model.printers)
                 Text(verbatim: "\(elsewhere.count) more \(elsewhere.count == 1 ? "job" : "jobs") queued for \(names.joined(separator: ", ")).")
-                    .font(.system(size: 11, weight: .medium))
+                    .scaledFont(11, weight: .medium)
                     .foregroundStyle(c.t3)
                     .padding(.top, 8)
             }
@@ -374,7 +374,7 @@ private struct MacJobsUpNext: View {
             // that is deliberately blank, describes a list that is not on screen.
             if state == .rows {
                 Text("server order · this app can't reorder the queue")
-                    .font(.system(size: 11, weight: .medium))
+                    .scaledFont(11, weight: .medium)
                     .foregroundStyle(c.t3)
                     .help("Bambuddy's queue API has no verified reorder route, so no drag is offered rather than one that silently snaps back.")
             }
@@ -405,7 +405,7 @@ private struct MacJobsUpNext: View {
 
     private func placeholder(_ text: String) -> some View {
         Text(verbatim: text)
-            .font(.system(size: 12, weight: .medium))
+            .scaledFont(12, weight: .medium)
             .foregroundStyle(c.t3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 11)
@@ -453,7 +453,7 @@ private struct MacJobsUpNext: View {
     private func queueRow(_ job: QueueItem, ordinal: Int) -> some View {
         HStack(spacing: 12) {
             Text(verbatim: "\(ordinal)")
-                .font(.mono(11, weight: .medium))
+                .scaledMono(11, weight: .medium)
                 .monospacedDigit()
                 .foregroundStyle(c.t3)
                 .frame(width: 14, alignment: .leading)
@@ -463,14 +463,14 @@ private struct MacJobsUpNext: View {
                 .frame(width: Self.thumbSize, height: Self.thumbSize)
 
             Text(JobsStore.queueName(job))
-                .font(.system(size: 12.5, weight: .semibold))
+                .scaledFont(12.5, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(verbatim: MacJobQueue.subtitle(job))
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .lineLimit(1)
 
@@ -553,7 +553,7 @@ private struct MacJobsHistory: View {
             // for a list that is not there.
             if !rows.isEmpty {
                 Text(verbatim: scope(rows.count))
-                    .font(.system(size: 11.5, weight: .medium))
+                    .scaledFont(11.5, weight: .medium)
                     .monospacedDigit()
                     .foregroundStyle(c.t3)
                     // Same honesty rule the MakerWorld sort learnt: a client-side sort must say what
@@ -582,7 +582,7 @@ private struct MacJobsHistory: View {
             EmptyView()
         case .empty:
             Text("No prints yet. Once a print finishes it's archived here with its stats, filament and cost.")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
@@ -603,7 +603,7 @@ private struct MacJobsHistory: View {
                         Swatch(value: swatch, size: 11, radius: Metrics.swatchRadius(11))
                     }
                     Text(row.name)
-                        .font(.system(size: 12, weight: .semibold))
+                        .scaledFont(12, weight: .semibold)
                         .foregroundStyle(c.t1)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -616,14 +616,14 @@ private struct MacJobsHistory: View {
             // the inspector shows the absolute timestamp for the one run being read.
             TableColumn("STARTED", value: \MacJobRow.started) { row in
                 Text(verbatim: row.startedText)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .scaledFont(11.5, weight: .medium)
                     .foregroundStyle(c.t2)
             }
             .width(min: 70, ideal: 95)
 
             TableColumn("DURATION", value: \MacJobRow.duration) { row in
                 Text(verbatim: row.durationText)
-                    .font(.mono(11.5, weight: .medium))
+                    .scaledMono(11.5, weight: .medium)
                     .monospacedDigit()
                     .foregroundStyle(c.t2)
             }
@@ -631,7 +631,7 @@ private struct MacJobsHistory: View {
 
             TableColumn("FILAMENT", value: \MacJobRow.filament) { row in
                 Text(verbatim: row.filament)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .scaledFont(11.5, weight: .medium)
                     .foregroundStyle(c.t2)
                     .lineLimit(1)
             }
@@ -639,7 +639,7 @@ private struct MacJobsHistory: View {
 
             TableColumn("COST", value: \MacJobRow.cost) { row in
                 Text(verbatim: row.costText)
-                    .font(.mono(11.5, weight: .medium))
+                    .scaledMono(11.5, weight: .medium)
                     .monospacedDigit()
                     .foregroundStyle(row.cost > 0 ? c.accent : c.t3)
             }
@@ -647,7 +647,7 @@ private struct MacJobsHistory: View {
 
             TableColumn("RESULT", value: \MacJobRow.outcomeLabel) { row in
                 Text(verbatim: row.outcome.label.uppercased())
-                    .font(.mono(10, weight: .bold))
+                    .scaledMono(10, weight: .bold)
                     .foregroundStyle(row.outcome.color(c))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 3)
@@ -1059,7 +1059,7 @@ struct MacJobsRetryCard: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "wifi.slash")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(c.t3)
             Text(verbatim: text)
                 .font(.system(size: m.body, weight: .medium))
@@ -1084,7 +1084,7 @@ struct MacJobsLoadingRow: View {
             ProgressView()
                 .controlSize(.small)
             Text("Loading…")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1102,7 +1102,7 @@ struct MacJobsChipButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 11.5, weight: .semibold))
+            .scaledFont(11.5, weight: .semibold)
             .foregroundStyle(c.t2)
             .padding(.horizontal, 10)
             .frame(height: m.minControlHeight)

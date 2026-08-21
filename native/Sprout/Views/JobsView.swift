@@ -214,7 +214,7 @@ private struct QueueSection: View {
             }
             if !elsewhere.isEmpty {
                 Text("\(elsewhere.count) more \(elsewhere.count == 1 ? "job" : "jobs") queued for \(otherNames.joined(separator: ", ")).")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t3)
                     .padding(.horizontal, 20)
                     .padding(.top, 18)
@@ -227,15 +227,15 @@ private struct QueueSection: View {
     private var emptyCard: some View {
         HStack(spacing: 12) {
             Image(systemName: "list.bullet")
-                .font(.system(size: 16))
+                .scaledFont(16)
                 .foregroundStyle(c.t3)
             Text("Nothing queued. Files you send to print line up here.")
-                .font(.system(size: 12.5, weight: .medium))
+                .scaledFont(12.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Tap(action: onBrowse) {
                 Text("Browse")
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     .foregroundStyle(c.accent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -252,7 +252,7 @@ private struct QueueSection: View {
     private var nowPrinting: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("NOW PRINTING")
-                .font(.mono(11))
+                .scaledMono(11)
                 .tracking(1)
                 .foregroundStyle(c.t3)
                 .padding(.horizontal, 20)
@@ -261,13 +261,13 @@ private struct QueueSection: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(vm.heroSub.isEmpty ? "Current print" : vm.heroSub)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(c.t1)
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     PulseDot(color: c.running, size: 6, period: 2)
                     Text("\(vm.progressInt)% · \(vm.etaText) left")
-                        .font(.mono(11))
+                        .scaledMono(11)
                         .foregroundStyle(c.running)
                 }
                 .padding(.top, 5)
@@ -286,12 +286,12 @@ private struct QueueSection: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("UP NEXT")
-                    .font(.mono(11))
+                    .scaledMono(11)
                     .tracking(1)
                     .foregroundStyle(c.t3)
                 Spacer(minLength: 8)
                 Text("\(upcoming.count) jobs")
-                    .font(.mono(11))
+                    .scaledMono(11)
                     .foregroundStyle(c.t3)
             }
             .padding(.horizontal, 20)
@@ -310,24 +310,24 @@ private struct QueueSection: View {
     private func row(_ j: QueueItem, ordinal: Int) -> some View {
         HStack(spacing: 12) {
             Text("\(ordinal)")
-                .font(.mono(13))
+                .scaledMono(13)
                 .foregroundStyle(c.t3)
                 .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(JobsStore.queueName(j))
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(c.t1)
                     .lineLimit(1)
                 Text(subtitle(j))
-                    .font(.mono(11, weight: .medium))
+                    .scaledMono(11, weight: .medium)
                     .foregroundStyle(c.t3)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Tap { onRemove(j) } content: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .regular))
+                    .scaledFont(16, weight: .regular)
                     .foregroundStyle(c.t3)
                     .frame(width: 30, height: 30)
                     .contentShape(.rect)
@@ -365,7 +365,7 @@ private struct HistorySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("HISTORY")
-                .font(.mono(11))
+                .scaledMono(11)
                 .tracking(1)
                 .foregroundStyle(c.t3)
                 .padding(.horizontal, 20)
@@ -393,7 +393,7 @@ private struct HistorySection: View {
             }
             if let entries, !entries.isEmpty {
                 Text("RECENT PRINTS · TAP TO REPRINT")
-                    .font(.mono(11))
+                    .scaledMono(11)
                     .tracking(1)
                     .foregroundStyle(c.t3)
                     .padding(.horizontal, 20)
@@ -462,12 +462,12 @@ private struct HistoryRow: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 8) {
                         Text(JobsStore.historyName(entry))
-                            .font(.system(size: 14, weight: .semibold))
+                            .scaledFont(14, weight: .semibold)
                             .foregroundStyle(c.t1)
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text(meta.label.uppercased())
-                            .font(.mono(9.5, weight: .bold))
+                            .scaledMono(9.5, weight: .bold)
                             .tracking(0.4)
                             .foregroundStyle(meta.color)
                             .padding(.horizontal, 8)
@@ -478,7 +478,7 @@ private struct HistoryRow: View {
                         .padding(.top, 6)
                     if let printer = entry.printerName, !printer.isEmpty {
                         Text(printer)
-                            .font(.mono(10, weight: .medium))
+                            .scaledMono(10, weight: .medium)
                             .foregroundStyle(c.t3)
                             .padding(.top, 4)
                     }
@@ -500,16 +500,16 @@ private struct HistoryRow: View {
                 Swatch(value: swatch, size: 11, radius: 3)
             }
             Text(PrintTime.relative(entry.startedAt))
-                .font(.mono(11, weight: .medium))
+                .scaledMono(11, weight: .medium)
                 .foregroundStyle(c.t3)
             if !facts.isEmpty {
                 Text("· \(facts.joined(separator: " · "))")
-                    .font(.mono(11, weight: .medium))
+                    .scaledMono(11, weight: .medium)
                     .foregroundStyle(c.t3)
             }
             if let cost, cost > 0 {
                 Text("· \(Money.format(sym, cost))")
-                    .font(.mono(11))
+                    .scaledMono(11)
                     .foregroundStyle(c.accent)
             }
         }
@@ -543,7 +543,7 @@ private struct HistoryRow: View {
 
     private var fallbackGlyph: some View {
         Image(systemName: "shippingbox")
-            .font(.system(size: 22))
+            .scaledFont(22)
             .foregroundStyle(c.t3)
     }
 }
@@ -582,7 +582,7 @@ private struct StatsBanner: View {
                     .padding(.top, 12)
                 if stats.energyDataWarmingUp == true {
                     Text("Energy data is warming up — costs appear after the next full job.")
-                        .font(.system(size: 11, weight: .medium))
+                        .scaledFont(11, weight: .medium)
                         .foregroundStyle(c.t3)
                         .padding(.top, 8)
                         .padding(.leading, 4)
@@ -597,7 +597,7 @@ private struct StatsBanner: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("LIFETIME PRINTS")
-                    .font(.mono(10))
+                    .scaledMono(10)
                     .tracking(1.2)
                     .foregroundStyle(c.t3)
                 RollingNumber(
@@ -610,7 +610,7 @@ private struct StatsBanner: View {
                 HStack(spacing: 7) {
                     PulseDot(color: c.running, size: 7, period: 2.4)
                     Text("\(successful) done")
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                         .foregroundStyle(c.t2)
                     if failed > 0 {
                         Circle()
@@ -618,7 +618,7 @@ private struct StatsBanner: View {
                             .frame(width: 7, height: 7)
                             .padding(.leading, 6)
                         Text("\(failed) failed")
-                            .font(.system(size: 12, weight: .medium))
+                            .scaledFont(12, weight: .medium)
                             .foregroundStyle(c.t2)
                     }
                 }
@@ -651,7 +651,7 @@ private struct StatsBanner: View {
                 )
                 .tracking(-0.5)
                 Text("SUCCESS")
-                    .font(.mono(8))
+                    .scaledMono(8)
                     .tracking(0.5)
                     .foregroundStyle(c.t3)
                     .padding(.top, -2)
@@ -694,14 +694,14 @@ private struct StatBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label)
-                .font(.mono(9.5))
+                .scaledMono(9.5)
                 .tracking(1)
                 .foregroundStyle(c.t3)
             HStack(alignment: .lastTextBaseline, spacing: 3) {
                 // `RollingNumber` only rolls integers; these values carry decimals and currency
                 // symbols, so the digits animate through SwiftUI's own numeric transition instead.
                 Text(value)
-                    .font(.system(size: 25, weight: .bold))
+                    .scaledFont(25, weight: .bold)
                     .tracking(-1)
                     .foregroundStyle(accent ? c.accent : c.t1)
                     // Live data, not a loop: this updates on every WebSocket frame — roughly once
@@ -712,7 +712,7 @@ private struct StatBlock: View {
                     .animation(reduceMotion ? nil : Motion.roll(0.6), value: value)
                 if let unit {
                     Text(unit)
-                        .font(.system(size: 12, weight: .semibold))
+                        .scaledFont(12, weight: .semibold)
                         .foregroundStyle(c.t3)
                 }
             }
@@ -736,7 +736,7 @@ private struct JobsPage<Content: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
-                    .font(.system(size: 30, weight: .bold))
+                    .scaledFont(30, weight: .bold)
                     .tracking(-0.8)
                     .foregroundStyle(c.t1)
                     .padding(.horizontal, 20)
@@ -763,15 +763,15 @@ private struct LoadFailedCard: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "wifi.slash")
-                .font(.system(size: 18))
+                .scaledFont(18)
                 .foregroundStyle(c.t3)
             Text("Couldn't reach the server.")
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(c.t2)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Tap(action: onRetry) {
                 Text("Retry")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(c.t1)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -798,17 +798,17 @@ private struct EmptyState: View {
     var body: some View {
         VStack(spacing: 15) {
             Image(systemName: icon)
-                .font(.system(size: 32))
+                .scaledFont(32)
                 .foregroundStyle(c.t3)
                 .frame(width: 72, height: 72)
                 .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(c.s2))
             VStack(spacing: 0) {
                 Text(title)
-                    .font(.system(size: 20, weight: .bold))
+                    .scaledFont(20, weight: .bold)
                     .tracking(-0.3)
                     .foregroundStyle(c.t1)
                 Text(message)
-                    .font(.system(size: 13, weight: .medium))
+                    .scaledFont(13, weight: .medium)
                     .lineSpacing(19 - 13)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(c.t3)

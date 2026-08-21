@@ -68,7 +68,7 @@ struct AlertsOverlay: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             Text("Attention")
-                .font(.system(size: 26, weight: .bold))
+                .scaledFont(26, weight: .bold)
                 .tracking(-0.6)
                 .foregroundStyle(c.t1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -79,7 +79,7 @@ struct AlertsOverlay: View {
                 // SF Symbols render heavier than Feather at the same point size, so 17 pt here is the
                 // visual match for the design's 20 pt Feather `x`.
                 Image(systemName: "xmark")
-                    .font(.system(size: 17, weight: .semibold))
+                    .scaledFont(17, weight: .semibold)
                     .foregroundStyle(c.t2)
                     .frame(width: 38, height: 38)
                     .background(Circle().fill(c.s2))
@@ -143,10 +143,10 @@ struct AlertsOverlay: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.circle")
-                .font(.system(size: 34, weight: .regular))
+                .scaledFont(34, weight: .regular)
                 .foregroundStyle(c.running)
             Text("Nothing needs attention")
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(c.t2)
         }
         .frame(maxWidth: .infinity)
@@ -158,10 +158,10 @@ struct AlertsOverlay: View {
     private var offlineNote: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "wifi.slash")
-                .font(.system(size: 16, weight: .regular))
+                .scaledFont(16, weight: .regular)
                 .foregroundStyle(c.t3)
             Text("The printer is offline. Actions come back the moment it reconnects.")
-                .font(.system(size: 12.5, weight: .medium))
+                .scaledFont(12.5, weight: .medium)
                 .lineSpacing(3)
                 .foregroundStyle(c.t2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -270,23 +270,23 @@ private struct AlertCard: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: alert.level == .info ? "info.circle" : "exclamationmark.circle")
-                    .font(.system(size: 18, weight: .regular))
+                    .scaledFont(18, weight: .regular)
                     .foregroundStyle(tone)
 
                 VStack(alignment: .leading, spacing: 0) {
                     Text(alert.title)
-                        .font(.system(size: 15, weight: .bold))
+                        .scaledFont(15, weight: .bold)
                         .foregroundStyle(c.t1)
 
                     Text(alert.detail)
-                        .font(.system(size: 12.5, weight: .medium))
+                        .scaledFont(12.5, weight: .medium)
                         .lineSpacing(3)
                         .foregroundStyle(c.t2)
                         .padding(.top, 4)
 
                     if let code = alert.code {
                         Text("HMS \(code)")
-                            .font(.mono(11, weight: .semibold))
+                            .scaledMono(11, weight: .semibold)
                             .foregroundStyle(c.t3)
                             .padding(.top, 6)
                     }
@@ -368,7 +368,7 @@ private struct AlertActionButton: View {
             HStack(spacing: 6) {
                 if isLocked {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 11, weight: .bold))
+                        .scaledFont(11, weight: .bold)
                 }
                 if busy {
                     ProgressView()
@@ -376,7 +376,7 @@ private struct AlertActionButton: View {
                         .tint(inkColor)
                 }
                 Text(action.label)
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(13, weight: .bold)
             }
             .foregroundStyle(inkColor)
             .padding(.horizontal, 15)

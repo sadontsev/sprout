@@ -20,7 +20,7 @@ struct MacDemoStrip: View {
             Spacer(minLength: 0)
             Button("Exit demo") { Task { await model.exitDemo() } }
                 .buttonStyle(.link)
-                .font(.system(size: 11, weight: .semibold))
+                .scaledFont(11, weight: .semibold)
         }
         .padding(.horizontal, m.gutter)
         .frame(height: 24)

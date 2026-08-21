@@ -82,7 +82,7 @@ struct PowerView: View {
     @ViewBuilder
     private var printerBlock: some View {
         Text(plug.value?.name ?? "Printer smart plug")
-            .font(.system(size: 13, weight: .medium))
+            .scaledFont(13, weight: .medium)
             .foregroundStyle(c.t3)
             .padding(.horizontal, 20)
             .padding(.top, 7)
@@ -110,7 +110,7 @@ struct PowerView: View {
                     ZStack {
                         Circle().fill(hero.on ? c.accent : c.s3)
                         Image(systemName: "power")
-                            .font(.system(size: 48, weight: .regular))
+                            .scaledFont(48, weight: .regular)
                             .foregroundStyle(hero.on ? c.accentInk : c.t2)
                     }
                     .frame(width: 130, height: 130)
@@ -120,7 +120,7 @@ struct PowerView: View {
             }
 
             Text(hero.on ? "Powered on" : "Powered off")
-                .font(.system(size: 19, weight: .bold))
+                .scaledFont(19, weight: .bold)
                 .kerning(-0.3)
                 .foregroundStyle(c.t1)
                 .padding(.top, 20)
@@ -132,13 +132,13 @@ struct PowerView: View {
                     Circle().fill(c.idle).frame(width: 7, height: 7)
                 }
                 Text(hero.reachable ? "Plug reachable" : "Plug unreachable")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t3)
             }
             .padding(.top, 8)
 
             Text("Tap to toggle the printer's smart plug")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t3)
                 .padding(.top, 6)
         }
@@ -154,7 +154,7 @@ struct PowerView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Text("DRAWING NOW")
-                        .font(.mono(10))
+                        .scaledMono(10)
                         .kerning(1)
                         .foregroundStyle(c.t3)
                     Spacer(minLength: 4)
@@ -183,20 +183,20 @@ struct PowerView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 Text("TODAY")
-                    .font(.mono(10))
+                    .scaledMono(10)
                     .kerning(1)
                     .foregroundStyle(c.t3)
                 // RollingNumber rolls whole digits only; kWh keeps two decimals, so this one is
                 // plain tabular text rather than a roll.
                 bigValue(hero.liveKwh.map { kwh in
                     Text(String(format: "%.2f", kwh))
-                        .font(.system(size: 28, weight: .bold))
+                        .scaledFont(28, weight: .bold)
                         .monospacedDigit()
                         .kerning(-1)
                         .foregroundStyle(c.t1)
                 }, unit: "kWh")
                 Text(todayCostLabel)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .monospacedDigit()
                     .foregroundStyle(c.accent)
                     .padding(.top, 6)
@@ -221,12 +221,12 @@ struct PowerView: View {
                 value
             } else {
                 Text("—")
-                    .font(.system(size: 28, weight: .bold))
+                    .scaledFont(28, weight: .bold)
                     .kerning(-1)
                     .foregroundStyle(c.t1)
             }
             Text(unit)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(c.t3)
                 .padding(.bottom, 5)
         }
@@ -238,12 +238,12 @@ struct PowerView: View {
             HStack(spacing: 7) {
                 PulseDot(color: c.running, size: 7, period: 2)
                 Text("THIS PRINT")
-                    .font(.mono(10))
+                    .scaledMono(10)
                     .kerning(1)
                     .foregroundStyle(c.running)
             }
             Text(printTitle)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .lineLimit(1)
                 .padding(.top, 8)
@@ -255,7 +255,7 @@ struct PowerView: View {
             .padding(.top, 12)
 
             Text(projectionFootnote)
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(11, weight: .medium)
                 .foregroundStyle(c.t3)
                 .padding(.top, 10)
         }
@@ -269,11 +269,11 @@ struct PowerView: View {
     private func projectionColumn(_ label: String, _ amount: Double?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label)
-                .font(.mono(10))
+                .scaledMono(10)
                 .kerning(0.5)
                 .foregroundStyle(c.t3)
             Text(amount.map { money($0) } ?? "—")
-                .font(.system(size: 20, weight: .bold))
+                .scaledFont(20, weight: .bold)
                 .monospacedDigit()
                 .kerning(-0.5)
                 .foregroundStyle(color)
@@ -299,17 +299,17 @@ struct PowerView: View {
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: cuts ? "clock" : "shield")
-                    .font(.system(size: 13, weight: .regular))
+                    .scaledFont(13, weight: .regular)
                     .foregroundStyle(cuts ? c.heating : c.t3)
                 Text("AUTOMATIC SWITCHING")
-                    .font(.mono(10))
+                    .scaledMono(10)
                     .kerning(1)
                     .foregroundStyle(c.t3)
             }
 
             if automations.isEmpty {
                 Text("Nothing switches this plug automatically — power stays as you leave it.")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     // RN `lineHeight: 17` on 12 pt text: SwiftUI's natural leading is ~14, so the
                     // extra 3 pt goes on as line spacing. Same conversion everywhere on this screen.
                     .lineSpacing(3)
@@ -324,10 +324,10 @@ struct PowerView: View {
                             .padding(.top, 5)
                         VStack(alignment: .leading, spacing: 0) {
                             Text(a.label)
-                                .font(.system(size: 13, weight: .semibold))
+                                .scaledFont(13, weight: .semibold)
                                 .foregroundStyle(c.t1)
                             Text(a.detail)
-                                .font(.system(size: 12, weight: .medium))
+                                .scaledFont(12, weight: .medium)
                                 .lineSpacing(3)
                                 .foregroundStyle(c.t3)
                                 .padding(.top, 2)
@@ -339,7 +339,7 @@ struct PowerView: View {
             }
 
             Text("Change these in Bambuddy → Settings → Smart Plugs.")
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(11, weight: .medium)
                 .foregroundStyle(c.t3)
                 .padding(.top, 12)
         }
@@ -355,7 +355,7 @@ struct PowerView: View {
     @ViewBuilder
     private var socketList: some View {
         Text("ALL SOCKETS")
-            .font(.mono(10))
+            .scaledMono(10)
             .kerning(1)
             .foregroundStyle(c.t3)
             .padding(.horizontal, 20)
@@ -369,13 +369,13 @@ struct PowerView: View {
     private var tariffFooter: some View {
         HStack(spacing: 10) {
             Image(systemName: "bolt")
-                .font(.system(size: 14, weight: .regular))
+                .scaledFont(14, weight: .regular)
                 .foregroundStyle(c.t3)
             Text(
                 price.map { "Tariff \(money($0))/kWh · set in Bambuddy → Settings → Energy" }
                     ?? "Electricity price not set. Add it in Bambuddy → Settings → Energy."
             )
-            .font(.system(size: 12, weight: .medium))
+            .scaledFont(12, weight: .medium)
             .lineSpacing(3)
             .foregroundStyle(c.t3)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -437,12 +437,12 @@ struct PlugRow: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 7) {
                     Text(name)
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(c.t1)
                         .lineLimit(1)
                     if isPrinter {
                         Text("PRINTER")
-                            .font(.mono(8.5))
+                            .scaledMono(8.5)
                             .kerning(0.5)
                             .foregroundStyle(c.accent)
                             .padding(.horizontal, 6)
@@ -458,14 +458,14 @@ struct PlugRow: View {
                         Circle().fill(c.idle).frame(width: 6, height: 6)
                     }
                     Text(statusLine)
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
                 .padding(.top, 5)
 
                 if !armed.isEmpty {
                     Text(armed.map(\.label).joined(separator: " · "))
-                        .font(.system(size: 11, weight: .medium))
+                        .scaledFont(11, weight: .medium)
                         .foregroundStyle(c.heating)
                         .lineLimit(1)
                         .padding(.top, 4)
@@ -532,7 +532,7 @@ private struct PowerPage<Content: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
-                    .font(.system(size: 30, weight: .bold))
+                    .scaledFont(30, weight: .bold)
                     .kerning(-0.8)
                     .foregroundStyle(c.t1)
                     .padding(.horizontal, 20)
@@ -563,16 +563,16 @@ private struct PowerEmpty: View {
                 .frame(width: 72, height: 72)
                 .overlay {
                     Image(systemName: icon)
-                        .font(.system(size: 32, weight: .regular))
+                        .scaledFont(32, weight: .regular)
                         .foregroundStyle(c.t3)
                 }
             VStack(spacing: 8) {
                 Text(title)
-                    .font(.system(size: 20, weight: .bold))
+                    .scaledFont(20, weight: .bold)
                     .kerning(-0.3)
                     .foregroundStyle(c.t1)
                 Text(message)
-                    .font(.system(size: 13, weight: .medium))
+                    .scaledFont(13, weight: .medium)
                     .lineSpacing(4)
                     .foregroundStyle(c.t3)
                     .multilineTextAlignment(.center)

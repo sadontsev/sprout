@@ -118,7 +118,7 @@ struct MacExploreInspector: View {
     private var empty: some View {
         VStack(spacing: 8) {
             Image(systemName: "square.grid.2x2")
-                .font(.system(size: 22, weight: .light))
+                .scaledFont(22, weight: .light)
                 .foregroundStyle(c.t3)
             Text("Nothing selected")
                 .font(.system(size: m.cardTitle, weight: .semibold))
@@ -337,9 +337,9 @@ struct MacExploreInspector: View {
         } label: {
             HStack(spacing: 5) {
                 Spacer(minLength: 0)
-                Image(systemName: "lock").font(.system(size: 10, weight: .semibold))
+                Image(systemName: "lock").scaledFont(10, weight: .semibold)
                 Text("Choose a version")
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
+                Image(systemName: "chevron.right").scaledFont(10, weight: .bold)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)

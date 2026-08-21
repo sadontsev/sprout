@@ -201,15 +201,15 @@ struct CameraOverlay: View {
         VStack(spacing: 0) {
             if failedView {
                 Image(systemName: "video.slash")
-                    .font(.system(size: 30))
+                    .scaledFont(30)
                     .foregroundStyle(Chrome.dim)
                 Text("CHAMBER · NO SIGNAL")
-                    .font(.mono(11, weight: .regular))
+                    .scaledMono(11, weight: .regular)
                     .tracking(2)
                     .foregroundStyle(Chrome.dim)
                     .padding(.top, 14)
                 Text(failureCopy)
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .lineSpacing(3.5)
                     .foregroundStyle(Chrome.muted)
                     .multilineTextAlignment(.center)
@@ -218,7 +218,7 @@ struct CameraOverlay: View {
                 HStack(spacing: 10) {
                     Tap { retry() } content: {
                         Text("Retry")
-                            .font(.system(size: 14, weight: .semibold))
+                            .scaledFont(14, weight: .semibold)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -229,7 +229,7 @@ struct CameraOverlay: View {
                     }
                     Tap { runDiagnostics() } content: {
                         Text("Diagnose")
-                            .font(.system(size: 14, weight: .semibold))
+                            .scaledFont(14, weight: .semibold)
                             .foregroundStyle(Chrome.label)
                             .padding(.horizontal, 18)
                             .frame(height: 42)
@@ -245,12 +245,12 @@ struct CameraOverlay: View {
                     .progressViewStyle(.circular)
                     .tint(Chrome.muted)
                 Text("CONNECTING…")
-                    .font(.mono(11, weight: .regular))
+                    .scaledMono(11, weight: .regular)
                     .tracking(2)
                     .foregroundStyle(Chrome.muted)
                     .padding(.top, 14)
                 Text("Waking the chamber camera — the first frame can take a few seconds.")
-                    .font(.system(size: 12.5))
+                    .scaledFont(12.5)
                     .lineSpacing(3)
                     .foregroundStyle(Chrome.faint)
                     .multilineTextAlignment(.center)
@@ -273,7 +273,7 @@ struct CameraOverlay: View {
     private func errorLine(prefix: String) -> some View {
         if let message = pip.lastError {
             Text("\(prefix) · \(message)")
-                .font(.mono(10.5, weight: .regular))
+                .scaledMono(10.5, weight: .regular)
                 .foregroundStyle(Chrome.faint)
                 .multilineTextAlignment(.center)
                 .lineLimit(3)
@@ -318,12 +318,12 @@ struct CameraOverlay: View {
                 .fill(vm.stateColor.resolve(c))
                 .frame(width: 7, height: 7)
             Text(vm.stateLabel)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(.white)
                 .lineLimit(1)
             Spacer(minLength: 8)
             Text("\(vm.progressInt)% · L\(vm.layer)")
-                .font(.mono(12))
+                .scaledMono(12)
                 .foregroundStyle(Color.white.opacity(0.5))
                 .lineLimit(1)
         }
@@ -368,7 +368,7 @@ struct CameraOverlay: View {
                 .fill(c.running)
                 .frame(width: 6, height: 6)
             Text("LIVE")
-                .font(.system(size: 10, weight: .semibold))
+                .scaledFont(10, weight: .semibold)
                 .tracking(0.5)
                 .foregroundStyle(.white)
         }
@@ -391,7 +391,7 @@ struct CameraOverlay: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 Text("Camera diagnostics")
-                    .font(.system(size: 15, weight: .semibold))
+                    .scaledFont(15, weight: .semibold)
                     .foregroundStyle(.white)
 
                 ScrollView {
@@ -399,7 +399,7 @@ struct CameraOverlay: View {
                         diagRow("Frames decoded", "\(pip.frameCount)")
                         // The single most useful number here, which is why it leads.
                         Text("Zero frames means nothing ever arrived over the wire. A rising count on a black screen means the transport is fine and the decode or display path is not — from the outside the two look identical.")
-                            .font(.system(size: 11))
+                            .scaledFont(11)
                             .lineSpacing(2)
                             .foregroundStyle(Chrome.muted)
                         diagRow("Stream", phaseLabel)
@@ -415,7 +415,7 @@ struct CameraOverlay: View {
                             .padding(.vertical, 2)
 
                         Text("SERVER PROBE")
-                            .font(.mono(10, weight: .regular))
+                            .scaledMono(10, weight: .regular)
                             .tracking(1.5)
                             .foregroundStyle(Chrome.faint)
 
@@ -423,13 +423,13 @@ struct CameraOverlay: View {
                             HStack(spacing: 8) {
                                 ProgressView().progressViewStyle(.circular).tint(Chrome.muted)
                                 Text("Probing…")
-                                    .font(.system(size: 12))
+                                    .scaledFont(12)
                                     .foregroundStyle(Chrome.muted)
                             }
                         }
                         if let diagnosisError {
                             Text(diagnosisError)
-                                .font(.system(size: 12))
+                                .scaledFont(12)
                                 .foregroundStyle(c.error)
                         }
                         if let d = diagnosis {
@@ -449,7 +449,7 @@ struct CameraOverlay: View {
                         // unreachable while the live stream is working fine. Believe the frame
                         // counter above it, not this verdict.
                         Text("The port-6000 probe is a known false negative on the A1 — it can call the camera unreachable while frames are flowing.")
-                            .font(.system(size: 11))
+                            .scaledFont(11)
                             .lineSpacing(2)
                             .foregroundStyle(Chrome.faint)
                     }
@@ -461,7 +461,7 @@ struct CameraOverlay: View {
                 HStack(spacing: 10) {
                     Tap { retry() } content: {
                         Text("Retry stream")
-                            .font(.system(size: 13, weight: .semibold))
+                            .scaledFont(13, weight: .semibold)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 16)
                             .frame(height: 38)
@@ -473,7 +473,7 @@ struct CameraOverlay: View {
                     Spacer(minLength: 0)
                     Tap { showDiagnostics = false } content: {
                         Text("Close")
-                            .font(.system(size: 13, weight: .semibold))
+                            .scaledFont(13, weight: .semibold)
                             .foregroundStyle(Chrome.label)
                             .padding(.horizontal, 16)
                             .frame(height: 38)
@@ -493,12 +493,12 @@ struct CameraOverlay: View {
     private func diagRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(label)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(Chrome.muted)
                 .lineLimit(2)
                 .frame(width: 118, alignment: .leading)
             Text(value)
-                .font(.mono(12, weight: .regular))
+                .scaledMono(12, weight: .regular)
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

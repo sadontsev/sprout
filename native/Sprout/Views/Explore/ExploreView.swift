@@ -142,14 +142,14 @@ private struct ExploreRoot: View {
         } content: {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.up.forward.app")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(c.accent)
                 Text(verbatim: "Open model \(id)")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(c.t1)
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     .foregroundStyle(c.t3)
             }
             .padding(.horizontal, 14)
@@ -167,14 +167,14 @@ private struct ExploreRoot: View {
         @Bindable var explore = explore
         return HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .medium))
+                .scaledFont(15, weight: .medium)
                 .foregroundStyle(c.t3)
 
             // "Search or paste a link" is a LABEL. The old placeholder was an example
             // ("benchy, or a makerworld.com link"), which reads as a value the field already holds.
             TextField("Search or paste a link", text: $explore.query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .scaledFont(15)
                 .foregroundStyle(c.t1)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -185,7 +185,7 @@ private struct ExploreRoot: View {
             if !explore.query.isEmpty {
                 Tap { explore.query = "" } content: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15))
+                        .scaledFont(15)
                         .foregroundStyle(c.t3)
                 }
                 .accessibilityLabel("Clear")
@@ -228,14 +228,14 @@ private struct ExploreRoot: View {
         Tap(action: action) {
             HStack(spacing: 6) {
                 if let symbol {
-                    Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
+                    Image(systemName: symbol).scaledFont(11, weight: .semibold)
                 }
-                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(title).scaledFont(13, weight: .semibold)
                 // Says the chip is a toggle rather than a destination, so "how do I get out of
                 // this" has a visible answer instead of being a thing you have to guess.
                 if on {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
+                        .scaledFont(9, weight: .bold)
                         .opacity(0.75)
                 }
             }
@@ -279,11 +279,11 @@ private struct ExploreRoot: View {
     private var scopeNote: some View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
-                .font(.system(size: 10, weight: .semibold))
+                .scaledFont(10, weight: .semibold)
             Text(verbatim: explore.hasMore
                  ? "\(explore.sort.label) — within the \(explore.hits.count) loaded of \(explore.hitTotal ?? explore.hits.count). MakerWorld's search can't sort."
                  : "\(explore.sort.label) — all \(explore.hits.count) results.")
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(11, weight: .medium)
         }
         .foregroundStyle(c.t3)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -338,15 +338,15 @@ private struct ExploreRoot: View {
                             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                         VStack(alignment: .leading, spacing: 3) {
                             Text(folder.title)
-                                .font(.system(size: 15, weight: .semibold))
+                                .scaledFont(15, weight: .semibold)
                                 .foregroundStyle(c.t1)
                             Text("\(folder.count) model\(folder.count == 1 ? "" : "s")")
-                                .font(.mono(11.5, weight: .medium))
+                                .scaledMono(11.5, weight: .medium)
                                 .foregroundStyle(c.t3)
                         }
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 14, weight: .semibold))
+                            .scaledFont(14, weight: .semibold)
                             .foregroundStyle(c.t3)
                     }
                     .contentShape(.rect)
@@ -393,7 +393,7 @@ struct ExploreTile: View {
                     let stats = MakerWorldSearch.stats(hit)
                     if !stats.isEmpty {
                         Text(stats)
-                            .font(.mono(10.5, weight: .semibold))
+                            .scaledMono(10.5, weight: .semibold)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 5)
@@ -408,7 +408,7 @@ struct ExploreTile: View {
                 .overlay(alignment: .topTrailing) {
                     if MakerWorldSearch.isAdult(hit) {
                         Text("18+")
-                            .font(.mono(9, weight: .bold))
+                            .scaledMono(9, weight: .bold)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 5).padding(.vertical, 2)
                             .background(Capsule().fill(.black.opacity(0.65)))
@@ -417,14 +417,14 @@ struct ExploreTile: View {
                 }
 
             Text(hit.title ?? "Untitled")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
 
             if let by = hit.designCreator?.name, !by.isEmpty {
                 Text(verbatim: "@\(by)")
-                    .font(.mono(10.5, weight: .medium))
+                    .scaledMono(10.5, weight: .medium)
                     .foregroundStyle(c.t3)
                     .lineLimit(1)
             }
@@ -497,13 +497,13 @@ struct ExploreMessage: View {
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: symbol)
-                .font(.system(size: 30, weight: .light))
+                .scaledFont(30, weight: .light)
                 .foregroundStyle(c.t3)
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(16, weight: .semibold)
                 .foregroundStyle(c.t1)
             Text(verbatim: message)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(c.t2)
                 .multilineTextAlignment(.center)
         }

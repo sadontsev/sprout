@@ -27,9 +27,9 @@ struct RichDescription: View {
                 // settings and compatibility claims someone is about to act on.
                 HStack(spacing: 5) {
                     Image(systemName: "character.bubble")
-                        .font(.system(size: 10, weight: .semibold))
+                        .scaledFont(10, weight: .semibold)
                     Text("Translated by MakerWorld")
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .scaledFont(10.5, weight: .semibold)
                 }
                 .foregroundStyle(c.t3)
                 .padding(.horizontal, 7)

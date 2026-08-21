@@ -139,7 +139,7 @@ struct MacExploreSection: View {
         @Bindable var explore = explore
         return HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(11, weight: .medium)
                 .foregroundStyle(c.t3)
 
             // "Search or paste a link" is a LABEL, not an example. The old placeholder read as a
@@ -156,7 +156,7 @@ struct MacExploreSection: View {
                     explore.query = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(c.t3)
                 }
                 .buttonStyle(.plain)
@@ -195,7 +195,7 @@ struct MacExploreSection: View {
                 Image(systemName: explore.sort.isServerOrder
                       ? "arrow.up.arrow.down"
                       : "arrow.up.arrow.down.circle.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .scaledFont(10, weight: .semibold)
                 Text(explore.sort.label)
                     .font(.system(size: caption, weight: .medium))
             }
@@ -222,14 +222,14 @@ struct MacExploreSection: View {
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: "arrow.up.forward.app")
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     .foregroundStyle(c.accent)
                 Text(verbatim: "Open model \(id)")
                     .font(.system(size: m.cardTitle, weight: .semibold))
                     .foregroundStyle(c.t1)
                 Spacer(minLength: 6)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .scaledFont(10, weight: .semibold)
                     .foregroundStyle(c.t3)
             }
             .padding(.horizontal, 11)
@@ -266,12 +266,12 @@ struct MacExploreSection: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 if let symbol {
-                    Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
+                    Image(systemName: symbol).scaledFont(9, weight: .semibold)
                 }
                 Text(title).font(.system(size: caption, weight: .semibold))
                 // Says the chip is a toggle rather than a destination, so "how do I get out of this"
                 // has a visible answer instead of being something to guess at.
-                if on { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).opacity(0.75) }
+                if on { Image(systemName: "xmark").scaledFont(8, weight: .bold).opacity(0.75) }
             }
             .foregroundStyle(on ? c.accent : c.t2)
             .padding(.horizontal, 11)
@@ -381,7 +381,7 @@ struct MacExploreSection: View {
                 explore.backToCollections(collectionsClient)
             } label: {
                 HStack(spacing: 4) {
-                    Image(systemName: "chevron.left").font(.system(size: 9, weight: .bold))
+                    Image(systemName: "chevron.left").scaledFont(9, weight: .bold)
                     Text("My collections").font(.system(size: caption, weight: .semibold))
                 }
                 .foregroundStyle(c.accent)
@@ -423,7 +423,7 @@ struct MacExploreSection: View {
     private func staleNote(_ error: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 9, weight: .semibold))
+                .scaledFont(9, weight: .semibold)
             Text(verbatim: "Couldn’t load that — these are the previous results. \(error)")
                 .font(.system(size: caption, weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
@@ -439,7 +439,7 @@ struct MacExploreSection: View {
     /// something larger — "Most downloaded" over 20 of 10 000 is not what the words imply.
     private var scopeNote: some View {
         HStack(spacing: 6) {
-            Image(systemName: "info.circle").font(.system(size: 9, weight: .semibold))
+            Image(systemName: "info.circle").scaledFont(9, weight: .semibold)
             Text(verbatim: explore.hasMore
                  ? "\(explore.sort.label) — within the \(explore.hits.count) loaded of "
                    + "\(explore.hitTotal ?? explore.hits.count). MakerWorld's search can't sort."
@@ -829,7 +829,7 @@ private struct MacExploreMessage: View {
     var body: some View {
         VStack(spacing: 9) {
             Image(systemName: symbol)
-                .font(.system(size: 26, weight: .light))
+                .scaledFont(26, weight: .light)
                 .foregroundStyle(c.t3)
             // Two points over a card heading: an empty state's title has to out-rank the sentence
             // under it, and `screenTitle` is the toolbar's size, not a body-copy heading.

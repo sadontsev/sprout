@@ -63,7 +63,7 @@ struct VersionChooserView: View {
                             ForEach(items) { row(  $0) }
                         } header: {
                             Text(verbatim: "\(group.title) · \(items.count)")
-                                .font(.mono(11, weight: .bold))
+                                .scaledMono(11, weight: .bold)
                                 .foregroundStyle(c.t3)
                         }
                     }
@@ -120,7 +120,7 @@ struct VersionChooserView: View {
         return Text(VersionGrouping.countLine(matching: visible.count,
                                               total: placed.count,
                                               unlabelled: unlabelled))
-            .font(.mono(11.5, weight: .semibold))
+            .scaledMono(11.5, weight: .semibold)
             .foregroundStyle(c.t3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
@@ -135,12 +135,12 @@ struct VersionChooserView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(picked == nil ? "No version chosen" : picked!.title)
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .scaledFont(13.5, weight: .semibold)
                         .foregroundStyle(c.t1)
                         .lineLimit(1)
                     if let d = picked?.detail {
                         Text(MakerWorld.metaLine(d))
-                            .font(.mono(11, weight: .medium))
+                            .scaledMono(11, weight: .medium)
                             .foregroundStyle(c.t3)
                             .lineLimit(1)
                     }
@@ -148,7 +148,7 @@ struct VersionChooserView: View {
                 Spacer()
                 Tap { dismiss() } content: {
                     Text("Use this")
-                        .font(.system(size: 14, weight: .bold))
+                        .scaledFont(14, weight: .bold)
                         .foregroundStyle(.black)
                         .padding(.horizontal, 18)
                         .frame(height: 40)
@@ -178,13 +178,13 @@ struct VersionChooserView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(item.row.title)
-                                .font(.system(size: 13.5, weight: .semibold))
+                                .scaledFont(13.5, weight: .semibold)
                                 .foregroundStyle(c.t1)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                             ForEach(item.marks, id: \.self) { mark in
                                 Text(mark)
-                                    .font(.mono(8.5, weight: .bold))
+                                    .scaledMono(8.5, weight: .bold)
                                     .foregroundStyle(c.accent)
                                     .padding(.horizontal, 4).padding(.vertical, 2)
                                     .background(RoundedRectangle(cornerRadius: 4).fill(c.accentDim))
@@ -194,7 +194,7 @@ struct VersionChooserView: View {
                         if let detail = item.row.detail {
                             HStack(spacing: 8) {
                                 Text(MakerWorld.metaLine(detail))
-                                    .font(.mono(11, weight: .medium))
+                                    .scaledMono(11, weight: .medium)
                                     .foregroundStyle(c.t3)
                                 ForEach(Array(detail.slots.prefix(4).enumerated()), id: \.offset) { _, sl in
                                     Swatch(value: FilamentColor.norm(sl.color), size: 9, radius: 5)
@@ -202,19 +202,19 @@ struct VersionChooserView: View {
                             }
                             if let remedy = item.remedy {
                                 Text(verbatim: remedy)
-                                    .font(.mono(11, weight: .semibold))
+                                    .scaledMono(11, weight: .semibold)
                                     .foregroundStyle(c.heating)
                             }
                         } else {
                             // The absent state, said in words rather than rendered as "—".
                             Text("No settings published")
-                                .font(.mono(11, weight: .medium))
+                                .scaledMono(11, weight: .medium)
                                 .foregroundStyle(c.t3)
                         }
 
                         if item.row.summary == nil && item.row.pictures.isEmpty {
                             Text("No photos or notes published")
-                                .font(.system(size: 11))
+                                .scaledFont(11)
                                 .foregroundStyle(c.t3.opacity(0.8))
                         }
                     }
@@ -223,7 +223,7 @@ struct VersionChooserView: View {
 
                     if selected {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 15, weight: .bold))
+                            .scaledFont(15, weight: .bold)
                             .foregroundStyle(c.accent)
                     }
                 }
@@ -258,9 +258,9 @@ struct VersionChooserView: View {
         } label: {
             HStack(spacing: 4) {
                 Text(hasMore ? "Details" : "Details — nothing more published")
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .scaledFont(12.5, weight: .semibold)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .bold))
+                    .scaledFont(10, weight: .bold)
             }
             .foregroundStyle(hasMore ? c.accent : c.t3)
         }
@@ -278,7 +278,7 @@ struct VersionChooserView: View {
                     .frame(width: 64, height: 48)
                     .overlay {
                         Text("NO PHOTO")
-                            .font(.mono(7.5, weight: .bold))
+                            .scaledMono(7.5, weight: .bold)
                             .foregroundStyle(c.t3)
                     }
             }
@@ -294,10 +294,10 @@ struct VersionChooserView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(verbatim: "No published settings · \(items.count)")
-                        .font(.mono(11, weight: .bold))
+                        .scaledMono(11, weight: .bold)
                         .foregroundStyle(c.t3)
                     Text(VersionGrouping.unlabelledExplanation)
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(c.t3)
                         .fixedSize(horizontal: false, vertical: true)
                 }

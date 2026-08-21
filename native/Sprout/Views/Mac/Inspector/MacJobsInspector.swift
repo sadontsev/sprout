@@ -89,13 +89,13 @@ struct MacJobsInspector: View {
         )
         return VStack(spacing: 8) {
             Image(systemName: state.symbol)
-                .font(.system(size: 22))
+                .scaledFont(22)
                 .foregroundStyle(c.t3)
             Text(verbatim: state.title)
                 .font(.system(size: m.cardTitle, weight: .semibold))
                 .foregroundStyle(c.t2)
             Text(verbatim: state.hint)
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(c.t3)
         }
@@ -137,20 +137,20 @@ struct MacJobsInspector: View {
     private func heading(_ row: MacJobRow) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(row.name)
-                .font(.system(size: 14, weight: .semibold))
+                .scaledFont(14, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Text(verbatim: row.outcome.label.uppercased())
-                    .font(.mono(10, weight: .bold))
+                    .scaledMono(10, weight: .bold)
                     .foregroundStyle(row.outcome.color(c))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 3)
                     .background(RoundedRectangle(cornerRadius: m.chipRadius, style: .continuous).fill(row.outcome.dim(c)))
                 if !row.startedAbsolute.isEmpty {
                     Text(verbatim: row.startedAbsolute)
-                        .font(.system(size: 11, weight: .medium))
+                        .scaledFont(11, weight: .medium)
                         .monospacedDigit()
                         .foregroundStyle(c.t3)
                 }
@@ -184,11 +184,11 @@ struct MacJobsInspector: View {
     private func fact(_ label: String, _ value: String) -> some View {
         HStack(spacing: 8) {
             Text(verbatim: label)
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(verbatim: value)
-                .font(.mono(11.5, weight: .medium))
+                .scaledMono(11.5, weight: .medium)
                 // Every one of these can tick over between two selections of the same run.
                 .monospacedDigit()
                 .foregroundStyle(c.t1)
@@ -236,7 +236,7 @@ struct MacJobsInspector: View {
 
             if !hasArchive(row) {
                 Text("Bambuddy has no archive for this run, so there's no file to send back. Prints started from the printer's own screen or its SD card land here without one.")
-                    .font(.system(size: 11, weight: .medium))
+                    .scaledFont(11, weight: .medium)
                     .lineSpacing(3)
                     .foregroundStyle(c.t3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -262,7 +262,7 @@ struct MacJobsInspector: View {
     /// about the server that nothing here verifies.
     private var footnote: some View {
         Text(verbatim: "Sends the archived job back to \(model.printer?.name ?? "the selected printer")'s queue with AMS on. It lines up behind whatever is printing now.")
-            .font(.system(size: 11, weight: .regular))
+            .scaledFont(11, weight: .regular)
             .lineSpacing(3.5)
             .foregroundStyle(c.t3)
             .fixedSize(horizontal: false, vertical: true)

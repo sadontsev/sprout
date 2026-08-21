@@ -94,7 +94,7 @@ struct MacAlertsSheet: View {
     private var header: some View {
         HStack {
             Text("Needs attention")
-                .font(.system(size: 15, weight: .bold))
+                .scaledFont(15, weight: .bold)
                 .foregroundStyle(c.t1)
             if !alerts.isEmpty {
                 Text("\(alerts.count)")
@@ -111,7 +111,7 @@ struct MacAlertsSheet: View {
     private var empty: some View {
         VStack(spacing: 8) {
             Image(systemName: "checkmark.circle")
-                .font(.system(size: 26))
+                .scaledFont(26)
                 .foregroundStyle(c.running)
             Text("Nothing needs you right now.")
                 .font(.system(size: m.body))
@@ -251,7 +251,7 @@ private struct MacAlertCard: View {
             locked.press(gate) { onAction(act) }()
         } label: {
             HStack(spacing: 6) {
-                if blocked { Image(systemName: "lock.fill").font(.system(size: 9, weight: .bold)) }
+                if blocked { Image(systemName: "lock.fill").scaledFont(9, weight: .bold) }
                 if probing, act.id == .lookup { ProgressView().controlSize(.small) }
                 Text(act.label)
             }

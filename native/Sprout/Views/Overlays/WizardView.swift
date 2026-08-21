@@ -289,24 +289,24 @@ struct WizardView: View {
             // muted secondary text that reads as disabled.
             Tap { model.overlay = nil } content: {
                 Text("Cancel")
-                    .font(.system(size: 15, weight: .semibold))
+                    .scaledFont(15, weight: .semibold)
                     .foregroundStyle(c.accent)
                     .contentShape(.rect)
             }
 
             VStack(spacing: 2) {
                 Text(title(step))
-                    .font(.system(size: 15, weight: .semibold))
+                    .scaledFont(15, weight: .semibold)
                     .foregroundStyle(c.t1)
                 Text(caption(step))
-                    .font(.system(size: 11, weight: .medium))
+                    .scaledFont(11, weight: .medium)
                     .foregroundStyle(c.t3)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
 
             Text("\(idx + 1)/\(steps.count)")
-                .font(.mono(12))
+                .scaledMono(12)
                 .foregroundStyle(c.t3)
         }
         .padding(.horizontal, 18)
@@ -321,7 +321,7 @@ struct WizardView: View {
                         .fill(i <= idx ? c.accent : c.s3)
                         .frame(height: 3)
                     Text(title(s).uppercased())
-                        .font(.mono(8.5))
+                        .scaledMono(8.5)
                         .tracking(0.3)
                         .foregroundStyle(i <= idx ? c.accent : c.t3)
                         .lineLimit(1)
@@ -371,7 +371,7 @@ struct WizardView: View {
                 if idx > 0, step != 7 {
                     Tap { back() } content: {
                         Text("Back")
-                            .font(.system(size: 16, weight: .semibold))
+                            .scaledFont(16, weight: .semibold)
                             .foregroundStyle(c.t1)
                             .padding(.horizontal, 22)
                             .frame(height: 52)
@@ -382,11 +382,11 @@ struct WizardView: View {
                     HStack(spacing: 8) {
                         if footer.locked {
                             Image(systemName: "lock.fill")
-                                .font(.system(size: 15, weight: .semibold))
+                                .scaledFont(15, weight: .semibold)
                                 .foregroundStyle(footer.fg)
                         }
                         Text(footer.label)
-                            .font(.system(size: 16, weight: .semibold))
+                            .scaledFont(16, weight: .semibold)
                             .foregroundStyle(footer.fg)
                     }
                     .frame(maxWidth: .infinity)
@@ -423,11 +423,11 @@ struct WizardView: View {
             SectionLabel("SELECTED FILE")
 
             Text(displayName)
-                .font(.system(size: 19, weight: .bold))
+                .scaledFont(19, weight: .bold)
                 .tracking(-0.3)
                 .foregroundStyle(c.t1)
             Text("\(file.fileType ?? "file") · \(alreadySliced ? "pre-sliced" : "will be sliced")")
-                .font(.mono(12, weight: .medium))
+                .scaledMono(12, weight: .medium)
                 .foregroundStyle(c.t3)
                 .padding(.top, 5)
                 .padding(.bottom, 16)
@@ -473,10 +473,10 @@ struct WizardView: View {
                 Color(hex: 0x0A0B0C)
                 VStack(spacing: 9) {
                     Image(systemName: "cube")
-                        .font(.system(size: 30))
+                        .scaledFont(30)
                         .foregroundStyle(c.t3)
                     Text("Tap to inspect the mesh")
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
             }
@@ -497,18 +497,18 @@ struct WizardView: View {
                     .fill(c.s3)
                     .frame(width: 52, height: 52)
                     .overlay {
-                        Image(systemName: "cpu").font(.system(size: 26)).foregroundStyle(c.t2)
+                        Image(systemName: "cpu").scaledFont(26).foregroundStyle(c.t2)
                     }
                 VStack(alignment: .leading, spacing: 5) {
                     Text(model.printer?.name ?? "Printer")
-                        .font(.system(size: 17, weight: .bold))
+                        .scaledFont(17, weight: .bold)
                         .foregroundStyle(c.t1)
                     HStack(spacing: 6) {
                         Circle()
                             .fill(status?.connected == true ? c.running : c.idle)
                             .frame(width: 6, height: 6)
                         Text(printerSubtitle)
-                            .font(.system(size: 12, weight: .medium))
+                            .scaledFont(12, weight: .medium)
                             .foregroundStyle(c.t2)
                     }
                 }
@@ -518,7 +518,7 @@ struct WizardView: View {
             .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(c.s2))
 
             Text("Switch printers from the dashboard header.")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t3)
                 .padding(.top, 13)
         }
@@ -592,11 +592,11 @@ struct WizardView: View {
         } content: {
             VStack(spacing: 2) {
                 Text(n.rawValue)
-                    .font(.system(size: 15, weight: .bold))
+                    .scaledFont(15, weight: .bold)
                     .monospacedDigit()
                     .foregroundStyle(on ? c.accent : c.t1)
                 Text(isMounted ? "mounted" : "mm")
-                    .font(.system(size: 9.5, weight: .medium))
+                    .scaledFont(9.5, weight: .medium)
                     .foregroundStyle(isMounted ? c.running : c.t3)
             }
             .frame(maxWidth: .infinity)
@@ -625,10 +625,10 @@ struct WizardView: View {
                     HStack(spacing: 5) {
                         if done {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .bold))
+                                .scaledFont(10, weight: .bold)
                         }
                         Text("Filament \(s)")
-                            .font(.system(size: 13, weight: .semibold))
+                            .scaledFont(13, weight: .semibold)
                     }
                     .foregroundStyle(on ? c.accent : (done ? c.t2 : c.t3))
                     .padding(.horizontal, 13)
@@ -651,7 +651,7 @@ struct WizardView: View {
                 Swatch(value: FilamentColor.norm(need.color), size: 18, radius: 6)
                 Text("The file wants \(need.type ?? "filament") here"
                      + ((need.usedGrams?.double).map { $0 > 0 ? String(format: " · %.0f g", $0) : "" } ?? ""))
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t3)
             }
             .padding(.bottom, 12)
@@ -678,10 +678,10 @@ struct WizardView: View {
         Tap { showCatalog.toggle() } content: {
             HStack(spacing: 6) {
                 Image(systemName: showCatalog || loaded.isEmpty ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(c.t3)
                 Text(loaded.isEmpty ? "CHOOSE A FILAMENT" : "OR PICK ANOTHER FILAMENT")
-                    .font(.mono(11))
+                    .scaledMono(11)
                     .tracking(1)
                     .foregroundStyle(c.t3)
                 Spacer(minLength: 0)
@@ -694,7 +694,7 @@ struct WizardView: View {
             let catalog = presets?.catalog ?? []
             if catalog.isEmpty {
                 Text("No filament profiles for this machine at \(nozzle.rawValue) mm.")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t3)
                     .padding(.top, 11)
             } else {
@@ -703,12 +703,12 @@ struct WizardView: View {
                         Tap { filaments[editingSlot] = m } content: {
                             HStack(spacing: 0) {
                                 Text(m.name.replacingOccurrences(of: " \(token)", with: ""))
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .scaledFont(14, weight: .semibold)
                                     .foregroundStyle(c.t1)
                                 Spacer(minLength: 8)
                                 if filaments[editingSlot]?.id == m.id {
                                     Image(systemName: "checkmark")
-                                        .font(.system(size: 14, weight: .semibold))
+                                        .scaledFont(14, weight: .semibold)
                                         .foregroundStyle(c.accent)
                                 }
                             }
@@ -749,16 +749,16 @@ struct WizardView: View {
                 Swatch(value: id.colorHex, size: 30, radius: 9)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(id.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(c.t1)
                     Text(sub)
-                        .font(.mono(11, weight: .medium))
+                        .scaledMono(11, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
                 Spacer(minLength: 0)
                 if selected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(c.accent)
                 }
             }
@@ -778,7 +778,7 @@ struct WizardView: View {
         let qualities = presets?.qualities ?? []
         if qualities.isEmpty {
             Text("No quality profiles for \(profile.printerPresetBase) at \(nozzle.rawValue) mm. Pick another nozzle size.")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t3)
                 .lineSpacing(3)
         } else {
@@ -811,11 +811,11 @@ struct WizardView: View {
         return Tap { quality = q } content: {
             VStack(alignment: .leading, spacing: 5) {
                 Text(height)
-                    .font(.system(size: 19, weight: .bold))
+                    .scaledFont(19, weight: .bold)
                     .monospacedDigit()
                     .foregroundStyle(on ? c.accent : c.t1)
                 Text(label)
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t2)
                     .lineLimit(2)
             }
@@ -840,7 +840,7 @@ struct WizardView: View {
             ForEach(profile.bedTypes) { b in
                 Tap { bedType = b.id } content: {
                     Text(b.label)
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .scaledFont(13.5, weight: .semibold)
                         .foregroundStyle(bedType == b.id ? c.accent : c.t1)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
@@ -863,14 +863,14 @@ struct WizardView: View {
             Tap { supports.toggle() } content: {
                 HStack(spacing: 13) {
                     Image(systemName: "arrow.triangle.merge")
-                        .font(.system(size: 19))
+                        .scaledFont(19)
                         .foregroundStyle(supports ? c.supports : c.t2)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Supports")
-                            .font(.system(size: 15, weight: .bold))
+                            .scaledFont(15, weight: .bold)
                             .foregroundStyle(supports ? c.supports : c.t1)
                         Text("Tree supports under overhangs. Adds print time + material; shown in amber in the layer view.")
-                            .font(.system(size: 11.5, weight: .medium))
+                            .scaledFont(11.5, weight: .medium)
                             .foregroundStyle(c.t3)
                             .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
@@ -916,15 +916,15 @@ struct WizardView: View {
                 Tap { advOpen.toggle() } content: {
                     HStack(spacing: 8) {
                         Image(systemName: advOpen ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
+                            .scaledFont(13, weight: .semibold)
                             .foregroundStyle(c.t3)
                         Text("ADVANCED")
-                            .font(.mono(11))
+                            .scaledMono(11)
                             .tracking(1)
                             .foregroundStyle(c.t3)
                         if adv.overrideCount > 0 {
                             Text("\(adv.overrideCount) changed")
-                                .font(.system(size: 10.5, weight: .bold))
+                                .scaledFont(10.5, weight: .bold)
                                 .foregroundStyle(c.accent)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
@@ -937,7 +937,7 @@ struct WizardView: View {
                 if adv.overrideCount > 0 {
                     Tap { adv = SliceOverrides() } content: {
                         Text("Reset")
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .scaledFont(11.5, weight: .semibold)
                             .foregroundStyle(c.accent)
                             .contentShape(.rect)
                     }
@@ -979,7 +979,7 @@ struct WizardView: View {
                                       selected: adv.flowRatio) { adv.flowRatio = $0 }
                     }
                     Text("“Preset” keeps the profile’s value. Changes apply to this slice via a reusable “Sprout Custom” profile on your server — stock presets are never modified.")
-                        .font(.system(size: 10.5))
+                        .scaledFont(10.5)
                         .foregroundStyle(c.t3)
                         .lineSpacing(3)
                 }
@@ -991,7 +991,7 @@ struct WizardView: View {
     private func advRow<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             Text(label)
-                .font(.mono(11))
+                .scaledMono(11)
                 .tracking(1)
                 .foregroundStyle(c.t3)
             content()
@@ -1014,7 +1014,7 @@ struct WizardView: View {
                     color: c.t1
                 )
                 Text("%")
-                    .font(.system(size: 22, weight: .bold))
+                    .scaledFont(22, weight: .bold)
                     .foregroundStyle(c.t3)
                     .padding(.bottom, 3)
             }
@@ -1022,7 +1022,7 @@ struct WizardView: View {
                 .containerRelativeFrame(.horizontal) { width, _ in width * 0.78 }
                 .padding(.top, 18)
             Text("Slicing on your server…")
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(c.t2)
                 .padding(.top, 14)
         }
@@ -1068,7 +1068,7 @@ struct WizardView: View {
             if isMultiFilament { mapSlotSelector }
             if trays.isEmpty {
                 Text("No AMS trays reported yet. Load filament in the printer, then come back.")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t3)
                     .lineSpacing(3)
             } else {
@@ -1083,7 +1083,7 @@ struct WizardView: View {
                 Text(isMultiFilament
                      ? "Tap a tray for filament \(editingSlot). Each filament the plate uses needs one."
                      : "Tap a slot to map this print's filament.")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t3)
                     .padding(.top, 13)
             }
@@ -1148,10 +1148,10 @@ struct WizardView: View {
                 Tap { editingSlot = sl } content: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Filament \(sl)")
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .scaledFont(12.5, weight: .semibold)
                             .foregroundStyle(on ? c.accent : c.t2)
                         Text(mapped.map(trayLabel) ?? "not mapped")
-                            .font(.mono(10.5, weight: .medium))
+                            .scaledMono(10.5, weight: .medium)
                             .foregroundStyle(mapped == nil ? c.heating : c.t3)
                     }
                     .padding(.horizontal, 12)
@@ -1182,12 +1182,12 @@ struct WizardView: View {
             HStack(spacing: 13) {
                 Swatch(value: id.colorHex, size: 28, radius: 8, empty: empty)
                 Text("\(position) · \(contents)")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(c.t1)
                 Spacer(minLength: 0)
                 if trayBySlot[editingSlot] == t.globalId {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(c.accent)
                 }
             }
@@ -1287,7 +1287,7 @@ struct WizardView: View {
 
     private func SectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.mono(11))
+            .scaledMono(11)
             .tracking(1)
             .foregroundStyle(c.t3)
             .padding(.bottom, 12)
@@ -1297,7 +1297,7 @@ struct WizardView: View {
         HStack(spacing: 10) {
             ProgressView().tint(c.accent)
             Text(text)
-                .font(.system(size: 12.5, weight: .medium))
+                .scaledFont(12.5, weight: .medium)
                 .foregroundStyle(c.t3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1617,11 +1617,11 @@ private struct SummaryRow: View {
     var body: some View {
         HStack {
             Text(key)
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(c.t2)
             Spacer(minLength: 12)
             Text(value)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .lineLimit(1)
                 .frame(maxWidth: 200, alignment: .trailing)
@@ -1643,10 +1643,10 @@ private struct NoticeCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 16))
+                .scaledFont(16)
                 .foregroundStyle(tint)
             Text(text)
-                .font(.system(size: 12.5, weight: .medium))
+                .scaledFont(12.5, weight: .medium)
                 .foregroundStyle(textColor)
                 .lineSpacing(4)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1677,21 +1677,21 @@ private struct ActionCard: View {
                     .fill(c.accentDim)
                     .frame(width: 36, height: 36)
                     .overlay {
-                        Image(systemName: icon).font(.system(size: 17)).foregroundStyle(c.accent)
+                        Image(systemName: icon).scaledFont(17).foregroundStyle(c.accent)
                     }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 15, weight: .semibold))
+                        .scaledFont(15, weight: .semibold)
                         .foregroundStyle(c.t1)
                     Text(subtitle)
-                        .font(.system(size: 11.5, weight: .medium))
+                        .scaledFont(11.5, weight: .medium)
                         .foregroundStyle(c.t3)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 14))
+                    .scaledFont(14)
                     .foregroundStyle(c.t3)
             }
             .padding(14)
@@ -1836,7 +1836,7 @@ private struct WizardPlateReview: View {
                 .padding(.top, 14)
             } else if vm.plateCount > 1 {
                 Text("This file has \(vm.plateCount) plates. Pick the one to print — only it gets sliced. Time and material are estimated after slicing.")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t3)
                     .lineSpacing(3)
                     .padding(.top, 13)
@@ -1844,14 +1844,14 @@ private struct WizardPlateReview: View {
 
             if !detailLine.isEmpty {
                 Text(detailLine)
-                    .font(.mono(11.5, weight: .medium))
+                    .scaledMono(11.5, weight: .medium)
                     .foregroundStyle(c.t3)
                     .padding(.top, 12)
             }
 
             if failed, !loading {
                 Text("Couldn’t read this file's plate details. Time and material may be missing.")
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t3)
                     .padding(.top, 12)
             }
@@ -1869,7 +1869,7 @@ private struct WizardPlateReview: View {
 
             if !settingsLine.isEmpty {
                 Text(settingsLine)
-                    .font(.mono(11, weight: .medium))
+                    .scaledMono(11, weight: .medium)
                     .foregroundStyle(c.t3)
                     .padding(.top, 12)
             }
@@ -1900,7 +1900,7 @@ private struct WizardPlateReview: View {
     private func plateChip(_ index: Int, selected: Bool) -> some View {
         Tap(disabled: onSelectPlate == nil) { onSelectPlate?(index) } content: {
             Text("Plate \(index)")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(selected ? c.accent : c.t2)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -1946,7 +1946,7 @@ private struct WizardPlateReview: View {
                     case .success(let image):
                         image.resizable().aspectRatio(contentMode: .fill)
                     case .failure:
-                        Image(systemName: "cube").font(.system(size: 30)).foregroundStyle(c.t3)
+                        Image(systemName: "cube").scaledFont(30).foregroundStyle(c.t3)
                     default:
                         ProgressView().tint(c.t3)
                     }
@@ -1954,7 +1954,7 @@ private struct WizardPlateReview: View {
             } else if loading {
                 ProgressView().tint(c.t3)
             } else {
-                Image(systemName: "cube").font(.system(size: 30)).foregroundStyle(c.t3)
+                Image(systemName: "cube").scaledFont(30).foregroundStyle(c.t3)
             }
         }
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
@@ -1966,10 +1966,10 @@ private struct WizardPlateReview: View {
                 Tap(action: onViewLayers) {
                     HStack(spacing: 6) {
                         Image(systemName: "square.stack.3d.up")
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(c.accent)
                         Text("View layers")
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .scaledFont(11.5, weight: .semibold)
                             .foregroundStyle(.white)
                     }
                     .padding(.horizontal, 11)
@@ -1985,11 +1985,11 @@ private struct WizardPlateReview: View {
         HStack(spacing: 12) {
             Swatch(value: f.colorHex, size: 22, radius: 7)
             Text(f.name)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(c.t1)
             Spacer(minLength: 8)
             Text(usage(f))
-                .font(.mono(12, weight: .medium))
+                .scaledMono(12, weight: .medium)
                 .foregroundStyle(c.t3)
         }
         .padding(.horizontal, 14)
@@ -2033,13 +2033,13 @@ private struct PStat: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(label)
-                .font(.mono(9))
+                .scaledMono(9)
                 .tracking(0.8)
                 .foregroundStyle(c.t3)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Text(value)
-                .font(.system(size: 19, weight: .bold))
+                .scaledFont(19, weight: .bold)
                 .monospacedDigit()
                 .tracking(-0.5)
                 .foregroundStyle(c.t1)
@@ -2048,7 +2048,7 @@ private struct PStat: View {
                 .padding(.top, 7)
             if let sub {
                 Text(sub)
-                    .font(.mono(10.5, weight: .medium))
+                    .scaledMono(10.5, weight: .medium)
                     .foregroundStyle(c.t3)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)

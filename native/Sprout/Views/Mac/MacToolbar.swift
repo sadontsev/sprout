@@ -115,7 +115,7 @@ struct MacToolbar: ToolbarContent {
                 PulseDot(color: model.vm.stateColor.resolve(palette), size: 7,
                          meaning: model.vm.stateLabel)
                 Text(model.printer?.name ?? "Printer")
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
             }
         }
         .menuStyle(.borderlessButton)

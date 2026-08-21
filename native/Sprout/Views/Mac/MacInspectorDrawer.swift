@@ -111,7 +111,7 @@ struct MacInspectorDrawer: ViewModifier {
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                .font(.system(size: 9, weight: .semibold))
+                .scaledFont(9, weight: .semibold)
                 .foregroundStyle(c.t3)
             MacPrinterMonoLabel(section.label.uppercased())
             Spacer(minLength: 0)

@@ -29,17 +29,17 @@ struct ImportReceiptSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 22))
+                    .scaledFont(22)
                     .foregroundStyle(c.accent)
                 Text(receipt.response.wasExisting == true ? "Already in your library" : "Added to your library")
-                    .font(.system(size: 17, weight: .bold))
+                    .scaledFont(17, weight: .bold)
                     .foregroundStyle(c.t1)
             }
             .padding(.bottom, 12)
 
             // The path, so the answer to "where did it go" is on screen rather than inferred.
             Text(verbatim: "Files › MakerWorld › \(filename)")
-                .font(.mono(12.5, weight: .medium))
+                .scaledMono(12.5, weight: .medium)
                 .foregroundStyle(c.t2)
                 .lineLimit(3)
                 .padding(.bottom, 20)
@@ -87,9 +87,9 @@ struct ImportReceiptSheet: View {
                 if busy {
                     ProgressView().tint(primary ? .black : c.t2)
                 } else {
-                    Image(systemName: symbol).font(.system(size: 14, weight: .semibold))
+                    Image(systemName: symbol).scaledFont(14, weight: .semibold)
                 }
-                Text(title).font(.system(size: 15, weight: .semibold))
+                Text(title).scaledFont(15, weight: .semibold)
                 Spacer()
             }
             .foregroundStyle(primary ? .black : c.t1)

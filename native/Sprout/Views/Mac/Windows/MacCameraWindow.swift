@@ -123,7 +123,7 @@ struct MacCameraWindow: View {
                 Circle().fill(c.idle).frame(width: 6, height: 6)
             }
             Text(verbatim: MacCameraBadge.label(isLive: cam.isLive, paused: paused))
-                .font(.mono(10, weight: .semibold))
+                .scaledMono(10, weight: .semibold)
                 .foregroundStyle(c.t1)
         }
         .padding(.horizontal, 10)
@@ -148,7 +148,7 @@ struct MacCameraWindow: View {
         return Text(verbatim: vm.kind == .live
                     ? "LAYER \(vm.layer) · \(vm.progressInt) %"
                     : vm.stateLabel.uppercased())
-            .font(.mono(10, weight: .medium))
+            .scaledMono(10, weight: .medium)
             .monospacedDigit()
             .foregroundStyle(c.t2)
             .padding(.horizontal, 10)
@@ -213,7 +213,7 @@ struct MacCameraWindow: View {
             paused.toggle()
         } label: {
             Image(systemName: paused ? "play.fill" : "pause.fill")
-                .font(.system(size: 12, weight: .semibold))
+                .scaledFont(12, weight: .semibold)
                 // Matches `MacSecondaryButtonStyle`'s height so the four controls sit on one line.
                 .frame(width: 34, height: m.primaryControlHeight)
                 .contentShape(.rect)
@@ -241,7 +241,7 @@ struct MacCameraWindow: View {
             .toggleStyle(.switch)
             .controlSize(.small)
             .tint(c.accent)
-            .font(.system(size: 12, weight: .medium))
+            .scaledFont(12, weight: .medium)
             .foregroundStyle(c.t2)
             .help(help)
     }

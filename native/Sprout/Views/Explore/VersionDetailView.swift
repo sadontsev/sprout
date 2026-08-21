@@ -36,7 +36,7 @@ struct VersionDetailView: View {
                             .overlay(alignment: .bottomTrailing) {
                                 if row.pictures.count > 0 {
                                     Text(verbatim: "\(row.pictures.count + 1) photos")
-                                        .font(.mono(10.5, weight: .bold))
+                                        .scaledMono(10.5, weight: .bold)
                                         .foregroundStyle(.white)
                                         .padding(.horizontal, 8).padding(.vertical, 4)
                                         .background(Capsule().fill(.black.opacity(0.55)))
@@ -47,7 +47,7 @@ struct VersionDetailView: View {
                 }
 
                 Text(row.title)
-                    .font(.system(size: 19, weight: .bold))
+                    .scaledFont(19, weight: .bold)
                     .foregroundStyle(c.t1)
 
                 specs
@@ -76,7 +76,7 @@ struct VersionDetailView: View {
             }
         } else {
             Text("MakerWorld publishes no time, weight or material for this version.")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(c.t2)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -85,10 +85,10 @@ struct VersionDetailView: View {
     private func spec(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.mono(10, weight: .bold))
+                .scaledMono(10, weight: .bold)
                 .foregroundStyle(c.t3)
             Text(verbatim: value)
-                .font(.system(size: 16, weight: .semibold))
+                .scaledFont(16, weight: .semibold)
                 .foregroundStyle(c.t1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -100,7 +100,7 @@ struct VersionDetailView: View {
     private var notes: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(hasNotes ? "MAKER'S NOTES" : "NO NOTES")
-                .font(.mono(10.5, weight: .bold))
+                .scaledMono(10.5, weight: .bold)
                 .foregroundStyle(c.t3)
 
             if let blurb = row.description {
@@ -111,7 +111,7 @@ struct VersionDetailView: View {
                 // The sentence that makes an empty page read as finished rather than failed.
                 Text("Most versions of a popular model are uploaded without a word of explanation. "
                      + "The numbers above are all MakerWorld has — nothing is missing from this screen.")
-                    .font(.system(size: 12.5))
+                    .scaledFont(12.5)
                     .foregroundStyle(c.t3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -129,7 +129,7 @@ struct VersionDetailView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("FILAMENT THIS VERSION USES")
-                    .font(.mono(10.5, weight: .bold))
+                    .scaledMono(10.5, weight: .bold)
                     .foregroundStyle(c.t3)
 
                 ForEach(Array(slots.enumerated()), id: \.offset) { i, slot in
@@ -137,22 +137,22 @@ struct VersionDetailView: View {
                         Swatch(value: FilamentColor.norm(slot.color), size: 14, radius: 7)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(verbatim: "Slot \(i + 1) · \(slot.type ?? "any material")")
-                                .font(.system(size: 13, weight: .semibold))
+                                .scaledFont(13, weight: .semibold)
                                 .foregroundStyle(c.t1)
                             if let tray = assigned[i] {
                                 Text(verbatim: "matches AMS \(tray.unit + 1), slot \(tray.slot + 1)")
-                                    .font(.mono(11, weight: .medium))
+                                    .scaledMono(11, weight: .medium)
                                     .foregroundStyle(c.accent)
                             } else if trays.isEmpty {
                                 Text("nothing loaded to compare against")
-                                    .font(.mono(11, weight: .medium))
+                                    .scaledMono(11, weight: .medium)
                                     .foregroundStyle(c.t3)
                             } else if let want = slot.type?.uppercased(), short[want] != nil {
                                 // Says WHICH problem it is: none at all, or not enough of them.
                                 let have = trays.filter { $0.type == want }.count
                                 Text(verbatim: have == 0 ? "no \(want) loaded"
                                                          : "only \(have) \(want) tray\(have == 1 ? "" : "s") loaded")
-                                    .font(.mono(11, weight: .semibold))
+                                    .scaledMono(11, weight: .semibold)
                                     .foregroundStyle(c.heating)
                             }
                         }
@@ -178,7 +178,7 @@ struct VersionDetailView: View {
                 dismiss()
             } content: {
                 Text(picked?.id == row.id ? "Chosen" : "Use this version")
-                    .font(.system(size: 15, weight: .bold))
+                    .scaledFont(15, weight: .bold)
                     .foregroundStyle(picked?.id == row.id ? c.t2 : .black)
                     .frame(maxWidth: .infinity)
                     .frame(height: 48)

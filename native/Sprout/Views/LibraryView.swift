@@ -205,7 +205,7 @@ struct LibraryView: View {
     private var header: some View {
         HStack {
             Text("Files")
-                .font(.system(size: 30, weight: .bold))
+                .scaledFont(30, weight: .bold)
                 .tracking(-0.8)
                 .foregroundStyle(c.t1)
             Spacer(minLength: 12)
@@ -230,11 +230,11 @@ struct LibraryView: View {
                     Group {
                         if uploader.busy {
                             Text(verbatim: "\(uploader.percent)%")
-                                .font(.mono(11, weight: .bold))
+                                .scaledMono(11, weight: .bold)
                                 .foregroundStyle(c.accent)
                         } else {
                             Image(systemName: "plus")
-                                .font(.system(size: 22, weight: .medium))
+                                .scaledFont(22, weight: .medium)
                                 .foregroundStyle(c.accent)
                         }
                     }
@@ -262,7 +262,7 @@ struct LibraryView: View {
             ForEach(LibrarySource.allCases) { s in
                 Tap { store.source = s } content: {
                     Text(s.label)
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .scaledFont(13.5, weight: .semibold)
                         .foregroundStyle(store.source == s ? c.t1 : c.t2)
                         .frame(maxWidth: .infinity)
                         .frame(height: 38)
@@ -303,7 +303,7 @@ struct LibraryView: View {
         }
         if hasFiles, shown.isEmpty {
             Text(noMatchText)
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 40)
@@ -311,7 +311,7 @@ struct LibraryView: View {
         if hasFiles, !shown.isEmpty {
             if layout == .grid { grid } else { list }
             Text(store.selecting ? "Tap to select · Delete removes all selected" : "Tap to print · hold for options")
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(11, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 16)
@@ -328,15 +328,15 @@ struct LibraryView: View {
     private var retryBanner: some View {
         HStack(spacing: 12) {
             Image(systemName: "wifi.slash")
-                .font(.system(size: 18))
+                .scaledFont(18)
                 .foregroundStyle(c.t3)
             Text("Couldn’t reach the server.")
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .foregroundStyle(c.t2)
             Spacer(minLength: 8)
             Tap { Task { await store.load() } } content: {
                 Text("Retry")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(c.t1)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -358,10 +358,10 @@ struct LibraryView: View {
                     Tap { filter = k } content: {
                         HStack(spacing: 6) {
                             Text(k.label)
-                                .font(.system(size: 12, weight: .semibold))
+                                .scaledFont(12, weight: .semibold)
                                 .foregroundStyle(on ? c.accent : c.t2)
                             Text("\(count(k))")
-                                .font(.mono(11))
+                                .scaledMono(11)
                                 .foregroundStyle(on ? c.accent : c.t3)
                         }
                         .padding(.horizontal, 13)
@@ -389,7 +389,7 @@ struct LibraryView: View {
     /// `label` is required because both call sites are icon-only.
     private func squareButton(_ symbol: String, label: String) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 15, weight: .medium))
+            .scaledFont(15, weight: .medium)
             .foregroundStyle(c.t2)
             .frame(width: 32, height: 32)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(c.s2))
@@ -403,19 +403,19 @@ struct LibraryView: View {
         return HStack(spacing: 10) {
             Tap { store.exitSelect() } content: {
                 Text("Done")
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(c.t1)
                     .padding(.horizontal, 14)
                     .frame(height: 34)
                     .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(c.s2))
             }
             Text(selected.isEmpty ? "Tap files to select" : "\(selected.count) selected")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(c.t2)
                 .frame(maxWidth: .infinity)
             Tap(disabled: selected.isEmpty) { confirmBulk = true } content: {
                 Text("Delete")
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(13, weight: .bold)
                     .foregroundStyle(selected.isEmpty ? c.t3 : c.error)
                     .padding(.horizontal, 14)
                     .frame(height: 34)
@@ -433,16 +433,16 @@ struct LibraryView: View {
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
+                .scaledFont(14)
                 .foregroundStyle(c.t3)
             ZStack(alignment: .leading) {
                 if query.isEmpty {
                     Text("Search files")
-                        .font(.system(size: 13.5))
+                        .scaledFont(13.5)
                         .foregroundStyle(c.t3)
                 }
                 TextField("", text: $query)
-                    .font(.system(size: 13.5))
+                    .scaledFont(13.5)
                     .foregroundStyle(c.t1)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -455,7 +455,7 @@ struct LibraryView: View {
                 // trailing padding keeps it from widening the field.
                 Tap { query = "" } content: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
+                        .scaledFont(14)
                         .foregroundStyle(c.t3)
                         .frame(width: 44, height: 44)
                         .contentShape(.rect)
@@ -505,7 +505,7 @@ struct LibraryView: View {
                         }
                         .overlay(alignment: .topLeading) {
                             Text((f.fileType ?? "").uppercased())
-                                .font(.mono(8.5))
+                                .scaledMono(8.5)
                                 .tracking(0.5)
                                 .foregroundStyle(Color.white.opacity(0.8))
                                 .padding(.horizontal, 6)
@@ -519,7 +519,7 @@ struct LibraryView: View {
                                     .padding(7)
                             } else if sliced {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 11, weight: .bold))
+                                    .scaledFont(11, weight: .bold)
                                     .foregroundStyle(c.accentInk)
                                     .frame(width: 18, height: 18)
                                     .background(Circle().fill(c.accent))
@@ -528,12 +528,12 @@ struct LibraryView: View {
                         }
 
                     Text(LibraryBrowse.displayName(f))
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(13, weight: .semibold)
                         .foregroundStyle(c.t1)
                         .lineLimit(1)
                         .padding(.top, 9)
                     Text(LibraryFormat.bytes(f.fileSize?.double))
-                        .font(.mono(11, weight: .medium))
+                        .scaledMono(11, weight: .medium)
                         .foregroundStyle(c.t3)
                         .padding(.top, 3)
                 }
@@ -548,7 +548,7 @@ struct LibraryView: View {
             Circle().fill(sel ? c.accent : Color.black.opacity(0.5))
             if sel {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 13, weight: .bold))
+                    .scaledFont(13, weight: .bold)
                     .foregroundStyle(c.accentInk)
             } else {
                 Circle().strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5)
@@ -579,11 +579,11 @@ struct LibraryView: View {
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(LibraryBrowse.displayName(f))
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .scaledFont(14, weight: .semibold)
                                     .foregroundStyle(c.t1)
                                     .lineLimit(1)
                                 Text(subtitle(f))
-                                    .font(.mono(11, weight: .medium))
+                                    .scaledMono(11, weight: .medium)
                                     .foregroundStyle(c.t3)
                                     .lineLimit(1)
                             }
@@ -594,7 +594,7 @@ struct LibraryView: View {
                                     Circle().fill(sel ? c.accent : .clear)
                                     if sel {
                                         Image(systemName: "checkmark")
-                                            .font(.system(size: 13, weight: .bold))
+                                            .scaledFont(13, weight: .bold)
                                             .foregroundStyle(c.accentInk)
                                     } else {
                                         Circle().strokeBorder(c.line2, lineWidth: 1.5)
@@ -603,7 +603,7 @@ struct LibraryView: View {
                                 .frame(width: 22, height: 22)
                             } else {
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 16, weight: .medium))
+                                    .scaledFont(16, weight: .medium)
                                     .foregroundStyle(c.t3)
                             }
                         }
@@ -709,7 +709,7 @@ struct LibraryView: View {
                     // opened it, which is what made the control look broken rather than merely ugly.
                     Tap { Task { await store.loadPrinter(LibraryBrowse.parentPath(store.printerPath)) } } content: {
                         Image(systemName: "chevron.backward")
-                            .font(.system(size: 16, weight: .semibold))
+                            .scaledFont(16, weight: .semibold)
                             .foregroundStyle(c.t1)
                             .frame(width: 36, height: 36)
                             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(c.s2))
@@ -718,7 +718,7 @@ struct LibraryView: View {
                     .accessibilityLabel("Back to \(LibraryBrowse.parentPath(store.printerPath))")
                 }
                 Text("printer:\(store.printerPath)")
-                    .font(.mono(12))
+                    .scaledMono(12)
                     .foregroundStyle(c.t3)
                     .lineLimit(1)
                     .truncationMode(.head)
@@ -746,7 +746,7 @@ struct LibraryView: View {
                 }
                 if pSorted.contains(where: { !$0.isDirectory }) {
                     Text("Tap a file for preview & actions · hold to delete")
-                        .font(.system(size: 11, weight: .medium))
+                        .scaledFont(11, weight: .medium)
                         .foregroundStyle(c.t3)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 8)
@@ -769,7 +769,7 @@ struct LibraryView: View {
     private var mediaGrid: some View {
         if mediaFiles.isEmpty {
             Text("No videos here yet.")
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
@@ -796,7 +796,7 @@ struct LibraryView: View {
                                 .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(c.line))
                                 .overlay {
                                     Image(systemName: "play.fill")
-                                        .font(.system(size: 16))
+                                        .scaledFont(16)
                                         .foregroundStyle(.white)
                                         .offset(x: 1)
                                         .frame(width: 34, height: 34)
@@ -804,12 +804,12 @@ struct LibraryView: View {
                                 }
 
                             Text(PrinterFiles.mediaLabel(pf.name))
-                                .font(.system(size: 12.5, weight: .semibold))
+                                .scaledFont(12.5, weight: .semibold)
                                 .foregroundStyle(c.t1)
                                 .lineLimit(1)
                                 .padding(.top, 8)
                             Text(LibraryFormat.bytes(pf.size?.double))
-                                .font(.mono(10.5, weight: .medium))
+                                .scaledMono(10.5, weight: .medium)
                                 .foregroundStyle(c.t3)
                                 .padding(.top, 2)
                         }
@@ -836,21 +836,21 @@ struct LibraryView: View {
         } content: {
             HStack(spacing: 12) {
                 Image(systemName: rowSymbol(pf))
-                    .font(.system(size: 18))
+                    .scaledFont(18)
                     .foregroundStyle(pf.isDirectory ? c.accent : c.t3)
                     .frame(width: 20)
                 Text(pf.name)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .scaledFont(13.5, weight: .semibold)
                     .foregroundStyle(c.t1)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if pf.isDirectory {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 16, weight: .medium))
+                        .scaledFont(16, weight: .medium)
                         .foregroundStyle(c.t3)
                 } else {
                     Text(LibraryFormat.bytes(pf.size?.double))
-                        .font(.mono(11, weight: .medium))
+                        .scaledMono(11, weight: .medium)
                         .foregroundStyle(c.t3)
                 }
             }
@@ -886,7 +886,7 @@ struct LibraryView: View {
         HStack(spacing: 9) {
             ProgressView().tint(c.accent)
             Text("Preparing to share…")
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(c.t1)
         }
         .padding(.horizontal, 16)
@@ -933,16 +933,16 @@ private struct LibEmpty: View {
     var body: some View {
         VStack(spacing: 15) {
             Image(systemName: icon)
-                .font(.system(size: 32))
+                .scaledFont(32)
                 .foregroundStyle(c.t3)
                 .frame(width: 72, height: 72)
                 .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(c.s2))
             Text(title)
-                .font(.system(size: 20, weight: .bold))
+                .scaledFont(20, weight: .bold)
                 .tracking(-0.3)
                 .foregroundStyle(c.t1)
             Text(message)
-                .font(.system(size: 13, weight: .medium))
+                .scaledFont(13, weight: .medium)
                 .lineSpacing(19 - 13)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(c.t3)
@@ -951,7 +951,7 @@ private struct LibEmpty: View {
             if let cta, let onCta {
                 Tap(action: onCta) {
                     Text(cta)
-                        .font(.system(size: 15, weight: .semibold))
+                        .scaledFont(15, weight: .semibold)
                         .foregroundStyle(c.accentInk)
                         .padding(.horizontal, 24)
                         .frame(height: 48)
@@ -1007,7 +1007,7 @@ private struct PrinterFileSheet: View {
                 Spacer()
                 Tap(action: { dismiss() }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 26))
+                        .scaledFont(26)
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(c.t3)
                         .frame(width: 44, height: 44)
@@ -1035,13 +1035,13 @@ private struct PrinterFileSheet: View {
             }
 
             Text(plate?.name ?? file.name)
-                .font(.system(size: 15.5, weight: .bold))
+                .scaledFont(15.5, weight: .bold)
                 .foregroundStyle(c.t1)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
 
             Text(meta)
-                .font(.mono(11.5, weight: .medium))
+                .scaledMono(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .multilineTextAlignment(.center)
                 .padding(.top, 6)
@@ -1050,8 +1050,8 @@ private struct PrinterFileSheet: View {
                 if let onPlay {
                     Tap(disabled: busy, action: onPlay) {
                         HStack(spacing: 8) {
-                            Image(systemName: "play.fill").font(.system(size: 15))
-                            Text("Play").font(.system(size: 14, weight: .bold))
+                            Image(systemName: "play.fill").scaledFont(15)
+                            Text("Play").scaledFont(14, weight: .bold)
                         }
                         .foregroundStyle(c.accentInk)
                         .frame(maxWidth: .infinity)
@@ -1063,8 +1063,8 @@ private struct PrinterFileSheet: View {
                 if let onLayers {
                     Tap(disabled: busy, action: onLayers) {
                         HStack(spacing: 8) {
-                            Image(systemName: "square.3.layers.3d").font(.system(size: 15))
-                            Text("Layers").font(.system(size: 14, weight: .bold))
+                            Image(systemName: "square.3.layers.3d").scaledFont(15)
+                            Text("Layers").scaledFont(14, weight: .bold)
                         }
                         .foregroundStyle(c.accentInk)
                         .frame(maxWidth: .infinity)
@@ -1078,10 +1078,10 @@ private struct PrinterFileSheet: View {
                         if busy {
                             ProgressView().tint(downloadInk)
                         } else {
-                            Image(systemName: "arrow.down.to.line").font(.system(size: 15))
+                            Image(systemName: "arrow.down.to.line").scaledFont(15)
                         }
                         Text(busy ? "Downloading…" : "Download")
-                            .font(.system(size: 14, weight: .bold))
+                            .scaledFont(14, weight: .bold)
                     }
                     .foregroundStyle(downloadInk)
                     .frame(maxWidth: .infinity)
@@ -1091,7 +1091,7 @@ private struct PrinterFileSheet: View {
                 }
                 Tap(disabled: busy) { confirmDelete = true } content: {
                     Image(systemName: "trash")
-                        .font(.system(size: 16))
+                        .scaledFont(16)
                         .foregroundStyle(c.error)
                         .frame(width: 52, height: 46)
                         .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(c.s3))
@@ -1225,10 +1225,10 @@ private struct SdVideoPlayer: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(PrinterFiles.mediaLabel(file.name))
-                    .font(.system(size: 15, weight: .bold))
+                    .scaledFont(15, weight: .bold)
                     .foregroundStyle(.white)
                 Text("\(LibraryFormat.bytes(file.size?.double)) · \(kind)")
-                    .font(.mono(10.5, weight: .medium))
+                    .scaledMono(10.5, weight: .medium)
                     .foregroundStyle(Color(hex: 0x8E9398))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1262,7 +1262,7 @@ private struct SdVideoPlayer: View {
         VStack(spacing: 0) {
             if let failure = download.failure {
                 Text(failure)
-                    .font(.system(size: 13.5))
+                    .scaledFont(13.5)
                     .lineSpacing(19 - 13.5)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(Color(hex: 0x8E9398))
@@ -1270,7 +1270,7 @@ private struct SdVideoPlayer: View {
                 ProgressView().tint(Color(hex: 0x30D158))
                 if let pct = download.percent {
                     Text("\(pct)% · \(LibraryFormat.bytes(Double(download.written))) / \(LibraryFormat.bytes(Double(download.total)))")
-                        .font(.mono(13))
+                        .scaledMono(13)
                         .foregroundStyle(.white)
                         .padding(.top, 16)
                     GeometryReader { geo in

@@ -130,18 +130,18 @@ struct DashboardView: View {
             } content: {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(brand)
-                        .font(.mono(11))
+                        .scaledMono(11)
                         .tracking(1.4)
                         .foregroundStyle(c.t3)
                     HStack(spacing: 7) {
                         PulseDot(color: vm.stateColor.resolve(c), size: 8, meaning: vm.stateLabel)
                         Text(model.printer?.name ?? "Printer")
-                            .font(.system(size: 17, weight: .semibold))
+                            .scaledFont(17, weight: .semibold)
                             .tracking(-0.2)
                             .foregroundStyle(c.t1)
                         if canSwitch {
                             Image(systemName: switcherOpen ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 13, weight: .semibold))
+                                .scaledFont(13, weight: .semibold)
                                 .foregroundStyle(c.t3)
                         }
                     }
@@ -153,7 +153,7 @@ struct DashboardView: View {
 
             Tap(action: onSettings) {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 17))
+                    .scaledFont(17)
                     .foregroundStyle(c.t2)
                     .frame(width: 38, height: 38)
                     .glassEffect(.regular.interactive(), in: .circle)
@@ -177,16 +177,16 @@ struct DashboardView: View {
                             PulseDot(color: entry.stateColor.resolve(c), size: 8, meaning: entry.stateLabel)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(p.name)
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .scaledFont(14, weight: .semibold)
                                     .foregroundStyle(c.t1)
                                 Text(switcherSubtitle(p, entry))
-                                    .font(.mono(11, weight: .medium))
+                                    .scaledMono(11, weight: .medium)
                                     .foregroundStyle(c.t3)
                             }
                             Spacer()
                             if isCurrent {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .scaledFont(13, weight: .semibold)
                                     .foregroundStyle(c.accent)
                             }
                         }
@@ -251,12 +251,12 @@ struct DashboardView: View {
     /// trailing chevron. They differ only by 1 pt of vertical padding, which is real, not a typo.
     private func chipRow(icon: String, tint: Color, label: String, verticalPadding: CGFloat) -> some View {
         HStack(spacing: 11) {
-            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(tint)
+            Image(systemName: icon).scaledFont(15).foregroundStyle(tint)
             Text(label)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(c.t3)
+            Image(systemName: "chevron.right").scaledFont(13).foregroundStyle(c.t3)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, verticalPadding)
@@ -272,12 +272,12 @@ struct DashboardView: View {
     private var hero: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(vm.stateLabel)
-                .font(.system(size: 36, weight: .bold))
+                .scaledFont(36, weight: .bold)
                 .tracking(-1)
                 .foregroundStyle(vm.stateColor.resolve(c))
             if !vm.heroSub.isEmpty {
                 Text(vm.heroSub)
-                    .font(.mono(13, weight: .medium))
+                    .scaledMono(13, weight: .medium)
                     .lineSpacing(4)
                     .foregroundStyle(c.t2)
                     .padding(.top, 8)
@@ -351,10 +351,10 @@ struct DashboardView: View {
     private var demoCameraNote: some View {
         HStack(spacing: 10) {
             Image(systemName: "video.slash")
-                .font(.system(size: 15))
+                .scaledFont(15)
                 .foregroundStyle(c.t3)
             Text("The chamber camera streams from the printer, so it isn’t part of the demo.")
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(c.t3)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -379,7 +379,7 @@ struct DashboardView: View {
                     CameraPiPView(url: url, active: tileStreamActive, model: tileCam)
                 } else {
                     Text("CHAMBER · SNAPSHOT")
-                        .font(.mono(10, weight: .medium))
+                        .scaledMono(10, weight: .medium)
                         .tracking(1.6)
                         .foregroundStyle(c.t3)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -392,7 +392,7 @@ struct DashboardView: View {
                         Circle().fill(c.t3).frame(width: 6, height: 6)
                     }
                     Text(tileBadge)
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .scaledFont(9.5, weight: .semibold)
                         .tracking(0.6)
                         .foregroundStyle(.white)
                 }
@@ -406,7 +406,7 @@ struct DashboardView: View {
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(c.line))
             .overlay(alignment: .bottomLeading) {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 11, weight: .semibold))
+                    .scaledFont(11, weight: .semibold)
                     .foregroundStyle(.white)
                     .frame(width: 26, height: 26)
                     .background(RoundedRectangle(cornerRadius: 7).fill(.black.opacity(0.5)))
@@ -471,7 +471,7 @@ struct DashboardView: View {
                         color: c.t1
                     )
                     Text("%")
-                        .font(.system(size: 15, weight: .bold))
+                        .scaledFont(15, weight: .bold)
                         .foregroundStyle(c.t3)
                 }
             }
@@ -486,7 +486,7 @@ struct DashboardView: View {
                             color: c.t1
                         )
                         Text(" / \(vm.totalLayers)")
-                            .font(.mono(19, weight: .medium))
+                            .scaledMono(19, weight: .medium)
                             .foregroundStyle(c.t3)
                     }
                     .padding(.top, 5)
@@ -495,7 +495,7 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     fieldLabel("TIME LEFT")
                     Text(vm.etaText)
-                        .font(.system(size: 19, weight: .semibold))
+                        .scaledFont(19, weight: .semibold)
                         .foregroundStyle(c.t1)
                         // Live data, not a loop: this updates on every WebSocket frame — roughly once
                         // a second for the whole print — so under Reduce Motion the rolling digits are
@@ -505,7 +505,7 @@ struct DashboardView: View {
                         .animation(reduceMotion ? nil : Motion.roll(0.6), value: vm.etaText)
                         .padding(.top, 5)
                     Text("done ~ \(vm.doneText)")
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                         .foregroundStyle(c.t3)
                         .padding(.top, 3)
                 }
@@ -522,7 +522,7 @@ struct DashboardView: View {
 
     private func fieldLabel(_ s: String) -> some View {
         Text(s)
-            .font(.mono(10))
+            .scaledMono(10)
             .tracking(1)
             .foregroundStyle(c.t3)
     }
@@ -539,10 +539,10 @@ struct DashboardView: View {
             }) {
                 HStack(spacing: 9) {
                     Image(systemName: lock.blocked(action) ? "lock.fill" : (vm.isPaused ? "play.fill" : "pause.fill"))
-                        .font(.system(size: 15))
+                        .scaledFont(15)
                         .foregroundStyle(c.t1)
                     Text(vm.isPaused ? "Resume" : "Pause")
-                        .font(.system(size: 16, weight: .semibold))
+                        .scaledFont(16, weight: .semibold)
                         .foregroundStyle(c.t1)
                 }
                 .frame(maxWidth: .infinity)
@@ -556,8 +556,8 @@ struct DashboardView: View {
             // command the printer might reject.
             Tap { confirmStop = true } content: {
                 HStack(spacing: 8) {
-                    Image(systemName: "stop.fill").font(.system(size: 13)).foregroundStyle(c.error)
-                    Text("Stop").font(.system(size: 16, weight: .semibold)).foregroundStyle(c.error)
+                    Image(systemName: "stop.fill").scaledFont(13).foregroundStyle(c.error)
+                    Text("Stop").scaledFont(16, weight: .semibold).foregroundStyle(c.error)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 58)
@@ -577,14 +577,14 @@ struct DashboardView: View {
             } content: {
                 HStack(spacing: 9) {
                     Image(systemName: "sun.max")
-                        .font(.system(size: 15))
+                        .scaledFont(15)
                         .foregroundStyle(vm.lightOn ? c.accent : c.t1)
                         .shadow(color: vm.lightOn ? c.accent.opacity(0.5) : .clear, radius: 6)
                     Text("Light")
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(vm.lightOn ? c.accent : c.t1)
                     Text(vm.lightOn ? "ON" : "OFF")
-                        .font(.mono(12))
+                        .scaledMono(12)
                         .foregroundStyle(vm.lightOn ? c.accent : c.t1)
                         .opacity(0.7)
                 }
@@ -604,13 +604,13 @@ struct DashboardView: View {
         Tap(action: lock.press(.speed) { speedOpen.toggle() }) {
             HStack(spacing: 9) {
                 Image(systemName: lock.blocked(.speed) ? "lock.fill" : "bolt.fill")
-                    .font(.system(size: 15))
+                    .scaledFont(15)
                     .foregroundStyle(c.t1)
                 Text(Self.speeds.first { $0.i == speedIdx }?.name ?? vm.speedLabel)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(c.t1)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(c.t3)
             }
             .frame(maxWidth: .infinity)
@@ -639,7 +639,7 @@ struct DashboardView: View {
         FadeRise(dy: 6, duration: 0.17) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("SPEED")
-                    .font(.mono(9))
+                    .scaledMono(9)
                     .tracking(1)
                     .foregroundStyle(c.t3)
                     .padding(.horizontal, 10)
@@ -654,12 +654,12 @@ struct DashboardView: View {
                         HStack(spacing: 10) {
                             RoundedRectangle(cornerRadius: 4).fill(c[keyPath: s.dot]).frame(width: 8, height: 8)
                             Text(s.name)
-                                .font(.system(size: 14, weight: .semibold))
+                                .scaledFont(14, weight: .semibold)
                                 .foregroundStyle(c.t1)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            Text(s.hint).font(.mono(11, weight: .medium)).foregroundStyle(c.t3)
+                            Text(s.hint).scaledMono(11, weight: .medium).foregroundStyle(c.t3)
                             if selected {
-                                Image(systemName: "checkmark").font(.system(size: 13)).foregroundStyle(c.accent)
+                                Image(systemName: "checkmark").scaledFont(13).foregroundStyle(c.accent)
                             }
                         }
                         .padding(.horizontal, 11)
@@ -703,12 +703,12 @@ struct DashboardView: View {
         let scrolls = vm.ams.count > 4
         return VStack(spacing: 0) {
             HStack {
-                Text("AMS").font(.mono(11)).tracking(1.2).foregroundStyle(c.t3)
+                Text("AMS").scaledMono(11).tracking(1.2).foregroundStyle(c.t3)
                 Spacer()
                 Tap { model.tab = .ams } content: {
                     HStack(spacing: 3) {
-                        Text("Details").font(.system(size: 13, weight: .semibold)).foregroundStyle(c.accent)
-                        Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(c.accent)
+                        Text("Details").scaledFont(13, weight: .semibold).foregroundStyle(c.accent)
+                        Image(systemName: "chevron.right").scaledFont(11).foregroundStyle(c.accent)
                     }
                 }
             }
@@ -734,11 +734,11 @@ struct DashboardView: View {
             VStack(spacing: 8) {
                 Swatch(value: slot.color, size: 32, radius: 9, empty: slot.empty)
                 Text(slot.label)
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .scaledFont(9.5, weight: .semibold)
                     .lineLimit(1)
                     .foregroundStyle(c.t2)
                 Text(slot.pct)
-                    .font(.mono(11))
+                    .scaledMono(11)
                     .monospacedDigit()
                     .foregroundStyle(c.t1)
                 // The invisible dot is a layout spacer, not dead code: without it inactive chips are
@@ -771,13 +771,13 @@ struct DashboardView: View {
     private var lanBanner: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 9) {
-                Image(systemName: "lock.fill").font(.system(size: 14)).foregroundStyle(c.heating)
+                Image(systemName: "lock.fill").scaledFont(14).foregroundStyle(c.heating)
                 Text(Lan.bannerTitle)
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(c.t1)
             }
             Text(Lan.bannerBody)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(c.t2)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -793,16 +793,16 @@ struct DashboardView: View {
         VStack(spacing: 14) {
             ZStack {
                 Circle().fill(c.runningDim).frame(width: 64, height: 64)
-                Image(systemName: "checkmark").font(.system(size: 28, weight: .bold)).foregroundStyle(c.running)
+                Image(systemName: "checkmark").scaledFont(28, weight: .bold).foregroundStyle(c.running)
             }
             if vm.awaitingPlateClear {
                 Tap {
                     model.perform("Plate cleared") { try await $0.clearPlate($1) }
                 } content: {
                     HStack(spacing: 8) {
-                        Image(systemName: "checkmark.square").font(.system(size: 15)).foregroundStyle(c.accentInk)
+                        Image(systemName: "checkmark.square").scaledFont(15).foregroundStyle(c.accentInk)
                         Text("Plate cleared – continue queue")
-                            .font(.system(size: 16, weight: .semibold))
+                            .scaledFont(16, weight: .semibold)
                             .foregroundStyle(c.accentInk)
                     }
                     .frame(maxWidth: .infinity)
@@ -854,10 +854,10 @@ struct DashboardView: View {
         } content: {
             HStack(spacing: 8) {
                 if isLocked {
-                    Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(ink)
+                    Image(systemName: "lock.fill").scaledFont(13).foregroundStyle(ink)
                 }
                 Text(archive == nil ? "Print something else" : "Print again")
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(16, weight: .semibold)
                     .foregroundStyle(ink)
             }
             .frame(maxWidth: .infinity)
@@ -871,14 +871,14 @@ struct DashboardView: View {
         VStack(spacing: 14) {
             ZStack {
                 Circle().fill(c.errorDim).frame(width: 64, height: 64)
-                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 26)).foregroundStyle(c.error)
+                Image(systemName: "exclamationmark.triangle.fill").scaledFont(26).foregroundStyle(c.error)
             }
             if let code = vm.hmsCode {
-                Text(code).font(.mono(12, weight: .medium)).foregroundStyle(c.t2)
+                Text(code).scaledMono(12, weight: .medium).foregroundStyle(c.t2)
             }
             Tap { model.overlay = .alerts } content: {
                 Text("See what's wrong")
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(16, weight: .semibold)
                     .foregroundStyle(c.accentInk)
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
@@ -893,10 +893,10 @@ struct DashboardView: View {
         VStack(spacing: 14) {
             ZStack {
                 Circle().fill(c.s2).frame(width: 64, height: 64)
-                Image(systemName: "wifi.slash").font(.system(size: 24)).foregroundStyle(c.idle)
+                Image(systemName: "wifi.slash").scaledFont(24).foregroundStyle(c.idle)
             }
             Text("The printer isn't responding. It may be powered off, or off the network.")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(c.t2)
         }
@@ -909,7 +909,7 @@ struct DashboardView: View {
         VStack(spacing: 14) {
             ProgressView().tint(c.accent)
             Text("Reaching the printer…")
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(c.t2)
         }
         .frame(maxWidth: .infinity)
@@ -951,7 +951,7 @@ struct TempGrid: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text(card.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(c.t2)
+                Text(card.label).scaledFont(12, weight: .semibold).foregroundStyle(c.t2)
                 Spacer()
                 if card.heating {
                     PulseDot(color: barColor, size: 7, period: 1.4)
@@ -966,9 +966,9 @@ struct TempGrid: View {
                         font: .system(size: 26, weight: .bold),
                         color: c.t1
                     )
-                    Text("°").font(.system(size: 13, weight: .bold)).foregroundStyle(c.t3)
+                    Text("°").scaledFont(13, weight: .bold).foregroundStyle(c.t3)
                 }
-                Text("→ \(card.target)°").font(.mono(12, weight: .medium)).foregroundStyle(c.t3)
+                Text("→ \(card.target)°").scaledMono(12, weight: .medium).foregroundStyle(c.t3)
             }
             .padding(.top, 9)
 

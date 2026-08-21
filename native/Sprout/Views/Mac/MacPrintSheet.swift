@@ -856,12 +856,12 @@ struct MacPrintSheet: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(verbatim: "Print \(displayName)")
-                .font(.system(size: 16, weight: .bold))
+                .scaledFont(16, weight: .bold)
                 .foregroundStyle(c.t1)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text(verbatim: subtitle)
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .lineLimit(1)
         }
@@ -954,12 +954,12 @@ struct MacPrintSheet: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: wantLine(row))
-                    .font(.system(size: 12, weight: .medium))
+                    .scaledFont(12, weight: .medium)
                     .foregroundStyle(c.t1)
                     .lineLimit(1)
                 if attention {
                     Text(verbatim: remedy(row))
-                        .font(.system(size: 10.5, weight: .medium))
+                        .scaledFont(10.5, weight: .medium)
                         .foregroundStyle(c.heating)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1034,7 +1034,7 @@ struct MacPrintSheet: View {
             HStack(spacing: 7) {
                 Swatch(value: row.identity?.colorHex, size: 13, radius: Metrics.swatchRadius(13), empty: row.tray == nil)
                 Text(verbatim: row.tray.map(trayLabel) ?? "Choose…")
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .scaledFont(11.5, weight: .semibold)
                     .foregroundStyle(row.tray == nil ? c.t3 : c.t1)
                     .lineLimit(1)
             }
@@ -1069,7 +1069,7 @@ struct MacPrintSheet: View {
     private func plateChip(_ index: Int, selected: Bool) -> some View {
         Button { selectedPlate = index } label: {
             Text(verbatim: "Plate \(index)")
-                .font(.system(size: 11.5, weight: .semibold))
+                .scaledFont(11.5, weight: .semibold)
                 .foregroundStyle(selected ? c.accent : c.t2)
                 .padding(.horizontal, 12)
                 .frame(height: m.controlHeight - 4)
@@ -1172,16 +1172,16 @@ struct MacPrintSheet: View {
     private func optionRow(_ option: MacPrintOption) -> some View {
         HStack(spacing: 11) {
             Image(systemName: "lock.fill")
-                .font(.system(size: 10, weight: .semibold))
+                .scaledFont(10, weight: .semibold)
                 .foregroundStyle(c.t3)
                 .frame(width: 32, alignment: .leading)
             Text(verbatim: option.label)
-                .font(.system(size: 12, weight: .medium))
+                .scaledFont(12, weight: .medium)
                 .foregroundStyle(c.t2)
             Spacer(minLength: 8)
             if let added = option.addedTime {
                 Text(verbatim: added)
-                    .font(.system(size: 11, weight: .medium))
+                    .scaledFont(11, weight: .medium)
                     .foregroundStyle(c.t3)
             }
         }
@@ -1226,14 +1226,14 @@ struct MacPrintSheet: View {
     ) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 14))
+                .scaledFont(14)
                 .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     .foregroundStyle(c.t1)
                 Text(verbatim: message)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .scaledFont(11.5, weight: .medium)
                     .foregroundStyle(c.t2)
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1250,7 +1250,7 @@ struct MacPrintSheet: View {
     private var footer: some View {
         HStack(spacing: 12) {
             Text(verbatim: slicing ? MacSliceCopy.progress(slicePct) : (sliceFailure ?? estimate))
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t2)
                 .monospacedDigit()
                 .lineLimit(1)
@@ -1344,7 +1344,7 @@ struct MacPrintSheet: View {
 
     private func note(_ text: String) -> some View {
         Text(verbatim: text)
-            .font(.system(size: 11, weight: .medium))
+            .scaledFont(11, weight: .medium)
             .foregroundStyle(c.t3)
             .lineSpacing(3)
             .fixedSize(horizontal: false, vertical: true)

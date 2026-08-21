@@ -85,7 +85,7 @@ struct MacHardwareInspector: View {
                     HStack(spacing: 8) {
                         Circle().fill(worst.color(c)).frame(width: 7, height: 7)
                         Text(headline)
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .scaledFont(12.5, weight: .semibold)
                             .foregroundStyle(c.t1)
                     }
                     ForEach(items) { item in triageRow(item) }
@@ -96,7 +96,7 @@ struct MacHardwareInspector: View {
                 HStack(spacing: 8) {
                     Circle().fill(c.running).frame(width: 7, height: 7)
                     Text(clearLine(units))
-                        .font(.system(size: 12.5, weight: .medium))
+                        .scaledFont(12.5, weight: .medium)
                         .foregroundStyle(c.t2)
                 }
             }
@@ -134,14 +134,14 @@ struct MacHardwareInspector: View {
                     .fill(MacHardwareSeverity.of(item).color(c))
                     .frame(width: 6, height: 6)
                 Text(item.text)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .scaledFont(11.5, weight: .medium)
                     .foregroundStyle(c.t2)
                     .monospacedDigit()
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 6)
                 Text("\(item.segment.label) ›")
-                    .font(.system(size: 11, weight: .semibold))
+                    .scaledFont(11, weight: .semibold)
                     .foregroundStyle(c.accent)
                     .fixedSize()
             }
@@ -194,7 +194,7 @@ struct MacHardwareInspector: View {
     private func reading(_ label: String, _ value: String, ink: Color? = nil, mono: Bool = true) -> some View {
         HStack(spacing: 8) {
             Text(label)
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(value)
@@ -229,7 +229,7 @@ struct MacHardwareInspector: View {
                     .tracking(1.1)
                     .foregroundStyle(c.t3)
                 Text("This printer isn’t reporting an AMS. Nozzles and service reminders still work.")
-                    .font(.system(size: 11.5))
+                    .scaledFont(11.5)
                     .foregroundStyle(c.t2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -246,7 +246,7 @@ struct MacHardwareInspector: View {
     private var refreshNote: some View {
         HwCard {
             Text("Filament and Service refetch on ⌘R. Nozzles is live socket state and needs no refresh.")
-                .font(.system(size: 11.5))
+                .scaledFont(11.5)
                 .foregroundStyle(c.t3)
                 .fixedSize(horizontal: false, vertical: true)
         }

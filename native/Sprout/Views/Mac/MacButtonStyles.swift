@@ -21,7 +21,7 @@ struct MacPrimaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .scaledFont(13, weight: .semibold)
             .foregroundStyle(c.accentInk)
             .padding(.horizontal, 20)
             .frame(height: m.primaryControlHeight)
@@ -46,7 +46,7 @@ struct MacSecondaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 13, weight: .semibold))
+            .scaledFont(13, weight: .semibold)
             .foregroundStyle(role == .destructive ? c.error : c.t1)
             .padding(.horizontal, 18)
             .frame(height: m.primaryControlHeight)

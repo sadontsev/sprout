@@ -142,15 +142,15 @@ struct MacVideoWindowView: View {
     @ViewBuilder
     private var content: some View {
         if request == nil {
-            centred { Text(verbatim: "No recording.").font(.system(size: 12)).foregroundStyle(c.t3) }
+            centred { Text(verbatim: "No recording.").scaledFont(12).foregroundStyle(c.t3) }
         } else if let failure = deleteFailed ?? download.failure {
             centred {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 22, weight: .light))
+                        .scaledFont(22, weight: .light)
                         .foregroundStyle(c.t3)
                     Text(verbatim: failure)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(c.t2)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 360)
@@ -180,7 +180,7 @@ struct MacVideoWindowView: View {
                     .tint(c.accent)
                     .frame(width: 240)
                 Text(verbatim: "Downloading — \(percent) %")
-                    .font(.mono(11, weight: .medium))
+                    .scaledMono(11, weight: .medium)
                     .foregroundStyle(c.t3)
                     .monospacedDigit()
             } else {
@@ -189,12 +189,12 @@ struct MacVideoWindowView: View {
                 Text(verbatim: download.written > 0
                      ? "Downloading — \(MacFileBrowse.bytes(Double(download.written)))"
                      : "Downloading…")
-                    .font(.mono(11, weight: .medium))
+                    .scaledMono(11, weight: .medium)
                     .foregroundStyle(c.t3)
                     .monospacedDigit()
             }
             Text(verbatim: "The printer’s recordings can’t be streamed, so the whole file comes down first.")
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(c.t3)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
@@ -204,7 +204,7 @@ struct MacVideoWindowView: View {
     private var controls: some View {
         HStack(spacing: 8) {
             Text(verbatim: request?.name ?? "")
-                .font(.system(size: 12, weight: .semibold))
+                .scaledFont(12, weight: .semibold)
                 .foregroundStyle(c.t1)
                 .lineLimit(1)
             Spacer(minLength: 12)

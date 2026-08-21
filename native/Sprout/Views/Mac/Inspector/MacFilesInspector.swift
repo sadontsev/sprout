@@ -197,7 +197,7 @@ struct MacFilesInspector: View {
                 .foregroundStyle(c.t1)
                 .fixedSize(horizontal: false, vertical: true)
             Text(verbatim: identityLine(f))
-                .font(.mono(11, weight: .medium))
+                .scaledMono(11, weight: .medium)
                 .foregroundStyle(c.t3)
                 .monospacedDigit()
         }
@@ -244,7 +244,7 @@ struct MacFilesInspector: View {
             Divider().overlay(c.line)
 
             Text(verbatim: Self.statsNote(f, slots: slots, hasLayer: hasLayer))
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .lineSpacing(2)
                 .foregroundStyle(c.t3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -258,7 +258,7 @@ struct MacFilesInspector: View {
     private func materialsRow(_ slots: [FileMetadata.FilamentSlot]) -> some View {
         HStack(spacing: 0) {
             Text("Materials")
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             // Indexed rather than by value: two slots of the same colour are a real and ordinary
@@ -340,11 +340,11 @@ struct MacFilesInspector: View {
     private func statRow(_ label: String, _ value: String) -> some View {
         HStack(spacing: 0) {
             Text(verbatim: label)
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(verbatim: value)
-                .font(.mono(11.5, weight: .medium))
+                .scaledMono(11.5, weight: .medium)
                 .foregroundStyle(c.t1)
                 .monospacedDigit()
         }
@@ -443,7 +443,7 @@ struct MacFilesInspector: View {
     private func reason(_ text: String?) -> some View {
         if let text {
             Text(verbatim: text)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .lineSpacing(2)
                 .foregroundStyle(c.t3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -513,7 +513,7 @@ struct MacFilesInspector: View {
                 .foregroundStyle(c.t1)
                 .fixedSize(horizontal: false, vertical: true)
             Text(verbatim: sdMeta(pf))
-                .font(.mono(11, weight: .medium))
+                .scaledMono(11, weight: .medium)
                 .foregroundStyle(c.t3)
                 .monospacedDigit()
         }
@@ -522,7 +522,7 @@ struct MacFilesInspector: View {
 
     private func sdPathCard(_ pf: PrinterFile) -> some View {
         Text(verbatim: pf.path)
-            .font(.mono(11))
+            .scaledMono(11)
             .foregroundStyle(c.t2)
             .lineLimit(2)
             .truncationMode(.head)
@@ -554,7 +554,7 @@ struct MacFilesInspector: View {
                             fallbackSymbol: SdFileCaps.symbol(pf))
                     .overlay {
                         Image(systemName: "play.fill")
-                            .font(.system(size: 15))
+                            .scaledFont(15)
                             .foregroundStyle(.white)
                             .offset(x: 1)
                             .frame(width: 34, height: 34)
@@ -566,7 +566,7 @@ struct MacFilesInspector: View {
                     .aspectRatio(4.0 / 3.0, contentMode: .fit)
                     .overlay {
                         Image(systemName: SdFileCaps.symbol(pf))
-                            .font(.system(size: 26, weight: .light))
+                            .scaledFont(26, weight: .light)
                             .foregroundStyle(c.t3)
                     }
             }

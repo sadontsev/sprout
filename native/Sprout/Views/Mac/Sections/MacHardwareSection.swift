@@ -204,7 +204,7 @@ struct MacHardwareSection: View {
         HStack(spacing: 12) {
             segmentPicker(MacHardwareTriage.items(model, dash: dash))
             Text(fleetLine(dash))
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t3)
                 .monospacedDigit()
                 .lineLimit(1)
@@ -230,7 +230,7 @@ struct MacHardwareSection: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text(seg.label)
-                            .font(.system(size: 12, weight: .semibold))
+                            .scaledFont(12, weight: .semibold)
                             .foregroundStyle(on ? c.t1 : c.t3)
                         // Always drawn, `clear` when clean: a dot that appears and disappears would
                         // shift the segment widths every time a reading crosses the threshold.
@@ -393,17 +393,17 @@ struct MacHardwareSection: View {
                     .font(.system(size: m.cardTitle, weight: .semibold))
                     .foregroundStyle(c.t1)
                 Text(activeDryerDetail(d))
-                    .font(.system(size: 11.5, weight: .medium))
+                    .scaledFont(11.5, weight: .medium)
                     .foregroundStyle(c.t2)
                     .monospacedDigit()
             }
             Spacer(minLength: 12)
             Text(d.remainingText)
-                .font(.mono(17, weight: .bold))
+                .scaledMono(17, weight: .bold)
                 .monospacedDigit()
                 .foregroundStyle(c.t1)
             Text("left")
-                .font(.system(size: 11, weight: .semibold))
+                .scaledFont(11, weight: .semibold)
                 .foregroundStyle(c.t3)
             Button(action: locked.press(.dryStop) { confirmStop = d }) {
                 Text("Stop")
@@ -455,7 +455,7 @@ struct MacHardwareSection: View {
                     .font(.system(size: m.cardTitle, weight: .semibold))
                     .foregroundStyle(c.t1)
                 Text(HardwareTriage.dryingReason(rh: rh, maxDryTemp: d.maxTemp))
-                    .font(.system(size: 11.5))
+                    .scaledFont(11.5)
                     .foregroundStyle(c.t2)
                     .monospacedDigit()
                     .fixedSize(horizontal: false, vertical: true)
@@ -464,7 +464,7 @@ struct MacHardwareSection: View {
                 // states it unconditionally, which would be a promise the machine might break.
                 if status?.supportsDryingWhilePrinting == true {
                     Text("Printing continues while the AMS dries.")
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(c.t3)
                 }
                 // The AMS's own refusals, said out loud. A Start button that looks live while the
@@ -473,8 +473,8 @@ struct MacHardwareSection: View {
                 ForEach(d.blockers, id: \.self) { blocker in
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 11))
-                        Text(blocker).font(.system(size: 11, weight: .medium))
+                            .scaledFont(11)
+                        Text(blocker).scaledFont(11, weight: .medium)
                     }
                     .foregroundStyle(c.heating)
                 }
@@ -513,17 +513,17 @@ struct MacHardwareSection: View {
     private func noDryerCard(stranded: [AmsUnitVM], dryers: [DryerVM], units: [AmsUnitVM]) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "humidity")
-                .font(.system(size: 14))
+                .scaledFont(14)
                 .foregroundStyle(c.heating)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 5) {
                 Text(stranded.count == 1
                      ? "\(stranded[0].label) is damp"
                      : "\(stranded.count) units are damp")
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .scaledFont(12.5, weight: .semibold)
                     .foregroundStyle(c.t1)
                 Text(noDryerReason(stranded: stranded, dryers: dryers, units: units))
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(c.t2)
                     .monospacedDigit()
                     .fixedSize(horizontal: false, vertical: true)
@@ -567,17 +567,17 @@ struct MacHardwareSection: View {
     private func idleDryerRow(_ ready: [DryerVM], units: [AmsUnitVM], reading: IdleReading) -> some View {
         HStack(spacing: 12) {
             Image(systemName: reading == .known ? "wind" : "questionmark.circle")
-                .font(.system(size: 14))
+                .scaledFont(14)
                 .foregroundStyle(c.t2)
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 3) {
                 Text(idleTitle(ready, units: units, reading: reading))
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .scaledFont(12.5, weight: .semibold)
                     .foregroundStyle(c.t1)
                 Text(reading == .known
                      ? "Nothing here needs a cycle. You can still run one."
                      : "No humidity reading, so there’s nothing to judge it on. You can still run a cycle.")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(c.t3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -662,7 +662,7 @@ struct MacHardwareSection: View {
                     if rows.contains(where: \.swappable) {
                         Text("Engaged is in the head now; the rest are docked. Colour chips show each "
                              + "nozzle's last filament — not what is loaded right now.")
-                            .font(.system(size: 11.5))
+                            .scaledFont(11.5)
                             .foregroundStyle(c.t3)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 15)
@@ -730,7 +730,7 @@ struct MacHardwareSection: View {
         return HStack(spacing: 12) {
             HStack(spacing: 7) {
                 Text(r.toolhead)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .scaledFont(12.5, weight: .semibold)
                     .foregroundStyle(c.t1)
                 // Flow rate is a first-class spec on the H2 series: a high-flow and a standard
                 // nozzle of the same diameter print very differently, so it is not folded into
@@ -743,27 +743,27 @@ struct MacHardwareSection: View {
             .frame(minWidth: NozzleColumn.minToolhead, maxWidth: .infinity, alignment: .leading)
 
             Text(r.diameter.isEmpty ? "—" : r.diameter)
-                .font(.mono(11.5, weight: .medium))
+                .scaledMono(11.5, weight: .medium)
                 .monospacedDigit()
                 .foregroundStyle(c.t2)
                 .frame(width: NozzleColumn.diameter, alignment: .leading)
 
             Text(r.material.isEmpty ? "—" : r.material)
-                .font(.system(size: 11.5, weight: .medium))
+                .scaledFont(11.5, weight: .medium)
                 .foregroundStyle(c.t2)
                 .frame(width: NozzleColumn.material, alignment: .leading)
 
             HStack(spacing: 7) {
                 Swatch(value: r.filamentHex, size: 14, radius: Metrics.swatchRadius(14), empty: r.filamentHex == nil)
                 Text(r.filamentType ?? (r.filamentHex == nil ? "None recorded" : "Unnamed"))
-                    .font(.system(size: 11.5, weight: .medium))
+                    .scaledFont(11.5, weight: .medium)
                     .foregroundStyle(c.t2)
                     .lineLimit(1)
             }
             .frame(minWidth: NozzleColumn.minFilament, maxWidth: .infinity, alignment: .leading)
 
             Text(state.label)
-                .font(.mono(10, weight: .bold))
+                .scaledMono(10, weight: .bold)
                 .tracking(0.4)
                 .foregroundStyle(state.ink)
                 .padding(.horizontal, 9)
@@ -790,7 +790,7 @@ struct MacHardwareSection: View {
 
     private func chip(_ text: String, ink: Color, fill: Color) -> some View {
         Text(text)
-            .font(.mono(8, weight: .bold))
+            .scaledMono(8, weight: .bold)
             .tracking(0.4)
             .foregroundStyle(ink)
             .padding(.horizontal, 5)
@@ -865,11 +865,11 @@ struct MacHardwareSection: View {
     private func noteRow(_ icon: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(c.t3)
                 .frame(width: 16)
             Text(text)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(c.t3)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -921,16 +921,16 @@ struct MacHardwareSection: View {
             Circle().fill(urgency.color).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.maintenanceTypeName)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .scaledFont(12.5, weight: .semibold)
                     .foregroundStyle(c.t1)
                 Text(serviceDetail(item))
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(urgency.urgent ? urgency.color : c.t3)
                     .monospacedDigit()
             }
             Spacer(minLength: 12)
             Text(intervalText(item))
-                .font(.mono(11, weight: .medium))
+                .scaledMono(11, weight: .medium)
                 .monospacedDigit()
                 .foregroundStyle(c.t3)
             // Not LAN-gated: marking an item done is Bambuddy-side bookkeeping in its own database
@@ -1144,11 +1144,11 @@ private struct MacSlotCard: View {
                 Swatch(value: swatch, size: 30, radius: Metrics.swatchRadius(30), empty: slot.empty)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .scaledFont(12.5, weight: .semibold)
                         .foregroundStyle(c.t1)
                         .lineLimit(1)
                     Text(subtitle)
-                        .font(.system(size: 10.5, weight: .medium))
+                        .scaledFont(10.5, weight: .medium)
                         .foregroundStyle(slot.active ? c.accent : c.t3)
                         .monospacedDigit()
                         .lineLimit(1)
@@ -1261,7 +1261,7 @@ private struct MacSlotCard: View {
             // the HT's id IS its tray id (128+), so there is no request to send — a Load button here
             // would be a control that cannot work.
             Text("Loads from the unit itself — the HT isn’t addressable from here.")
-                .font(.system(size: 10.5))
+                .scaledFont(10.5)
                 .foregroundStyle(c.t3)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)

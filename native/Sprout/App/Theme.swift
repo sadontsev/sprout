@@ -186,3 +186,51 @@ extension View {
             .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
     }
 }
+
+// MARK: - Dynamic Type
+
+/// A system font at an explicit point size that STILL scales with Dynamic Type.
+///
+/// `Font.system(size:)` is fixed — the SDK offers `relativeTo:` only on `Font.custom(_:size:)`,
+/// which needs a font name and so cannot carry the system face. `@ScaledMetric` is the supported
+/// route, and it is a `DynamicProperty`: it has to live on a view, which is why this is a modifier
+/// and not another `Font` helper. `Font.mono` could not be fixed in place for the same reason.
+///
+/// At the default text size `scaledValue == size`, so this changes nothing visually; it only lets
+/// the app grow for people who have asked it to. accessibility.md: "Support larger text sizes …
+/// Ideally, give people the option to enlarge text by at least 200 percent."
+private struct ScaledFont: ViewModifier {
+    @ScaledMetric private var size: CGFloat
+    private let weight: Font.Weight
+    private let monospaced: Bool
+
+    init(size: CGFloat, relativeTo style: Font.TextStyle, weight: Font.Weight, monospaced: Bool) {
+        _size = ScaledMetric(wrappedValue: size, relativeTo: style)
+        self.weight = weight
+        self.monospaced = monospaced
+    }
+
+    func body(content: Content) -> some View {
+        let base = Font.system(size: size, weight: weight)
+        return content.font(monospaced ? base.monospaced() : base)
+    }
+}
+
+extension View {
+    /// `.font(.system(size:weight:))` that honours Dynamic Type. See `ScaledFont`.
+    ///
+    /// `relativeTo` defaults to `.body` so everything grows by the same factor and the layout keeps
+    /// its proportions; pass a different style only where a run of text should scale on its own
+    /// curve.
+    func scaledFont(_ size: CGFloat,
+                    weight: Font.Weight = .regular,
+                    relativeTo style: Font.TextStyle = .body,
+                    monospaced: Bool = false) -> some View {
+        modifier(ScaledFont(size: size, relativeTo: style, weight: weight, monospaced: monospaced))
+    }
+
+    /// The monospaced counterpart to `Font.mono`, which is a static func and therefore cannot scale.
+    func scaledMono(_ size: CGFloat, weight: Font.Weight = .semibold) -> some View {
+        scaledFont(size, weight: weight, monospaced: true)
+    }
+}

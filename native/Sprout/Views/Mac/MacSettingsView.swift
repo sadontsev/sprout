@@ -76,7 +76,7 @@ struct MacSettingsGeneral: View {
                 } else {
                     Button("Try demo mode") { Task { await model.startDemo() } }
                     Text("Sample data, no server. Nothing is saved and your real settings are left alone.")
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(c.t3)
                 }
             } header: {
@@ -85,7 +85,7 @@ struct MacSettingsGeneral: View {
 
             Section {
                 Text(versionLine)
-                    .font(.mono(10, weight: .medium))
+                    .scaledMono(10, weight: .medium)
                     .foregroundStyle(c.t3)
             }
         }
@@ -129,16 +129,16 @@ struct MacSettingsServer: View {
         MacSettingsPane {
             Section {
                 TextField("Server URL", text: $baseUrl, prompt: Text(verbatim: "http://bambuddy.local:8080"))
-                    .font(.mono(12, weight: .medium))
+                    .scaledMono(12, weight: .medium)
                 HStack {
                     SecureField("API key", text: $apiKey, prompt: Text(verbatim: "bb_…"))
-                        .font(.mono(12, weight: .medium))
+                        .scaledMono(12, weight: .medium)
                     Button("Test", action: test).disabled(!canSave)
                 }
                 if let result {
                     HStack(spacing: 7) {
                         Circle().fill(failed ? c.error : c.running).frame(width: 6, height: 6)
-                        Text(result).font(.system(size: 11.5)).foregroundStyle(c.t2)
+                        Text(result).scaledFont(11.5).foregroundStyle(c.t2)
                     }
                 }
             } header: {
@@ -149,7 +149,7 @@ struct MacSettingsServer: View {
 
             Section {
                 TextField("Endpoint", text: $pushUrl, prompt: Text(verbatim: derivedHint))
-                    .font(.mono(12, weight: .medium))
+                    .scaledMono(12, weight: .medium)
             } header: {
                 Text("TRELLIS")
             } footer: {
@@ -373,7 +373,7 @@ struct MacSettingsNotifications: View {
         VStack(alignment: .leading, spacing: 3) {
             Toggle(kind.label, isOn: isOn)
             Text(kind.gatedOn)
-                .font(.system(size: 11))
+                .scaledFont(11)
                 .foregroundStyle(c.t3)
                 .fixedSize(horizontal: false, vertical: true)
         }

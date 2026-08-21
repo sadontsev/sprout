@@ -44,14 +44,14 @@ struct ViewerTopBar<Trailing: View>: View {
                 // The translucent circle around it is drawn below, so the glyph is bare rather
                 // than `xmark.circle.fill`.
                 Image(systemName: "xmark")
-                    .font(.system(size: 17, weight: .semibold))
+                    .scaledFont(17, weight: .semibold)
                     .foregroundStyle(ViewerChrome.ink)
                     .frame(width: 40, height: 40)
                     .background(Circle().fill(ViewerChrome.pill.opacity(0.6)))
             }
 
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .scaledFont(13, weight: .semibold)
                 .foregroundStyle(ViewerChrome.ink)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -115,7 +115,7 @@ struct ViewerFailure: View {
             if let onRetry {
                 Tap(action: onRetry) {
                     Text("Retry")
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(13, weight: .semibold)
                         .foregroundStyle(Palette.dark.accent)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 10)
