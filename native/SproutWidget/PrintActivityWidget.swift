@@ -92,7 +92,7 @@ struct PrintActivityWidget: Widget {
                 // look like any other app's. A dry cycle gets the spool, because in minimal and
                 // compact the silhouette plus the tint is the entire message and the two must not be
                 // confusable.
-                IslandMark(state: context.state, tint: tint, size: 17)
+                IslandProgressMark(state: context.state, tint: tint)
             } compactTrailing: {
                 // Drying cards pin progress to 0, so a percentage says nothing about them — they get
                 // the countdown instead. Resolved once so the visibility check and the text that
@@ -124,7 +124,7 @@ struct PrintActivityWidget: Widget {
                         .foregroundStyle(tint)
                 }
             } minimal: {
-                IslandMark(state: context.state, tint: tint, size: 17)
+                IslandProgressMark(state: context.state, tint: tint)
             }
             .keylineTint(tint)
         }
@@ -149,6 +149,44 @@ private struct IslandLeading: View {
                 .modifier(PreviewTile(radius: 7))
         } else {
             IslandMark(state: state, tint: tint, size: 16)
+        }
+    }
+}
+
+/// The island mark with the print's progress drawn around it.
+///
+/// The slot is ~17 pt and already spends all of it on a glyph that never changes, so the ring is the
+/// only way to get progress into it without shrinking the mark to nothing. It replaces no text: the
+/// trailing slot still carries the finish time, which answers a different question.
+///
+/// A drying cycle gets the plain mark. Those pin `progress` to 0 for their whole run, so a ring
+/// would sit empty and read as a stalled print — the countdown in the trailing slot is their answer.
+private struct IslandProgressMark: View {
+    let state: PrintActivityAttributes.ContentState
+    let tint: Color
+
+    private var fraction: Double {
+        min(max(Double(state.progress) / 100, 0), 1)
+    }
+
+    var body: some View {
+        if state.dry == true {
+            IslandMark(state: state, tint: tint, size: 17)
+        } else {
+            IslandMark(state: state, tint: tint, size: 12)
+                .frame(width: 22, height: 22)
+                .background {
+                    ZStack {
+                        Circle()
+                            .stroke(tint.opacity(0.28), lineWidth: 2)
+                        Circle()
+                            // A hair of arc at 0 %, so the ring reads as "started" rather than as a
+                            // missing element on the first frames of a print.
+                            .trim(from: 0, to: max(fraction, 0.02))
+                            .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                }
         }
     }
 }
@@ -259,7 +297,12 @@ private struct LockScreenCard: View {
                     ExtrusionBar(
                         progress: Double(state.progress) / 100,
                         tint: tint,
-                        riding: ExtrusionRider.rides(tintHex: state.tint, finished: state.finished)
+                        riding: ExtrusionRider.rides(tintHex: state.tint, finished: state.finished),
+                        // 11 is the mock's margin, and the glyph is 20 tall, so it overflowed nine
+                        // points into the line above and sat against the file name. Reserving the
+                        // glyph's own height plus a little keeps the design's look without the
+                        // collision.
+                        headroom: 16
                     ) { riderGlyph }
 
                     // One line, and it fills the width instead of splitting to both margins.

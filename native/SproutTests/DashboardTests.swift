@@ -233,3 +233,30 @@ final class DashboardTests: XCTestCase {
         XCTAssertEqual(vm.nozzleNow, 220)
     }
 }
+
+/// `Dash.isNamedStage` decides whether the printer's sub-stage becomes the headline.
+///
+/// The predicate has to ask "did the printer NAME this stage", not "is there a string". Bambuddy
+/// answers `Unknown stage (79)` for any sub-stage code it has no name for, and that reached the
+/// lock screen verbatim: a print opened under the headline "Unknown stage (79)" instead of
+/// "Printing".
+final class NamedStageTests: XCTestCase {
+    func testARealStageNameIsUsed() {
+        XCTAssertTrue(Dash.isNamedStage("Changing filament"))
+        XCTAssertTrue(Dash.isNamedStage("Auto bed leveling"))
+    }
+
+    func testUnnamedCodesAreNotStageNames() {
+        XCTAssertFalse(Dash.isNamedStage("Unknown stage (79)"))
+        XCTAssertFalse(Dash.isNamedStage("unknown stage (3)"))
+        XCTAssertFalse(Dash.isNamedStage("  Unknown stage (79)  "))
+    }
+
+    func testAbsentOrRedundantStagesFallThrough() {
+        XCTAssertFalse(Dash.isNamedStage(""))
+        XCTAssertFalse(Dash.isNamedStage("   "))
+        // Already the headline the fallback produces; repeating it says nothing.
+        XCTAssertFalse(Dash.isNamedStage("Printing"))
+        XCTAssertFalse(Dash.isNamedStage("printing"))
+    }
+}

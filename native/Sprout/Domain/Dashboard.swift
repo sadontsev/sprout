@@ -148,6 +148,19 @@ enum Dash {
     }
 
     /// Pure: map a `PrinterStatus` into the Dashboard's display values.
+    /// Whether `stage` is a stage the printer actually NAMED.
+    ///
+    /// The question is not "is there a string". Bambuddy answers `Unknown stage (79)` for any
+    /// sub-stage code it has no name for, and that reached the lock screen verbatim — a print opened
+    /// under the headline "Unknown stage (79)" instead of "Printing". A code the backend could not
+    /// name is not a name, so it falls through to the heating/printing heuristic exactly as an
+    /// absent one does.
+    nonisolated static func isNamedStage(_ stage: String) -> Bool {
+        let s = stage.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !s.isEmpty, s != "printing" else { return false }
+        return !s.hasPrefix("unknown")
+    }
+
     static func present(_ status: PrinterStatus?, now: Date = Date()) -> DashVM {
         guard let status else { return DashVM() }
         guard status.connected else {
@@ -270,7 +283,7 @@ enum Dash {
         // Live. Prefer the printer's own sub-stage name ("Changing filament", "Auto bed leveling"…);
         // fall back to the heating heuristic.
         let stage = (status.stgCurName ?? "").trimmingCharacters(in: .whitespaces)
-        let inStage = !stage.isEmpty && stage.lowercased() != "printing"
+        let inStage = Self.isNamedStage(stage)
         let heatingUp = (active.heating || bedHeating) && (status.progress?.double ?? 0) < 2
         vm.kind = .live
         vm.stateLabel = inStage ? stage : (heatingUp ? "Heating" : "Printing")
