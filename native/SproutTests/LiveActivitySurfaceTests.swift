@@ -77,7 +77,8 @@ final class ExtrusionRiderTests: XCTestCase {
     /// The whole reason the clamp exists: at 3 % the glyph's centre would sit 3 % along and most of
     /// the nozzle would hang off the rounded cap into nothing.
     func testTheGlyphNeverHangsOffEitherEnd() {
-        let width: CGFloat = 200, glyph: CGFloat = 15
+        let width: CGFloat = 200
+        let glyph: CGFloat = 15
         XCTAssertEqual(ExtrusionRider.centreX(progress: 0, width: width, glyphWidth: glyph), glyph / 2)
         XCTAssertEqual(ExtrusionRider.centreX(progress: 0.03, width: width, glyphWidth: glyph), glyph / 2)
         XCTAssertEqual(ExtrusionRider.centreX(progress: 1, width: width, glyphWidth: glyph), width - glyph / 2)
@@ -313,6 +314,55 @@ final class PrintArtTests: XCTestCase {
 
     func testAnUnmatchedJobHasNoArt() {
         XCTAssertNil(PrintArt.artFile(jobName: "nothing", in: [file(1, "cube.3mf")]))
+    }
+
+    // MARK: - When the card is worth listing again
+
+    private func sd(_ names: [String]) -> [PrinterFile] {
+        names.map { PrinterFile(name: $0, isDirectory: false, size: nil, path: "/" + $0, mtime: nil) }
+    }
+
+    /// The listing we already hold answers the question — no request, however many times the
+    /// 4-second loop asks.
+    func testACardListingThatAlreadyHasTheJobIsNotRelisted() {
+        XCTAssertFalse(PrintArt.shouldListCard(job: "cube", browsed: sd(["cube.gcode.3mf"]),
+                                               cached: nil, alreadyAsked: false))
+        XCTAssertFalse(PrintArt.shouldListCard(job: "cube", browsed: [],
+                                               cached: sd(["cube.gcode.3mf"]), alreadyAsked: false))
+    }
+
+    /// The case the whole rule exists for: a print sent from Studio lands on the card AFTER the app
+    /// cached the listing. Keyed by printer alone, that job is never looked for again and the card
+    /// shows a glyph for the rest of the session.
+    func testAJobMissingFromACachedListingEarnsOneRelist() {
+        XCTAssertTrue(PrintArt.shouldListCard(job: "duct_clamp", browsed: [],
+                                              cached: sd(["something_else.gcode.3mf"]),
+                                              alreadyAsked: false))
+    }
+
+    /// An empty listing is the unreachable-printer case, and must not become a permanent answer —
+    /// but it still only costs one request.
+    func testAnEmptyCachedListingIsAskedOncePerJob() {
+        XCTAssertTrue(PrintArt.shouldListCard(job: "duct_clamp", browsed: [], cached: [],
+                                              alreadyAsked: false))
+        XCTAssertFalse(PrintArt.shouldListCard(job: "duct_clamp", browsed: [], cached: [],
+                                               alreadyAsked: true))
+    }
+
+    /// Having asked for THIS job says nothing about the next one — that is the point of keying the
+    /// memo by job rather than by printer.
+    func testTheMemoDoesNotCarryToTheNextJob() {
+        // `alreadyAsked` is the caller's per-job lookup, so a different job arrives as false.
+        XCTAssertTrue(PrintArt.shouldListCard(job: "next_print", browsed: [],
+                                              cached: sd(["duct_clamp.gcode.3mf"]),
+                                              alreadyAsked: false))
+    }
+
+    /// A browsed listing that has the job wins even when it has been asked before — the answer is
+    /// already in hand, so "have we asked?" never gets a say.
+    func testAMatchBeatsTheAskedMemo() {
+        XCTAssertFalse(PrintArt.shouldListCard(job: "cube", browsed: sd(["cube.gcode.3mf"]),
+                                               cached: [], alreadyAsked: true))
     }
 }
 

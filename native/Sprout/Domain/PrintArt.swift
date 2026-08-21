@@ -68,6 +68,28 @@ enum PrintArt {
         return files.first { !$0.isDirectory && stem($0.name) == wanted }
     }
 
+    /// Whether the printer's card is worth listing (again) for this job.
+    ///
+    /// The listing is cached for the whole launch, because the card is searched on a 4-second loop
+    /// and re-listing 70 files every tick to find one picture is absurd. But a cache keyed only by
+    /// PRINTER answers "have we asked this machine?" when the question is "could what we hold
+    /// contain the job that is running now?" — and those come apart exactly in the case this rung
+    /// exists for. Send a print from Bambu Studio or Handy and the file reaches the card AFTER the
+    /// app cached its listing, so the job is missing from the copy we hold, is never looked for
+    /// again, and the card shows the brand glyph for the entire session. Restarting the app fixed
+    /// it, which is the tell.
+    ///
+    /// So the memo is keyed by JOB. A listing that already contains the job is used as-is; a
+    /// listing that does not earns exactly one re-list per job name, after which the answer stands
+    /// until the printer starts something else. Bounded at one request per job per launch, which is
+    /// what the caching was protecting in the first place.
+    static func shouldListCard(job: String, browsed: [PrinterFile], cached: [PrinterFile]?,
+                               alreadyAsked: Bool) -> Bool {
+        if matchSd(jobName: job, in: browsed) != nil { return false }
+        if let cached, matchSd(jobName: job, in: cached) != nil { return false }
+        return !alreadyAsked
+    }
+
     /// The file whose THUMBNAIL should be shown for a job — the match, or the model it was sliced
     /// from when the match's own image is Bambuddy's flat silhouette.
     ///

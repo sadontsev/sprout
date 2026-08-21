@@ -32,6 +32,14 @@ final class LiveActivityArtResolver {
     /// the card and its plate render returned 200 the whole time.
     private var sdCache: [Int: [PrinterFile]] = [:]
 
+    /// Job names the card has already been listed for, per printer.
+    ///
+    /// `sdCache` alone made a stale listing permanent: a print sent from Studio or Handy lands its
+    /// file on the card AFTER the app cached the listing, so the job was missing from the copy we
+    /// held and was never looked for again — brand glyph for the whole session, cured only by
+    /// relaunching. See `PrintArt.shouldListCard`.
+    private var sdAsked: [Int: Set<String>] = [:]
+
     struct Resolved: Equatable {
         var jobName: String
         var modelUri: String
@@ -101,7 +109,9 @@ final class LiveActivityArtResolver {
         if let token, !library.isEmpty,
            let file = PrintArt.artFile(jobName: jobName, in: library) {
             url = client.fileThumbUrl(file.id, token: token, thumbnailPath: file.thumbnailPath)
-        } else if let entry = PrintArt.matchSd(jobName: jobName, in: await sdListing(printerId, given: sdFiles, client: client)) {
+        } else if let entry = PrintArt.matchSd(
+            jobName: jobName,
+            in: await sdListing(printerId, job: jobName, given: sdFiles, client: client)) {
             url = client.printerPlateThumbUrl(printerId, path: entry.path)
             headers = client.authHeaders()
         }
@@ -126,16 +136,27 @@ final class LiveActivityArtResolver {
         return uri
     }
 
-    /// The SD root listing: whatever the app already has, else fetched once per printer.
+    /// The SD root listing: whatever already contains this job, else one fetch per job.
     ///
     /// Root only. A job in a subfolder will not match and falls back to the glyph, which is the
     /// honest outcome — walking the whole card on a 4-second loop to chase one thumbnail is a lot of
     /// requests for a picture.
-    private func sdListing(_ printerId: Int, given: [PrinterFile], client: BambuddyClient) async -> [PrinterFile] {
-        if !given.isEmpty { return given }
-        if let hit = sdCache[printerId] { return hit }
+    ///
+    /// The "one fetch per JOB" part is `PrintArt.shouldListCard`, and it is the difference between
+    /// this rung working for a print sent from Studio and it working only if the app happened to
+    /// launch after the file arrived.
+    private func sdListing(_ printerId: Int, job: String, given: [PrinterFile],
+                           client: BambuddyClient) async -> [PrinterFile] {
+        if PrintArt.matchSd(jobName: job, in: given) != nil { return given }
+        let cached = sdCache[printerId]
+        guard PrintArt.shouldListCard(job: job, browsed: given, cached: cached,
+                                      alreadyAsked: sdAsked[printerId]?.contains(job) == true) else {
+            return cached ?? given
+        }
+        sdAsked[printerId, default: []].insert(job)
         let files = (try? await client.listPrinterFiles(printerId, path: "/"))?.files ?? []
-        // Cached even when empty, so an unreachable printer is asked once rather than every tick.
+        // Stored even when empty, so an unreachable printer is asked once per job rather than every
+        // tick — the memo above is what keeps "empty" from meaning "forever".
         sdCache[printerId] = files
         return files
     }
