@@ -24,7 +24,16 @@ extension SproutApp {
         .defaultSize(width: 1440, height: 900)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unified)
-        .commands { MacCommands(model: model) }
+        .commands {
+            MacCommands(model: model)
+            // Show/Hide Sidebar and its ⌃⌘S. sidebars.md: "in macOS, you can include a show/hide
+            // button or add Show Sidebar and Hide Sidebar commands to your app's View menu."
+            //
+            // Load-bearing here rather than merely conventional: MacWindow forces
+            // `columnVisibility = .detailOnly` below a width threshold, and without this command
+            // there is no way to bring the sidebar back other than widening the window.
+            SidebarCommands()
+        }
 
         // §5.2. One window per printer, keyed by printer id, so `openWindow(id:value:)` reuses the
         // existing window for the same machine instead of stacking duplicates.

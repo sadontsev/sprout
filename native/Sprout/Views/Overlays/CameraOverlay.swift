@@ -285,10 +285,11 @@ struct CameraOverlay: View {
 
     private func topChrome(insets: EdgeInsets) -> some View {
         HStack(spacing: 11) {
-            chip(landscape ? "iphone" : "display", size: 17) {
+            chip(landscape ? "iphone" : "display", size: 17,
+                 label: landscape ? "Portrait" : "Landscape") {
                 withAnimation(Motion.standard(0.3)) { landscape.toggle() }
             }
-            chip("chevron.down", size: 22) { close() }
+            chip("chevron.down", size: 22, label: "Close camera") { close() }
 
             statusPill
 
@@ -296,11 +297,12 @@ struct CameraOverlay: View {
             // no control.
             if pip.isPictureInPictureSupported {
                 // The real PiP glyph — a generic "minimize" square gives no hint what it does.
-                chip(pip.pipActive ? "pip.exit" : "pip.enter", size: 17) {
+                chip(pip.pipActive ? "pip.exit" : "pip.enter", size: 17,
+                     label: pip.pipActive ? "Exit Picture in Picture" : "Picture in Picture") {
                     if pip.pipActive { pip.stopPiP() } else { pip.startPiP() }
                 }
             }
-            chip("arrow.clockwise", size: 18) { retry() }
+            chip("arrow.clockwise", size: 18, label: "Retry") { retry() }
         }
         .padding(.top, landscape ? 12 : insets.top + 10)
         .padding(.bottom, 16)
@@ -331,15 +333,31 @@ struct CameraOverlay: View {
         .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Chrome.pill))
     }
 
-    private func chip(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
+    /// One round icon button in the camera chrome.
+    ///
+    /// `label` is NOT optional on purpose. Every chip here is icon-only, and this whole screen had
+    /// no accessibility labels at all — VoiceOver announced four unlabelled buttons, one of which is
+    /// the only way out of a fullscreen view. Requiring it at the one shared definition is what
+    /// stops the next chip being added unlabelled. voiceover.md: "Provide alternative labels for all
+    /// key interface elements … Add labels to any custom elements your app defines."
+    ///
+    /// The circle stays 40 for the design; the HIT REGION is 44, which is the minimum
+    /// game-controls.md gives ("a minimum size of 44x44 pt … to accommodate people's fingers").
+    /// Growing the visible circle instead would have changed the layout.
+    private func chip(_ symbol: String,
+                      size: CGFloat,
+                      label: String,
+                      action: @escaping () -> Void) -> some View {
         Tap(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .medium))
                 .foregroundStyle(.white)
                 .frame(width: 40, height: 40)
                 .background(Circle().fill(Chrome.chip))
+                .frame(width: 44, height: 44)
                 .contentShape(Circle())
         }
+        .accessibilityLabel(label)
     }
 
     // MARK: - Live badge
