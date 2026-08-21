@@ -17,8 +17,15 @@ let maxStlBytes = 120 * 1024 * 1024
 /// faces by orientation makes displacement-texture detail pop far better than any single colour.
 enum StlPage {
 
-    /// - Parameter compact: inline embed (the wizard's step-1 preview) — hides the control card and
-    ///   the reset button. Orbit / pinch / double-tap still work.
+    /// - Parameters:
+    ///   - url: absolute STL URL. Same origin as the page, so the in-page fetch is not a CORS
+    ///     request at all.
+    ///   - name: shown in the control card beside the triangle count.
+    ///   - compact: inline embed (the wizard's step-1 preview) — hides the control card and
+    ///     the reset button. Orbit / pinch / double-tap still work.
+    ///   - headers: `X-API-Key`. Library endpoints take the API key, NOT the camera stream token.
+    /// - Returns: a complete HTML document, ready to hand to a web view. Every input is baked in
+    ///   as a literal, so the page fetches nothing it was not given.
     static func html(url: String, name: String, compact: Bool, headers: [String: String]) -> String {
         let urlLit = ViewerJS.literal(url)
         let nameLit = ViewerJS.literal(name)
@@ -53,7 +60,7 @@ enum StlPage {
           <div id="top"><span id="lbl"></span><span id="hint"></span></div>
           <div id="chips">
             <div class="chip" data-m="steel">Steel</div>
-            <div class="chip on" data-m="ivory">Ivory</div>
+            <div class="chip on" data-m="porcelain">Porcelain</div>
             <div class="chip" data-m="normals">Normals</div>
             <div class="chip" data-m="bg">Light bg</div>
           </div>
@@ -166,13 +173,16 @@ enum StlPage {
             var vHalf=0.45, hHalf=Math.atan(Math.tan(vHalf)*asp0);
             var DEF={yaw:-0.62,pitch:0.5,dist:rad/Math.tan(Math.min(vHalf,hHalf))*1.15};
             var yaw=DEF.yaw,pitch=DEF.pitch,dist=DEF.dist,panX=0,panY=0,vyaw=0,vpitch=0;
-            var MATS={steel:[0.62,0.67,0.76],ivory:[0.91,0.89,0.84]};
-            // Ivory, not steel. The server renders every library thumbnail as a near-white
-            // model (`MODEL_COLOR` in Bambuddy's `stl_thumbnail.py`), so opening a tile used to
-            // change the material of the thing you had just tapped. The fallback below points at
-            // the same entry deliberately — a default and its fallback answering differently is
-            // how a chip ends up claiming a shading the shader is not using.
-            var mode='ivory', lightBg=false, dpr=Math.min(window.devicePixelRatio||2,2.5);
+            var MATS={steel:[0.62,0.67,0.76],porcelain:[0.914,0.925,0.941]};
+            // Porcelain, not steel — and it is the SERVER's porcelain, `MODEL_COLOR = "#E9ECF0"`
+            // in Bambuddy's `stl_thumbnail.py`, not a colour picked to look like it. Every library
+            // thumbnail is rendered in that value, so opening a tile used to change the material
+            // of the thing you had just tapped. Ivory was the near miss: #E8E3D6 is WARM (red 18
+            // above blue) where the render is cool (red 7 below), which side by side reads as two
+            // materials rather than one. The fallback below names the same entry deliberately — a
+            // default and its fallback answering differently is how a chip ends up claiming a
+            // shading the shader is not using.
+            var mode='porcelain', lightBg=false, dpr=Math.min(window.devicePixelRatio||2,2.5);
 
             function draw(){
               var W=cv.clientWidth*dpr|0, H=cv.clientHeight*dpr|0;
@@ -187,7 +197,7 @@ enum StlPage {
               var mvp=mul(persp(0.9,cv.width/Math.max(cv.height,1),span*0.01,span*20), lookAt(eye,tgt,[0,0,1]));
               gl.uniformMatrix4fv(uMVP,false,new Float32Array(mvp));
               gl.uniform1f(uMode,mode==='normals'?1:0);
-              var col=MATS[mode]||MATS.ivory; gl.uniform3f(uColor,col[0],col[1],col[2]);
+              var col=MATS[mode]||MATS.porcelain; gl.uniform3f(uColor,col[0],col[1],col[2]);
               gl.drawArrays(gl.TRIANGLES,0,g.tris*3);
             }
             var raf=null; function schedule(){ if(!raf) raf=requestAnimationFrame(function(){raf=null;draw();}); }

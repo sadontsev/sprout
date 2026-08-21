@@ -18,9 +18,19 @@ cd "$(dirname "$0")/.."
 if [ $# -gt 0 ]; then
   files=("$@")
 else
-  mapfile -t files < <(git diff --name-only main...HEAD -- '*.swift'; git diff --name-only -- '*.swift')
-  # De-duplicate, and drop anything already deleted.
-  mapfile -t files < <(printf '%s\n' "${files[@]}" | sort -u | while read -r f; do [ -f "$f" ] && echo "$f"; done)
+  # A read loop, not `mapfile`: that is a bash 4 builtin and macOS still ships bash 3.2 as
+  # /bin/bash, so `#!/usr/bin/env bash` finds a shell without it unless a newer one happens to come
+  # first on PATH. It died with "mapfile: command not found" — for the author it worked, because
+  # MacPorts' bash was earlier in their PATH than the system one.
+  #
+  # `sort -u` de-duplicates the two diffs, and the `-f` test drops files the branch deleted. Doing
+  # both inside one loop also removes the `printf ... "${files[@]}"` that ran between the two
+  # mapfiles, which would itself have failed under `set -u` when nothing had changed.
+  files=()
+  while IFS= read -r f; do
+    [ -n "$f" ] && [ -f "$f" ] && files+=("$f")
+  done < <({ git diff --name-only main...HEAD -- '*.swift'
+             git diff --name-only -- '*.swift'; } | sort -u)
 fi
 
 [ ${#files[@]} -gt 0 ] || { echo "no Swift files to lint"; exit 0; }

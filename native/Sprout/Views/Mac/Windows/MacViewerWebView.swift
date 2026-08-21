@@ -33,7 +33,7 @@ import os
 ///
 /// The alternative — forking the pages so the Mac's controls are native — is the thing the whole
 /// design refuses. Clicking the page's own `.chip` elements and dispatching an `input` on its own
-/// `<input type=range>` means there is still exactly ONE implementation of "what does Ivory do",
+/// `<input type=range>` means there is still exactly ONE implementation of "what does Porcelain do",
 /// and it is the one iOS ships.
 @MainActor
 final class MacViewerPageHandle {

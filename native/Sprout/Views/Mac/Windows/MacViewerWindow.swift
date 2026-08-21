@@ -201,9 +201,9 @@ struct MacViewerWindow: View {
 
     @State private var playTask: Task<Void, Never>?
     @State private var speed: Double = 1
-    /// Mirrors the page's own default, which is Ivory — see `StlPage`. A mirror that starts
+    /// Mirrors the page's own default, which is Porcelain — see `StlPage`. A mirror that starts
     /// on a different chip than the page is a sidebar describing someone else's render.
-    @State private var shading = "ivory"
+    @State private var shading = "porcelain"
     @State private var lightBackground = false
 
     /// 1× advances 24 layers a second — a film rate, chosen so the number means something you can
@@ -727,10 +727,10 @@ struct MacViewerWindow: View {
     /// legend keyed to `Palette.accent` would be a swatch of a colour that is nowhere on screen. The
     /// two pairs track the two shading chips, which is why the swatch follows `shading`.
     private var rampSwatch: AnyView {
-        // TINTS.ivory {bot:[0.52,0.47,0.40], top:[0.93,0.90,0.83]} and
+        // TINTS.porcelain {bot:[0.40,0.41,0.43], top:[0.914,0.925,0.941]} and
         // TINTS.steel {bot:[0.33,0.38,0.48], top:[0.78,0.81,0.87]}, rounded to 8-bit.
-        let pair = shading == "ivory"
-            ? (Color(hex: 0x857866), Color(hex: 0xEDE6D4))
+        let pair = shading == "porcelain"
+            ? (Color(hex: 0x66696E), Color(hex: 0xE9ECF0))
             : (Color(hex: 0x54617A), Color(hex: 0xC7CFDE))
         return AnyView(
             RoundedRectangle(cornerRadius: Metrics.swatchRadius(legendSwatch), style: .continuous)
@@ -817,7 +817,7 @@ struct MacViewerWindow: View {
 
     /// The page's own shading chips, moved into the sidebar because this window hides its control
     /// card. The controls are not reimplemented: each one clicks the chip the page already owns, so
-    /// "what does Ivory do" still has exactly one answer and it is the one iOS ships.
+    /// "what does Porcelain do" still has exactly one answer and it is the one iOS ships.
     private var viewSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionLabel("VIEW")
@@ -852,12 +852,12 @@ struct MacViewerWindow: View {
     /// Normals is a mesh-only chip — the layer page has no such mode, and offering it there would be
     /// a control with nothing behind it.
     private var shadingOptions: [String] {
-        mode == .model ? ["steel", "ivory", "normals"] : ["steel", "ivory"]
+        mode == .model ? ["steel", "porcelain", "normals"] : ["steel", "porcelain"]
     }
 
     private static func shadingLabel(_ chip: String) -> String {
         switch chip {
-        case "ivory": "Ivory"
+        case "porcelain": "Porcelain"
         case "normals": "Normals"
         default: "Steel"
         }
@@ -1034,9 +1034,9 @@ struct MacViewerWindow: View {
         layer = 0
         hasSupport = nil
         tris = nil
-        // A fresh page starts on Ivory with a dark background, so the mirrors have to as well —
-        // otherwise the sidebar would claim a shading the page is not using.
-        shading = "ivory"
+        // A fresh page starts on Porcelain with a dark background, so the mirrors have to as
+        // well — otherwise the sidebar would claim a shading the page is not using.
+        shading = "porcelain"
         lightBackground = false
     }
 

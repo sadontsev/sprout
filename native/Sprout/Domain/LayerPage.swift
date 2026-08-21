@@ -127,10 +127,12 @@ enum LayerPage {
     ///     request at all.
     ///   - headers: `X-API-Key`. G-code endpoints take the API key, NOT the camera stream token.
     ///   - plate: the machine's physical bed footprint in mm, from `PrinterProfile`.
-    /// - Parameter compact: inline embed (the print wizard's preview) — hides the page's own
-    ///   control card and reset button, exactly as `StlPage` does. The model still renders in full;
-    ///   only the chrome goes, so the preview and the full-screen viewer cannot disagree about what
-    ///   the print looks like.
+    ///   - compact: inline embed (the print wizard's preview) — hides the page's own control
+    ///     card and reset button, exactly as `StlPage` does. The model still renders in full;
+    ///     only the chrome goes, so the preview and the full-screen viewer cannot disagree about
+    ///     what the print looks like.
+    /// - Returns: a complete HTML document, ready to hand to a web view. Every input is baked in
+    ///   as a literal, so the page fetches nothing it was not given.
     static func html(url: String, headers: [String: String], plate: PlateSize,
                      compact: Bool = false) -> String {
         let compactCss = compact ? "<style>#bar,#reset{display:none}</style>" : ""
@@ -163,7 +165,7 @@ enum LayerPage {
         <canvas id="c"></canvas>
         <canvas id="cg"></canvas>
         <div id="reset">⌂</div>
-        <div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint"></span></div><input id="s" type="range" min="1" max="1" value="1"><div id="chips"><div class="chip" data-m="steel">Steel</div><div class="chip on" data-m="ivory">Ivory</div><div class="chip" data-m="bg">Light bg</div></div></div></div>
+        <div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint"></span></div><input id="s" type="range" min="1" max="1" value="1"><div id="chips"><div class="chip" data-m="steel">Steel</div><div class="chip on" data-m="porcelain">Porcelain</div><div class="chip" data-m="bg">Light bg</div></div></div></div>
         <div id="err"></div>
         <script>
           var URL_=\#(urlLit), HDRS=\#(hdrLit);
@@ -318,10 +320,12 @@ enum LayerPage {
             // (a depth test z-fights them into speckle), and pitch is clamped above the horizon so layer
             // order IS depth order — the property the old canvas renderer relied on.
             // Shading palettes (bottom->top height ramp) — chips switch these like the STL viewer's.
-            var TINTS={steel:{bot:[0.33,0.38,0.48],top:[0.78,0.81,0.87]},ivory:{bot:[0.52,0.47,0.40],top:[0.93,0.90,0.83]}};
-            // Ivory to match the server-rendered thumbnails and the mesh viewer next door;
-            // see `StlPage` for why. The fallback below names the same entry on purpose.
-            var tint='ivory', lightBg=false;
+            var TINTS={steel:{bot:[0.33,0.38,0.48],top:[0.78,0.81,0.87]},porcelain:{bot:[0.40,0.41,0.43],top:[0.914,0.925,0.941]}};
+            // Porcelain to match the server-rendered thumbnails and the mesh viewer next door;
+            // see `StlPage` for why. The top of the ramp IS `MODEL_COLOR`; the bottom is near the
+            // value the server's own averted faces land on, so the two surfaces read as one
+            // material. The fallback below names the same entry on purpose.
+            var tint='porcelain', lightBg=false;
 
             function drawPlate(){
               // Surface: subtly lit quad with 10 mm grid, 50 mm majors, edge accents, origin dot.
@@ -385,7 +389,7 @@ enum LayerPage {
               gl.uniform1f(U.uHalf,Math.max(1.2,0.23*S)); // ~10% over half of 0.42mm: adjacent lines overlap, no hairline gaps
               gl.uniform1f(U.uMinZ,b.minZ); gl.uniform1f(U.uSpanZ,zspan);
               gl.uniform1f(U.uCurZ,zs[cur-1]||0); gl.uniform1f(U.uEps,minGap*0.45);
-              var T=TINTS[tint]||TINTS.ivory;
+              var T=TINTS[tint]||TINTS.porcelain;
               gl.uniform3f(U.uColBot,T.bot[0],T.bot[1],T.bot[2]); gl.uniform3f(U.uColTop,T.top[0],T.top[1],T.top[2]);
               if(!supTotal){
                 gl.uniform1f(U.uIsSup,0);
