@@ -25,7 +25,15 @@ struct PrintActivityWidget: Widget {
         } dynamicIsland: { context in
             let tint = Color(hexString: context.state.tint)
             return DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) {
+                // `priority:` is the API's own way to settle the three regions' claim on one
+                // width — `DynamicIslandExpandedRegion(_:priority:)`, default 0. The sides get 1 so
+                // the centre's long file name yields to them instead of squeezing "Printing" into a
+                // one-letter column and a countdown into three stacked fragments.
+                //
+                // NOT `.fixedSize()`, which was the previous attempt: it made the leading HStack
+                // demand glyph + full label width, the region clipped the overflow at its leading
+                // edge, and the nozzle came out cropped.
+                DynamicIslandExpandedRegion(.leading, priority: 1) {
                     HStack(spacing: 6) {
                         // ONE mark, not two. The preview and the glyph are rungs of the SAME ladder —
                         // the glyph is what the slot falls back to when there is no plate — so drawing
@@ -38,15 +46,8 @@ struct PrintActivityWidget: Widget {
                             .lineLimit(1)
                             .foregroundStyle(.secondary)
                     }
-                    // The three expanded regions negotiate for one width, and the centre asked for
-                    // all of it: the file name is long, `lineLimit(1)` caps the LINES but not the
-                    // width it requests, so the sides were squeezed to a few points and wrapped one
-                    // character per line — "Printing" came out as a vertical column and a countdown
-                    // as three stacked fragments. The sides claim their natural width first now, and
-                    // the name truncates into whatever is left, which is what a name is for.
-                    .fixedSize(horizontal: true, vertical: false)
                 }
-                DynamicIslandExpandedRegion(.trailing) {
+                DynamicIslandExpandedRegion(.trailing, priority: 1) {
                     CountdownSlot(
                         countdown: context.state.countdown(),
                         font: .system(size: 12, weight: .medium).monospacedDigit(),
@@ -54,15 +55,12 @@ struct PrintActivityWidget: Widget {
                     )
                     .foregroundStyle(tint)
                     .padding(.trailing, Self.cornerInset)
-                    .fixedSize(horizontal: true, vertical: false)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text(context.state.name)
                         .font(.caption2)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        // Lowest claim on the shared width: whatever the sides do not need.
-                        .layoutPriority(-1)
                         .foregroundStyle(.secondary)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
