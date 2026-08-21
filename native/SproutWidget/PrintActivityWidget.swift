@@ -137,6 +137,11 @@ struct PrintActivityWidget: Widget {
                 IslandProgressMark(state: context.state, tint: tint)
             }
             .keylineTint(tint)
+            // The API's own margin, per presentation — `contentMargins(_:_:for:)`. Keeps the compact
+            // slots off the sensor cutout instead of relying on the content happening to be small
+            // enough.
+            .contentMargins(.trailing, 3, for: .compactLeading)
+            .contentMargins(.leading, 3, for: .compactTrailing)
         }
     }
 }
@@ -183,8 +188,12 @@ private struct IslandProgressMark: View {
         if state.dry == true {
             IslandMark(state: state, tint: tint, size: 17)
         } else {
-            IslandMark(state: state, tint: tint, size: 12)
-                .frame(width: 22, height: 22)
+            // 17 TOTAL, the size the plain mark occupied. The ring was added at 22 and the compact
+            // slot does not scroll or shrink its content — it clips it, against the sensor cutout.
+            // The ring has to fit inside the old footprint, so the glyph gives up the 2pt the stroke
+            // needs rather than the slot growing.
+            IslandMark(state: state, tint: tint, size: 10)
+                .frame(width: 17, height: 17)
                 .background {
                     ZStack {
                         Circle()
