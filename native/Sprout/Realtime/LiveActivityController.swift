@@ -761,6 +761,16 @@ final class LiveActivityController {
     /// trip, while the state it reports changes only when a card appears or disappears.
     private func reconcile() async {
         guard isServerOwned else { return }
+        // Never reconcile without a device id. `/sync` is how this device tells Trellis which cards
+        // it still holds, and Trellis scopes that answer BY device id — so a report carrying an
+        // empty one is read as some other device saying "I hold nothing", and the live card is
+        // deregistered. That is not theoretical: it emptied the registry and left no Live Activity
+        // at all, because `p2s_started` then considers the card already started and will not push
+        // another for the same print.
+        //
+        // Empty means the Keychain could not be read yet (locked phone). Saying nothing is correct
+        // there; the next tick after an unlock reports properly.
+        guard !deviceID.isEmpty else { return }
         if let last = lastReconcile, Date().timeIntervalSince(last) < Self.reconcileInterval { return }
         lastReconcile = Date()
 
