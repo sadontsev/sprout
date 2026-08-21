@@ -220,7 +220,14 @@ struct DashboardView: View {
             ? "\(due) maintenance \(due == 1 ? "task is" : "tasks are") due"
             : "\(maintenance.warn) maintenance \(maintenance.warn == 1 ? "task is" : "tasks are") coming up"
         return FadeRise {
-            Tap { model.tab = .ams } content: {
+            // Selects the SEGMENT too. Switching to Hardware alone left whichever segment was last
+            // open — usually Filament — so a tap on "2 maintenance tasks are due" landed on spools
+            // and the user had to find the tasks themselves. The chip names a destination; it should
+            // arrive there.
+            Tap {
+                model.hardware.segment = .service
+                model.tab = .ams
+            } content: {
                 chipRow(icon: "wrench.and.screwdriver", tint: tint, label: label, verticalPadding: 12)
             }
         }

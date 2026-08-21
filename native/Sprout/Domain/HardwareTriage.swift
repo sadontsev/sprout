@@ -20,7 +20,11 @@ enum HardwareTriage {
             switch self {
             case .filament: return "Filament"
             case .nozzles:  return "Nozzles"
-            case .service:  return "Service"
+            // "Maintenance", not "Service": the dashboard chip says "maintenance tasks are due",
+            // the endpoint is `getMaintenance`, and the fields are `dueCount`/`warningCount`. The
+            // tab was the only place calling it something else. The CASE stays `service` — the raw
+            // value is persisted.
+            case .service:  return "Maintenance"
             }
         }
     }
