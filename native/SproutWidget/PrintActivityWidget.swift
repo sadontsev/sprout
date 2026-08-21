@@ -35,8 +35,16 @@ struct PrintActivityWidget: Widget {
                         IslandLeading(state: context.state, tint: tint)
                         Text(context.state.stateLabel)
                             .font(.system(size: 12))
+                            .lineLimit(1)
                             .foregroundStyle(.secondary)
                     }
+                    // The three expanded regions negotiate for one width, and the centre asked for
+                    // all of it: the file name is long, `lineLimit(1)` caps the LINES but not the
+                    // width it requests, so the sides were squeezed to a few points and wrapped one
+                    // character per line — "Printing" came out as a vertical column and a countdown
+                    // as three stacked fragments. The sides claim their natural width first now, and
+                    // the name truncates into whatever is left, which is what a name is for.
+                    .fixedSize(horizontal: true, vertical: false)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     CountdownSlot(
@@ -46,11 +54,15 @@ struct PrintActivityWidget: Widget {
                     )
                     .foregroundStyle(tint)
                     .padding(.trailing, Self.cornerInset)
+                    .fixedSize(horizontal: true, vertical: false)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text(context.state.name)
                         .font(.caption2)
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                        // Lowest claim on the shared width: whatever the sides do not need.
+                        .layoutPriority(-1)
                         .foregroundStyle(.secondary)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -244,6 +256,11 @@ private struct CountdownSlot: View {
     private func text(_ label: Text) -> some View {
         label
             .font(font)
+            // One line, always. `maxWidth` caps how wide the slot may get, not how narrow it may be
+            // squeezed, so in a contested layout a countdown wrapped into stacked fragments — "1:35:45"
+            // as three lines. A time that does not fit should shrink, not stack.
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
             .multilineTextAlignment(.trailing)
             .frame(maxWidth: maxWidth)
     }
