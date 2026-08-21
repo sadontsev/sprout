@@ -598,6 +598,7 @@ private struct PowerBreathe<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     @State private var up = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         // The halo is a BACKGROUND, not a ZStack sibling: a bare shape has no intrinsic size, so as
@@ -618,8 +619,11 @@ private struct PowerBreathe<Content: View>: View {
                     .animation(Motion.inOutQuad(0.3), value: active)
                     .allowsHitTesting(false)
             }
+            // `onChange(initial: true)`, not `onAppear`. accessibility.md names this one twice —
+            // it is a scaleEffect, so both "zooming, scaling" and the repetition apply. Rests at
+            // scale 1; "Powered on"/"Powered off" is stated in text beside it either way.
             .onChange(of: active, initial: true) { _, isActive in
-                up = isActive
+                up = isActive && !reduceMotion
             }
     }
 }
@@ -633,6 +637,7 @@ private struct PowerSpark: View {
     var spread: CGFloat = 20
 
     @State private var fired = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
@@ -657,7 +662,10 @@ private struct PowerSpark: View {
             }
         }
         .allowsHitTesting(false)
-        .onAppear { fired = true }
+        // Not frozen: unfired this leaves six dots stacked at the origin inside the source circle —
+        // dead pixels rather than a resting state. accessibility.md calls an outward drift like
+        // this "peripheral motion", so it is dropped entirely.
+        .onAppear { if !reduceMotion { fired = true } }
     }
 }
 

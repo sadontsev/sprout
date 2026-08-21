@@ -99,15 +99,20 @@ struct PulseDot: View {
     var period: Double = 2.4
 
     @State private var dim = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        // Safe to simply stop: the dot pulses UNCONDITIONALLY whenever it is rendered, so the
+        // motion is identical in every state and cannot be carrying one. Checked across all 20 call
+        // sites — state is always in the colour, the shape, or whether the dot is drawn at all.
+        // Resting opacity is 1, so what remains is a solid dot in the state colour.
         Circle()
             .fill(color)
             .frame(width: size, height: size)
             .shadow(color: glow ? color.opacity(0.85) : .clear, radius: size * 0.7)
             .opacity(dim ? 0.22 : 1)
             .animation(Motion.inOutQuad(period / 2).repeatForever(autoreverses: true), value: dim)
-            .onAppear { dim = true }
+            .onAppear { if !reduceMotion { dim = true } }
     }
 }
 
@@ -127,6 +132,7 @@ struct HeatBar: View {
     var height: CGFloat = 6
 
     @State private var shimmer = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geo in
@@ -142,8 +148,9 @@ struct HeatBar: View {
         .opacity(heating && shimmer ? 0.5 : 1)
         .animation(heating ? Motion.inOutQuad(0.7).repeatForever(autoreverses: true) : Motion.inOutQuad(0.25), value: shimmer)
         .animation(Motion.inOutQuad(0.25), value: heating)
+        // `onChange(initial: true)`, not `onAppear` — the guard belongs on the assignment.
         .onChange(of: heating, initial: true) { _, isHeating in
-            shimmer = isHeating
+            shimmer = isHeating && !reduceMotion
         }
     }
 }
@@ -163,6 +170,7 @@ struct ProgressRing<Content: View>: View {
     @ViewBuilder var label: () -> Content
 
     @State private var haloUp = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
@@ -173,7 +181,8 @@ struct ProgressRing<Content: View>: View {
                     .blur(radius: 22)
                     .opacity(haloUp ? 0.28 : 0.04)
                     .animation(Motion.inOutQuad(1.2).repeatForever(autoreverses: true), value: haloUp)
-                    .onAppear { haloUp = true }
+                    // Rests at 0.04 — a faint static glow rather than nothing.
+                    .onAppear { if !reduceMotion { haloUp = true } }
             }
             Circle()
                 .stroke(track, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
@@ -221,6 +230,7 @@ struct Shimmer: View {
     var cornerRadius: CGFloat = 8
 
     @State private var phase: CGFloat = -160
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geo in
@@ -232,6 +242,9 @@ struct Shimmer: View {
             }
             .onAppear {
                 phase = -160
+                // Rests at -160: the highlight sits entirely left of x=0 inside the clipShape, so
+                // the placeholder is a plain block.
+                guard !reduceMotion else { return }
                 withAnimation(Motion.inOutEase(1.4).repeatForever(autoreverses: false)) {
                     phase = geo.size.width
                 }

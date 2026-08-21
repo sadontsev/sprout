@@ -464,6 +464,7 @@ struct ExploreSkeletonGrid: View {
 struct ExploreLoadingBar: View {
     @Environment(\.palette) private var c
     @State private var shift = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geo in
@@ -474,7 +475,14 @@ struct ExploreLoadingBar: View {
                 .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: shift)
         }
         .frame(height: 2)
-        .onAppear { shift = true }
+        // HIDDEN under Reduce Motion, not stopped — the only site here where freezing would lie.
+        // The rest offset is `-geo.size.width * 0.0`, i.e. ZERO, so a stopped bar is a 35 %-wide
+        // capsule parked at the left edge: a determinate bar apparently stuck at 35 %. This view
+        // exists (see its own comment) to give the wait a shape "without claiming a percentage
+        // nobody can compute", and freezing it claims exactly that percentage. The redacted
+        // skeleton grid underneath already says "loading".
+        .opacity(reduceMotion ? 0 : 1)
+        .onAppear { if !reduceMotion { shift = true } }
     }
 }
 
