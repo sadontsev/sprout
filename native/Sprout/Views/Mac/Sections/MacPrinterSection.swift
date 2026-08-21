@@ -41,6 +41,7 @@ struct MacPrinterSection: View {
     }
 
     @Environment(\.palette) private var c
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.metrics) private var m
 
     /// Where "go to that section" writes. See `MacSectionSelection` for why this is not a bare
@@ -230,8 +231,12 @@ struct MacPrinterSection: View {
                     .font(.system(size: caption, weight: .medium))
                     .foregroundStyle(c.t2)
                     .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .animation(Motion.roll(0.6), value: vm.etaText)
+                    // Live data, not a loop: this updates on every WebSocket frame — roughly once
+                    // a second for the whole print — so under Reduce Motion the rolling digits are
+                    // continuous motion during the one activity the app exists for. The VALUE still
+                    // updates; only the roll is dropped.
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+                    .animation(reduceMotion ? nil : Motion.roll(0.6), value: vm.etaText)
                     .lineLimit(1)
             }
 

@@ -75,6 +75,8 @@ struct RollingNumber: View {
     var font: Font = .system(size: 34, weight: .bold)
     var color: Color = .primary
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         // No grouping separator: these sit next to plain totals ("1153 / 1237"), and one side
         // formatting as "1,153" while the other doesn't looks like a bug.
@@ -82,8 +84,12 @@ struct RollingNumber: View {
             .font(font)
             .monospacedDigit()
             .foregroundStyle(color)
-            .contentTransition(.numericText(value: Double(value)))
-            .animation(Motion.roll(0.6), value: value)
+            // Live data rather than a loop, and therefore easy to miss: this re-rolls on every
+            // status frame — about once a second for a whole print — so under Reduce Motion it is
+            // continuous motion during exactly the activity the app exists for. The number still
+            // updates; only the roll goes.
+            .contentTransition(reduceMotion ? .identity : .numericText(value: Double(value)))
+            .animation(reduceMotion ? nil : Motion.roll(0.6), value: value)
     }
 }
 

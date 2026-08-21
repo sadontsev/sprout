@@ -689,6 +689,7 @@ private struct StatBlock: View {
     var accent: Bool = false
 
     @Environment(\.palette) private var c
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -703,8 +704,12 @@ private struct StatBlock: View {
                     .font(.system(size: 25, weight: .bold))
                     .tracking(-1)
                     .foregroundStyle(accent ? c.accent : c.t1)
-                    .contentTransition(.numericText())
-                    .animation(Motion.roll(0.6), value: value)
+                    // Live data, not a loop: this updates on every WebSocket frame — roughly once
+                    // a second for the whole print — so under Reduce Motion the rolling digits are
+                    // continuous motion during the one activity the app exists for. The VALUE still
+                    // updates; only the roll is dropped.
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+                    .animation(reduceMotion ? nil : Motion.roll(0.6), value: value)
                 if let unit {
                     Text(unit)
                         .font(.system(size: 12, weight: .semibold))

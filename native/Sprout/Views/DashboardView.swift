@@ -12,6 +12,7 @@ struct DashboardView: View {
     var onSettings: () -> Void
 
     @Environment(\.palette) private var c
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var switcherOpen = false
     @State private var speedOpen = false
     @State private var maintenance: (due: Int, warn: Int) = (0, 0)
@@ -489,8 +490,12 @@ struct DashboardView: View {
                     Text(vm.etaText)
                         .font(.system(size: 19, weight: .semibold))
                         .foregroundStyle(c.t1)
-                        .contentTransition(.numericText())
-                        .animation(Motion.roll(0.6), value: vm.etaText)
+                        // Live data, not a loop: this updates on every WebSocket frame — roughly once
+                        // a second for the whole print — so under Reduce Motion the rolling digits are
+                        // continuous motion during the one activity the app exists for. The VALUE still
+                        // updates; only the roll is dropped.
+                        .contentTransition(reduceMotion ? .identity : .numericText())
+                        .animation(reduceMotion ? nil : Motion.roll(0.6), value: vm.etaText)
                         .padding(.top, 5)
                     Text("done ~ \(vm.doneText)")
                         .font(.system(size: 12, weight: .medium))
