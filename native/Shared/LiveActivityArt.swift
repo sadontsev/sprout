@@ -100,6 +100,30 @@ enum LiveActivityArt {
         return fileManager.fileExists(atPath: url.path) ? url.absoluteString : ""
     }
 
+    /// The plate image for a card — whether or not the push that delivered it carried one.
+    ///
+    /// **A remote update REPLACES the whole `ContentState`.** Trellis has no idea which plate the
+    /// device wrote, so `classify()` sends `modelUri: ""` on every push, and the first server update
+    /// after the app resolved a plate blanked the preview — seconds after it appeared — leaving the
+    /// brand glyph for the rest of the print. `iconUri` survived only because it is registered per
+    /// push token and echoed back; a plate is per JOB and there is nothing to echo.
+    ///
+    /// The device does not need to be told. `plateName` is pure, `printerId` is a static ATTRIBUTE
+    /// that no push can touch, and `name` is the same `subtask_name` the app matched the plate on —
+    /// so the widget can derive the path itself and treat a carried `modelUri` as a shortcut rather
+    /// than the source of truth.
+    ///
+    /// Fixing it here rather than in Trellis is deliberate: `ContentState`'s field names are a wire
+    /// format shared with a service that deploys separately, and this needs no new field, no new
+    /// endpoint and no version skew. It also holds for a user whose Trellis is older than their app.
+    static func plateURI(printerId: Int, jobName: String, carried: String,
+                         fileManager: FileManager = .default) -> String {
+        if !carried.isEmpty { return carried }
+        guard !jobName.isEmpty else { return "" }
+        return existingURI(name: plateName(printerId: printerId, fileName: jobName),
+                           fileManager: fileManager)
+    }
+
     /// Remove plate images that no live card refers to.
     ///
     /// Without this the container grows by one PNG per distinct file name ever printed, forever —

@@ -19,7 +19,7 @@ struct PrintActivityWidget: Widget {
 
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: PrintActivityAttributes.self) { context in
-            LockScreenCard(state: context.state)
+            LockScreenCard(state: context.state, printerId: context.attributes.printerId)
                 // The card pins ONE dark background for both appearances, but its text uses adaptive
                 // semantic styles (.primary/.secondary/.tertiary). In light appearance those resolve
                 // to black — the 19pt finish time, the card's headline, rendered near-black on a
@@ -48,7 +48,8 @@ struct PrintActivityWidget: Widget {
                         // both put two nozzles side by side on every job without a matched plate,
                         // which is most of them. The preview wins when there is one; otherwise the
                         // tinted mark stands in for it.
-                        IslandLeading(state: context.state, tint: tint)
+                        IslandLeading(state: context.state, tint: tint,
+                                      printerId: context.attributes.printerId)
                         Text(context.state.stateLabel)
                             .font(.system(size: 12))
                             .lineLimit(1)
@@ -158,11 +159,18 @@ struct PrintActivityWidget: Widget {
 private struct IslandLeading: View {
     let state: PrintActivityAttributes.ContentState
     let tint: Color
+    let printerId: Int
 
     var body: some View {
         // The PLATE only. `iconUri` is deliberately not a fallback here: it is the brand nozzle, and
         // showing it in the tile would put the same mark in the tile and beside it.
-        if state.dry != true, let image = LockScreenCard.loadImage(state.modelUri) {
+        //
+        // Through `plateURI`, not `state.modelUri`: a Trellis push carries no plate, so reading the
+        // pushed value alone made the tile empty on every server-driven update.
+        if state.dry != true,
+           let image = LockScreenCard.loadImage(
+            LiveActivityArt.plateURI(printerId: printerId, jobName: state.name,
+                                     carried: state.modelUri)) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
@@ -283,6 +291,8 @@ private struct CountdownSlot: View {
 /// The full card on the lock screen.
 private struct LockScreenCard: View {
     let state: PrintActivityAttributes.ContentState
+    /// From the ACTIVITY'S ATTRIBUTES, which a push cannot replace — see `LiveActivityArt.plateURI`.
+    let printerId: Int
 
     private var tint: Color { Color(hexString: state.tint) }
 
@@ -414,7 +424,9 @@ private struct LockScreenCard: View {
                 .fill(tint.opacity(0.14))
                 .frame(width: 56, height: 56)
                 .overlay { SpoolGlyph(size: 28, tint: tint) }
-        } else if let image = Self.loadImage(state.modelUri) ?? Self.loadImage(state.iconUri) {
+        } else if let image = Self.loadImage(
+            LiveActivityArt.plateURI(printerId: printerId, jobName: state.name,
+                                     carried: state.modelUri)) ?? Self.loadImage(state.iconUri) {
             // `scaledToFill` + clip, not `scaledToFit`: a plate render is rarely square and fitting it
             // letterboxed the model into a corner of an empty slot.
             Image(uiImage: image)

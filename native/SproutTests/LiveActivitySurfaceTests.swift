@@ -364,6 +364,42 @@ final class PrintArtTests: XCTestCase {
         XCTAssertFalse(PrintArt.shouldListCard(job: "cube", browsed: sd(["cube.gcode.3mf"]),
                                                cached: [], alreadyAsked: true))
     }
+
+    // MARK: - The plate a push did not carry
+
+    /// A remote update replaces the whole `ContentState`, and Trellis sends `modelUri: ""` on every
+    /// one — it has no idea which plate the device wrote. So the widget must not read the pushed
+    /// value alone, or the preview vanishes on the first server update after it appears.
+    func testACarriedUriIsUsedWhenThePushHasOne() {
+        XCTAssertEqual(
+            LiveActivityArt.plateURI(printerId: 2, jobName: "duct_clamp", carried: "file:///x.png"),
+            "file:///x.png")
+    }
+
+    /// With nothing carried, the path is DERIVED — from the printer id, which is a static attribute
+    /// no push can touch, and the job name, which is the same `subtask_name` the plate was written
+    /// under. Nothing on disk in the test container, so the answer is "", but the derivation is what
+    /// matters: it must not crash and must not invent a URI.
+    func testAnAbsentPlateIsEmptyRatherThanWrong() {
+        XCTAssertEqual(
+            LiveActivityArt.plateURI(printerId: 2, jobName: "never_printed_here", carried: ""),
+            "")
+    }
+
+    /// No job name is no plate. Guarded because `plateName` would otherwise hash the empty string
+    /// into a perfectly valid-looking filename shared by every printer with no job.
+    func testAnEmptyJobNameHasNoPlate() {
+        XCTAssertEqual(LiveActivityArt.plateURI(printerId: 2, jobName: "", carried: ""), "")
+    }
+
+    /// The derived name is what the resolver writes, or the two halves would never meet. Same
+    /// function, asserted from both sides.
+    func testTheDerivedNameMatchesWhatTheResolverWrites() {
+        let written = LiveActivityArt.plateName(printerId: 7, fileName: "duct_clamp_H2C")
+        XCTAssertEqual(written, "plate-7-\(LiveActivityArt.stableHash("duct_clamp_H2C")).png")
+        // Different printers never share a plate file, even for an identically named job.
+        XCTAssertNotEqual(written, LiveActivityArt.plateName(printerId: 8, fileName: "duct_clamp_H2C"))
+    }
 }
 
 #if os(macOS)
