@@ -374,22 +374,28 @@ struct LibraryView: View {
 
             // Shows the mode it switches TO, not the one in use.
             Tap { layout = layout == .grid ? .list : .grid } content: {
-                squareButton(layout == .grid ? "list.bullet" : "square.grid.2x2")
+                squareButton(layout == .grid ? "list.bullet" : "square.grid.2x2",
+                             label: layout == .grid ? "List view" : "Grid view")
             }
             Tap { store.beginSelecting() } content: {
-                squareButton("checkmark.square")
+                squareButton("checkmark.square", label: "Select files")
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 14)
     }
 
-    private func squareButton(_ symbol: String) -> some View {
+    /// The 32pt visual square keeps the toolbar's rhythm; the TARGET is 44, per game-controls.md.
+    /// `label` is required because both call sites are icon-only.
+    private func squareButton(_ symbol: String, label: String) -> some View {
         Image(systemName: symbol)
             .font(.system(size: 15, weight: .medium))
             .foregroundStyle(c.t2)
             .frame(width: 32, height: 32)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(c.s2))
+            .frame(width: 44, height: 44)
+            .contentShape(.rect)
+            .accessibilityLabel(label)
     }
 
     private var selectBar: some View {
@@ -443,11 +449,19 @@ struct LibraryView: View {
                     .submitLabel(.search)
             }
             if !query.isEmpty {
+                // The glyph had no frame at all, so the target was the glyph: about 14x14.
+                // game-controls.md: "Make sure frequently used controls are a minimum size of
+                // 44x44 pt". The glyph stays 14; only the hit region grows, and the negative
+                // trailing padding keeps it from widening the field.
                 Tap { query = "" } content: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14))
                         .foregroundStyle(c.t3)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
                 }
+                .padding(.trailing, -12)
+                .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 12)

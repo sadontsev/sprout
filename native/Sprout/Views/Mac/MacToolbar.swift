@@ -112,7 +112,8 @@ struct MacToolbar: ToolbarContent {
             Button("Manage printers…") { openSettings() }
         } label: {
             HStack(spacing: 8) {
-                PulseDot(color: model.vm.stateColor.resolve(palette), size: 7)
+                PulseDot(color: model.vm.stateColor.resolve(palette), size: 7,
+                         meaning: model.vm.stateLabel)
                 Text(model.printer?.name ?? "Printer")
                     .font(.system(size: 12, weight: .semibold))
             }

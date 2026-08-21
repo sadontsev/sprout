@@ -134,7 +134,7 @@ struct DashboardView: View {
                         .tracking(1.4)
                         .foregroundStyle(c.t3)
                     HStack(spacing: 7) {
-                        PulseDot(color: vm.stateColor.resolve(c), size: 8)
+                        PulseDot(color: vm.stateColor.resolve(c), size: 8, meaning: vm.stateLabel)
                         Text(model.printer?.name ?? "Printer")
                             .font(.system(size: 17, weight: .semibold))
                             .tracking(-0.2)
@@ -174,7 +174,7 @@ struct DashboardView: View {
                         if !isCurrent { model.printerId = p.id }
                     } content: {
                         HStack(spacing: 11) {
-                            PulseDot(color: entry.stateColor.resolve(c), size: 8)
+                            PulseDot(color: entry.stateColor.resolve(c), size: 8, meaning: entry.stateLabel)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(p.name)
                                     .font(.system(size: 14, weight: .semibold))

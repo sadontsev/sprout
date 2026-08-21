@@ -191,7 +191,7 @@ struct MacMenuBarPanel: View {
 
     private var header: some View {
         HStack(spacing: 9) {
-            PulseDot(color: vm.stateColor.resolve(c), size: 7)
+            PulseDot(color: vm.stateColor.resolve(c), size: 7, meaning: vm.stateLabel)
             Text(model.printer?.name ?? "Printer")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(c.t1)

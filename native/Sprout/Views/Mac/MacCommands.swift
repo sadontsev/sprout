@@ -22,6 +22,7 @@ struct MacCommands: Commands {
     @FocusedValue(\.refreshSection) private var refresh
     @FocusedValue(\.selectedSection) private var selectedSection
     @FocusedValue(\.inspectorToggle) private var inspectorToggle
+    @FocusedValue(\.printerControls) private var controls
 
     @Environment(\.openWindow) private var openWindow
 
@@ -29,6 +30,25 @@ struct MacCommands: Commands {
         // Replaces the stock "New Window" — Sprout is one window (§Fleet: "one printer at a time",
         // and multiple printer windows are explicitly not shipping).
         CommandGroup(replacing: .newItem) {}
+
+        // Pause / Resume / Stop existed ONLY in the toolbar and the menu bar panel. toolbars.md:
+        // "Make every toolbar item available as a command in the menu bar. Because people can
+        // customize the toolbar or hide it, it can't be the only place that presents a command."
+        //
+        // Each item is enabled on `controls.enabled`, which is "applicable AND the printer will
+        // accept it" — not merely "a print is running". A menu item that looks live and does
+        // nothing is the failure this repo keeps re-learning.
+        CommandMenu("Printer") {
+            Button(controls?.isPaused == true ? "Resume" : "Pause") {
+                controls?.run(controls?.isPaused == true ? .resume : .pause)
+            }
+            .keyboardShortcut("p", modifiers: [.shift, .command])
+            .disabled(!(controls?.enabled(controls?.isPaused == true ? .resume : .pause) ?? false))
+
+            Button("Stop") { controls?.run(.stop) }
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(!(controls?.enabled(.stop) ?? false))
+        }
 
         CommandGroup(after: .toolbar) {
             Button("Refresh") { Task { await refresh?.run() } }

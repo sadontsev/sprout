@@ -305,6 +305,21 @@ struct MacWindow: View {
         .focusedSceneValue(\.refreshSection, RefreshAction { await MacSectionRefresh.run(section, model: model, explore: explore) })
         .focusedSceneValue(\.selectedSection, sectionBinding)
         .focusedSceneValue(\.inspectorToggle, inspectorToggle)
+        // `accepts` is the SAME gate the menu bar panel uses (`Lan.isBlocked`), not a second
+        // predicate that only nearly answers the question.
+        .focusedSceneValue(\.printerControls, PrinterControls(
+            isRunning: model.vm.kind == .live,
+            isPaused: model.vm.isPaused,
+            accepts: { !Lan.isBlocked($0, model.lanMode) },
+            run: { action in
+                switch action {
+                case .pause:  model.perform("Pause") { try await $0.pause($1) }
+                case .resume: model.perform("Resume") { try await $0.resume($1) }
+                case .stop:   model.perform("Stop") { try await $0.stop($1) }
+                default: break
+                }
+            }
+        ))
     }
 
     @Environment(\.openWindow) private var openWindow

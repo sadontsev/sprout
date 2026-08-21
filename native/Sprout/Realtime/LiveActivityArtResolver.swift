@@ -23,6 +23,15 @@ final class LiveActivityArtResolver {
     /// Whether the brand glyph has been written this launch. One file, written once.
     private var glyphURI: String?
 
+    /// The printer's own file listing, fetched by this type when the app has not browsed Printer SD.
+    ///
+    /// **Without this the plate almost never resolved.** `sdFiles` is passed down from
+    /// `LibraryStore.printerList`, which is only populated once the user opens the Printer SD segment
+    /// — so on a normal launch the second rung of the ladder had an empty list to search and every
+    /// card fell back to the brand glyph. Measured against the live machine: the running job was on
+    /// the card and its plate render returned 200 the whole time.
+    private var sdCache: [Int: [PrinterFile]] = [:]
+
     struct Resolved: Equatable {
         var jobName: String
         var modelUri: String
@@ -92,7 +101,7 @@ final class LiveActivityArtResolver {
         if let token, !library.isEmpty,
            let file = PrintArt.artFile(jobName: jobName, in: library) {
             url = client.fileThumbUrl(file.id, token: token, thumbnailPath: file.thumbnailPath)
-        } else if let entry = PrintArt.matchSd(jobName: jobName, in: sdFiles) {
+        } else if let entry = PrintArt.matchSd(jobName: jobName, in: await sdListing(printerId, given: sdFiles, client: client)) {
             url = client.printerPlateThumbUrl(printerId, path: entry.path)
             headers = client.authHeaders()
         }
@@ -117,10 +126,25 @@ final class LiveActivityArtResolver {
         return uri
     }
 
+    /// The SD root listing: whatever the app already has, else fetched once per printer.
+    ///
+    /// Root only. A job in a subfolder will not match and falls back to the glyph, which is the
+    /// honest outcome — walking the whole card on a 4-second loop to chase one thumbnail is a lot of
+    /// requests for a picture.
+    private func sdListing(_ printerId: Int, given: [PrinterFile], client: BambuddyClient) async -> [PrinterFile] {
+        if !given.isEmpty { return given }
+        if let hit = sdCache[printerId] { return hit }
+        let files = (try? await client.listPrinterFiles(printerId, path: "/"))?.files ?? []
+        // Cached even when empty, so an unreachable printer is asked once rather than every tick.
+        sdCache[printerId] = files
+        return files
+    }
+
     /// Drop a printer's cache when its card ends, so the next print re-resolves rather than showing
     /// the previous job's plate.
     func forget(printerId: Int) {
         cached[printerId] = nil
+        sdCache[printerId] = nil
     }
 }
 #endif

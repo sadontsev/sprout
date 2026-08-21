@@ -101,6 +101,10 @@ struct PulseDot: View {
     let color: Color
     var size: CGFloat = 8
     var glow: Bool = true
+    /// What the dot's COLOUR means, for VoiceOver. Optional because most call sites sit beside a
+    /// label that already says it; supply it wherever the colour is the only encoding, which
+    /// accessibility.md forbids on its own: "Convey information with more than color alone."
+    var meaning: String? = nil
     /// Full cycle in seconds (RN default 2400 ms).
     var period: Double = 2.4
 
@@ -119,6 +123,8 @@ struct PulseDot: View {
             .opacity(dim ? 0.22 : 1)
             .animation(Motion.inOutQuad(period / 2).repeatForever(autoreverses: true), value: dim)
             .onAppear { if !reduceMotion { dim = true } }
+            .accessibilityHidden(meaning == nil)
+            .accessibilityLabel(meaning ?? "")
     }
 }
 

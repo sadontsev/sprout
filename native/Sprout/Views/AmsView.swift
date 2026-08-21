@@ -936,6 +936,9 @@ private struct HwStepper: View {
         .hwCard(12, fill: c.s2, border: c.line)
     }
 
+    /// 30pt square, 44pt target. These set a DRYER temperature and duration, so they are worth
+    /// hitting first time; the label names the parameter rather than the direction, because
+    /// "Increase" alone tells a VoiceOver user nothing about which of the two steppers they are on.
     private func button(_ symbol: String, action: @escaping () -> Void) -> some View {
         Tap(action: action) {
             Image(systemName: symbol)
@@ -943,7 +946,10 @@ private struct HwStepper: View {
                 .foregroundStyle(c.t1)
                 .frame(width: 30, height: 30)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(c.s3))
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
         }
+        .accessibilityLabel(symbol == "minus" ? "Decrease \(label)" : "Increase \(label)")
     }
 }
 
