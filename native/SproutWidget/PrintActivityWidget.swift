@@ -303,7 +303,7 @@ private struct LockScreenCard: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(state.stateLabel)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(tint)
                     if !state.printerName.isEmpty {
                         Text(state.printerName)
@@ -313,8 +313,13 @@ private struct LockScreenCard: View {
                 }
 
                 if !state.name.isEmpty {
+                    // The headline, because it is the SUBJECT — what is being printed. It used to be
+                    // 12pt regular `.secondary`, i.e. smaller and fainter than the state word above
+                    // it, which inverted the hierarchy: the card shouted "Printing" and whispered
+                    // what. live-activities.md:94 — "Use large, heavier-weight text — a medium
+                    // weight or higher … make sure key information is legible at a glance."
                     Text(state.name)
-                        .font(.system(size: 12))
+                        .font(.system(size: 16, weight: .semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(.secondary)
@@ -329,6 +334,10 @@ private struct LockScreenCard: View {
                         progress: Double(state.progress) / 100,
                         tint: tint,
                         riding: ExtrusionRider.rides(tintHex: state.tint, finished: state.finished),
+                        // 5 read as a hairline once the card is drawn at Mac size beside the
+                        // countdown. live-activities.md:113: "When separating a block of content,
+                        // place it in an inset container shape or use a thick line."
+                        barHeight: 7,
                         // 11 is the mock's margin, and the glyph is 20 tall, so it overflowed nine
                         // points into the line above and sat against the file name. Reserving the
                         // glyph's own height plus a little keeps the design's look without the
@@ -351,7 +360,7 @@ private struct LockScreenCard: View {
                         Text(verbatim: "Up next · \(state.nextName)")
                             .font(.system(size: 10))
                             .lineLimit(1)
-                            .foregroundStyle(.white.opacity(0.38))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -377,7 +386,7 @@ private struct LockScreenCard: View {
                 if state.dry == true {
                     Text("left")
                         .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(.secondary)
                 } else {
                     Text("\(state.progress)%")
                         .font(.system(size: 12, weight: .medium).monospacedDigit())
