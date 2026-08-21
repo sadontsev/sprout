@@ -201,7 +201,9 @@ struct MacViewerWindow: View {
 
     @State private var playTask: Task<Void, Never>?
     @State private var speed: Double = 1
-    @State private var shading = "steel"
+    /// Mirrors the page's own default, which is Ivory — see `StlPage`. A mirror that starts
+    /// on a different chip than the page is a sidebar describing someone else's render.
+    @State private var shading = "ivory"
     @State private var lightBackground = false
 
     /// 1× advances 24 layers a second — a film rate, chosen so the number means something you can
@@ -1032,9 +1034,9 @@ struct MacViewerWindow: View {
         layer = 0
         hasSupport = nil
         tris = nil
-        // A fresh page starts on Steel with a dark background, so the mirrors have to as well —
+        // A fresh page starts on Ivory with a dark background, so the mirrors have to as well —
         // otherwise the sidebar would claim a shading the page is not using.
-        shading = "steel"
+        shading = "ivory"
         lightBackground = false
     }
 

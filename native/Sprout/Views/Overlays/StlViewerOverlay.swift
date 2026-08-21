@@ -243,6 +243,7 @@ struct StlModelView: View {
 
 /// Full-screen interactive STL preview for a library file: flat-shaded WebGL mesh with orbit, pinch
 /// zoom, two-finger pan and double-tap reset, plus Steel / Ivory / Normals / Light-bg chips.
+/// Opens on Ivory, matching the near-white the server renders library thumbnails in.
 struct StlViewerOverlay: View {
     let model: AppModel
     let file: LibraryFile

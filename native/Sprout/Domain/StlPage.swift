@@ -52,8 +52,8 @@ enum StlPage {
         <div id="bar"><div id="card">
           <div id="top"><span id="lbl"></span><span id="hint"></span></div>
           <div id="chips">
-            <div class="chip on" data-m="steel">Steel</div>
-            <div class="chip" data-m="ivory">Ivory</div>
+            <div class="chip" data-m="steel">Steel</div>
+            <div class="chip on" data-m="ivory">Ivory</div>
             <div class="chip" data-m="normals">Normals</div>
             <div class="chip" data-m="bg">Light bg</div>
           </div>
@@ -166,8 +166,13 @@ enum StlPage {
             var vHalf=0.45, hHalf=Math.atan(Math.tan(vHalf)*asp0);
             var DEF={yaw:-0.62,pitch:0.5,dist:rad/Math.tan(Math.min(vHalf,hHalf))*1.15};
             var yaw=DEF.yaw,pitch=DEF.pitch,dist=DEF.dist,panX=0,panY=0,vyaw=0,vpitch=0;
-            var MATS={steel:[0.62,0.67,0.76],ivory:[0.91,0.89,0.84],teal:[0.17,0.83,0.75]};
-            var mode='steel', lightBg=false, dpr=Math.min(window.devicePixelRatio||2,2.5);
+            var MATS={steel:[0.62,0.67,0.76],ivory:[0.91,0.89,0.84]};
+            // Ivory, not steel. The server renders every library thumbnail as a near-white
+            // model (`MODEL_COLOR` in Bambuddy's `stl_thumbnail.py`), so opening a tile used to
+            // change the material of the thing you had just tapped. The fallback below points at
+            // the same entry deliberately — a default and its fallback answering differently is
+            // how a chip ends up claiming a shading the shader is not using.
+            var mode='ivory', lightBg=false, dpr=Math.min(window.devicePixelRatio||2,2.5);
 
             function draw(){
               var W=cv.clientWidth*dpr|0, H=cv.clientHeight*dpr|0;
@@ -182,7 +187,7 @@ enum StlPage {
               var mvp=mul(persp(0.9,cv.width/Math.max(cv.height,1),span*0.01,span*20), lookAt(eye,tgt,[0,0,1]));
               gl.uniformMatrix4fv(uMVP,false,new Float32Array(mvp));
               gl.uniform1f(uMode,mode==='normals'?1:0);
-              var col=MATS[mode]||MATS.steel; gl.uniform3f(uColor,col[0],col[1],col[2]);
+              var col=MATS[mode]||MATS.ivory; gl.uniform3f(uColor,col[0],col[1],col[2]);
               gl.drawArrays(gl.TRIANGLES,0,g.tris*3);
             }
             var raf=null; function schedule(){ if(!raf) raf=requestAnimationFrame(function(){raf=null;draw();}); }

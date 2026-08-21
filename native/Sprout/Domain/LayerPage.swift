@@ -163,7 +163,7 @@ enum LayerPage {
         <canvas id="c"></canvas>
         <canvas id="cg"></canvas>
         <div id="reset">⌂</div>
-        <div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint"></span></div><input id="s" type="range" min="1" max="1" value="1"><div id="chips"><div class="chip on" data-m="steel">Steel</div><div class="chip" data-m="ivory">Ivory</div><div class="chip" data-m="bg">Light bg</div></div></div></div>
+        <div id="bar"><div id="card"><div id="top"><span id="lbl">Rendering…</span><span id="hint"></span></div><input id="s" type="range" min="1" max="1" value="1"><div id="chips"><div class="chip" data-m="steel">Steel</div><div class="chip on" data-m="ivory">Ivory</div><div class="chip" data-m="bg">Light bg</div></div></div></div>
         <div id="err"></div>
         <script>
           var URL_=\#(urlLit), HDRS=\#(hdrLit);
@@ -319,7 +319,9 @@ enum LayerPage {
             // order IS depth order — the property the old canvas renderer relied on.
             // Shading palettes (bottom->top height ramp) — chips switch these like the STL viewer's.
             var TINTS={steel:{bot:[0.33,0.38,0.48],top:[0.78,0.81,0.87]},ivory:{bot:[0.52,0.47,0.40],top:[0.93,0.90,0.83]}};
-            var tint='steel', lightBg=false;
+            // Ivory to match the server-rendered thumbnails and the mesh viewer next door;
+            // see `StlPage` for why. The fallback below names the same entry on purpose.
+            var tint='ivory', lightBg=false;
 
             function drawPlate(){
               // Surface: subtly lit quad with 10 mm grid, 50 mm majors, edge accents, origin dot.
@@ -383,7 +385,7 @@ enum LayerPage {
               gl.uniform1f(U.uHalf,Math.max(1.2,0.23*S)); // ~10% over half of 0.42mm: adjacent lines overlap, no hairline gaps
               gl.uniform1f(U.uMinZ,b.minZ); gl.uniform1f(U.uSpanZ,zspan);
               gl.uniform1f(U.uCurZ,zs[cur-1]||0); gl.uniform1f(U.uEps,minGap*0.45);
-              var T=TINTS[tint]||TINTS.steel;
+              var T=TINTS[tint]||TINTS.ivory;
               gl.uniform3f(U.uColBot,T.bot[0],T.bot[1],T.bot[2]); gl.uniform3f(U.uColTop,T.top[0],T.top[1],T.top[2]);
               if(!supTotal){
                 gl.uniform1f(U.uIsSup,0);
