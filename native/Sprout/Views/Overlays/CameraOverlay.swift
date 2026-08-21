@@ -289,7 +289,7 @@ struct CameraOverlay: View {
                  label: landscape ? "Portrait" : "Landscape") {
                 withAnimation(Motion.standard(0.3)) { landscape.toggle() }
             }
-            chip("chevron.down", size: 22, label: "Close camera") { close() }
+            chip("xmark", size: 18, label: "Close camera") { close() }
 
             statusPill
 

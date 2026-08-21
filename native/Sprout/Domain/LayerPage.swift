@@ -358,7 +358,12 @@ enum LayerPage {
 
             function drawGizmo(){
               // Small XYZ triad, top-left — orientation at a glance.
-              var gx=26, gy=(window.safeTop||44)+30, L=17;
+              //
+              // gy clears the CHROME above it. ViewerTopBar's close button is a 40pt circle at
+              // top 10 within the safe area, so it occupies safeTop+10 … safeTop+50; the triad's
+              // arms are L long about its centre, so a centre at safeTop+30 put the X and Y arms
+              // straight through the button. safeTop+84 leaves the whole triad below the bar.
+              var gx=26, gy=(window.safeTop||44)+84, L=17;
               function axis(dx,dy,dz,color,label){
                 var ex=gx+((dx)*cyaw-(dy)*syaw)*L, ey=gy-((((dx)*syaw+(dy)*cyaw)*cpit)+(dz)*spit)*L;
                 ctx.beginPath(); ctx.moveTo(gx,gy); ctx.lineTo(ex,ey); ctx.strokeStyle=color; ctx.lineWidth=2; ctx.stroke();

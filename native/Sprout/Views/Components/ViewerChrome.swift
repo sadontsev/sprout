@@ -39,8 +39,12 @@ struct ViewerTopBar<Trailing: View>: View {
     var body: some View {
         HStack(spacing: 11) {
             Tap(action: onClose) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 20, weight: .semibold))
+                // `xmark`, not `chevron.down` — this DISMISSES a fullscreen viewer, which is what
+                // Photos puts an x on. A chevron says "collapse downwards", a different promise.
+                // The translucent circle around it is drawn below, so the glyph is bare rather
+                // than `xmark.circle.fill`.
+                Image(systemName: "xmark")
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(ViewerChrome.ink)
                     .frame(width: 40, height: 40)
                     .background(Circle().fill(ViewerChrome.pill.opacity(0.6)))

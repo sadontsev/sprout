@@ -128,7 +128,9 @@ struct LibraryView: View {
                     onPlay: PrinterFiles.isPlayableVideo(file.name) ? { play(file) } : nil,
                     onLayers: PrinterFiles.isSliced3mf(file.name) ? { showLayers(file) } : nil
                 )
-                .presentationDetents([.height(PrinterFiles.isSliced3mf(file.name) ? 470 : 230)])
+                // +56 for the close-button row added to the sheet: these detents are FIXED heights,
+                // so a new header steals the space from the content rather than growing the sheet.
+                .presentationDetents([.height(PrinterFiles.isSliced3mf(file.name) ? 526 : 286)])
                 .presentationCornerRadius(24)
                 .presentationBackground(c.s1)
             }
@@ -968,6 +970,7 @@ private struct PrinterFileSheet: View {
     var onLayers: (() -> Void)?
 
     @Environment(\.palette) private var c
+    @Environment(\.dismiss) private var dismiss
     @State private var plate: PlateInfo?
     @State private var busy = false
     @State private var shareItem: LibShareItem?
@@ -981,6 +984,26 @@ private struct PrinterFileSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // The system's close button for a sheet, in the corner Photos and Mail put it.
+            //
+            // This sheet had NO dismiss control: a fixed-height detent with no grabber shown, so
+            // the only way out was a drag someone had to already know about. `xmark.circle.fill`
+            // in `.secondary` is the platform's own affordance for exactly this.
+            HStack {
+                Spacer()
+                Tap(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 26))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(c.t3)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
+                }
+                .accessibilityLabel("Close")
+            }
+            .padding(.trailing, 6)
+            .padding(.top, 6)
+
             if sliced {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(c.thumb)
