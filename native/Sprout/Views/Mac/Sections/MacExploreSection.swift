@@ -865,7 +865,10 @@ private struct MacExploreChipFlow: Layout {
     /// same width, so the measured size and the placed positions cannot disagree.
     private func arrange(_ subviews: Subviews, width: CGFloat) -> (points: [CGPoint], size: CGSize) {
         var points: [CGPoint] = []
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var widest: CGFloat = 0
         for view in subviews {
             let size = view.sizeThatFits(.unspecified)
             if x > 0, x + size.width > width {

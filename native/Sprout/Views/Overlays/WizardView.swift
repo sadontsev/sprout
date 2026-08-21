@@ -420,7 +420,7 @@ struct WizardView: View {
 
     private var stepFile: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("SELECTED FILE")
+            sectionLabel("SELECTED FILE")
 
             Text(displayName)
                 .scaledFont(19, weight: .bold)
@@ -491,7 +491,7 @@ struct WizardView: View {
 
     private var stepPrinter: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("PRINT ON")
+            sectionLabel("PRINT ON")
             HStack(spacing: 14) {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(c.s3)
@@ -535,7 +535,7 @@ struct WizardView: View {
 
     private var stepMaterial: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("NOZZLE")
+            sectionLabel("NOZZLE")
             HStack(spacing: 9) {
                 ForEach(NozzleSize.allCases, id: \.rawValue) { n in
                     nozzleChip(n)
@@ -616,7 +616,7 @@ struct WizardView: View {
     /// answer for the wrong slot by accident. Hidden entirely at N == 1.
     @ViewBuilder
     private var slotSelector: some View {
-        SectionLabel("THIS PLATE NEEDS \(mappedSlots.count) FILAMENTS")
+        sectionLabel("THIS PLATE NEEDS \(mappedSlots.count) FILAMENTS")
         FlowLayout(spacing: 8) {
             ForEach(mappedSlots, id: \.self) { s in
                 let on = editingSlot == s
@@ -665,7 +665,7 @@ struct WizardView: View {
 
     @ViewBuilder
     private var materialSection: some View {
-        SectionLabel(loaded.isEmpty ? "MATERIAL" : "LOADED IN THE PRINTER")
+        sectionLabel(loaded.isEmpty ? "MATERIAL" : "LOADED IN THE PRINTER")
 
         if !loaded.isEmpty {
             VStack(spacing: 9) {
@@ -774,7 +774,7 @@ struct WizardView: View {
 
     @ViewBuilder
     private var qualitySection: some View {
-        SectionLabel("QUALITY")
+        sectionLabel("QUALITY")
         let qualities = presets?.qualities ?? []
         if qualities.isEmpty {
             Text("No quality profiles for \(profile.printerPresetBase) at \(nozzle.rawValue) mm. Pick another nozzle size.")
@@ -831,7 +831,7 @@ struct WizardView: View {
 
     @ViewBuilder
     private var bedPlateSection: some View {
-        SectionLabel("BUILD PLATE")
+        sectionLabel("BUILD PLATE")
         LazyVGrid(
             columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)],
             spacing: 9
@@ -1064,7 +1064,7 @@ struct WizardView: View {
 
     private var stepMapFilament: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("AMS SLOT")
+            sectionLabel("AMS SLOT")
             if isMultiFilament { mapSlotSelector }
             if trays.isEmpty {
                 Text("No AMS trays reported yet. Load filament in the printer, then come back.")
@@ -1205,7 +1205,7 @@ struct WizardView: View {
 
     private var stepStart: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("READY TO PRINT")
+            sectionLabel("READY TO PRINT")
             VStack(spacing: 0) {
                 SummaryRow(key: "File", value: displayName)
                 SummaryRow(key: "Printer", value: model.printer?.name ?? "—")
@@ -1285,7 +1285,7 @@ struct WizardView: View {
         return raw.removingPercentEncoding ?? raw
     }
 
-    private func SectionLabel(_ text: String) -> some View {
+    private func sectionLabel(_ text: String) -> some View {
         Text(text)
             .scaledMono(11)
             .tracking(1)
@@ -1735,7 +1735,9 @@ private struct FlowLayout: Layout {
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let maxWidth = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
         for view in subviews {
             let size = view.sizeThatFits(.unspecified)
             if x > 0, x + size.width > maxWidth {
@@ -1750,7 +1752,9 @@ private struct FlowLayout: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
         for view in subviews {
             let size = view.sizeThatFits(.unspecified)
             if x > bounds.minX, x + size.width > bounds.maxX {

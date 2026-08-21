@@ -743,12 +743,16 @@ enum MacExploreCopy {
     }
 
     /// - Parameters:
-    ///   - pickedId/pickedTitle: `MakerWorld.preselect`'s answer — what Import will really use.
+    ///   - pickedId: `MakerWorld.preselect`'s answer — what Import will really use.
+    ///   - pickedTitle: that pick's display name.
+    ///   - pickedPublishesDetail: whether the pick publishes time/weight/material, which is what
+    ///     separates a recommendation worth showing from a bare one.
     ///   - recommendedId: `design.defaultInstanceId`. An **instance** id, matching `rows[].id`; it
     ///     is not a `profileId`, and reading it as one is a documented way to get this wrong.
     ///   - recommendationIsListed: whether that instance is among the rows shown. "MakerWorld
     ///     recommends something we rejected" and "MakerWorld recommends something it never listed"
     ///     have different explanations, and only the first is a substitution.
+    /// - Returns: what to tell the user about the pick — recommended, substituted, or unresolvable.
     nonisolated static func importPick(pickedId: Int?, pickedTitle: String?,
                                        pickedPublishesDetail: Bool,
                                        recommendedId: Int?,

@@ -26,7 +26,11 @@ fi
 [ ${#files[@]} -gt 0 ] || { echo "no Swift files to lint"; exit 0; }
 
 # Formatting-only rules. Everything else is signal.
-NOISE='\[(Indentation|AddLines|LineLength|Spacing|RemoveLine|TrailingWhitespace)\]'
+# TrailingComma belongs here rather than in `.swift-format`: it is not a toggleable rule, it is
+# part of the pretty-printer — which is also why its positions point into the FORMATTED output and
+# not the source (it reported WizardView:1000, a blank line, and :1041, a comment). Unfixable as
+# reported, and a style preference either way.
+NOISE='\[(Indentation|AddLines|LineLength|Spacing|RemoveLine|TrailingWhitespace|TrailingComma)\]'
 
 out=$("$SF" lint --configuration .swift-format "${files[@]}" 2>&1 | grep -vE "$NOISE" || true)
 out=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' || true)

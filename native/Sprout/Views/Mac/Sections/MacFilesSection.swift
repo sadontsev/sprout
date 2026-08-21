@@ -196,12 +196,14 @@ enum MacFileBrowse {
             return byName
         case .size:
             return { a, b in
-                let x = a.file.fileSize?.double ?? 0, y = b.file.fileSize?.double ?? 0
+                let x = a.file.fileSize?.double ?? 0
+                let y = b.file.fileSize?.double ?? 0
                 return x == y ? byName(a, b) : x > y
             }
         case .type:
             return { a, b in
-                let x = (a.file.fileType ?? "").lowercased(), y = (b.file.fileType ?? "").lowercased()
+                let x = (a.file.fileType ?? "").lowercased()
+                let y = (b.file.fileType ?? "").lowercased()
                 return x == y ? byName(a, b) : x < y
             }
         }
@@ -234,7 +236,8 @@ enum MacFileBrowse {
             return byName
         case .size:
             return { a, b in
-                let x = a.size?.double ?? 0, y = b.size?.double ?? 0
+                let x = a.size?.double ?? 0
+                let y = b.size?.double ?? 0
                 return x == y ? byName(a, b) : x > y
             }
         case .type:

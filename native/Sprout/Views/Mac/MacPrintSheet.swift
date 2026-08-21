@@ -164,18 +164,27 @@ struct MacPrintProblem: Equatable, Sendable {
 enum MacPrintGate {
 
     /// - Parameters:
-    ///   - usedSlots: the 1-based filament slots THIS PLATE consumes — from
-    ///     `filament-requirements?plate_id=`, never the unfiltered file-wide list.
-    ///   - trayBySlot: slot → global tray id. A slot with no entry is "not chosen yet".
-    ///   - loadedTrays: the AMS as it is right now, so a spool pulled since the choice is caught.
-    /// - Parameters:
+    ///   - file: the file the sheet was opened with — only `cannotSliceReason` reads it, to say WHY
+    ///     a file that cannot print also cannot be sliced.
     ///   - hasToolpaths: `LibraryFileCaps.hasGcode` of the file that would actually be PRINTED — the
     ///     slice output once one exists, not the file the sheet was opened with. Passed in rather than
     ///     derived here for exactly that reason: this function must not assume the two are the same.
     ///   - canSlice: `SliceCapability.canSlice` of the file the sheet was opened with. Decides whether
     ///     "nothing to print" is a dead end or a first step.
+    ///   - printerMismatch: this output was sliced for a different machine. G-code is per-machine,
+    ///     so this is a reslice, not a warning.
+    ///   - slicedFor: the machine it WAS sliced for, named in that message. nil reads "another
+    ///     machine" rather than inventing one.
+    ///   - printerName: the machine it would print on, the other half of that sentence.
+    ///   - hasStatus: whether the printer has reported at all. Without a status there is nothing to
+    ///     check the job against, which is a different refusal from a job that fails a check.
+    ///   - loadedTrays: the AMS as it is right now, so a spool pulled since the choice is caught.
+    ///   - usedSlots: the 1-based filament slots THIS PLATE consumes — from
+    ///     `filament-requirements?plate_id=`, never the unfiltered file-wide list.
+    ///   - trayBySlot: slot → global tray id. A slot with no entry is "not chosen yet".
     ///   - presetBySlot: the filament preset chosen for each used slot, when slicing. Empty when there
     ///     is nothing to slice; see guard 5b.
+    /// - Returns: the FIRST problem that blocks printing, in guard order, or nil when nothing does.
     static func evaluate(
         file: LibraryFile,
         hasToolpaths: Bool,
