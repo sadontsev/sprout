@@ -10,14 +10,22 @@
 # "run it inside the container" does not reach them either. Between the two, those twelve had never
 # executed anywhere until this script.
 #
-# The venv lives outside the repo and is reused across runs.
+# The venv lives outside the repo and is reused across runs. NOT under $TMPDIR: macOS reaps files
+# there that have not been read for a few days, and it takes `pyvenv.cfg` while leaving the
+# directories and the symlinks. What is left looks exactly like a venv and is not one — without
+# `pyvenv.cfg` the interpreter runs in system mode, so `pip install` goes to the Homebrew Python and
+# dies with PEP 668's "externally-managed-environment", days after the last good run.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV="${TRELLIS_VENV:-${TMPDIR:-/tmp}/trellis-test-venv}"
+VENV="${TRELLIS_VENV:-$HOME/.cache/trellis-test-venv}"
 
-if [ ! -x "$VENV/bin/python" ]; then
+# `pyvenv.cfg`, not `bin/python`: the second answers "is there an interpreter here?" when the
+# question is "is this a venv?", and the reaped tree above answers yes to the first and no to the
+# second. Rebuilt rather than repaired — a half-eaten venv has no state worth keeping.
+if [ ! -f "$VENV/pyvenv.cfg" ]; then
   echo "==> creating venv at $VENV"
+  rm -rf "$VENV"
   python3 -m venv "$VENV"
 fi
 
