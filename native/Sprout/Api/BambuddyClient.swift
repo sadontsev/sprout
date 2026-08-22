@@ -483,6 +483,26 @@ final class BambuddyClient: Sendable {
         return URL(string: url)
     }
 
+    /// The printer's OWN cover for the job it is running, gated by the camera stream token.
+    ///
+    /// The rung for prints that cannot be matched by name at all. `subtask_name` is not always a file
+    /// name: measured on the live machine, a plate sent straight from the slicer reported
+    /// `PETG 0.2mm layer, 2 walls, 15% infill` — the PROCESS PRESET — with
+    /// `gcode_file = /data/Metadata/plate_1.gcode`. No library row, no card entry and no archive can
+    /// match that, because there is no file name in it to match.
+    ///
+    /// This endpoint asks the printer instead of asking a name. It answers **404** when there is no
+    /// cover — Bambuddy caches that negative, so a job without one is cheap to ask about — which is
+    /// why the caller tries it once per job and lets the glyph stand when it fails.
+    ///
+    /// Do NOT gate this on `status.cover_url` being present. It is populated even when the endpoint
+    /// 404s; measured on the same print, `cover_url` read `/api/v1/printers/2/cover` while that exact
+    /// URL answered *"No cover available … (cached)"*. The field announces the route, not the picture.
+    func printerCoverUrl(_ printerId: Int, token: String?) -> URL? {
+        guard let token else { return nil }
+        return URL(string: "\(baseUrl)/api/v1/printers/\(printerId)/cover?token=\(esc(token))")
+    }
+
     /// Rendered plate thumbnail (1-based index). Gated by the camera stream token.
     ///
     /// **This one cannot be versioned** the way `fileThumbUrl` is: a plate render has no

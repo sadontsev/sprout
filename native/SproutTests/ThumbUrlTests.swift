@@ -100,4 +100,23 @@ final class ThumbUrlTests: XCTestCase {
         let url = client().plateThumbUrl(39, plateIndex: 1, token: "tok")
         XCTAssertEqual(url?.query, "token=tok")
     }
+
+    // MARK: - The printer's own cover
+
+    /// The rung for a job with no file name in it at all. Measured on the live machine: a plate sent
+    /// straight from the slicer reported `subtask_name` = "PETG 0.2mm layer, 2 walls, 15% infill" —
+    /// the process preset — so no library row, card entry or archive could ever match it.
+    func testTheCoverUrlIsBuiltFromThePrinterAndTheStreamToken() {
+        XCTAssertEqual(client().printerCoverUrl(2, token: "tok")?.absoluteString,
+                       "https://bambuddy.example.com/api/v1/printers/2/cover?token=tok")
+    }
+
+    /// Token-gated like every other thumbnail here — the `X-API-Key` header answers 401.
+    func testNoTokenIsNoCover() {
+        XCTAssertNil(client().printerCoverUrl(2, token: nil))
+    }
+
+    func testTheCoverTokenIsEscaped() {
+        XCTAssertEqual(client().printerCoverUrl(2, token: "a b")?.query, "token=a%20b")
+    }
 }

@@ -40,6 +40,13 @@ final class LiveActivityArtResolver {
     /// relaunching. See `PrintArt.shouldListCard`.
     private var sdAsked: [Int: Set<String>] = [:]
 
+    /// Jobs the printer's own cover has already been asked for, per printer.
+    ///
+    /// The cover 404s for any job that has none, and `ThumbCache` does not cache a failure — without
+    /// this the 4-second loop would ask again every tick, forever, for exactly the prints that have
+    /// no picture. One request per job, same rule as the card listing.
+    private var coverAsked: [Int: Set<String>] = [:]
+
     struct Resolved: Equatable {
         var jobName: String
         var modelUri: String
@@ -114,6 +121,22 @@ final class LiveActivityArtResolver {
             in: await sdListing(printerId, job: jobName, given: sdFiles, client: client)) {
             url = client.printerPlateThumbUrl(printerId, path: entry.path)
             headers = client.authHeaders()
+        }
+        // Third rung: ask the PRINTER, which needs no name at all.
+        //
+        // Measured on the live machine while checking whether the first two rungs fire: a plate sent
+        // straight from the slicer reported `subtask_name` = "PETG 0.2mm layer, 2 walls, 15% infill",
+        // the process preset, with `gcode_file = /data/Metadata/plate_1.gcode`. Nothing in the
+        // library, nothing on the card, and Bambuddy's own archive row held a null thumbnail — there
+        // is no file name in that job to match against anything. A name-matching ladder cannot reach
+        // this population however many rungs it grows.
+        //
+        // Asked once per job because the endpoint 404s when there is no cover and `ThumbCache` does
+        // not cache failures.
+        if url == nil, let token, coverAsked[printerId]?.contains(jobName) != true {
+            coverAsked[printerId, default: []].insert(jobName)
+            url = client.printerCoverUrl(printerId, token: token)
+            headers = [:]
         }
         guard let url else { return "" }
         let name = LiveActivityArt.plateName(printerId: printerId, fileName: jobName)
