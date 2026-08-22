@@ -101,6 +101,19 @@ struct PrintActivityWidget: Widget {
                             // read as deliberate against the curve; a glyph half-eaten by it reads as
                             // a bug — "Layer" was arriving as "ayer".
                             .padding(.horizontal, Self.cornerInset)
+
+                            // The temperatures, which the lock-screen card has always shown and this
+                            // view never did — the same print described two different ways depending
+                            // on where you looked at it.
+                            //
+                            // Only when there is something to say. Apple asks for the expanded
+                            // presentation's height to shrink when there is less information and grow
+                            // when there is more, so an all-zero readout must take no space at all
+                            // rather than render a row of "N 0°".
+                            let temps = TempsRow(state: context.state, tint: tint)
+                            if temps.hasAny {
+                                temps.padding(.horizontal, Self.cornerInset)
+                            }
                         }
                     }
                 }
@@ -154,8 +167,16 @@ struct PrintActivityWidget: Widget {
     }
 }
 
-/// The expanded island's 30 pt preview. Same ladder as the card's, one size down; absent entirely
-/// when there is no image, because a 30 pt empty tile beside a 16 pt glyph is just clutter.
+/// The expanded island's preview. Same ladder as the card's; absent entirely when there is no
+/// image, because an empty tile beside a 16 pt glyph is just clutter.
+///
+/// **44 pt, up from 30.** Touch-and-hold on the compact or minimal presentation is what produces
+/// this view (HIG, Live Activities → Expanded), so it is the one people reach for deliberately —
+/// and Apple's own size table gives the expanded presentation 84–160 pt of height against 371 pt of
+/// width on a 393×852 phone. The old 30 pt tile spent a fraction of that on the one thing worth
+/// enlarging. It stays square and stays in the leading region, which costs the centre 14 pt of the
+/// file name's width; the name already truncates in the middle, and a legible model beats two more
+/// characters of a name.
 private struct IslandLeading: View {
     let state: PrintActivityAttributes.ContentState
     let tint: Color
@@ -174,9 +195,9 @@ private struct IslandLeading: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 30, height: 30)
+                .frame(width: 44, height: 44)
                 .clipped()
-                .modifier(PreviewTile(radius: 7))
+                .modifier(PreviewTile(radius: 10))
         } else {
             IslandMark(state: state, tint: tint, size: 16)
         }
@@ -453,30 +474,53 @@ private struct LockScreenCard: View {
     /// bead take the tint while the body stays grey.
     private var riderGlyph: some View { NozzleMark(bead: tint) }
 
-    private var temps: some View {
-        HStack(spacing: 8) {
-            if state.hasNozzle2 {
-                tempPair("L", state.nozzle, state.nozzleTarget, active: state.activeNozzle == 0)
-                tempPair("R", state.nozzle2, state.nozzle2Target, active: state.activeNozzle == 1)
-            } else {
-                tempPair("N", state.nozzle, state.nozzleTarget, active: true)
-            }
-            tempPair("B", state.bed, state.bedTarget, active: false)
-        }
-    }
-
-    /// `N 148° → 220°` while a target is being chased, `N 220°` once it is reached. The target was
-    /// accepted and dropped, so a heating card said nothing about what it was heating TO — which on
-    /// the one card that exists to answer "how long" is the number that answers it.
-    private func tempPair(_ label: String, _ now: Int, _ target: Int, active: Bool) -> some View {
-        Text(target > 0 && target != now ? "\(label) \(now)° → \(target)°" : "\(label) \(now)°")
-            .font(.system(size: 10, weight: active ? .semibold : .regular).monospacedDigit())
-            .foregroundStyle(active ? AnyShapeStyle(tint) : AnyShapeStyle(.tertiary))
-    }
+    private var temps: some View { TempsRow(state: state, tint: tint) }
 
     static func loadImage(_ uri: String) -> UIImage? {
         guard !uri.isEmpty, let url = URL(string: uri), let data = try? Data(contentsOf: url) else { return nil }
         return UIImage(data: data)
+    }
+}
+
+/// `N 148° → 220°  B 55° → 60°`, shared by the lock-screen card and the expanded island.
+///
+/// One view rather than two, because the island's numbers used to be missing entirely and the fix
+/// for that must not become a second copy that drifts from the card's. Apple's own guidance for the
+/// Lock Screen presentation is to "use a layout similar to the expanded presentation"
+/// (HIG, Live Activities → Lock Screen), so the two surfaces disagreeing about what a print shows
+/// was a defect rather than a choice.
+private struct TempsRow: View {
+    let state: PrintActivityAttributes.ContentState
+    let tint: Color
+    var size: CGFloat = 10
+
+    /// Nothing to say when every reading is zero — an offline or idle card. Apple asks for the
+    /// height to shrink when there is less to show, so this returning empty is load-bearing rather
+    /// than tidy: it is what keeps the expanded island short in the states that have no numbers.
+    var hasAny: Bool {
+        state.nozzle > 0 || state.nozzleTarget > 0 || state.bed > 0 || state.bedTarget > 0
+            || state.nozzle2 > 0 || state.nozzle2Target > 0
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if state.hasNozzle2 {
+                pair("L", state.nozzle, state.nozzleTarget, active: state.activeNozzle == 0)
+                pair("R", state.nozzle2, state.nozzle2Target, active: state.activeNozzle == 1)
+            } else {
+                pair("N", state.nozzle, state.nozzleTarget, active: true)
+            }
+            pair("B", state.bed, state.bedTarget, active: false)
+        }
+    }
+
+    /// `N 148° → 220°` while a target is being chased, `N 220°` once it is reached. The target was
+    /// accepted and dropped once, so a heating card said nothing about what it was heating TO —
+    /// which on the one card that exists to answer "how long" is the number that answers it.
+    private func pair(_ label: String, _ now: Int, _ target: Int, active: Bool) -> some View {
+        Text(target > 0 && target != now ? "\(label) \(now)° → \(target)°" : "\(label) \(now)°")
+            .font(.system(size: size, weight: active ? .semibold : .regular).monospacedDigit())
+            .foregroundStyle(active ? AnyShapeStyle(tint) : AnyShapeStyle(.tertiary))
     }
 }
 
