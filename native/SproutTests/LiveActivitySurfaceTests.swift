@@ -396,9 +396,24 @@ final class PrintArtTests: XCTestCase {
     /// function, asserted from both sides.
     func testTheDerivedNameMatchesWhatTheResolverWrites() {
         let written = LiveActivityArt.plateName(printerId: 7, fileName: "duct_clamp_H2C")
-        XCTAssertEqual(written, "plate-7-\(LiveActivityArt.stableHash("duct_clamp_H2C")).png")
+        XCTAssertEqual(
+            written,
+            "plate-7-\(LiveActivityArt.stableHash("duct_clamp_H2C"))-v\(LiveActivityArt.plateFormat).png")
         // Different printers never share a plate file, even for an identically named job.
         XCTAssertNotEqual(written, LiveActivityArt.plateName(printerId: 8, fileName: "duct_clamp_H2C"))
+    }
+
+    /// The name carries what the file CONTAINS, not just which job it is for.
+    ///
+    /// `plate()` returns an existing file untouched, so a plate written before `PlateGround` existed
+    /// would stay ungrounded for the life of that print however many builds landed. The version in
+    /// the name is what makes a changed rule look somewhere nothing has written yet — and it keeps
+    /// the `plate-` prefix so the sweep still collects the old one.
+    func testThePlateNameCarriesItsFormatVersion() {
+        let name = LiveActivityArt.plateName(printerId: 2, fileName: "V2 Bins")
+        XCTAssertTrue(name.hasSuffix("-v\(LiveActivityArt.plateFormat).png"), name)
+        XCTAssertTrue(name.hasPrefix("plate-"), name)
+        XCTAssertGreaterThanOrEqual(LiveActivityArt.plateFormat, 2)
     }
 }
 

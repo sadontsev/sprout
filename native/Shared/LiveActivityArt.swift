@@ -30,12 +30,25 @@ enum LiveActivityArt {
     /// rider, so one file serves both and neither can get a different vintage of the artwork.
     static let glyphName = "nozzle.png"
 
+    /// What a plate file CONTAINS, as opposed to which job it is for. Bump it whenever the bytes
+    /// written for the same job would now differ.
+    ///
+    /// Without this the name is a stable address over changing content — the same defect that hid a
+    /// repainted thumbnail behind its own URL, one layer down. `plate()` returns an existing file
+    /// untouched, by design, so a plate written before `PlateGround` existed stays ungrounded for
+    /// the life of that print no matter how many builds land. Bumping the version makes the new rule
+    /// look for a name nothing has written yet, and `sweepPlates` collects the old one because it
+    /// still matches the `plate-` prefix.
+    ///
+    /// 2 — a transparent cover is composited onto a contrasting ground (`PlateGround`).
+    static let plateFormat = 2
+
     /// **Per printer, and per FILE.** Two printers running produce two cards; naming the plate by
     /// printer alone means the second card's write overwrites the first card's image and both then
     /// show the same model. Including a hash of the file name also makes a new job's write land on a
     /// new path, so a card cannot show the previous print's plate while the new thumbnail downloads.
     static func plateName(printerId: Int, fileName: String) -> String {
-        "plate-\(printerId)-\(stableHash(fileName)).png"
+        "plate-\(printerId)-\(stableHash(fileName))-v\(plateFormat).png"
     }
 
     /// A stable, filesystem-safe digest of the file name.
