@@ -42,6 +42,10 @@ struct PrintActivityWidget: Widget {
                 // demand glyph + full label width, the region clipped the overflow at its leading
                 // edge, and the nozzle came out cropped.
                 DynamicIslandExpandedRegion(.leading, priority: 1) {
+                    // The plate ALONE. The state label used to sit beside it, and at 44 pt there was
+                    // no longer room for both — "Printing" came out as "Prin...", which is a worse
+                    // reading of the same word. It moved to the centre region, above the file name,
+                    // where it has the width to be a word.
                     HStack(spacing: 6) {
                         // ONE mark, not two. The preview and the glyph are rungs of the SAME ladder —
                         // the glyph is what the slot falls back to when there is no plate — so drawing
@@ -50,10 +54,6 @@ struct PrintActivityWidget: Widget {
                         // tinted mark stands in for it.
                         IslandLeading(state: context.state, tint: tint,
                                       printerId: context.attributes.printerId)
-                        Text(context.state.stateLabel)
-                            .font(.system(size: 12))
-                            .lineLimit(1)
-                            .foregroundStyle(.secondary)
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing, priority: 1) {
@@ -66,11 +66,20 @@ struct PrintActivityWidget: Widget {
                     .padding(.trailing, Self.cornerInset)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(context.state.name)
-                        .font(.caption2)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(.secondary)
+                    // State above name, the same stack the lock-screen card uses — Apple asks the two
+                    // presentations to share a layout (HIG, Live Activities → Lock Screen).
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(context.state.stateLabel)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                            .foregroundStyle(tint)
+                        Text(context.state.name)
+                            .font(.caption2)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     if let rows = context.state.dryUnits, !rows.isEmpty {

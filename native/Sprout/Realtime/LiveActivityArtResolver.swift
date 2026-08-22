@@ -150,13 +150,42 @@ final class LiveActivityArtResolver {
         // Through `ThumbCache`, so a plate the Files grid already fetched is not fetched again — the
         // library thumbnail endpoint is token-gated and the token rotates hourly.
         guard let image = await ThumbCache.shared.image(for: url, headers: headers),
-              let data = image.pngData() else { return "" }
+              let data = onGround(image).pngData() else { return "" }
         let uri = LiveActivityArt.write(data, name: name)
         cached[printerId] = Resolved(jobName: jobName, modelUri: uri)
         // Everything this launch still refers to, plus the glyph, survives; the rest is last week's
         // prints taking up space nobody can see.
         LiveActivityArt.sweepPlates(keeping: Set(cached.values.map { ($0.modelUri as NSString).lastPathComponent }))
         return uri
+    }
+
+    /// The image with a ground behind it, when it needs one.
+    ///
+    /// The Bambu Cloud cover is a transparent PNG of the model in its own filament colour, and the
+    /// island's background is black and not ours to set. A near-black filament therefore produced a
+    /// black model on a black island — 1.36:1, measured on a real job, which is invisible.
+    ///
+    /// Composited HERE rather than in the widget, for three reasons: the widget is a separate
+    /// process that would repeat the work on every render; the lock-screen card needs exactly the
+    /// same fix and gets it for free; and the ground is a property of the image, so it belongs with
+    /// the write rather than with each of the two readers.
+    ///
+    /// `PlateGround` answers nil for an image that is already opaque, so Bambuddy's own renders —
+    /// which carry their own ground — pass through untouched.
+    private func onGround(_ image: UIImage) -> UIImage {
+        // 64 rather than the probe's usual 32: this model covers 8% of its own canvas, and at 32 a
+        // point-sampler lands on too few opaque pixels for the mean to say anything.
+        guard let probe = image.rgbaProbe(side: 64),
+              let ground = PlateGround.choose(rgba: probe, side: 64) else { return image }
+        let rgb = ground.rgb
+        let format = UIGraphicsImageRendererFormat.default()
+        format.opaque = true
+        format.scale = image.scale
+        return UIGraphicsImageRenderer(size: image.size, format: format).image { context in
+            UIColor(red: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: image.size))
+            image.draw(in: CGRect(origin: .zero, size: image.size))
+        }
     }
 
     /// The SD root listing: whatever already contains this job, else one fetch per job.
