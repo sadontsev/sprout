@@ -34,10 +34,17 @@ import outbox as ob
 import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
-from p2s import dry_identity, next_started_for, print_identity, should_start
+from p2s import (aggregate_should_start, dry_identity, may_wake, next_started_for,
+                 print_identity, should_start)
 
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
+# How long before the same device may be woken by a silent push again.
+#
+# Apple: "don't try to send more than two or three per hour." Half an hour is deliberately far below
+# that, because being throttled is invisible from here — iOS simply stops delivering and the symptom
+# is a card that never gets its picture, which looks exactly like the bug this is meant to fix.
+WAKE_MIN_INTERVAL_S = float(os.environ.get("WAKE_MIN_INTERVAL_S", "1800"))
 # Not os.environ["…"]: compose turns an unset variable into the EMPTY STRING, which is present as
 # far as os.environ is concerned, so the KeyError never fired. Trellis booted with a blank key and
 # every Bambuddy call answered 401 — a failure that reads as "Bambuddy is broken" and sends you to
@@ -317,6 +324,12 @@ _p2s_started: dict[str, str] = {}
 # another phone's lock screen, on top of a card that phone had never adopted.
 _p2s_rearm: dict[str, float] = {}
 
+# Plate wake bookkeeping. `_woke` is printerId -> the print identity we last woke for, so a wake
+# fires once per print; `_woke_at` is push token -> when that device was last woken, which is what
+# holds the whole service under Apple's two-or-three-an-hour ceiling however many printers run.
+_woke: dict[str, str] = {}
+_woke_at: dict[str, float] = {}
+
 
 def _has_rearm(key: str) -> bool:
     """Whether any device holds a replacement grant for this card.
@@ -359,7 +372,7 @@ _cool_threshold_at = 0.0
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox, _p2s_rearm
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox, _p2s_rearm, _woke, _woke_at
     try:
         data = json.loads(REG_FILE.read_text())
         # Permanent, not a one-shot migration: rolling back to the previous image
@@ -383,6 +396,8 @@ def _load() -> None:
         _p2s_pending = data.get("p2s_pending", {})
         _p2s_started = data.get("p2s_started", {})
         _p2s_rearm = data.get("p2s_rearm", {})
+        _woke = data.get("woke", {})
+        _woke_at = data.get("woke_at", {})
         _p2s_devices = data.get("p2s_devices", {})
         _suspended = data.get("suspended", {})
         _needs_claim = data.get("needs_claim", {})
@@ -393,6 +408,7 @@ def _load() -> None:
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
         _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}, {}, {}
         _cool, _p2s_started, _p2s_clients, _p2s_rearm = {}, {}, {}, {}
+        _woke, _woke_at = {}, {}
         _p2s_devices, _suspended, _needs_claim = {}, {}, {}
         _outbox = ob.Outbox()
 
@@ -411,7 +427,7 @@ def _save() -> None:
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
                                     "p2s_icons": _p2s_icons, "p2s_clients": _p2s_clients,
                                     "p2s_pending": _p2s_pending, "p2s_started": _p2s_started, "p2s_devices": _p2s_devices,
-                                    "p2s_rearm": _p2s_rearm,
+                                    "p2s_rearm": _p2s_rearm, "woke": _woke, "woke_at": _woke_at,
                           "suspended": _suspended, "needs_claim": _needs_claim,
                           "outbox": _outbox.to_json(),
                                     "last_paused": _last_paused,
@@ -460,6 +476,37 @@ async def _apns_send(client: httpx.AsyncClient, push_token: str, aps: dict, prio
     those callers already reason about.
     """
     return await _relay_send(client, push_token, aps, priority, push_type)
+
+
+async def _wake_devices(client: httpx.AsyncClient, label: str) -> bool:
+    """Silent-push every healthy device token so the app can fetch this print's plate.
+
+    Returns whether a push was ATTEMPTED, not whether it landed. iOS never tells anyone that a
+    background push was throttled, so "attempted" is the only honest signal available — and arming
+    on it means a tick that skipped every token (all claiming, all suspended, all floored) retries
+    on the next one instead of burning this print's single wake.
+
+    The payload carries no printer id and no job name. The app enumerates the live cards it already
+    holds, so there is nothing here for a replayed or forged push to steer.
+    """
+    now = time.time()
+    attempted = False
+    for tok in list(_device_tokens):
+        if tok in _needs_claim or tok in _suspended:
+            continue
+        if not may_wake(now, _woke_at.get(tok), WAKE_MIN_INTERVAL_S):
+            continue
+        _woke_at[tok] = now
+        attempted = True
+        code = await _apns_send(client, tok, {"aps": {"content-available": 1}, "sprout_wake": "plate"},
+                                "5", push_type="background")
+        print(f"[wake] {label} -> {code}", flush=True)
+        if code in (400, 410):
+            # Same hygiene as the banners: a dead token is a statement about one device.
+            if tok in _device_tokens:
+                _device_tokens.remove(tok)
+            _woke_at.pop(tok, None)
+    return attempted
 
 
 def _needs_heartbeat(reg: dict, now: float) -> bool:
@@ -932,6 +979,27 @@ async def _tick(client: httpx.AsyncClient) -> None:
         if dirty:
             _save()
 
+        # Hoisted out of the `if _p2s_tokens:` below: the plate wake needs it too, and a device with
+        # no push-to-start token would otherwise reach a NameError.
+        ident = print_identity(status, fields)
+
+        # 1b2) The plate wake. Trellis pushes the CARD; nothing can push the PICTURE, because an
+        # image cannot travel in a ContentState — the app writes it into its App Group and the widget
+        # reads the file. A print started from Bambu's own app therefore finds Sprout closed and the
+        # card draws a brand glyph for the whole print. This buys the app a few seconds to fetch it.
+        #
+        # One wake per print, floored per device at WAKE_MIN_INTERVAL_S. It is armed by the same
+        # `_woke` bookkeeping shape the push-to-start block uses, and cleared when the printer leaves
+        # the live state so the next print arms again.
+        if _device_tokens and kind == "live" and _woke.get(str(pid)) != ident \
+                and (fields.get("progress") or 0) >= 1:
+            if await _wake_devices(client, f"print {pid} [{ident}]"):
+                _woke[str(pid)] = ident
+                _save()
+        elif kind != "live" and str(pid) in _woke:
+            _woke.pop(str(pid), None)
+            _save()
+
         # 1c) Push-to-start: a print/dry began while NO card is registered (app closed) -> start the
         # Live Activity remotely. Edge-triggered exactly like the banners so it fires once per event.
         if _p2s_tokens:
@@ -942,7 +1010,6 @@ async def _tick(client: httpx.AsyncClient) -> None:
             # "no existing card for this key" and the single-outstanding rule.
             # ONE card per print, keyed by the print's identity — not one per expiring claim.
             key = str(pid)
-            ident = print_identity(status, fields)
             # NB `key in _regs` answers "does ANYONE have a card", which is a nearby question and
             # not this one. _remote_start now decides per device, so a phone that has no card still
             # gets a start even when another phone in the house does.
@@ -985,7 +1052,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 # Identity is the SET of cycles: a unit joining or leaving the batch is a new card,
                 # because the rows it shows are different ones.
                 aident = "agg:" + ",".join(str(r["amsId"]) for r in aggregate["dryUnits"])
-                if _p2s_started.get(akey) != aident and should_start(_p2s_tokens, akey):
+                if aggregate_should_start(aident, _p2s_started.get(akey), _has_rearm(akey)):
                     if await _remote_start(client, akey, {"printerName": name, **aggregate},
                                            f"dry {pid}:all"):
                         _p2s_started[akey] = aident

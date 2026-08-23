@@ -71,6 +71,53 @@ def should_start(active: bool, identity: str, started_for: str | None, has_card:
     return started_for is None
 
 
+def may_wake(now: float, last: float | None, min_interval: float) -> bool:
+    """Whether a device may be woken by a silent push again yet.
+
+    Apple: "the system may throttle the delivery of background notifications if the total number
+    becomes excessive ... don't try to send more than two or three per hour." That ceiling is the
+    whole reason this rule exists, and it lives here as a tested function rather than as an inline
+    comparison so it can be checked without a printer.
+
+    Being throttled is not an error the service sees — iOS simply stops delivering, and the symptom
+    is a card that never gets its picture. So the floor is deliberately far below the ceiling: one
+    wake per printer per half hour spends at most two an hour even if every print were half an hour
+    long.
+
+    `last` is None when this device has never been woken, and that is a DIFFERENT question from
+    "has enough time passed", so it gets its own answer rather than a zero sentinel. A sentinel
+    works here only because real timestamps are enormous — `now - 0 >= 1800` is true for every clock
+    reading since 1970 — which is a dependency on the units nobody would think to check, and a test
+    written with small numbers found it immediately.
+    """
+    if last is None:
+        return True
+    return now - last >= min_interval
+
+
+def aggregate_should_start(identity: str, started_for: str | None, has_rearm: bool) -> bool:
+    """Whether to push-to-start the AGGREGATE drying card now.
+
+    A different question from ``should_start``, and that is why it is a different function rather
+    than a call into that one. ``should_start`` deliberately refuses to compare identity, because a
+    print's identity is unstable early on — Bambuddy assigns the archive id a little after printing
+    begins and comparing values started a second card. The aggregate's identity is the SET of
+    cycles, which is stable and which genuinely selects the card: a unit joining or leaving the
+    batch means the card shows different rows, so it is a different card.
+
+    It used to be written inline as ``should_start(_p2s_tokens, akey)`` — two arguments to a
+    four-parameter function, so the first batch of two simultaneous cycles would have raised
+    TypeError into the poll loop's catch-all rather than starting a card. Never observed, because it
+    needs two units drying at once with no card up yet; a rule with no test and no call of its own
+    is how that survived review.
+
+    identity    the set of cycles this card would show
+    started_for what we recorded when we last started on this key (None = not this session)
+    has_rearm   a device holds a replacement grant, which overrides the arming answer
+    """
+    return started_for != identity or has_rearm
+
+
 def next_started_for(active: bool, identity: str, started_for: str | None) -> str | None:
     """The value to persist after a tick. Clearing on leaving the live state is the ONLY thing that
     re-arms a start. The value itself is just the latest identity, kept for logs — the arming

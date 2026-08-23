@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import unittest
 
-from p2s import dry_identity, next_started_for, print_identity, prune, should_start
+from p2s import (aggregate_should_start, dry_identity, may_wake, next_started_for, print_identity,
+                 prune, should_start)
 
 
 class TestPrintIdentity(unittest.TestCase):
@@ -120,3 +121,60 @@ class TestPrune(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AggregateArmingTests(unittest.TestCase):
+    """The aggregate drying card's arming rule.
+
+    Split out of `should_start` on purpose. That helper refuses to compare identity — a print's
+    identity is unstable early on, and comparing it started a second card — whereas the aggregate's
+    identity IS the set of cycles, which is stable and which selects the card.
+
+    The rule was written inline as `should_start(_p2s_tokens, akey)`: two arguments to a
+    four-parameter function, a TypeError waiting for the first batch of two simultaneous cycles.
+    It survived because it had no test and no call of its own.
+    """
+
+    def test_a_new_set_arms(self):
+        self.assertTrue(aggregate_should_start("agg:1,2", None, False))
+        self.assertTrue(aggregate_should_start("agg:1,2", "agg:1", False))
+        self.assertTrue(aggregate_should_start("agg:1", "agg:1,2", False))
+
+    def test_the_same_set_does_not_rearm(self):
+        self.assertFalse(aggregate_should_start("agg:1,2", "agg:1,2", False))
+
+    def test_a_grant_overrides_the_answer(self):
+        self.assertTrue(aggregate_should_start("agg:1,2", "agg:1,2", True))
+
+    def test_the_signature_is_not_should_starts(self):
+        """The bug in one line: the two functions take different arguments and are not
+        interchangeable, however similar their names read at a call site."""
+        with self.assertRaises(TypeError):
+            should_start(set(), "dry:2:-1")   # what the aggregate block used to call
+
+
+class WakeCeilingTests(unittest.TestCase):
+    """The floor under Apple's ceiling for silent pushes.
+
+    "Don't try to send more than two or three per hour." Being throttled is invisible from the
+    service — iOS just stops delivering — so the rule is a tested function rather than an inline
+    comparison, and the interval is far below the ceiling rather than near it.
+    """
+
+    def test_a_wake_inside_the_interval_is_refused(self):
+        self.assertFalse(may_wake(now=1000.0, last=1000.0, min_interval=1800.0))
+        self.assertFalse(may_wake(now=2799.0, last=1000.0, min_interval=1800.0))
+
+    def test_a_wake_at_or_past_the_interval_is_allowed(self):
+        self.assertTrue(may_wake(now=2800.0, last=1000.0, min_interval=1800.0))
+        self.assertTrue(may_wake(now=2801.0, last=1000.0, min_interval=1800.0))
+
+    def test_a_device_never_woken_is_allowed(self):
+        """None, not a zero sentinel. `now - 0 >= 1800` is true for every real clock reading, so a
+        sentinel would pass by accident and fail the moment anyone tested it with small numbers —
+        which is exactly how this was found."""
+        self.assertTrue(may_wake(now=1.0, last=None, min_interval=1800.0))
+        self.assertTrue(may_wake(now=1_787_000_000.0, last=None, min_interval=1800.0))
+
+    def test_the_default_interval_stays_under_two_an_hour(self):
+        self.assertLessEqual(3600 / 1800.0, 2.0)
