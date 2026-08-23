@@ -64,6 +64,13 @@ targets:
       - target: SproutWidget
         embed: true
         platformFilter: iOS
+      # Same filter, same reason, same trap. A notification service extension is iOS-only, and
+      # `platforms:` here would silently delete the embed phase on both platforms exactly as it did
+      # for the widget — the app would install fine and every halt banner would arrive without its
+      # picture, with nothing to see in a build log.
+      - target: SproutNotify
+        embed: true
+        platformFilter: iOS
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu
@@ -285,6 +292,38 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+  # The notification service extension: the one API that may rewrite a notification before it is
+  # shown, which is what lets a halt banner carry a photograph of the printer. Launched by iOS on
+  # the app's behalf when a push carries `mutable-content: 1`; it registers for nothing and holds no
+  # identity of its own, so its entitlements are one app group and nothing else.
+  SproutNotify:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SproutNotify
+      # `Shared` for `ShotHandoff`, and `Sprout/Config/SecureConfig.swift` for the base URL the
+      # payload deliberately does not carry. The file is listed on its own rather than the whole
+      # `Sprout` tree: an extension that compiled the app would inherit its dependencies and its
+      # launch cost, for one keychain read.
+      - path: Shared
+      - path: Sprout/Config/SecureConfig.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mvks5.bambu.Notify
+        PRODUCT_NAME: SproutNotify
+        INFOPLIST_FILE: SproutNotify/Info.plist
+        CODE_SIGN_ENTITLEMENTS: SproutNotify/SproutNotify.entitlements
+        SKIP_INSTALL: YES
+    info:
+      path: SproutNotify/Info.plist
+      properties:
+        CFBundleDisplayName: Sprout
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
 
   SproutTests:
     type: bundle.unit-test

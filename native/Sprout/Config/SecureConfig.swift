@@ -28,6 +28,13 @@ struct AppConfig: Codable, Equatable, Sendable {
     /// Model-texturizer feature toggle. true/nil ⇒ enabled (URL derived or explicit, then
     /// health-probed). false ⇒ fully off.
     var texturize: Bool?
+    /// Put a live camera frame on a halt notification. **Default off, and deliberately so.**
+    ///
+    /// A notification attachment is rendered on the lock screen, where anyone standing nearby sees
+    /// it, and the frame is a photograph of the inside of the user's home. That is not a default
+    /// anyone should acquire by installing an update, so `nil` means off and the user turns it on.
+    var shotOnAlert: Bool?
+
     /// Optional Bambuddy ADMIN login — unlocks admin-gated actions (e.g. maintenance "mark done"),
     /// which categorically refuse API keys. Keychain-only, like the API key.
     var adminUsername: String?
@@ -77,9 +84,58 @@ enum SecureConfig {
         )
     }
 
+    /// The account the BASE URL is mirrored to, in a keychain group the notification extension can
+    /// also read.
+    ///
+    /// Only the base URL, and deliberately not the whole config: the extension needs to know which
+    /// host to ask and nothing else, and the API key does not become reachable by a second binary
+    /// just because a picture is wanted on a banner. The camera token it uses arrives in the push.
+    ///
+    /// **Its presence is the permission.** The item exists only while `shotOnAlert` is on, so the
+    /// extension's question — "may I fetch a photograph, and from where?" — has exactly one answer
+    /// to read. Storing the host and the consent separately would let them disagree, and the
+    /// disagreement that matters is the one where the picture is taken anyway.
+    static let sharedBaseUrlAccount = "bambu.baseurl"
+
+    /// The app group, used as a keychain access group.
+    ///
+    /// Apple, *Sharing access to keychain items among a collection of apps*: "You can use app group
+    /// names as keychain access group names, without adding them to the Keychain access groups
+    /// entitlement." So the group the widget already shares is enough, and no new entitlement is
+    /// introduced for this.
+    static let sharedAccessGroup = LiveActivityArt.groupId
+
     static func save(_ config: AppConfig) {
         guard let data = try? JSONEncoder().encode(config) else { return }
         write(data, service: service, account: account)
+        // Mirrored on every save rather than written once at onboarding: a user who changes their
+        // server would otherwise leave the extension pointing at the old one forever, and the
+        // failure — a banner with no picture — says nothing about why. Turning the preference off
+        // deletes it, which is what makes the item's presence mean consent.
+        writeSharedBaseUrl(config.shotOnAlert == true ? config.baseUrl : "")
+    }
+
+    /// The base URL as the extension reads it. Nil when nothing has been onboarded.
+    static func sharedBaseUrl() -> String? {
+        guard let data = read(service: service, account: sharedBaseUrlAccount,
+                              accessGroup: sharedAccessGroup),
+              let value = String(data: data, encoding: .utf8), !value.isEmpty
+        else { return nil }
+        return value
+    }
+
+    private static func writeSharedBaseUrl(_ baseUrl: String) {
+        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else {
+            SecItemDelete([
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+                kSecAttrAccount: sharedBaseUrlAccount,
+                kSecAttrAccessGroup: sharedAccessGroup,
+            ] as CFDictionary)
+            return
+        }
+        write(data, service: service, account: sharedBaseUrlAccount, accessGroup: sharedAccessGroup)
     }
 
     static func clear() {
@@ -88,29 +144,41 @@ enum SecureConfig {
             kSecAttrService: service,
             kSecAttrAccount: account,
         ] as CFDictionary)
+        // The mirror goes with it. Signing out and leaving a second binary holding the old host is
+        // the kind of residue nobody looks for.
+        SecItemDelete([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: sharedBaseUrlAccount,
+            kSecAttrAccessGroup: sharedAccessGroup,
+        ] as CFDictionary)
     }
 
     // MARK: - Keychain primitives
 
-    private static func read(service: String, account: String) -> Data? {
-        var out: CFTypeRef?
-        let status = SecItemCopyMatching([
+    private static func read(service: String, account: String, accessGroup: String? = nil) -> Data? {
+        var query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
             kSecReturnData: true,
             kSecMatchLimit: kSecMatchLimitOne,
-        ] as CFDictionary, &out)
+        ]
+        if let accessGroup { query[kSecAttrAccessGroup] = accessGroup }
+        var out: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
         guard status == errSecSuccess else { return nil }
         return out as? Data
     }
 
-    private static func write(_ data: Data, service: String, account: String) {
-        let query: [CFString: Any] = [
+    private static func write(_ data: Data, service: String, account: String,
+                             accessGroup: String? = nil) {
+        var query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
         ]
+        if let accessGroup { query[kSecAttrAccessGroup] = accessGroup }
         // Update-then-add: SecItemAdd fails with errSecDuplicateItem on an existing entry, and
         // delete-then-add would briefly leave the device with no credentials at all.
         let updated = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)

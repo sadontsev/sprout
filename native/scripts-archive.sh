@@ -58,9 +58,10 @@ if [ "$platform" = macos ]; then
   # A Mac app keeps its Info.plist in Contents/; an iOS app keeps it at the bundle root. Reading the
   # wrong one does not report a missing file — see the guard below for what it cost.
   app_plist='Contents/Info.plist'
-  # No widget on macOS: the SproutWidget dependency is `platformFilter: iOS`, so the Mac app embeds
-  # no appex and naming a profile for one would fail the export.
+  # No appex of either kind on macOS: both dependencies are `platformFilter: iOS`, so the Mac app
+  # embeds neither and naming a profile for one would fail the export.
   has_widget=0
+  has_notify=0
 else
   dest='generic/platform=iOS'
   archive=/tmp/SproutNative.xcarchive
@@ -70,6 +71,7 @@ else
   artifact_glob='*.ipa'
   app_plist='Info.plist'
   has_widget=1
+  has_notify=1
 fi
 echo "archiving for $platform"
 
@@ -199,6 +201,11 @@ if [ "$has_widget" = 1 ]; then
   widget_profile_line="    <key>com.mvks5.bambu.LiveActivity</key><string>${DIST_PROFILE_WIDGET:-}</string>"
 fi
 
+notify_profile_line=""
+if [ "$has_notify" = 1 ]; then
+  notify_profile_line="    <key>com.mvks5.bambu.Notify</key><string>${DIST_PROFILE_NOTIFY:-}</string>"
+fi
+
 # The manual branch is **iOS's**, and gating it on the platform is not a simplification — every
 # variable it reads names an iOS artefact. DIST_CERT is an "iPhone Distribution" identity;
 # DIST_PROFILE_APP is the iOS profile for com.mvks5.bambu, which is a DIFFERENT profile from the Mac
@@ -212,8 +219,11 @@ fi
 # has Apple mint the certificate and the profile on demand, which is how the first Mac builds were
 # uploaded. So macOS takes the template path deliberately, not as a fallback.
 rm -rf "$exportdir"
+# `has_notify` rather than an unconditional test: a build that predates the extension has no appex
+# to sign and must not be pushed onto the automatic path just because a new variable is unset.
 if [ "$platform" = ios ] \
-   && [ -n "${DIST_CERT:-}" ] && [ -n "${DIST_PROFILE_APP:-}" ] && [ -n "${DIST_PROFILE_WIDGET:-}" ]; then
+   && [ -n "${DIST_CERT:-}" ] && [ -n "${DIST_PROFILE_APP:-}" ] && [ -n "${DIST_PROFILE_WIDGET:-}" ] \
+   && { [ "$has_notify" = 0 ] || [ -n "${DIST_PROFILE_NOTIFY:-}" ]; }; then
   cat > /tmp/sprout-ExportOptions.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -227,6 +237,7 @@ if [ "$platform" = ios ] \
   <dict>
     <key>com.mvks5.bambu</key><string>${DIST_PROFILE_APP}</string>
 ${widget_profile_line}
+${notify_profile_line}
   </dict>
   <key>destination</key><string>export</string>
   <key>uploadSymbols</key><true/>

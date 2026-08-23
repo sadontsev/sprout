@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The app group, and nothing else.
+
+	     It is also the keychain access group the base-URL mirror lives in — Apple, "Sharing access
+	     to keychain items among a collection of apps": "You can use app group names as keychain
+	     access group names, without adding them to the Keychain access groups entitlement." So this
+	     one key buys both, and no new entitlement is introduced.
+
+	     Deliberately NOT here: `aps-environment` (the system launches this extension on the app's
+	     behalf; it never registers for anything itself) and App Attest (it holds no identity). -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.mvks5.bambu</string>
+	</array>
+</dict>
+</plist>

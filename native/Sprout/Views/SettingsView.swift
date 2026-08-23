@@ -42,6 +42,9 @@ struct SettingsView: View {
              + "lock-screen updates and MakerWorld collections."
     }
     @State private var serverPush = true
+    /// Default OFF — see `AppConfig.shotOnAlert`. A lock-screen attachment is a photograph of
+    /// the inside of someone's home, and nobody should acquire that by installing an update.
+    @State private var shotOnAlert = false
     @State private var texturizeUrl = ""
     @State private var texturize = true
     @State private var showAdvanced = false
@@ -96,6 +99,7 @@ struct SettingsView: View {
         adminPassword = cfg.adminPassword ?? ""
         pushUrl = cfg.pushUrl ?? ""
         serverPush = cfg.serverPush ?? true
+        shotOnAlert = cfg.shotOnAlert ?? false
         texturizeUrl = cfg.texturizeUrl ?? ""
         texturize = cfg.texturize ?? true
     }
@@ -294,6 +298,17 @@ struct SettingsView: View {
                     .scaledFont(11)
                     .foregroundStyle(c.t3)
                     .fixedSize(horizontal: false, vertical: true)
+
+                #if os(iOS)
+                // iOS only, and not a placeholder on the Mac: the attachment is drawn by a
+                // notification service extension, and there is no such thing on macOS. A toggle
+                // that could not do anything is the shape this project keeps paying for.
+                toggleRow("Camera photo on alerts", isOn: $shotOnAlert,
+                          hint: "Off by default. On adds a live camera frame to a paused or error "
+                              + "notification — a photograph of the printer, shown on the lock "
+                              + "screen where anyone nearby can see it. The frame is taken when the "
+                              + "notification arrives, not when the fault happened.")
+                #endif
             }
         }
     }
@@ -516,6 +531,7 @@ struct SettingsView: View {
         cfg.adminPassword = adminPassword.isEmpty ? nil : adminPassword
         cfg.pushUrl = pushUrl.isEmpty ? nil : pushUrl
         cfg.serverPush = serverPush
+        cfg.shotOnAlert = shotOnAlert
         cfg.texturizeUrl = texturizeUrl.isEmpty ? nil : texturizeUrl
         cfg.texturize = texturize
         return cfg
