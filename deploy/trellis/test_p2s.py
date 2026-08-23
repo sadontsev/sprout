@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 
 from p2s import (aggregate_should_start, dry_identity, hms_reason, may_wake, next_started_for,
-                 print_identity, prune, should_start, wake_push_due)
+                 print_identity, prune, shot_printer_id, should_start, wake_push_due)
 
 
 class TestPrintIdentity(unittest.TestCase):
@@ -258,3 +258,30 @@ class HmsReasonTests(unittest.TestCase):
 
     def test_a_malformed_entry_does_not_raise(self):
         self.assertIsNone(hms_reason([{}, {"full_code": None}, {"full_code": 3008004}]))
+
+
+class ShotPrinterTests(unittest.TestCase):
+    """Which alerts carry a camera frame.
+
+    Only a halt. `complete` deliberately gets none: by delivery the plate may already be cleared or
+    the print ejected, so the frame would show an empty bed captioned "print finished" — a picture
+    that contradicts its own sentence.
+    """
+
+    def test_a_halt_gets_a_frame(self):
+        self.assertEqual(shot_printer_id("2:error"), 2)
+        self.assertEqual(shot_printer_id("2:paused"), 2)
+        self.assertEqual(shot_printer_id("17:paused"), 17)
+
+    def test_a_finished_print_gets_none(self):
+        self.assertIsNone(shot_printer_id("2:complete"))
+
+    def test_the_quiet_events_get_none(self):
+        for key in ("2:stopped", "2:cool", "dry:2:0", "2:lowfilament", "2"):
+            self.assertIsNone(shot_printer_id(key), key)
+
+    def test_a_malformed_key_is_not_an_error(self):
+        self.assertIsNone(shot_printer_id(""))
+        self.assertIsNone(shot_printer_id("notanumber:error"))
+        self.assertIsNone(shot_printer_id("0:error"))
+        self.assertIsNone(shot_printer_id("-3:error"))

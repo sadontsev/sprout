@@ -71,6 +71,28 @@ def should_start(active: bool, identity: str, started_for: str | None, has_card:
     return started_for is None
 
 
+def shot_printer_id(alert_key: str) -> int | None:
+    """Which printer a camera frame should be taken from for this alert, or None for no frame.
+
+    Only a HALT gets a photograph. `complete` deliberately does not: by the time a banner is
+    delivered the plate may already have been cleared or the print ejected, so the frame would
+    show an empty bed captioned "print finished" — a picture that contradicts its own sentence.
+    The Live Activity already carries the plate render for a finished print.
+
+    `cool` and `dry` get none either: nothing about a cooling plate or a drying spool is visible.
+
+    The key is `"{printerId}:{event}"`, built by every `_queue_alert` call site.
+    """
+    head, _, event = alert_key.partition(":")
+    if event not in ("error", "paused"):
+        return None
+    try:
+        printer_id = int(head)
+    except ValueError:
+        return None
+    return printer_id if printer_id > 0 else None
+
+
 def hms_reason(hms_errors: list[dict] | None) -> str | None:
     """The sentence to put on a banner for the fault that halted this print, or None.
 

@@ -35,7 +35,8 @@ import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
 from p2s import (aggregate_should_start, dry_identity, hms_reason, may_wake,
-                 next_started_for, print_identity, should_start, wake_push_due)
+                 next_started_for, print_identity, shot_printer_id, should_start,
+                 wake_push_due)
 
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
@@ -655,7 +656,7 @@ async def _drain_outbox(client: httpx.AsyncClient) -> None:
     now = time.time()
     dirty = False
     for alert in _outbox.due(now):
-        ok = await _notify(client, alert.title, alert.body, alert.urgent)
+        ok = await _notify(client, alert.title, alert.body, alert.urgent, key=alert.key)
         if ok:
             _outbox.succeeded(alert.key)
         else:
@@ -665,7 +666,26 @@ async def _drain_outbox(client: httpx.AsyncClient) -> None:
         _save()
 
 
-async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool = True) -> bool:
+async def _camera_token(client: httpx.AsyncClient) -> str | None:
+    """A fresh camera stream token, minted at SEND time.
+
+    Never at queue time. The outbox retries with backoff, so a token minted when the alert was
+    created could be an hour old by the time it is delivered — and an expired one produces a banner
+    with no picture and no explanation, which is indistinguishable from the camera being off.
+    """
+    try:
+        res = await client.post(f"{BAMBUDDY_URL}/api/v1/printers/camera/stream-token",
+                                headers={"X-API-Key": BAMBUDDY_API_KEY}, timeout=10)
+        if res.status_code != 200:
+            return None
+        return (res.json() or {}).get("token") or None
+    except Exception as e:  # noqa: BLE001 — a missing photo must never hold up the sentence
+        print(f"[shot] token mint failed: {e}", flush=True)
+        return None
+
+
+async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool = True,
+                  key: str = "") -> bool:
     """Send an alert banner to every registered device. Returns whether it reached anyone.
 
     `interruption-level: time-sensitive` asks iOS to break through Focus modes and the Scheduled
@@ -678,12 +698,26 @@ async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool
            "interruption-level": "time-sensitive" if urgent else "active"}
     if not _device_tokens:
         return True  # nobody to tell; not a failure, and retrying would never help
+
+    # A halt banner may carry a live camera frame. The DEVICE decides whether to fetch it — the
+    # extension only looks when the user has turned it on — so nothing here needs to know the
+    # preference, and turning it on takes effect without re-registering anything.
+    payload: dict = {"aps": aps}
+    printer_id = shot_printer_id(key)
+    if printer_id is not None:
+        token = await _camera_token(client)
+        if token:
+            # `mutable-content` is what lets the extension run at all. The payload carries a token
+            # and an id, never a URL: the host comes from the device's own keychain, so a forged or
+            # replayed push has nothing to aim.
+            aps["mutable-content"] = 1
+            payload["sprout_shot"] = {"t": token, "p": printer_id}
     delivered = False
     for tok in list(_device_tokens):
         try:
             # Through the same backend as everything else, so the relay's status translation and
             # the local signer stay observably equivalent to the hygiene below.
-            code = await _apns_send(client, tok, aps, "10", push_type="alert")
+            code = await _apns_send(client, tok, payload, "10", push_type="alert")
             print(f"[notify] {title!r} -> {code}", flush=True)
             if code in (400, 410):
                 _device_tokens.remove(tok)
