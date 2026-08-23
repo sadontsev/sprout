@@ -63,16 +63,33 @@ jobs:
       # `1` and `1.2` exist so a user can follow a line rather than a point. That is what makes the
       # Watchtower overlay safe to offer: Watchtower re-pulls whatever tag the container was
       # started with, so `latest` would deliver a major version unannounced.
+      # Strip the `trellis-v` prefix before metadata-action sees it. Passed whole it warns
+      #
+      #   ! trellis-v1.0.0 is not a valid semver
+      #
+      # and then silently emits NO version tags — the first release pushed only `latest` and
+      # `sha-…` while its own notes advertised `:1.0.0`. Worse, `1` never existed, so the
+      # `TRELLIS_TAG=1` line that makes the Watchtower overlay safe pointed at nothing.
+      - id: ver
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "version=${GITHUB_REF_NAME#trellis-v}" >> "$GITHUB_OUTPUT"
+
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=semver,pattern={{version}},prefix=,value=${{ github.ref_name }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.ref_name }}
-            type=semver,pattern={{major}},value=${{ github.ref_name }}
+            type=semver,pattern={{version}},value=${{ steps.ver.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.ver.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.ver.outputs.version }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
             type=sha,prefix=sha-
+          # Otherwise these are inherited from the REPOSITORY, so the package page described the
+          # iOS app — "Self-hosted iOS + macOS app for Bambu Lab printers" — on a push relay.
+          labels: |
+            org.opencontainers.image.title=Trellis
+            org.opencontainers.image.description=Live Activity APNs push and MakerWorld collections for Sprout. Runs next to your own Bambuddy.
+            org.opencontainers.image.version=${{ steps.ver.outputs.version || 'latest' }}
 
       - uses: docker/build-push-action@v6
         with:
