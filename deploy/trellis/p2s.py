@@ -74,17 +74,22 @@ def should_start(active: bool, identity: str, started_for: str | None, has_card:
 def shot_printer_id(alert_key: str) -> int | None:
     """Which printer a camera frame should be taken from for this alert, or None for no frame.
 
-    Only a HALT gets a photograph. `complete` deliberately does not: by the time a banner is
-    delivered the plate may already have been cleared or the print ejected, so the frame would
-    show an empty bed captioned "print finished" — a picture that contradicts its own sentence.
-    The Live Activity already carries the plate render for a finished print.
+    A halt, and a finished print.
 
-    `cool` and `dry` get none either: nothing about a cooling plate or a drying spool is visible.
+    `complete` was excluded at first, on the argument that by delivery the plate may already have
+    been cleared and the frame would then show an empty bed captioned "print finished" — a picture
+    contradicting its own sentence. That risk is real and unchanged. It is also not the common case:
+    the notification arrives within seconds of the print ending, long before anyone has walked over
+    to the machine, and seeing the thing you waited two hours for is most of why you wanted a
+    photograph at all. Judged worth an occasional empty bed.
+
+    `cool` and `dry` still get none: nothing about a cooling plate or a drying spool is visible in a
+    frame, so the picture would carry no information at any moment.
 
     The key is `"{printerId}:{event}"`, built by every `_queue_alert` call site.
     """
     head, _, event = alert_key.partition(":")
-    if event not in ("error", "paused"):
+    if event not in ("error", "paused", "complete"):
         return None
     try:
         printer_id = int(head)

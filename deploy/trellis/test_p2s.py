@@ -263,9 +263,8 @@ class HmsReasonTests(unittest.TestCase):
 class ShotPrinterTests(unittest.TestCase):
     """Which alerts carry a camera frame.
 
-    Only a halt. `complete` deliberately gets none: by delivery the plate may already be cleared or
-    the print ejected, so the frame would show an empty bed captioned "print finished" — a picture
-    that contradicts its own sentence.
+    A halt, and a finished print. `cool` and `dry` never: nothing about a cooling plate or a drying
+    spool is visible in a frame, so the picture would carry no information at any moment.
     """
 
     def test_a_halt_gets_a_frame(self):
@@ -273,8 +272,11 @@ class ShotPrinterTests(unittest.TestCase):
         self.assertEqual(shot_printer_id("2:paused"), 2)
         self.assertEqual(shot_printer_id("17:paused"), 17)
 
-    def test_a_finished_print_gets_none(self):
-        self.assertIsNone(shot_printer_id("2:complete"))
+    def test_a_finished_print_gets_a_frame(self):
+        """Excluded at first, on the argument that a cleared plate would photograph as an empty bed
+        under "print finished". The banner arrives within seconds of the print ending, long before
+        anyone has walked over to the machine — and seeing the finished thing is most of the point."""
+        self.assertEqual(shot_printer_id("2:complete"), 2)
 
     def test_the_quiet_events_get_none(self):
         for key in ("2:stopped", "2:cool", "dry:2:0", "2:lowfilament", "2"):
