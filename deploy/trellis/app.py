@@ -34,8 +34,8 @@ import outbox as ob
 import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
-from p2s import (aggregate_should_start, dry_identity, may_wake, next_started_for,
-                 print_identity, should_start, wake_push_due)
+from p2s import (aggregate_should_start, dry_identity, hms_reason, may_wake,
+                 next_started_for, print_identity, should_start, wake_push_due)
 
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
@@ -166,7 +166,11 @@ def classify(status: dict) -> tuple[dict, str]:
     bed, bed_t = _rnd(t.get("bed")), _rnd(t.get("bed_target"))
 
     finished = False
-    if status.get("print_error") or state in ("FAILED", "ERROR"):
+    # `print_error` was read here and is not a field of Bambuddy's `PrinterStatus` — the route
+    # declares `response_model=PrinterStatus`, so it is stripped before it ever reaches us.
+    # Confirmed against the live server: the key is simply absent. The `state` test is what has
+    # always done the work.
+    if state in ("FAILED", "ERROR"):
         label, color, kind = "Error", COLORS["error"], "error"
     elif state in ("PAUSE", "PAUSED"):
         label, color, kind = "Paused", COLORS["paused"], "live"
@@ -1101,7 +1105,12 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 if kind == "complete":
                     _queue_alert(f"{pid}:complete", f"✅ {name} — print finished", model)
                 elif kind == "error":
-                    _queue_alert(f"{pid}:error", f"⚠️ {name} — needs attention", model)
+                    # The title stays two words. Apple's `UNNotificationContent.title` is
+                    # "usually only a couple of words"; a 135-character sentence belongs in the
+                    # body, which is where someone reads it anyway.
+                    why = hms_reason(status.get("hms_errors"))
+                    _queue_alert(f"{pid}:error", f"⚠️ {name} — needs attention",
+                                 f"{model} — {why}" if why else model)
                 elif kind == "idle" and prev == "live":
                     # A live print that goes IDLE ended WITHOUT completing — aborted by the printer,
                     # or cancelled. This was silent: only complete/error notified, so the one case
@@ -1116,10 +1125,12 @@ async def _tick(client: httpx.AsyncClient) -> None:
             print(f"[state] printer {pid}: paused={paused_now}", flush=True)
             if _device_tokens and was_paused is not None and paused_now:
                 model = fields.get("name") or "your print"
-                err = status.get("print_error")
-                why = "The printer halted it — resume or stop it in the app."
-                if err:
-                    why = f"Halted with error {err} — open the app to resume or stop."
+                # `err = status.get("print_error")` used to stand here, and the sentence it built
+                # has never rendered: that key is not part of Bambuddy's `PrinterStatus` and is
+                # stripped by the response model. The description the server now resolves is the
+                # thing that actually names the fault.
+                why = hms_reason(status.get("hms_errors")) \
+                    or "The printer halted it — resume or stop it in the app."
                 _queue_alert(f"{pid}:paused", f"⏸️ {name} — print paused", f"{model}. {why}")
             _last_paused[pid] = paused_now
             if paused_now:

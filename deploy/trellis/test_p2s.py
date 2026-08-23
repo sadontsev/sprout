@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import unittest
 
-from p2s import (aggregate_should_start, dry_identity, may_wake, next_started_for, print_identity,
-                 prune, should_start, wake_push_due)
+from p2s import (aggregate_should_start, dry_identity, hms_reason, may_wake, next_started_for,
+                 print_identity, prune, should_start, wake_push_due)
 
 
 class TestPrintIdentity(unittest.TestCase):
@@ -199,3 +199,62 @@ class WakeSettleTests(unittest.TestCase):
     def test_the_push_is_due_once_the_window_passes(self):
         self.assertTrue(wake_push_due(now=1_787_483_276.0, due=1_787_483_276.0))
         self.assertTrue(wake_push_due(now=1_787_483_999.0, due=1_787_483_276.0))
+
+
+class HmsReasonTests(unittest.TestCase):
+    """Which fault a halt banner names.
+
+    Bambuddy resolves a description for the 8-char `print_error` family only, so most faults still
+    have nothing to say — the two that matter most to a user, spaghetti and filament runout, do.
+    """
+
+    SPAGHETTI = "Spaghetti defects were detected by the AI Print Monitoring."
+    RUNOUT = "Filament ran out. Please load new filament."
+
+    def test_no_errors_is_no_reason(self):
+        self.assertIsNone(hms_reason(None))
+        self.assertIsNone(hms_reason([]))
+
+    def test_a_resolving_fault_is_named(self):
+        self.assertEqual(
+            hms_reason([{"full_code": "03008004", "description": self.RUNOUT}]),
+            self.RUNOUT,
+        )
+
+    def test_the_last_resolving_fault_wins(self):
+        """`hms_errors` ACCUMULATES across a print — the print_error branch appends and clears only
+        on a fresh `hms` array or a new print. The first entry is the oldest thing the printer has
+        mentioned, not the thing that just halted it."""
+        self.assertEqual(
+            hms_reason([
+                {"full_code": "03008003", "description": self.SPAGHETTI},
+                {"full_code": "03008004", "description": self.RUNOUT},
+            ]),
+            self.RUNOUT,
+        )
+
+    def test_a_sixteen_char_hms_fault_is_not_named(self):
+        """The `hms[]` family resolves to nothing in Bambu's own table. Both faults live on the
+        H2C while this was written are of this kind, so the banner keeps its generic wording."""
+        self.assertIsNone(hms_reason([{"full_code": "050002000003000A", "description": None}]))
+
+    def test_a_sixteen_char_fault_is_skipped_even_if_something_described_it(self):
+        """The length test confines the answer to the branch that fires on a halt, so a described
+        16-char entry must not win over an 8-char one behind it."""
+        self.assertEqual(
+            hms_reason([
+                {"full_code": "03008003", "description": self.SPAGHETTI},
+                {"full_code": "0500050000010007", "description": "something else entirely"},
+            ]),
+            self.SPAGHETTI,
+        )
+
+    def test_an_older_bambuddy_sends_no_description_at_all(self):
+        """Trellis may run ahead of the Bambuddy beside it. A missing key is not an error and needs
+        no version negotiation — the banner simply keeps its generic wording."""
+        self.assertIsNone(hms_reason([{"full_code": "03008004"}]))
+        self.assertIsNone(hms_reason([{"full_code": "03008004", "description": ""}]))
+        self.assertIsNone(hms_reason([{"full_code": "03008004", "description": "   "}]))
+
+    def test_a_malformed_entry_does_not_raise(self):
+        self.assertIsNone(hms_reason([{}, {"full_code": None}, {"full_code": 3008004}]))

@@ -71,6 +71,32 @@ def should_start(active: bool, identity: str, started_for: str | None, has_card:
     return started_for is None
 
 
+def hms_reason(hms_errors: list[dict] | None) -> str | None:
+    """The sentence to put on a banner for the fault that halted this print, or None.
+
+    Bambuddy resolves a description for the 8-char ``print_error`` family only — that table is
+    keyed ``MMMM_EEEE``, which is a ``print_error`` full_code split in half, and the 16-char
+    ``hms[]`` family matches no key. So most faults still have nothing to say, and this returns
+    None rather than inventing something. "Spaghetti defects were detected", "Filament ran out"
+    and ~434 others do resolve, and those are the ones worth naming on a lock screen.
+
+    **The LAST resolving entry, not the first.** ``hms_errors`` accumulates across a print: the
+    print_error branch appends and only clears on a payload bearing a fresh ``hms`` array or on a
+    new print. The first entry is therefore the OLDEST fault the printer has mentioned, which on a
+    long print is very unlikely to be the one that just halted it.
+
+    The ``len == 8`` test is not a formatting nicety either — it confines the answer to the branch
+    that fires on a halt.
+    """
+    for err in reversed(hms_errors or []):
+        if len(str(err.get("full_code") or "")) != 8:
+            continue
+        text = (err.get("description") or "").strip()
+        if text:
+            return text
+    return None
+
+
 def wake_push_due(now: float, due: float | None) -> bool:
     """Whether a card owes a re-render because the app has just been woken to fetch its picture.
 
