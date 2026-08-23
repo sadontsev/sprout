@@ -89,7 +89,7 @@ final class ShotHandoffTests: XCTestCase {
     }
 
     func testPlainHttpIsAllowedBecauseALanBambuddyIsOftenPlainHttp() {
-        XCTAssertNotNil(ShotHandoff.url(base: "http://192.168.31.10:8910", printerId: 2, token: "t"))
+        XCTAssertNotNil(ShotHandoff.url(base: "http://10.0.0.10:8910", printerId: 2, token: "t"))
     }
 
     /// Belt and braces over the charset check: even if a token ever reached this function
