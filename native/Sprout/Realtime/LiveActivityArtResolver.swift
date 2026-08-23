@@ -90,7 +90,8 @@ final class LiveActivityArtResolver {
         library: [LibraryFile],
         sdFiles: [PrinterFile] = [],
         client: BambuddyClient?,
-        token: String?
+        token: String?,
+        sweep: Bool = true
     ) async -> String {
         guard !jobName.isEmpty else { return "" }
         // Same job as last time and already written — the common case on a 4-second loop.
@@ -155,7 +156,14 @@ final class LiveActivityArtResolver {
         cached[printerId] = Resolved(jobName: jobName, modelUri: uri)
         // Everything this launch still refers to, plus the glyph, survives; the rest is last week's
         // prints taking up space nobody can see.
-        LiveActivityArt.sweepPlates(keeping: Set(cached.values.map { ($0.modelUri as NSString).lastPathComponent }))
+        // The keep-set is THIS INSTANCE's `cached`, so a one-shot resolver holding a single entry
+        // would delete every other printer's live plate. The background wake makes exactly such an
+        // instance, which is why it asks not to sweep — housekeeping needs the whole picture and it
+        // does not have it.
+        if sweep {
+            LiveActivityArt.sweepPlates(
+                keeping: Set(cached.values.map { ($0.modelUri as NSString).lastPathComponent }))
+        }
         return uri
     }
 

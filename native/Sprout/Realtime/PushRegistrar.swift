@@ -50,6 +50,20 @@ final class PushRegistrar: NSObject {
         vouchNonce(in: userInfo) != nil
     }
 
+    /// Whether a payload is Trellis asking the app to go and fetch this print's plate.
+    ///
+    /// The key is TOP LEVEL, beside `aps` and not inside it. APNs delivers `aps` to the system and
+    /// everything else to the app verbatim, and a key nested in `aps` simply never arrives — a
+    /// mistake that costs a launch and returns `.noData`, which is indistinguishable from being
+    /// throttled and so would never be diagnosed from the outside.
+    ///
+    /// The payload carries no printer id and no job name on purpose. The handler enumerates the live
+    /// cards it already has, so there is nothing for a replayed or forged payload to steer; a
+    /// constant is the smallest thing that cannot be aimed.
+    nonisolated static func isPlateWake(_ userInfo: [AnyHashable: Any]) -> Bool {
+        (userInfo["sprout_wake"] as? String) == "plate"
+    }
+
     func handle(remoteNotification userInfo: [AnyHashable: Any]) {
         guard let nonce = Self.vouchNonce(in: userInfo) else { return }
         pendingVouchNonce = nonce
@@ -106,9 +120,19 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
-        guard let nonce = PushRegistrar.vouchNonce(in: userInfo) else { return .noData }
-        Self.onVouchNonce?(nonce)
-        return .newData
+        // Vouch first. The two payloads are disjoint today, and checking the narrower one first
+        // means an ambiguous future payload can never be read as an instruction to do network work.
+        if let nonce = PushRegistrar.vouchNonce(in: userInfo) {
+            Self.onVouchNonce?(nonce)
+            return .newData
+        }
+        if PushRegistrar.isPlateWake(userInfo) {
+            // `.newData` only when something was actually written: iOS budgets future wakes on this
+            // answer, so claiming new data for a no-op spends the budget that makes the next print's
+            // wake arrive.
+            return await PlateWake.run() ? .newData : .noData
+        }
+        return .noData
     }
 }
 #endif

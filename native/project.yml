@@ -201,6 +201,16 @@ targets:
         # PiP keeps the app alive via a near-silent audio session — see CameraRenderer.
         UIBackgroundModes:
           - audio
+          # Without this key iOS never calls
+          # `PushAppDelegate.application(_:didReceiveRemoteNotification:)` on a suspended app —
+          # Apple: "To receive background notifications, you must add the remote notifications
+          # background mode to your app." So the vouch push, whose own comment claimed it worked
+          # "when the phone is locked in a pocket", only ever reached a foreground app; and the
+          # plate wake below could not exist at all.
+          #
+          # It buys a wake, not a guarantee. Apple is equally explicit that delivery is not
+          # guaranteed, that the system throttles, and that a force-quit app is never launched.
+          - remote-notification
         ITSAppUsesNonExemptEncryption: false
         # `false` because Sprout COPIES an opened document into the library rather than editing the
         # user's file where it sits. Both platforms behave that way; only their tolerance differs.

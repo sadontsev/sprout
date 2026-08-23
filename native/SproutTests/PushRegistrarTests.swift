@@ -73,4 +73,41 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertEqual(registrar.pendingVouchNonce, "nonce-1")
     }
 }
+
+// MARK: - The plate wake
+
+/// Trellis's silent push that buys the app a few seconds to fetch this print's plate.
+///
+/// The key is TOP LEVEL, beside `aps`. APNs hands `aps` to the system and everything else to the
+/// app verbatim, so a key nested inside `aps` never arrives — and the symptom is a launch that
+/// returns `.noData`, which from outside is indistinguishable from iOS having throttled the push.
+extension PushRegistrarTests {
+
+    func testAPlateWakeIsRecognised() {
+        let payload: [AnyHashable: Any] = ["aps": ["content-available": 1], "sprout_wake": "plate"]
+        XCTAssertTrue(PushRegistrar.isPlateWake(payload))
+    }
+
+    func testAKeyNestedInsideApsIsNotAWake() {
+        let payload: [AnyHashable: Any] = ["aps": ["content-available": 1, "sprout_wake": "plate"]]
+        XCTAssertFalse(PushRegistrar.isPlateWake(payload))
+    }
+
+    /// The two silent payloads must stay disjoint: the delegate checks vouch first so an ambiguous
+    /// one can never be read as an instruction to go and do network work.
+    func testAVouchIsNotAWakeAndAWakeIsNotAVouch() {
+        let vouch: [AnyHashable: Any] = ["aps": ["content-available": 1], "vouch_nonce": "abc"]
+        XCTAssertFalse(PushRegistrar.isPlateWake(vouch))
+        XCTAssertTrue(PushRegistrar.isVouch(vouch))
+
+        let wake: [AnyHashable: Any] = ["aps": ["content-available": 1], "sprout_wake": "plate"]
+        XCTAssertFalse(PushRegistrar.isVouch(wake))
+    }
+
+    func testAnUnrelatedSilentPushIsNeither() {
+        let other: [AnyHashable: Any] = ["aps": ["content-available": 1], "sprout_wake": "something"]
+        XCTAssertFalse(PushRegistrar.isPlateWake(other))
+        XCTAssertFalse(PushRegistrar.isVouch(other))
+    }
+}
 #endif
