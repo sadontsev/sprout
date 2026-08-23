@@ -988,11 +988,20 @@ async def _tick(client: httpx.AsyncClient) -> None:
         # reads the file. A print started from Bambu's own app therefore finds Sprout closed and the
         # card draws a brand glyph for the whole print. This buys the app a few seconds to fetch it.
         #
-        # One wake per print, floored per device at WAKE_MIN_INTERVAL_S. It is armed by the same
-        # `_woke` bookkeeping shape the push-to-start block uses, and cleared when the printer leaves
-        # the live state so the next print arms again.
-        if _device_tokens and kind == "live" and _woke.get(str(pid)) != ident \
-                and (fields.get("progress") or 0) >= 1:
+        # Armed by `should_start`, the same tested rule the push-to-start block uses, for the same
+        # reason it exists: it refuses to COMPARE identity, because a print's identity is unstable
+        # early on — Bambuddy assigns the archive id a little after printing begins, so the value
+        # legitimately changes mid-print — and arming per live session is the question actually being
+        # asked. Written here first as `_woke.get(pid) != ident`, which is the trap that helper's
+        # docstring was written about.
+        #
+        # And NO progress gate. There was one, `progress >= 1`, inherited from a design note about a
+        # camera frame being captured too early. This wake fetches the CLOUD TASK's cover, which is
+        # the sliced plate render and is byte-identical at 0 % and at 50 % — measured mid-calibration
+        # on a real print: 200, 6 464 bytes, at 0 % with the nozzle still being cleaned. The gate
+        # protected against a failure mode this path does not have, and cost the card its picture for
+        # the whole of the calibration phase, which is exactly when someone is looking at it.
+        if _device_tokens and should_start(kind == "live", ident, _woke.get(str(pid)), False):
             if await _wake_devices(client, f"print {pid} [{ident}]"):
                 _woke[str(pid)] = ident
                 _save()
