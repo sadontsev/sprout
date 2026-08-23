@@ -91,6 +91,25 @@ jobs:
             org.opencontainers.image.description=Live Activity APNs push and MakerWorld collections for Sprout. Runs next to your own Bambuddy.
             org.opencontainers.image.version=${{ steps.ver.outputs.version || 'latest' }}
 
+      # The guard the first release needed. metadata-action WARNS on a tag it cannot parse and
+      # then emits nothing, so the run went green having published no version tags at all while the
+      # release notes advertised `:1.0.0`. An exit code proved nothing; this asserts the output.
+      - name: Assert the version tags exist
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          major=${VERSION%%.*}
+          for want in "$VERSION" "$major" latest; do
+            echo "$TAGS" | grep -qx "${IMAGE}:${want}" || {
+              echo "::error::no ${IMAGE}:${want} in the computed tags — the release would advertise a tag it never pushed"
+              echo "computed:"; echo "$TAGS" | sed 's/^/  /'
+              exit 1
+            }
+          done
+          echo "ok: $VERSION, $major, latest"
+
       - uses: docker/build-push-action@v6
         with:
           context: ./deploy/trellis
@@ -103,6 +122,28 @@ jobs:
 
       # Notes from the commits that actually touched the service. A release listing app and Canopy
       # work would be worse than no notes: it invites users to read changes that cannot affect them.
+      # Pull it back the way a user would: no credentials. Catches a tag that did not land and a
+      # package that is private, which look identical from the run log and identical to each other
+      # from the user's side ("denied").
+      - name: Verify the published image is anonymously pullable
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          repo=${IMAGE#ghcr.io/}
+          token=$(curl -fsSL "https://ghcr.io/token?scope=repository:${repo}:pull&service=ghcr.io" | jq -r .token)
+          for want in "$VERSION" "${VERSION%%.*}" latest; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer ${token}" \
+              -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+              "https://ghcr.io/v2/${repo}/manifests/${want}")
+            [ "$code" = "200" ] || {
+              echo "::error::${IMAGE}:${want} is not anonymously pullable (HTTP ${code}) — a user would see 'denied'"
+              exit 1
+            }
+            echo "ok: :${want}"
+          done
+
       - name: Notes
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -112,7 +153,9 @@ jobs:
             echo "## Deploy"
             echo
             echo '```bash'
-            echo "cp -r deploy/trellis <deploy-dir>/trellis && cd <deploy-dir>/trellis"
+            echo "mkdir -p <deploy-dir>/trellis && cd <deploy-dir>/trellis"
+            echo "curl -O https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/deploy/trellis/docker-compose.yml"
+            echo "curl -O https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/deploy/trellis/.env.example"
             echo "cp .env.example .env        # BAMBUDDY_API_KEY is the only value you must set"
             echo "docker compose up -d"
             echo '```'

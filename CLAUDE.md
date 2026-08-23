@@ -22,7 +22,8 @@ by **another team**, who cannot get push at all and for whom switching it off is
 copy, empty states, failure messages and capability gating as things a stranger will read without
 being able to ask what they meant.
 
-There is no CI. Builds are local, through Xcode.
+The APP has no CI — its builds are local, through Xcode. **Trellis does**: tagging `trellis-v*`
+publishes a multi-arch image (see Releasing Trellis).
 
 Monorepo layout:
 
@@ -342,6 +343,56 @@ and `altool -t`.
   first — it catches an SDK rejection in seconds instead of after a ten-minute upload.
 - Distribution needs the App ID enabled for **macOS** on the developer portal. Unsigned local builds
   are unaffected.
+
+## Releasing Trellis (`deploy/trellis/`)
+
+Trellis is the one component every USER deploys, so it ships as a prebuilt image rather than a
+`build: .` that makes every NAS and Pi compile a three-package Python service.
+
+```bash
+git tag trellis-v1.2.3 && git push origin trellis-v1.2.3   # that is the whole release
+```
+
+`.github/workflows/trellis-release.yml` then runs the suite, builds `linux/amd64` + `linux/arm64`,
+publishes to `ghcr.io/sadontsev/sprout/trellis`, and opens a GitHub Release whose notes are the
+commits touching `deploy/trellis/` since the previous `trellis-v*` tag.
+
+- **The tag is PREFIXED** because this repo also holds the app and Canopy. A bare `v1.2.3` would not
+  say what was released.
+- **Five image tags per release**: `1.2.3`, `1.2`, `1`, `latest`, `sha-<short>`. The bare major is
+  not decoration — `TRELLIS_TAG=1` is what makes the Watchtower overlay safe, because Watchtower
+  re-pulls whatever tag the container was STARTED with and `latest` would deliver a major
+  unattended.
+- **armv7 is deliberately absent.** `uvicorn[standard]` pulls `uvloop`/`httptools`, which have no
+  32-bit wheels, so every release would compile C extensions under QEMU.
+- **Compose is three files, overlay-style**, matching what `docker-compose.collections.yml` already
+  established: base pulls the image, `docker-compose.build.yml` builds locally, and
+  `docker-compose.watchtower.yml` is opt-in *because it needs the Docker socket*, which is root on
+  the host. Never present Watchtower as the default path.
+
+### A green run proved nothing, and that is why the guards exist
+
+The first release published **no version tags at all** and still went green.
+`docker/metadata-action` was handed the git tag whole; `trellis-v1.0.0` is not semver, so it emitted
+a *warning* and then produced nothing — while the release notes it generated advertised `:1.0.0`,
+and `TRELLIS_TAG=1` pointed at a tag that had never existed.
+
+Two guards now stand between that and a user:
+
+1. **Before the build** — assert `steps.meta.outputs.tags` actually contains the version, the bare
+   major, and `latest`. The failure was in metadata output, so that is where it is checked.
+2. **After the push** — fetch each of those manifests from GHCR **anonymously**, the way a user
+   without credentials does. A tag that never landed and a package that is private are
+   indistinguishable in the run log, and identical from the user's side: `denied`.
+
+Same shape as everything else in this file: the exit code answered a nearby question ("did the
+step run?") rather than the real one ("can a user pull what the notes promise?").
+
+### GHCR visibility
+
+The package came out publicly pullable on first publish — Actions into a public repo, permissions
+inherited. GitHub's docs say packages default to private, so **check rather than assume** in either
+direction; the post-push guard is what actually settles it.
 
 ## Linting
 
