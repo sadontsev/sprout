@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 
 from p2s import (aggregate_should_start, dry_identity, may_wake, next_started_for, print_identity,
-                 prune, should_start)
+                 prune, should_start, wake_push_due)
 
 
 class TestPrintIdentity(unittest.TestCase):
@@ -178,3 +178,24 @@ class WakeCeilingTests(unittest.TestCase):
 
     def test_the_default_interval_stays_under_two_an_hour(self):
         self.assertLessEqual(3600 / 1800.0, 2.0)
+
+
+class WakeSettleTests(unittest.TestCase):
+    """The re-render a card is owed after its app was woken.
+
+    `meaningful_change` compares numbers, and after a wake no number has moved — a print in its
+    calibration phase sits at progress 0, layer 0, temperatures settled. So the plate would land on
+    disk and the card would keep drawing the glyph until the 450 s heartbeat.
+    """
+
+    def test_nothing_is_owed_when_no_wake_was_sent(self):
+        self.assertFalse(wake_push_due(now=1_787_483_300.0, due=None))
+
+    def test_the_push_waits_for_the_app_to_fetch(self):
+        """A wake and its push in the same tick would re-render a card whose file does not exist
+        yet: measured, the cover arrived one second after the push."""
+        self.assertFalse(wake_push_due(now=1_787_483_266.0, due=1_787_483_276.0))
+
+    def test_the_push_is_due_once_the_window_passes(self):
+        self.assertTrue(wake_push_due(now=1_787_483_276.0, due=1_787_483_276.0))
+        self.assertTrue(wake_push_due(now=1_787_483_999.0, due=1_787_483_276.0))

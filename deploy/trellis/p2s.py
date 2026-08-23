@@ -71,6 +71,23 @@ def should_start(active: bool, identity: str, started_for: str | None, has_card:
     return started_for is None
 
 
+def wake_push_due(now: float, due: float | None) -> bool:
+    """Whether a card owes a re-render because the app has just been woken to fetch its picture.
+
+    The card is re-rendered when its ContentState changes, and `meaningful_change` decides that by
+    comparing NUMBERS. After a wake nothing numeric has changed — a print in its calibration phase
+    sits at progress 0, layer 0, with the temperatures settled — so the card kept drawing the brand
+    glyph until the 450 s heartbeat came round, minutes after the plate was already on disk. The
+    picture appearing is a reason to push that the numeric predicate cannot see; it answers "did the
+    readings move", which is the neighbouring question.
+
+    `due` is a timestamp rather than a flag because the app needs a moment to actually fetch the
+    thing: measured on a real wake, the cover arrived one second after the push. Pushing in the same
+    tick would re-render a card whose file does not exist yet, spend the update, and change nothing.
+    """
+    return due is not None and now >= due
+
+
 def may_wake(now: float, last: float | None, min_interval: float) -> bool:
     """Whether a device may be woken by a silent push again yet.
 

@@ -35,7 +35,7 @@ import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
 from p2s import (aggregate_should_start, dry_identity, may_wake, next_started_for,
-                 print_identity, should_start)
+                 print_identity, should_start, wake_push_due)
 
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
@@ -45,6 +45,10 @@ BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/
 # that, because being throttled is invisible from here — iOS simply stops delivering and the symptom
 # is a card that never gets its picture, which looks exactly like the bug this is meant to fix.
 WAKE_MIN_INTERVAL_S = float(os.environ.get("WAKE_MIN_INTERVAL_S", "1800"))
+# How long to let the woken app fetch its plate before pushing the card so it re-renders.
+# Measured on a real wake: the cover arrived one second later. Ten is margin, not a guess at the
+# work — a wake that misses this window is repaired by the next state change like any other.
+WAKE_SETTLE_S = float(os.environ.get("WAKE_SETTLE_S", "10"))
 # Not os.environ["…"]: compose turns an unset variable into the EMPTY STRING, which is present as
 # far as os.environ is concerned, so the KeyError never fired. Trellis booted with a blank key and
 # every Bambuddy call answered 401 — a failure that reads as "Bambuddy is broken" and sends you to
@@ -329,6 +333,9 @@ _p2s_rearm: dict[str, float] = {}
 # holds the whole service under Apple's two-or-three-an-hour ceiling however many printers run.
 _woke: dict[str, str] = {}
 _woke_at: dict[str, float] = {}
+# printerId -> when the card owes a re-render because a wake was sent. Not persisted: it is worth
+# seconds, and a restart that lost it costs one heartbeat rather than a wrong card.
+_wake_due: dict[str, float] = {}
 
 
 def _has_rearm(key: str) -> bool:
@@ -965,7 +972,8 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 print(f"[end] printer {pid} -> {code}", flush=True)
                 registry.drop_token(_regs, str(pid), creg.get("pushToken"))
                 dirty = True
-            elif (meaningful_change(creg.get("lastState"), cs) or _needs_heartbeat(creg, now)) \
+            elif (meaningful_change(creg.get("lastState"), cs) or _needs_heartbeat(creg, now)
+                  or wake_push_due(now, _wake_due.get(str(pid)))) \
                     and (now - creg.get("lastPush", 0) >= MIN_UPDATE_S):
                 prio = "10" if _urgent(creg.get("lastState"), cs) else "5"
                 code = await _push_update(client, creg, cs, prio)
@@ -976,6 +984,10 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 else:
                     creg["lastState"], creg["lastPush"] = cs, now
                 dirty = True
+        # Cleared after the loop, never inside it: the first device's push would otherwise cancel
+        # the re-render every other device is owed.
+        if wake_push_due(now, _wake_due.get(str(pid))):
+            _wake_due.pop(str(pid), None)
         if dirty:
             _save()
 
@@ -1004,6 +1016,10 @@ async def _tick(client: httpx.AsyncClient) -> None:
         if _device_tokens and should_start(kind == "live", ident, _woke.get(str(pid)), False):
             if await _wake_devices(client, f"print {pid} [{ident}]"):
                 _woke[str(pid)] = ident
+                # The card owes a re-render shortly: nothing numeric has changed, so
+                # `meaningful_change` will not ask for one and the plate would sit on disk unseen
+                # until the heartbeat.
+                _wake_due[str(pid)] = time.time() + WAKE_SETTLE_S
                 _save()
         elif kind != "live" and str(pid) in _woke:
             _woke.pop(str(pid), None)
