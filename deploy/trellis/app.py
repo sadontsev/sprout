@@ -866,6 +866,24 @@ async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: st
     return sent
 
 
+def _prune_needs_claim() -> None:
+    """Forget tokens nothing can ever claim.
+
+    `_needs_claim` is written whenever the relay refuses a push and cleared only by a successful
+    claim — so a token that rotates, or a card that ends, leaves an entry no device will ever come
+    back for. A live instance had 34 of them, and they are not merely clutter: `_remote_start`
+    SKIPS a start token listed here, on the sound argument that pushing to a token the relay is
+    known to refuse spends a start the print only gets one of. An entry that can never be cleared
+    would therefore stop that device getting cards at all.
+
+    Held means: a card's token, a start token, or a device token. Anything else is gone.
+    """
+    live = registry.all_tokens(_regs) | set(_p2s_tokens) | set(_device_tokens)
+    for tok in [t for t in _needs_claim if t not in live]:
+        _needs_claim.pop(tok, None)
+        _suspended.pop(tok, None)
+
+
 async def _chase_adoption(client: httpx.AsyncClient) -> None:
     """Chase a remote start whose card has never handed its token over.
 
@@ -876,6 +894,7 @@ async def _chase_adoption(client: httpx.AsyncClient) -> None:
     (the printer drops off Bambuddy, the status call times out), and the chase must keep running
     exactly when the fleet loop has stopped producing.
     """
+    _prune_needs_claim()
     now = time.time()
     for pending_id, ts in list(_p2s_pending.items()):
         key, _, device = pending_id.rpartition("|")
