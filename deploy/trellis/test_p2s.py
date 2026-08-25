@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import unittest
 
-from p2s import (aggregate_should_start, dry_identity, hms_reason, may_wake, next_started_for,
-                 print_identity, prune, rearm_after_drop, shot_printer_id, should_start,
-                 wake_push_due)
+from p2s import (adoption_step, aggregate_should_start, dry_identity, hms_reason, may_wake,
+                 next_started_for, print_identity, prune, rearm_after_drop, shot_printer_id,
+                 should_start, wake_push_due)
 
 
 class TestPrintIdentity(unittest.TestCase):
@@ -311,3 +311,33 @@ class RearmAfterDropTests(unittest.TestCase):
         would push a second start at a device that already has one."""
         self.assertFalse(rearm_after_drop(1))
         self.assertFalse(rearm_after_drop(3))
+
+
+class TestAdoptionStep(unittest.TestCase):
+    """The ladder for a start no card has claimed.
+
+    The failure it exists for: a push-to-started card is frozen at its opening content until the app
+    hands over its update token, and a frozen card is indistinguishable from a healthy one — the ETA
+    ticks down on the device with no push behind it. Thirteen days of that went unnoticed on a real
+    deployment, so the rule is that an unadopted start must ESCALATE rather than expire quietly.
+    """
+
+    def test_fresh_starts_wait(self):
+        self.assertEqual(adoption_step(0, 0), 0)
+        self.assertEqual(adoption_step(89, 0), 0)
+
+    def test_the_quiet_repair_comes_first(self):
+        self.assertEqual(adoption_step(90, 0), 1)
+
+    def test_the_banner_only_after_the_wake_failed(self):
+        self.assertEqual(adoption_step(300, 1), 2)
+
+    def test_a_wake_is_never_skipped(self):
+        """Even a start already older than the banner offset spends its wake first: the silent push
+        is free and repairs the common case (a merely suspended app) without bothering anyone."""
+        self.assertEqual(adoption_step(9999, 0), 1)
+
+    def test_each_step_is_spent_once(self):
+        """The bug this prevents is a banner every five seconds for the rest of a print."""
+        self.assertEqual(adoption_step(9999, 2), 0)
+        self.assertEqual(adoption_step(120, 1), 0)

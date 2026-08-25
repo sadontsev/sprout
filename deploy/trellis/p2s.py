@@ -224,3 +224,40 @@ def prune(started: dict[str, Any], live_keys: set[str]) -> dict[str, Any]:
     """Drop bookkeeping for keys that are no longer live, so the map cannot grow without bound
     across printers and AMS units."""
     return {k: v for k, v in started.items() if k in live_keys}
+
+
+# Escalation offsets for a start no card has claimed yet. Far apart on purpose: the first step is
+# free and usually enough, the second is a banner the USER sees and must only fire once the quiet
+# repair has demonstrably failed.
+ADOPT_WAKE_S = 90.0
+ADOPT_BANNER_S = 300.0
+
+
+def adoption_step(age: float, spent: int, wake_after: float = ADOPT_WAKE_S,
+                  banner_after: float = ADOPT_BANNER_S) -> int:
+    """Which escalation to spend now on a start nothing has claimed; 0 = keep waiting.
+
+    A push-to-started card carries its own update token and ONLY the app can hand that token over:
+    ActivityKit gives it to a running process and to nobody else. Until it arrives the card is
+    frozen at the content the start push created — and a frozen card looks alive, because its ETA
+    counts down on the device with no push behind it.
+
+    Measured on a real deployment: thirteen days, every print, one frozen card each, and nothing in
+    any log. The relay was refusing every update as `not_bound` while Trellis, the app and APNs all
+    reported success; the only evidence was a SQLite query against the relay's bindings table.
+
+    So an unadopted start escalates instead of expiring quietly:
+
+      1. a silent push, asking iOS to wake the app so it can hand the token over;
+      2. a BANNER, because iOS does not deliver a silent push to an app the user force-quit and
+         does deliver an alert — it is the last channel there is, and its text names the one thing
+         that repairs this ("open the app").
+
+    Steps are monotonic and single-use per pending start (`spent`), so a start that is never adopted
+    costs one push and one banner rather than one of each every poll.
+    """
+    if spent < 1 and age >= wake_after:
+        return 1
+    if spent < 2 and age >= banner_after:
+        return 2
+    return 0
