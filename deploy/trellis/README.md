@@ -241,15 +241,17 @@ So Trellis now **states the gap and chases it**, rather than waiting for a token
 Each step is spent **once per start** (`adoption_step` in `p2s.py`), so a card that is never adopted
 costs one silent push and one banner — not one of each every poll.
 
-#### Not built yet: the second channel
+#### The dependency this does not remove
 
-Everything above still ends at a token the app must deliver. Home Assistant's companion app does not
-have that single point of failure: its Live Activity content arrives as an **ordinary notification**
-(or over its LAN push channel) and a *notification service extension* writes the card locally, which
-runs whatever state the app is in. Sprout already has the extension and a bound, working device
-token — the missing piece is a `mutable-content` payload carrying the ContentState, an
-`Activity.update` in the extension, and a `/register` posted from there with the token it can read
-off the live activity. That closes the loop without waiting for the app to be opened.
+Every step above still ends at a token only the app can hand over. Home Assistant's companion app
+survives the same situation at home because it has a second delivery channel — `NEAppPushProvider`,
+a network extension iOS keeps running on the home Wi-Fi whatever state the app is in — and that
+entitlement is granted by Apple on request. It is a larger commitment than this problem is worth.
+
+What the app does instead: when Trellis reports that it **cannot** push to a card (`needs_claim` on
+`/sync` and `/health`), the app stops deferring to the server and writes that card itself. Two
+writers are still impossible, because ownership only moves once the server has said it is not one.
+An unbound card therefore moves whenever Sprout is open, and the ladder above covers the rest.
 
 ## MakerWorld collections
 
