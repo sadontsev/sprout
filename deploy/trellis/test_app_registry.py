@@ -745,3 +745,71 @@ class TestAggregateDryState(unittest.TestCase):
         # Unit ids are indices, so a negative sentinel can never collide and let the aggregate
         # replace a unit's own card.
         self.assertLess(la.AGGREGATE_AMS_ID, 0)
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class UnadoptedStarts(unittest.TestCase):
+    """A remote start that no card ever claims.
+
+    Observed on a real deployment for thirteen days: every print produced one frozen card and no
+    log line anywhere, because the relay refused every update as `not_bound` while Trellis, the app
+    and APNs all reported success.
+    """
+
+    def setUp(self):
+        la.app.dependency_overrides[la._require_key] = lambda: None
+        self.client = TestClient(la.app)
+        la._regs = {}
+        la._p2s_pending = {}
+        la._p2s_escalated = {}
+        la._needs_claim = {}
+        la._device_tokens = []
+        la._save = lambda: None
+        self.woke, self.alerts = [], []
+
+        async def wake(_client, label, force=False):
+            self.woke.append((label, force))
+            return True
+
+        la._wake_devices = wake
+        la._queue_alert = lambda key, title, body, urgent=True: self.alerts.append((key, title))
+
+    def tearDown(self):
+        la.app.dependency_overrides.clear()
+
+    def chase(self):
+        asyncio.run(la._chase_adoption(None))
+
+    def test_an_unclaimed_start_is_woken_then_bannered(self):
+        la._p2s_pending = {"7|phoneA": time.time() - 100}
+        self.chase()
+        self.assertEqual([f for _, f in self.woke], [True],
+                         "the wake must bypass the plate-fetch floor: it repairs a card, it is not "
+                         "a picture fetch")
+        self.assertEqual(self.alerts, [], "one step per tick, quietest first")
+
+        la._p2s_pending = {"7|phoneA": time.time() - 400}
+        self.chase()
+        self.assertEqual(len(self.alerts), 1,
+                         "a silent push is not delivered to a force-quit app; the banner is the "
+                         "only channel left")
+
+    def test_nothing_is_chased_once_the_card_is_adopted(self):
+        la._p2s_pending = {"7|phoneA": time.time() - 400}
+        la._regs = {"7": [{"printerId": 7, "pushToken": "tok", "deviceId": "phoneA"}]}
+        self.chase()
+        self.assertEqual((self.woke, self.alerts), ([], []))
+
+    def test_a_finished_print_forgets_its_pending_start(self):
+        """`_p2s_pending` is keyed "<key>|<device>"; the callers popped the bare key, matched
+        nothing, and left a stale claim that bound the next card's token to a dead key."""
+        la._p2s_pending = {"7|phoneA": time.time(), "7|phoneB": time.time(), "9|phoneA": time.time()}
+        la._p2s_escalated = {"7|phoneA": 1}
+        la._drop_pending_key("7")
+        self.assertEqual(list(la._p2s_pending), ["9|phoneA"])
+        self.assertEqual(la._p2s_escalated, {})
+
+    def test_health_names_the_tokens_the_relay_refuses(self):
+        la._needs_claim = {"deadbeefcafe": "phoneA"}
+        body = self.client.get("/health").json()
+        self.assertEqual(body["needs_claim"], [{"token": "deadbeef", "device": "phoneA"}])

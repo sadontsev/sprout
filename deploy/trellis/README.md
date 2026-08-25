@@ -174,7 +174,7 @@ collections.
 
 | | |
 |---|---|
-| `GET /health` | `{ok, registrations, apns_host, cards_by_client, start_tokens_by_client}` — **unauthenticated** |
+| `GET /health` | `{ok, registrations, relay, cards_by_client, start_tokens_by_client, push_suspended, needs_claim, unadopted_starts, cards}` — **unauthenticated**. The last three answer "why is that card not moving?" — see [A card nobody claims](#a-card-nobody-claims) |
 | `POST /register` | `{printer_id, push_token, printer_name?, icon_uri?, kind?, ams_id?, client?, claim?}` — `kind` is `"print"` or `"dry"`; a drying card is one per AMS unit, so `ams_id` is required in practice for `"dry"`. Answers `{ok, bound}` — see below |
 | `POST /unregister?printer_id=…` | drops a registration |
 | `POST /register-start` | registers the token used for print-start pushes |
@@ -217,6 +217,39 @@ terminates running Live Activities — would never be replaced.
 Only clients that report those two separately get the grant. The RN app's sole reconcile path is
 `/sync`, so from it a swipe and a death are indistinguishable — granting on that basis would put a
 deliberately dismissed card back within 45 seconds.
+
+### A card nobody claims
+
+A push-to-started card is **frozen at the content the start push created** until the app hands over
+that card's own update token. Only the app can: ActivityKit gives the token to a running process and
+to nobody else. Nothing about that state looks broken — the ETA counts down on the device with no
+push behind it, Trellis reports `ok: true`, and Apple never sees a request to reject.
+
+It ran for thirteen days on a real deployment. The only evidence was a SQLite query against the
+relay's `bindings` table, which showed one activity binding, from the day the user set the thing up.
+
+So Trellis now **states the gap and chases it**, rather than waiting for a token that may never come:
+
+| | |
+|---|---|
+| **Say it** | every non-delivery logs `[push] <tok>… NOT delivered (not_bound) — …`, rate-limited per token and reason. `_relay_send` answers `0` for all of them and every caller reads `0` as "change nothing", so without this line the whole failure is silent by construction |
+| **Show it** | `/health` carries `needs_claim` (tokens the relay refuses), `unadopted_starts` (started, never claimed, with age and escalation spent) and `cards` (per card: bound, and how long since its last push) |
+| **Wake it** — 90 s | a silent push, asking iOS to run the app so it can hand the token over. Bypasses the 30-minute wake floor: that floor protects the silent-push budget from a per-print *picture* fetch, and this is the push that repairs an unreachable card |
+| **Say it out loud** — 300 s | a banner. iOS does not deliver a silent push to an app the user force-quit and does deliver an alert, so this is the last channel there is, and its text names the one thing that repairs it |
+| **Give up** — 600 s | the pending claim expires, `/sync` reports the token as an orphan and the app ends the card rather than leaving a lie on the lock screen |
+
+Each step is spent **once per start** (`adoption_step` in `p2s.py`), so a card that is never adopted
+costs one silent push and one banner — not one of each every poll.
+
+#### Not built yet: the second channel
+
+Everything above still ends at a token the app must deliver. Home Assistant's companion app does not
+have that single point of failure: its Live Activity content arrives as an **ordinary notification**
+(or over its LAN push channel) and a *notification service extension* writes the card locally, which
+runs whatever state the app is in. Sprout already has the extension and a bound, working device
+token — the missing piece is a `mutable-content` payload carrying the ContentState, an
+`Activity.update` in the extension, and a `/register` posted from there with the token it can read
+off the live activity. That closes the loop without waiting for the app to be opened.
 
 ## MakerWorld collections
 

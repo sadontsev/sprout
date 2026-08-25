@@ -34,7 +34,7 @@ import outbox as ob
 import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
-from p2s import (aggregate_should_start, dry_identity, hms_reason, may_wake,
+from p2s import (adoption_step, aggregate_should_start, dry_identity, hms_reason, may_wake,
                  next_started_for, print_identity, rearm_after_drop, shot_printer_id,
                  should_start, wake_push_due)
 
@@ -281,6 +281,10 @@ _p2s_devices: dict[str, str] = {}
 # two phones each adopt their own card.
 _p2s_pending: dict[str, float] = {}
 P2S_PENDING_TTL = 600.0
+# _p2s_escalated: pending id -> how many escalation steps that start has already spent. See
+# `adoption_step`: a start nobody claims is a card frozen at its opening content, and this is what
+# keeps the chase down to one silent push and one banner rather than one of each every poll.
+_p2s_escalated: dict[str, int] = {}
 
 # How long silence may last before a card is lying. NOT derived from MIN_UPDATE_S: that is a floor
 # on how OFTEN we may push, gating a change detector, and a paused print or a drying cycle sitting
@@ -384,7 +388,7 @@ _cool_threshold_at = 0.0
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox, _p2s_rearm, _woke, _woke_at
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _p2s_escalated, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox, _p2s_rearm, _woke, _woke_at
     try:
         data = json.loads(REG_FILE.read_text())
         # Permanent, not a one-shot migration: rolling back to the previous image
@@ -406,6 +410,7 @@ def _load() -> None:
         # app's, which is what an empty map means anyway (client_of/norm_client default to EXPO).
         _p2s_clients = data.get("p2s_clients", {})
         _p2s_pending = data.get("p2s_pending", {})
+        _p2s_escalated = data.get("p2s_escalated", {})
         _p2s_started = data.get("p2s_started", {})
         _p2s_rearm = data.get("p2s_rearm", {})
         _woke = data.get("woke", {})
@@ -419,7 +424,7 @@ def _load() -> None:
         # to survive a missing/corrupt state file raised ValueError instead.
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
         _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}, {}, {}
-        _cool, _p2s_started, _p2s_clients, _p2s_rearm = {}, {}, {}, {}
+        _cool, _p2s_started, _p2s_clients, _p2s_rearm, _p2s_escalated = {}, {}, {}, {}, {}
         _woke, _woke_at = {}, {}
         _p2s_devices, _suspended, _needs_claim = {}, {}, {}
         _outbox = ob.Outbox()
@@ -438,7 +443,8 @@ def _save() -> None:
     payload = json.dumps({"regs": _regs, "devices": _device_tokens, "last_kind": _last_kind,
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
                                     "p2s_icons": _p2s_icons, "p2s_clients": _p2s_clients,
-                                    "p2s_pending": _p2s_pending, "p2s_started": _p2s_started, "p2s_devices": _p2s_devices,
+                                    "p2s_pending": _p2s_pending, "p2s_escalated": _p2s_escalated,
+                                    "p2s_started": _p2s_started, "p2s_devices": _p2s_devices,
                                     "p2s_rearm": _p2s_rearm, "woke": _woke, "woke_at": _woke_at,
                           "suspended": _suspended, "needs_claim": _needs_claim,
                           "outbox": _outbox.to_json(),
@@ -451,6 +457,30 @@ def _save() -> None:
 
 
 # ---- APNs ----
+# How often the same token may repeat the same non-delivery. A card pushes on every meaningful
+# change, so an unloggable failure would either say nothing or say it twice a minute for a print.
+_GAP_LOG_EVERY = 300.0
+_gap_logged: dict[str, float] = {}
+
+
+def _log_push_gap(token: str, reason: str, detail: str) -> None:
+    """Say that a push did NOT reach Apple, at most every few minutes per token and reason.
+
+    This absence is the failure this file keeps rediscovering. `_relay_send` answers 0 for every
+    non-delivery, every caller reads 0 as "change nothing", and a card the relay will never accept
+    therefore looks exactly like a card with nothing to say: no error, no retry, no log. The one
+    real occurrence took a SQLite query against Canopy to find, thirteen days after it started.
+    """
+    k = f"{token}:{reason}"
+    now = time.time()
+    if now - _gap_logged.get(k, 0.0) < _GAP_LOG_EVERY:
+        return
+    if len(_gap_logged) > 512:  # tokens rotate; this is a memo, not state worth keeping
+        _gap_logged.clear()
+    _gap_logged[k] = now
+    print(f"[push] {token[:8]}… NOT delivered ({reason}) — {detail}", flush=True)
+
+
 async def _relay_send(client: httpx.AsyncClient, push_token: str, aps: dict, priority: str,
                       push_type: str) -> int:
     if _canopy is None:
@@ -464,12 +494,21 @@ async def _relay_send(client: httpx.AsyncClient, push_token: str, aps: dict, pri
         # Another tenant holds this token: our authority was taken. Suspend it, and do NOT return
         # a 4xx that the caller would read as a dead token.
         _suspended[push_token] = "not_owner"
+        _log_push_gap(push_token, "not_owner",
+                      "another tenant holds this token; suspended until a fresh claim wins it back")
         return 0
     if res.outcome is canopy.Outcome.NOT_BOUND:
         # Routine after a release or an expiry. Ask the device to re-claim; changing nothing else.
         _needs_claim[push_token] = _device_for_token(push_token)
+        _log_push_gap(push_token, "not_bound",
+                      "the relay holds no binding for it, so this card CANNOT update until the app "
+                      "registers it again with a claim — see needs_claim on /health")
         return 0
-    return 0  # transport, rate limit, refusal — retry later, touch no registration
+    # Transport, rate limit, refusal — retry later, touch no registration. Logged all the same: a
+    # relay that is down and a token that is refused are both silent from here, and they are not
+    # the same problem.
+    _log_push_gap(push_token, res.outcome.value, res.detail or "no detail from the relay")
+    return 0
 
 
 def _device_for_token(push_token: str) -> str:
@@ -490,7 +529,7 @@ async def _apns_send(client: httpx.AsyncClient, push_token: str, aps: dict, prio
     return await _relay_send(client, push_token, aps, priority, push_type)
 
 
-async def _wake_devices(client: httpx.AsyncClient, label: str) -> bool:
+async def _wake_devices(client: httpx.AsyncClient, label: str, force: bool = False) -> bool:
     """Silent-push every healthy device token so the app can fetch this print's plate.
 
     Returns whether a push was ATTEMPTED, not whether it landed. iOS never tells anyone that a
@@ -506,7 +545,10 @@ async def _wake_devices(client: httpx.AsyncClient, label: str) -> bool:
     for tok in list(_device_tokens):
         if tok in _needs_claim or tok in _suspended:
             continue
-        if not may_wake(now, _woke_at.get(tok), WAKE_MIN_INTERVAL_S):
+        # `force` is the adoption chase (see `adoption_step`), which spends one wake per unadopted
+        # START rather than one per plate. The floor exists to protect the silent-push budget from a
+        # per-print picture fetch, not to withhold the one push that repairs an unreachable card.
+        if not force and not may_wake(now, _woke_at.get(tok), WAKE_MIN_INTERVAL_S):
             continue
         _woke_at[tok] = now
         attempted = True
@@ -729,6 +771,23 @@ async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool
     return delivered
 
 
+def _forget_pending(pending_id: str) -> None:
+    """Drop one outstanding start and the escalation spent on it."""
+    _p2s_pending.pop(pending_id, None)
+    _p2s_escalated.pop(pending_id, None)
+
+
+def _drop_pending_key(key: str) -> None:
+    """Forget EVERY device's outstanding start for one registry key.
+
+    `_p2s_pending` is keyed "<key>|<device>", and the callers below popped the bare key — which
+    matched nothing, so a finished print left its claim behind. `_pending_key` then handed that
+    stale claim to the next card the device reported and bound a fresh token to a dead key.
+    """
+    for pending_id in [p for p in _p2s_pending if p == key or p.startswith(f"{key}|")]:
+        _forget_pending(pending_id)
+
+
 def _pending_key(device: str = "") -> str | None:
     """This device's outstanding remote start, dropping it if it has aged out.
 
@@ -743,7 +802,7 @@ def _pending_key(device: str = "") -> str | None:
         if not key:  # legacy entry written before ids existed
             key, owner = pending_id, registry.LEGACY_DEVICE
         if time.time() - ts > P2S_PENDING_TTL:
-            _p2s_pending.pop(pending_id, None)
+            _forget_pending(pending_id)
             print(f"[p2s] pending {key} expired — the app will end that card as an orphan", flush=True)
             _save()
         elif owner == want:
@@ -805,6 +864,43 @@ async def _remote_start(client: httpx.AsyncClient, key: str, cs: dict, label: st
     if sent:
         _save()
     return sent
+
+
+async def _chase_adoption(client: httpx.AsyncClient) -> None:
+    """Chase a remote start whose card has never handed its token over.
+
+    `adoption_step` holds the rule and the story; this is the loop side. It walks the outstanding
+    starts, forgets the ones a card has since claimed, and spends at most one escalation per start.
+
+    Deliberately NOT part of the per-printer walk below: a start can outlive the poll that made it
+    (the printer drops off Bambuddy, the status call times out), and the chase must keep running
+    exactly when the fleet loop has stopped producing.
+    """
+    now = time.time()
+    for pending_id, ts in list(_p2s_pending.items()):
+        key, _, device = pending_id.rpartition("|")
+        if not key:  # legacy entry written before ids existed
+            key, device = pending_id, registry.LEGACY_DEVICE
+        if registry.has_card(_regs, key, device):
+            _p2s_escalated.pop(pending_id, None)  # adopted; nothing left to chase
+            continue
+        step = adoption_step(now - ts, _p2s_escalated.get(pending_id, 0))
+        if not step:
+            continue
+        _p2s_escalated[pending_id] = step
+        _save()
+        age = int(now - ts)
+        if step == 1:
+            print(f"[adopt] {key} unclaimed after {age}s — waking {device}, which is the only "
+                  f"party that can hand this card's token over", flush=True)
+            await _wake_devices(client, f"unadopted {key}", force=True)
+            continue
+        pid, _ams = key_ids(key)
+        name = _printers_cache.get(pid) or f"Printer {pid}"
+        print(f"[adopt] {key} STILL unclaimed after {age}s — the app has not run; sending the "
+              f"banner, the one channel a force-quit app still receives", flush=True)
+        _queue_alert(f"{key}:unadopted", f"📵 {name} — card can’t update",
+                     "Open Sprout once so this print’s card can be linked.")
 
 
 def _f(v) -> float:
@@ -931,6 +1027,9 @@ async def _tick(client: httpx.AsyncClient) -> None:
     # Deliver queued banners first: an event that failed last tick is older than
     # anything this one will produce.
     await _drain_outbox(client)
+    # Then chase the cards that cannot be reached at all. Ahead of the fleet walk on purpose: an
+    # unadopted card is unreachable NOW, and whatever the poll below discovers cannot be shown on it.
+    await _chase_adoption(client)
 
     # Poll every printer with a Live-Activity card; also the whole fleet when a device token is
     # registered (so print-done/error alerts fire even with no card up).
@@ -1088,7 +1187,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
             if nxt != _p2s_started.get(key):
                 if nxt is None:
                     _p2s_started.pop(key, None)
-                    _p2s_pending.pop(key, None)  # print over; the next one may start a card again
+                    _drop_pending_key(key)  # print over; the next one may start a card again
                 else:
                     _p2s_started[key] = nxt
                 _save()
@@ -1129,7 +1228,7 @@ async def _tick(client: httpx.AsyncClient) -> None:
             for k in [k for k in list(_p2s_started) if k.startswith(f"dry:{pid}:")]:
                 if k not in live_dry_keys:
                     _p2s_started.pop(k, None)
-                    _p2s_pending.pop(k, None)
+                    _drop_pending_key(k)
             _save()
 
         # 2) Alert on a state transition (edge-triggered; the first observation is silent). _last_kind is
@@ -1581,6 +1680,21 @@ async def health() -> dict:
         # every other angle — is visible here without touching the phone.
         "cards_by_client": registry.count_by(_regs, client_of),
         "push_suspended": [{"token": t[:8], "reason": why} for t, why in _suspended.items()],
+        # The three lists that answer "why is that card not moving?" without a database. A token the
+        # relay refuses is a card that CANNOT update, and that fact used to live only in Canopy's own
+        # SQLite — from here it looked identical to a printer with nothing to say.
+        "needs_claim": [{"token": t[:8], "device": d[:8]} for t, d in _needs_claim.items()],
+        "unadopted_starts": [
+            {"key": p.rpartition("|")[0] or p, "device": p.rpartition("|")[2][:8],
+             "age_s": int(time.time() - ts), "escalated": _p2s_escalated.get(p, 0)}
+            for p, ts in _p2s_pending.items()
+        ],
+        "cards": [
+            {"key": k, "device": registry.device_of(c)[:8], "client": client_of(c),
+             "bound": c.get("pushToken") not in _needs_claim,
+             "last_push_age_s": int(time.time() - c["lastPush"]) if c.get("lastPush") else None}
+            for k in _regs for c in registry.cards(_regs, k)
+        ],
         "start_tokens_by_client": {c: sum(1 for t in _p2s_tokens if norm_client(_p2s_clients.get(t)) == c) for c in (EXPO, NATIVE)},
     }
 
@@ -1715,10 +1829,15 @@ async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
             "client": norm_client(r.client),
             "lastPush": 0, "lastState": None,
         })
-        _p2s_pending.pop(_pending_id(key, device), None)
+        _forget_pending(_pending_id(key, device))
         known.add(tok)
         print(f"[sync] bound {key} -> token {tok[:8]}… (card is now updatable)", flush=True)
 
+    if orphans:
+        # Logged because this is the app being told to END a card, which on the phone looks exactly
+        # like the card dying by itself. Silent, it was indistinguishable from the freeze it repairs.
+        print(f"[sync] {device} holds {len(orphans)} card(s) we cannot place "
+              f"({', '.join(t[:8] for t in orphans)}) — telling the app to end them", flush=True)
     _save()
     return {"end": orphans, "cards": list(_regs.keys()), "needs_claim": _needs_claim_for(device)}
 
@@ -1759,7 +1878,7 @@ async def register(r: Register, _: None = Depends(_require_key)) -> dict:
         # this token still needs claiming, so nothing downstream could tell the device to retry.
         _needs_claim[r.push_token] = device
     if r.kind != "dry":
-        _p2s_pending.pop(_pending_id(str(r.printer_id), device), None)  # reachable again
+        _forget_pending(_pending_id(str(r.printer_id), device))  # reachable again
     _save()
     print(f"[register] {r.kind} printer {r.printer_id} ({r.printer_name}) [{norm_client(r.client)}] "
           f"token {r.push_token[:8]}… bound={bound}", flush=True)
