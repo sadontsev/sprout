@@ -813,3 +813,35 @@ class UnadoptedStarts(unittest.TestCase):
         la._needs_claim = {"deadbeefcafe": "phoneA"}
         body = self.client.get("/health").json()
         self.assertEqual(body["needs_claim"], [{"token": "deadbeef", "device": "phoneA"}])
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class NeedsClaimHousekeeping(unittest.TestCase):
+    """`needs_claim` entries for tokens nobody holds any more.
+
+    Written on every refused push and cleared only by a successful claim, so a rotated token leaves
+    one behind for good. A live instance had 34. They are not only clutter: `_remote_start` refuses
+    to spend a print's single start on a token listed here, so an entry that can never be cleared
+    would stop that device getting cards at all.
+    """
+
+    def setUp(self):
+        la._regs = {}
+        la._p2s_tokens = []
+        la._device_tokens = []
+        la._needs_claim = {}
+        la._suspended = {}
+
+    def test_a_token_nothing_holds_is_forgotten(self):
+        la._needs_claim = {"gone": "phoneA"}
+        la._suspended = {"gone": "not_owner"}
+        la._prune_needs_claim()
+        self.assertEqual((la._needs_claim, la._suspended), ({}, {}))
+
+    def test_every_kind_of_held_token_survives(self):
+        la._regs = {"1": [{"printerId": 1, "pushToken": "card", "deviceId": "phoneA"}]}
+        la._p2s_tokens = ["start"]
+        la._device_tokens = ["device"]
+        la._needs_claim = {"card": "phoneA", "start": "phoneA", "device": "phoneA", "gone": "phoneA"}
+        la._prune_needs_claim()
+        self.assertEqual(sorted(la._needs_claim), ["card", "device", "start"])
