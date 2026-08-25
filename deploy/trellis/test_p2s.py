@@ -4,7 +4,8 @@ from __future__ import annotations
 import unittest
 
 from p2s import (aggregate_should_start, dry_identity, hms_reason, may_wake, next_started_for,
-                 print_identity, prune, shot_printer_id, should_start, wake_push_due)
+                 print_identity, prune, rearm_after_drop, shot_printer_id, should_start,
+                 wake_push_due)
 
 
 class TestPrintIdentity(unittest.TestCase):
@@ -287,3 +288,26 @@ class ShotPrinterTests(unittest.TestCase):
         self.assertIsNone(shot_printer_id("notanumber:error"))
         self.assertIsNone(shot_printer_id("0:error"))
         self.assertIsNone(shot_printer_id("-3:error"))
+
+
+class RearmAfterDropTests(unittest.TestCase):
+    """Losing a card mid-print must let push-to-start replace it.
+
+    The bug this encodes, measured on a live printer at 96 % with no card at all:
+
+        [update] printer 2 prio 10 -> 410
+
+    APNs said the token was dead, the registration was dropped, and `_p2s_started` still said "we
+    started one for this session" — so nothing started another until the print ended. The comment
+    above the arming call claimed the condition was "this printer is live and has no card"; the
+    fact it consulted was "have we started for this session", which is the neighbouring question.
+    """
+
+    def test_the_last_card_going_re_arms(self):
+        self.assertTrue(rearm_after_drop(0))
+
+    def test_one_of_several_going_does_not(self):
+        """Another phone still holds a card, so this is not a printer with no card — re-arming
+        would push a second start at a device that already has one."""
+        self.assertFalse(rearm_after_drop(1))
+        self.assertFalse(rearm_after_drop(3))

@@ -35,8 +35,8 @@ import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
 from p2s import (aggregate_should_start, dry_identity, hms_reason, may_wake,
-                 next_started_for, print_identity, shot_printer_id, should_start,
-                 wake_push_due)
+                 next_started_for, print_identity, rearm_after_drop, shot_printer_id,
+                 should_start, wake_push_due)
 
 # ---- config (env) ----
 BAMBUDDY_URL = os.environ.get("BAMBUDDY_URL", "http://localhost:8910").rstrip("/")
@@ -1019,6 +1019,12 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 if code in (400, 410):
                     print(f"[drop] printer {pid} -> {code}", flush=True)
                     registry.drop_token(_regs, str(pid), creg.get("pushToken"))
+                    # A dead token is a card that no longer exists. If it was the last one, let
+                    # push-to-start arm again — otherwise the printer runs to the end of the print
+                    # with no card and nothing that can replace it. See `rearm_after_drop`.
+                    if rearm_after_drop(len(registry.cards(_regs, str(pid)))):
+                        if _p2s_started.pop(str(pid), None) is not None:
+                            print(f"[p2s] re-armed printer {pid}: its last card is gone", flush=True)
                 else:
                     creg["lastState"], creg["lastPush"] = cs, now
                 dirty = True

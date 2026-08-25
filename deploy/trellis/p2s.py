@@ -71,6 +71,29 @@ def should_start(active: bool, identity: str, started_for: str | None, has_card:
     return started_for is None
 
 
+def rearm_after_drop(cards_left: int) -> bool:
+    """Whether losing a card should let this printer's push-to-start arm again.
+
+    Arming is once per LIVE SESSION — `should_start` returns True only while nothing has been
+    started — and that is right for the case it was written for: a card that exists must not be
+    duplicated. It is wrong for the case that actually happens. A card's push token dies mid-print
+    (the app was updated, iOS ended the activity, the user swiped it away), APNs answers 410, the
+    registration is dropped, and from then until the print finishes nothing starts a replacement.
+    Measured on a live printer at 96 % with no card at all:
+
+        [update] printer 2 prio 10 -> 410
+
+    The comment above the arming call claims the condition is "this printer is live and has no
+    card". It was not: `_p2s_started` records "have we started for this session", which is the
+    neighbouring question, and it kept saying yes about a card that no longer existed.
+
+    So a drop that empties the key re-arms. Not any drop — one device losing its card while another
+    still holds one is not a printer with no card, and re-arming there would push a second start at
+    a phone that already has one.
+    """
+    return cards_left == 0
+
+
 def shot_printer_id(alert_key: str) -> int | None:
     """Which printer a camera frame should be taken from for this alert, or None for no frame.
 
