@@ -132,6 +132,37 @@ final class LiveActivityController {
         startObserving()
     }
 
+    private static var instance: LiveActivityController?
+
+    /// The one controller this process has, built on demand.
+    ///
+    /// **Why this is not just a convenience.** Apple's contract for a push-to-started card is that
+    /// the system "starts a new Live Activity, wakes up your app, and grants it background runtime",
+    /// and that "while the system starts the new Live Activity and wakes up your app, you receive
+    /// the push token you use for updates". That token is the ONLY way anyone can update that card.
+    ///
+    /// It was arriving to nobody. The controller — the only object that iterates `pushTokenUpdates`
+    /// — was built inside `AppModel.connect`, which runs from the SwiftUI scene's `.task`, and a
+    /// background launch never builds a scene. So iOS did exactly what it promises, handed the token
+    /// to a process with no listener in it, and the card stayed frozen at its start content until
+    /// somebody opened the app by hand. Thirteen days of that on one deployment, every print.
+    ///
+    /// So the app delegate builds it at launch — every launch, including the invisible ones — and
+    /// the session reuses that instance rather than making a second one. Two controllers would mean
+    /// two registrations for one card and, since the app now writes cards the relay cannot reach,
+    /// two writers.
+    @discardableResult
+    static func shared(config: AppConfig) -> LiveActivityController {
+        if let instance, instance.pushUrl == ConfigRules.resolvePushUrl(config), instance.apiKey == config.apiKey {
+            return instance
+        }
+        // Settings → Save changes where registrations go, so the old one is replaced rather than
+        // reconfigured. Its stream tasks hold `self` weakly and end with it.
+        let controller = LiveActivityController(config: config)
+        instance = controller
+        return controller
+    }
+
     /// The device id sent with every registration, so Trellis can tell two phones apart. They share
     /// one Bambuddy key, so without this one phone's reconcile deregisters the other's cards.
     private var deviceID: String { identity?.deviceID ?? "" }
