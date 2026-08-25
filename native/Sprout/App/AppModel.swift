@@ -312,7 +312,10 @@ final class AppModel {
         attachStores(client: c)
 
         #if os(iOS)
-        liveActivity = LiveActivityController(config: cfg)
+        // `shared`, not a fresh one: the app delegate has already built this at launch so a
+        // background wake has something listening for card tokens. A second instance here would
+        // register every card twice and, in take-over mode, write it twice.
+        liveActivity = LiveActivityController.shared(config: cfg)
 
         // Remote notifications: the device token feeds the alert banners this app has never been
         // able to receive, and it is the only token kind Apple delivers a silent push to — which

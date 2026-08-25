@@ -99,6 +99,30 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
     nonisolated(unsafe) static var onDeviceToken: ((String) -> Void)?
     nonisolated(unsafe) static var onVouchNonce: ((String) -> Void)?
 
+    /// Every launch, including the ones with no UI.
+    ///
+    /// iOS launches this process in the background when a push-to-started Live Activity needs its
+    /// update token handed over — Apple: it "starts a new Live Activity, wakes up your app, and
+    /// grants it background runtime", and "while the system starts the new Live Activity and wakes
+    /// up your app, you receive the push token you use for updates".
+    ///
+    /// Nothing was there to receive it. The controller that iterates `pushTokenUpdates` was built
+    /// by `AppModel.connect`, which runs from the SwiftUI scene's `.task`, and a background launch
+    /// builds no scene. The token was delivered to a process with no listener in it and the card
+    /// stayed frozen at its start content for the whole print.
+    ///
+    /// Reading the config here is safe with the phone locked: both keychain items are
+    /// `AfterFirstUnlock`, for this exact moment.
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        if let config = SecureConfig.load() {
+            LiveActivityController.shared(config: config)
+        }
+        return true
+    }
+
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
