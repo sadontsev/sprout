@@ -57,6 +57,9 @@ final class LiveActivityController {
     private var tokens: [String: String] = [:]
     /// `"<activity id>|<token>"` pairs Trellis has accepted.
     private var registered: Set<String> = []
+    /// Tokens the relay has told us it cannot push to (`needs_claim`). Not a diagnostic: while a
+    /// token is in here the SERVER cannot write that card, so this app must — see `appMustWrite`.
+    private var unbound: Set<String> = []
     private var lastRegisterAttempt: [String: Date] = [:]
 
     /// Minimum gap between updates for one card. ActivityKit throttles aggressively and a card that
@@ -535,6 +538,38 @@ final class LiveActivityController {
         }
     }
 
+    /// Whether this app has to write a card the server nominally owns.
+    ///
+    /// A Live Activity started by push can only be updated through ITS OWN token, and ActivityKit
+    /// hands that token to a running process and to nobody else. When the app is force-quit iOS
+    /// never launches it, the token never reaches Trellis, and the relay refuses every update as
+    /// `not_bound` — so the card sits frozen at the percentage the start push created, with its ETA
+    /// counting down on the device and nothing anywhere reporting a failure. Thirteen days of that
+    /// went unnoticed on a real deployment.
+    ///
+    /// The single-writer rule survives, because ownership only moves once the server has SAID it is
+    /// not the writer: an unregistered pair (Trellis never answered `bound`) or a token it has since
+    /// listed in `needs_claim`. There is no window where both sides believe they own the card.
+    nonisolated static func appMustWrite(token: String?, registered: Bool, unbound: Bool) -> Bool {
+        guard let token, !token.isEmpty else { return true }  // nothing was ever handed over
+        return unbound || !registered
+    }
+
+    /// `appMustWrite` for the card under one key. False when no card exists: creating one in SERVER
+    /// mode stays push-to-start's job, or two cards appear for one print.
+    private func serverCannotWrite(printerId: Int, amsId: Int?) -> Bool {
+        for activity in Activity<PrintActivityAttributes>.activities
+        where activity.attributes.printerId == printerId && activity.attributes.amsId == amsId {
+            let token = tokens[activity.id]
+            return Self.appMustWrite(
+                token: token,
+                registered: token.map { registered.contains("\(activity.id)|\($0)") } ?? false,
+                unbound: token.map { unbound.contains($0) } ?? false
+            )
+        }
+        return false
+    }
+
     private func upsert(printerId: Int, amsId: Int?, content: PrintActivityAttributes.ContentState, ended: Bool) async {
         // SERVER mode: the server is the sole WRITER as well as the sole creator, so this returns
         // before touching a card or the gate state behind it. Two writers do not merely halve the
@@ -542,7 +577,10 @@ final class LiveActivityController {
         // hold different snapshots and the card's progress visibly jitters backwards. The local gate
         // (`lastContent`/`lastUpdate`) also knows nothing about what the server last rendered, so the
         // two sides cannot even agree on what counts as a change.
-        guard !isServerOwned else { return }
+        //
+        // Unless the server cannot write it at all, which is not the same question — see
+        // `appMustWrite`. A card only this app can reach is a card only this app can keep honest.
+        guard !isServerOwned || serverCannotWrite(printerId: printerId, amsId: amsId) else { return }
 
         let k = key(printerId: printerId, amsId: amsId)
 
@@ -563,8 +601,11 @@ final class LiveActivityController {
             return
         }
 
-        // No card exists, so this is a creation. Respect a swipe: the user removing a card is an
-        // instruction, not a glitch to heal.
+        // No card exists, so this is a creation — and creation is push-to-start's job in SERVER
+        // mode even when the app has taken over WRITING. Creating one here would put a second card
+        // on the lock screen the moment a start push landed.
+        guard !isServerOwned else { return }
+        // Respect a swipe: the user removing a card is an instruction, not a glitch to heal.
         guard !dismissed.contains(k) else { return }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
@@ -666,6 +707,14 @@ final class LiveActivityController {
         }
 
         guard isServerOwned else { return }
+        // The token a card ALREADY has, read directly. `pushTokenUpdates` is the durable path and
+        // stays below, but a card adopted at launch (started remotely while the app was closed) has
+        // had its token for some time, and waiting for the stream to re-emit is waiting for a rotation
+        // that may not come this print. Registering it is what un-freezes that card.
+        if let existing = activity.pushToken.map(Self.hex), !existing.isEmpty, tokens[id] != existing {
+            tokens[id] = existing
+            Task { [weak self] in await self?.register(activity: activity, token: existing) }
+        }
         Task { [weak self] in
             for await tokenData in activity.pushTokenUpdates {
                 guard let self else { return }
@@ -681,6 +730,7 @@ final class LiveActivityController {
         // to this device, and by the end of this function we no longer have it.
         let vanishedToken = tokens[activityId]
         observed.remove(activityId)
+        if let vanishedToken { unbound.remove(vanishedToken) }
         tokens[activityId] = nil
         registered = registered.filter { !$0.hasPrefix("\(activityId)|") }
         lastRegisterAttempt = lastRegisterAttempt.filter { !$0.key.hasPrefix("\(activityId)|") }
@@ -805,6 +855,9 @@ final class LiveActivityController {
     /// intersection, and its own test explains why the naive reading is an oracle.
     private func reclaim(_ serverSays: [String], held: Set<String>) {
         for token in pending.needingReclaim(serverSays: serverSays, heldTokens: held) {
+            // Recorded, not just retried. Until a claim succeeds the relay will refuse every push to
+            // this card, so this app is its only writer — `appMustWrite` reads this set.
+            unbound.insert(token)
             // Clearing the stamp lets the next tick retry immediately: the server has just told us
             // this token is unusable, which is newer information than the backoff was protecting.
             registered = registered.filter { !$0.hasSuffix("|\(token)") }
@@ -989,6 +1042,7 @@ final class LiveActivityController {
         // every component reporting success.
         if result.ok && result.bound {
             registered.insert(pair)
+            unbound.remove(token)  // the relay can reach it again; the server is the writer once more
             await attestor.confirmAttested()
         } else {
             // The "why" is already logged by postWithReason, for every failure rather than only
