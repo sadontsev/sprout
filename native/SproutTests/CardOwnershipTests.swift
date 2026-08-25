@@ -1,3 +1,7 @@
+#if os(iOS)
+// Card ownership. The subject is iOS-only — `LiveActivityController` is inside `#if os(iOS)`
+// because ActivityKit does not exist on macOS — so the tests are too, matching every other
+// Live Activity suite in this directory.
 import XCTest
 @testable import Sprout
 
@@ -38,3 +42,4 @@ final class CardOwnershipTests: XCTestCase {
         XCTAssertFalse(LiveActivityController.appMustWrite(token: "tok", registered: true, unbound: false))
     }
 }
+#endif
