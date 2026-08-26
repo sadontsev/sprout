@@ -89,6 +89,21 @@ CANOPY_URL = os.environ.get("CANOPY_URL", "").rstrip("/") or DEFAULT_CANOPY_URL
 # variable to set rather than as a bare HTTP status.
 CANOPY_INVITE_CODE = os.environ.get("CANOPY_INVITE_CODE", "")
 
+# Verbose request logging. OFF by default: these lines name a device id and a token prefix on
+# every registration, so they belong in a deliberate debugging session and not in a normal log.
+#
+# `.strip().lower()` and a truthy SET, not `bool(os.environ.get(...))`: compose turns an unset
+# variable into the EMPTY STRING, and any non-empty string is truthy — so `TRELLIS_VERBOSE=false`
+# would have switched it ON. The same trap this file already documents for BAMBUDDY_API_KEY.
+VERBOSE = os.environ.get("TRELLIS_VERBOSE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def vlog(msg: str) -> None:
+    """Print only when TRELLIS_VERBOSE is set. See VERBOSE."""
+    if VERBOSE:
+        print(f"[v] {msg}", flush=True)
+
+
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "5"))
 # 30s: Live-Activity pushes draw from a per-device budget (even WITH the frequent-updates plist
 # key). Priority-10 every 4s exhausted it within minutes — iOS then silently stops applying updates
@@ -1728,7 +1743,13 @@ class StartReg(BaseModel):
 
 @app.post("/register-start")
 async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
+    # Enough to tell ONE app posting twice from TWO devices posting once — which is the whole
+    # question when the same token registers three times in two seconds. Same device_id and token
+    # means one app with two code paths; different device_id means two installs.
+    vlog(f"register-start token={r.push_token[:8]}… device={(r.device_id or '-')[:8]}… "
+         f"client={r.client} claim={'yes' if r.claim else 'NO'} known={r.push_token in _p2s_tokens}")
     bound = await _forward_claim(r.claim, r.push_token, r.device_id or registry.LEGACY_DEVICE)
+    vlog(f"register-start token={r.push_token[:8]}… bound={bound}")
     if r.push_token:
         if r.push_token not in _p2s_tokens:
             _p2s_tokens.append(r.push_token)
@@ -1763,6 +1784,7 @@ async def challenge(r: ChallengeReq, _: None = Depends(_require_key)) -> dict:
     if _canopy is None or _canopy.credentials is None:
         raise HTTPException(status_code=503, detail="not enrolled with the push relay yet")
     try:
+        vlog(f"challenge purpose={r.purpose}")
         return {"challenge": await _canopy.challenge(r.purpose)}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"could not reach the push relay: {e}") from e
@@ -1863,6 +1885,8 @@ async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
 
 @app.post("/register-device")
 async def register_device(r: DeviceReg, _: None = Depends(_require_key)) -> dict:
+    vlog(f"register-device token={r.device_token[:8]}… device={(r.device_id or '-')[:8]}… "
+         f"claim={'yes' if r.claim else 'NO'}")
     bound = await _forward_claim(r.claim, r.device_token, r.device_id or registry.LEGACY_DEVICE)
     if r.device_token not in _device_tokens:
         _device_tokens.append(r.device_token)
@@ -1876,6 +1900,8 @@ async def register_device(r: DeviceReg, _: None = Depends(_require_key)) -> dict
 
 @app.post("/register")
 async def register(r: Register, _: None = Depends(_require_key)) -> dict:
+    vlog(f"register printer={r.printer_id} kind={r.kind} token={r.push_token[:8]}… "
+         f"device={(r.device_id or '-')[:8]}… claim={'yes' if r.claim else 'NO'}")
     key = str(r.printer_id) if r.kind != "dry" else (
         f"dry:{r.printer_id}:{r.ams_id}" if r.ams_id is not None else f"dry:{r.printer_id}"
     )

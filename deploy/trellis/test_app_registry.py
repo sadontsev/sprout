@@ -845,3 +845,30 @@ class NeedsClaimHousekeeping(unittest.TestCase):
         la._needs_claim = {"card": "phoneA", "start": "phoneA", "device": "phoneA", "gone": "phoneA"}
         la._prune_needs_claim()
         self.assertEqual(sorted(la._needs_claim), ["card", "device", "start"])
+
+
+class VerboseFlagTests(unittest.TestCase):
+    """`TRELLIS_VERBOSE` is off unless explicitly turned on.
+
+    The trap this guards is the one BAMBUDDY_API_KEY already documents in app.py: compose turns an
+    unset variable into the EMPTY STRING, and `bool("")` is False but `bool("false")` is TRUE. A
+    naive `bool(os.environ.get(...))` would therefore switch verbose logging ON for anyone who
+    wrote `TRELLIS_VERBOSE=false`, which is the opposite of what they asked for.
+    """
+
+    @staticmethod
+    def _on(raw: str) -> bool:
+        # The expression under test, mirrored from app.py's VERBOSE.
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    def test_off_by_default_and_when_empty(self):
+        for raw in ("", "   "):
+            self.assertFalse(self._on(raw), f"{raw!r} must be off")
+
+    def test_words_that_mean_no_are_off(self):
+        for raw in ("0", "false", "False", "no", "off", "nope"):
+            self.assertFalse(self._on(raw), f"{raw!r} must be off")
+
+    def test_words_that_mean_yes_are_on(self):
+        for raw in ("1", "true", "TRUE", " yes ", "on"):
+            self.assertTrue(self._on(raw), f"{raw!r} must be on")

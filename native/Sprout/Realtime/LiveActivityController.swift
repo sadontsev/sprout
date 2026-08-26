@@ -690,6 +690,14 @@ final class LiveActivityController {
                     // a POST that failed here used to be the end of it: the server then had nothing
                     // to push a start to and the lock screen stayed empty for the whole print.
                     self.pending.add(token: token, kind: .start)
+                    // Stamped BEFORE the eager send, so `flushPending` — which runs on the 4 s tick
+                    // and honours the same 30 s per-token throttle — does not register this token a
+                    // second time while this POST is still in flight. Queuing AND sending is
+                    // deliberate (a failed send here would otherwise be the end of it), but without
+                    // the stamp both paths fired: two claims, two challenges, two register-starts,
+                    // in the same second on the same connection. The card path at `register` and
+                    // `flushPending` itself already stamp; this was the one that did not.
+                    self.lastRegisterAttempt[token] = Date()
                     // The glyph, when we have one. Trellis treats an empty value as "keep what you
                     // have", so a registration that races the first `sync` is not destructive — the
                     // next one carries it.

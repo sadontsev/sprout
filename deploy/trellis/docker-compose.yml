@@ -34,6 +34,13 @@ services:
       # fine and every Bambuddy call answered 401 — which reads as "Bambuddy is broken" and sends
       # you to the wrong service.
       BAMBUDDY_API_KEY: ${BAMBUDDY_API_KEY:?set BAMBUDDY_API_KEY in .env — see .env.example}
+      # Verbose request logging, for a debugging session and not for normal running: these lines
+      # name a device id and a token prefix on every registration. `TRELLIS_VERBOSE=1` in .env.
+      #
+      # Default EMPTY rather than "0": Trellis reads this with a truthy set, so an empty value is
+      # off and so is "false" — writing `${TRELLIS_VERBOSE:-0}` would be fine too, but an empty
+      # default keeps `docker compose config` honest about the variable being unset.
+      TRELLIS_VERBOSE: ${TRELLIS_VERBOSE:-}
     volumes:
       # Trellis's own state — registrations, tenant credentials, edge-detection.
       - ./data:/data
