@@ -872,3 +872,34 @@ class VerboseFlagTests(unittest.TestCase):
     def test_words_that_mean_yes_are_on(self):
         for raw in ("1", "true", "TRUE", " yes ", "on"):
             self.assertTrue(self._on(raw), f"{raw!r} must be on")
+
+
+@unittest.skipUnless(HAVE_DEPS, "needs fastapi/httpx")
+class DeliverableTokenTests(unittest.TestCase):
+    """One predicate for "can a push to this token land", used by all three senders.
+
+    It was inlined in `_wake_devices` and in the push-to-start loop, and missing from `_notify`, so
+    every alert was also sent to tokens the relay has no binding for. Observed on a live banner: one
+    `200` and three `-> 0`, the three belonging to a device identity that no longer exists.
+    """
+
+    def setUp(self):
+        self._nc, self._sus = dict(la._needs_claim), dict(la._suspended)
+        la._needs_claim.clear()
+        la._suspended.clear()
+
+    def tearDown(self):
+        la._needs_claim.clear(); la._needs_claim.update(self._nc)
+        la._suspended.clear(); la._suspended.update(self._sus)
+
+    def test_a_bound_token_is_deliverable(self):
+        self.assertTrue(la._deliverable("goodtoken"))
+
+    def test_an_unclaimed_token_is_not(self):
+        # No binding at the relay: every push to it is refused, so sending is a guaranteed failure.
+        la._needs_claim["stale"] = "K5dLF6s-"
+        self.assertFalse(la._deliverable("stale"))
+
+    def test_a_suspended_token_is_not(self):
+        la._suspended["paused"] = 0.0
+        self.assertFalse(la._deliverable("paused"))

@@ -552,6 +552,21 @@ async def _apns_send(client: httpx.AsyncClient, push_token: str, aps: dict, prio
     return await _relay_send(client, push_token, aps, priority, push_type)
 
 
+def _deliverable(tok: str) -> bool:
+    """Whether a push to this device token can possibly land.
+
+    A token in `_needs_claim` has no binding at the relay, so the relay refuses every push to it —
+    the attempt is a guaranteed failure, not a gamble. `_suspended` is the same answer for a
+    different reason.
+
+    Written once because it was already inlined in `_wake_devices` and in the push-to-start loop,
+    and MISSING from `_notify` — so every alert was sent to stale tokens too. Observed: one `200`
+    and three `-> 0` for a single banner, the three being tokens from a device identity that no
+    longer exists.
+    """
+    return tok not in _needs_claim and tok not in _suspended
+
+
 async def _wake_devices(client: httpx.AsyncClient, label: str, force: bool = False) -> bool:
     """Silent-push every healthy device token so the app can fetch this print's plate.
 
@@ -566,7 +581,7 @@ async def _wake_devices(client: httpx.AsyncClient, label: str, force: bool = Fal
     now = time.time()
     attempted = False
     for tok in list(_device_tokens):
-        if tok in _needs_claim or tok in _suspended:
+        if not _deliverable(tok):
             continue
         # `force` is the adoption chase (see `adoption_step`), which spends one wake per unadopted
         # START rather than one per plate. The floor exists to protect the silent-push budget from a
@@ -779,6 +794,10 @@ async def _notify(client: httpx.AsyncClient, title: str, body: str, urgent: bool
             payload["sprout_shot"] = {"t": token, "p": printer_id}
     delivered = False
     for tok in list(_device_tokens):
+        # See `_deliverable`. Sending to an unbound token is a guaranteed refusal, and doing it on
+        # every alert made a working banner look like a failing one in the log.
+        if not _deliverable(tok):
+            continue
         try:
             # Through the same backend as everything else, so the relay's status translation and
             # the local signer stay observably equivalent to the hygiene below.
