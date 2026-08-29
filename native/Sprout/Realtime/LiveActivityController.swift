@@ -74,8 +74,11 @@ final class LiveActivityController {
     /// they deliver within moments — and short enough that an orphaned card is ended in the same
     /// minute rather than living beside its replacement.
     private static let adoptionGrace: TimeInterval = 20
-    /// When this controller was built, for `adoptionGrace`.
-    private let startedAt = Date()
+    /// When each still-untracked activity was first seen without a token, for `adoptionGrace`.
+    ///
+    /// Per ACTIVITY rather than per process: an orphan that has been tokenless for hours is one we
+    /// can report immediately, and only a card that appeared moments ago deserves the wait.
+    private var untrackedSince: [String: Date] = [:]
 
     var isServerOwned: Bool { pushUrl != nil }
 
@@ -734,6 +737,16 @@ final class LiveActivityController {
 
     private func adoptExistingActivities() {
         for activity in Activity<PrintActivityAttributes>.activities { observe(activity) }
+        // Anything already on screen at launch has been through `observe`, which reads
+        // `activity.pushToken` SYNCHRONOUSLY. So a card still tokenless after this is genuinely
+        // tokenless — not one whose token is moments away — and reconcile may report it at once.
+        //
+        // Without this the per-activity grace restarts every launch: the orphan is "first seen"
+        // again each time, waits out the grace again, and a user who opens the app briefly never
+        // reaches a `/sync`. Backdating is what makes the very first tick able to end it.
+        for activity in Activity<PrintActivityAttributes>.activities where tokens[activity.id] == nil {
+            untrackedSince[activity.id] = .distantPast
+        }
     }
 
     /// Wire one card — ours or the server's — to the streams that keep it honest.
@@ -895,8 +908,18 @@ final class LiveActivityController {
         // So: say nothing while adoption is plausibly still in flight, then speak. By `adoptionGrace`
         // the streams have long since delivered anything they were going to, and a still-untracked
         // activity is not a card we are about to learn about — it is one that needs ending.
+        let now = Date()
         let untracked = Activity<PrintActivityAttributes>.activities.filter { tokens[$0.id] == nil }
-        guard untracked.isEmpty || Date().timeIntervalSince(startedAt) >= Self.adoptionGrace else { return }
+        for a in untracked where untrackedSince[a.id] == nil { untrackedSince[a.id] = now }
+        untrackedSince = untrackedSince.filter { id, _ in untracked.contains { $0.id == id } }
+        // Wait only on activities that are PLAUSIBLY still adopting — measured per activity, not
+        // per process. Measuring from launch made the app silent for the first 20 seconds of every
+        // foreground session, which is most of them: reconcile only runs while the app is on
+        // screen, so "open it, glance, close" never reached a single `/sync`. Observed: three hours,
+        // zero syncs, while registrations kept arriving because those come from the token STREAMS
+        // and not from this tick.
+        let stillArriving = untracked.contains { now.timeIntervalSince(untrackedSince[$0.id] ?? now) < Self.adoptionGrace }
+        guard !stillArriving else { return }
 
         let held = Set(tokens.values.filter { !$0.isEmpty })
         let (outcome, payload) = await send("/sync", body: SyncReport(tokens: Array(held), deviceId: deviceID))
