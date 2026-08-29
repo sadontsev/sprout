@@ -1,3 +1,12 @@
+#if os(iOS)
+// Compiled into TWO targets: the widget extension that ships it, and SproutTests, which renders
+// these views to check their layout (a Live Activity never starts in the Simulator, so this is the
+// only look available before a build reaches a phone). The extension compiles `Shared/` itself; the
+// test target gets those types from the Sprout module instead, hence the conditional import.
+#if SPROUT_TESTS
+@testable import Sprout
+#endif
+
 import ActivityKit
 import SwiftUI
 import WidgetKit
@@ -91,39 +100,7 @@ struct PrintActivityWidget: Widget {
                         DryReadout(state: context.state, tint: tint)
                             .padding(.horizontal, Self.cornerInset)
                     } else {
-                        VStack(spacing: 5) {
-                            ExtrusionBar(
-                                progress: Double(context.state.progress) / 100,
-                                tint: tint,
-                                riding: ExtrusionRider.rides(tintHex: context.state.tint, finished: context.state.finished)
-                            ) {
-                                NozzleMark(bead: tint)
-                            }
-                            HStack {
-                                Text("Layer \(context.state.layer)/\(context.state.totalLayers)")
-                                Spacer()
-                                Text("\(context.state.progress)%")
-                            }
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            // Only the TEXT is inset, not the bar. The bar is a rectangle whose ends
-                            // read as deliberate against the curve; a glyph half-eaten by it reads as
-                            // a bug — "Layer" was arriving as "ayer".
-                            .padding(.horizontal, Self.cornerInset)
-
-                            // The temperatures, which the lock-screen card has always shown and this
-                            // view never did — the same print described two different ways depending
-                            // on where you looked at it.
-                            //
-                            // Only when there is something to say. Apple asks for the expanded
-                            // presentation's height to shrink when there is less information and grow
-                            // when there is more, so an all-zero readout must take no space at all
-                            // rather than render a row of "N 0°".
-                            let temps = TempsRow(state: context.state, tint: tint)
-                            if temps.hasAny {
-                                temps.padding(.horizontal, Self.cornerInset)
-                            }
-                        }
+                        IslandBottom(state: context.state, tint: tint)
                     }
                 }
             } compactLeading: {
@@ -186,6 +163,87 @@ struct PrintActivityWidget: Widget {
 /// enlarging. It stays square and stays in the leading region, which costs the centre 14 pt of the
 /// file name's width; the name already truncates in the middle, and a legible model beats two more
 /// characters of a name.
+/// The expanded island's bottom region for a PRINT: bar, then one line of counters.
+///
+/// Extracted from the `DynamicIsland` builder so it can be rendered on its own — the island cannot
+/// be photographed (a Live Activity does not start in the Simulator at all), so the only way to see
+/// this layout before it ships is to render this view directly. `LiveActivityRenderTests` does that
+/// at real island widths, which is how the temperatures were caught taking a whole extra line.
+private struct IslandBottom: View {
+    let state: PrintActivityAttributes.ContentState
+    let tint: Color
+
+    var body: some View {
+        let temps = TempsRow(state: state, tint: tint)
+        return VStack(spacing: 5) {
+            ExtrusionBar(
+                progress: Double(state.progress) / 100,
+                tint: tint,
+                riding: ExtrusionRider.rides(tintHex: state.tint, finished: state.finished)
+            ) {
+                NozzleMark(bead: tint)
+            }
+            if temps.hasAny {
+                // One line when the readings fit, two when they do not — asked of the layout system
+                // rather than decided here, because the answer depends on the numbers.
+                //
+                // The temperatures had a row of their own, which left the space between "Layer
+                // 731/952" and "82%" — over half the island — empty while making the card a line
+                // taller. Moving them onto that line fixes the ordinary case and breaks the worst
+                // one: a dual-nozzle enclosed machine mid-heat wants 291pt of readings against
+                // 206pt of free space, and every target truncated to "L 148° →…". Losing all four
+                // targets is worse than spending a line, and the targets are the numbers that
+                // answer "how long".
+                //
+                // `ViewThatFits` picks the first child whose IDEAL size fits the width it is
+                // offered, so the one-line form is used exactly when it does not have to shrink.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        counter("Layer \(state.layer)/\(state.totalLayers)")
+                        Spacer(minLength: 4)
+                        temps
+                        Spacer(minLength: 4)
+                        counter("\(state.progress)%")
+                    }
+                    // Stacked, and the temperatures share the LEFT margin with "Layer" rather
+                    // than centring themselves under a row that is pinned to both edges.
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            counter("Layer \(state.layer)/\(state.totalLayers)")
+                            Spacer()
+                            counter("\(state.progress)%")
+                        }
+                        temps
+                    }
+                }
+                // Only the TEXT is inset, not the bar. The bar is a rectangle whose ends read as
+                // deliberate against the curve; a glyph half-eaten by it reads as a bug — "Layer"
+                // was arriving as "ayer".
+                .padding(.horizontal, PrintActivityWidget.cornerInset)
+            } else {
+                HStack {
+                    counter("Layer \(state.layer)/\(state.totalLayers)")
+                    Spacer()
+                    counter("\(state.progress)%")
+                }
+                .padding(.horizontal, PrintActivityWidget.cornerInset)
+            }
+        }
+    }
+
+    /// `LocalizedStringKey`, not `String`, and that is not cosmetic: interpolating an `Int` into a
+    /// `LocalizedStringKey` groups it — "Layer 1,731/1,952" — while a plain `String` does not. The
+    /// lock-screen card builds this label from a literal and so has always grouped; taking a
+    /// `String` here silently dropped the separators on the island alone, and the same print then
+    /// read two different ways depending on where you looked at it.
+    private func counter(_ text: LocalizedStringKey) -> some View {
+        Text(text)
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+}
+
 private struct IslandLeading: View {
     let state: PrintActivityAttributes.ContentState
     let tint: Color
@@ -385,14 +443,27 @@ private struct LockScreenCard: View {
                         headroom: 16
                     ) { riderGlyph }
 
-                    // One line, and it fills the width instead of splitting to both margins.
-                    HStack(spacing: 8) {
-                        if state.totalLayers > 0 {
-                            Text("Layer \(state.layer)/\(state.totalLayers)")
-                                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    // Counters and temperatures on ONE line when they fit, stacked when they do
+                    // not — and stacked LEFT-ALIGNED, on the same margin as everything else in this
+                    // column.
+                    //
+                    // This column is roughly a third of the card, not the card: the leading visual
+                    // and the countdown block take the rest. A single fixed row tuned for the width
+                    // of the expanded island clipped every reading here to "L…  R 2…  B…  C 3…",
+                    // and squeezing the readings in beside "Layer 731/952" instead left that label
+                    // floating against a two-row block on no shared baseline. Given a whole row they
+                    // simply line up.
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            layerCount
+                            temps
+                            Spacer(minLength: 0)
                         }
-                        temps
-                        Spacer(minLength: 0)
+                        VStack(alignment: .leading, spacing: 3) {
+                            layerCount
+                            temps
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .foregroundStyle(.secondary)
 
@@ -485,6 +556,14 @@ private struct LockScreenCard: View {
 
     private var temps: some View { TempsRow(state: state, tint: tint) }
 
+    @ViewBuilder private var layerCount: some View {
+        if state.totalLayers > 0 {
+            Text("Layer \(state.layer)/\(state.totalLayers)")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .lineLimit(1)
+        }
+    }
+
     static func loadImage(_ uri: String) -> UIImage? {
         guard !uri.isEmpty, let url = URL(string: uri), let data = try? Data(contentsOf: url) else { return nil }
         return UIImage(data: data)
@@ -511,29 +590,49 @@ private struct TempsRow: View {
             || state.nozzle2 > 0 || state.nozzle2Target > 0 || state.chamber != nil
     }
 
+    /// The heads, in position order. `nil` chamber is the printer having no chamber, not a chamber
+    /// reading 0°, so an open-frame machine renders three pairs and not a fourth one lying about a
+    /// chamber it does not have.
+    @ViewBuilder private var heads: some View {
+        if state.hasNozzle2 {
+            pair("L", state.nozzle, state.nozzleTarget, active: state.activeNozzle == 0)
+            pair("R", state.nozzle2, state.nozzle2Target, active: state.activeNozzle == 1)
+        } else {
+            pair("N", state.nozzle, state.nozzleTarget, active: true)
+        }
+    }
+
+    @ViewBuilder private var vessels: some View {
+        pair("B", state.bed, state.bedTarget, active: false)
+        if let chamber = state.chamber {
+            pair("C", chamber, state.chamberTarget ?? 0, active: false)
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            if state.hasNozzle2 {
-                pair("L", state.nozzle, state.nozzleTarget, active: state.activeNozzle == 0)
-                pair("R", state.nozzle2, state.nozzle2Target, active: state.activeNozzle == 1)
-            } else {
-                pair("N", state.nozzle, state.nozzleTarget, active: true)
+        // One row where it fits, two where it does not — the row adapts to the width it is GIVEN,
+        // which is not the same as the width of the surface it is on. That distinction is what this
+        // view got wrong: the expanded island hands the row most of its width, while the lock-screen
+        // card's middle column is a third of the card, and a single fixed layout tuned for the
+        // island truncated every reading to "L…  R 2…  B…  C 3…" on the card.
+        //
+        // Truncation is the one outcome that must never happen here: a clipped "L 148° →…" drops
+        // the target, and the target is the number that answers "how long". Two rows cost a line;
+        // a clipped row costs the information.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                heads
+                vessels
             }
-            pair("B", state.bed, state.bedTarget, active: false)
-            // Enclosed machines only. `nil` is the printer having no chamber, not a chamber reading
-            // 0°, so an open-frame machine renders three pairs and not a fourth one lying about a
-            // chamber it does not have.
-            if let chamber = state.chamber {
-                pair("C", chamber, state.chamberTarget ?? 0, active: false)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) { heads }
+                HStack(spacing: 8) { vessels }
             }
         }
-        // A fourth pair is what makes this necessary. The widest state a dual-nozzle enclosed machine
-        // can reach is both heads chasing targets at once — `L 148° → 220°  R 148° → 220°  B 55° →
-        // 60°  C 31° → 50°` — which fits the expanded island at the default text size and does not at
-        // the larger accessibility ones. Scaling is the honest failure here: truncation would drop a
-        // whole readout with no sign it was ever there, and this row's entire job is the numbers.
+        // Each PAIR stays on one line — a reading broken across lines is unreadable. The row as a
+        // whole is free to become two, which is what `ViewThatFits` above decides.
         .lineLimit(1)
-        .minimumScaleFactor(0.75)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// `N 148° → 220°` while a target is being chased, `N 220°` once it is reached. The target was
@@ -661,3 +760,39 @@ extension Color {
         )
     }
 }
+#if DEBUG
+/// Renderable handles on the card's private views, for `LiveActivityRenderTests`.
+///
+/// These views are `private` and must stay that way — they are the widget's internals, not API. The
+/// harness lives in this file for that reason alone. It exists because **a Live Activity cannot be
+/// photographed before it ships**: the Simulator does not start one at all, so the island and the
+/// lock-screen card could only ever be checked on a real device, after a TestFlight build. Rendering
+/// the same views directly is the only way to see a layout mistake before a user does — which is how
+/// the chamber reading was found taking a whole extra row.
+enum LiveActivityShots {
+    /// The expanded Dynamic Island's bottom region — bar and counters.
+    static func islandBottom(_ state: PrintActivityAttributes.ContentState) -> some View {
+        IslandBottom(state: state, tint: Color(hexString: state.tint))
+            .environment(\.colorScheme, .dark)
+    }
+
+    /// The lock-screen card, whole.
+    static func lockScreen(_ state: PrintActivityAttributes.ContentState, printerId: Int = 2) -> some View {
+        LockScreenCard(state: state, printerId: printerId)
+            .environment(\.colorScheme, .dark)
+    }
+
+    /// Just the temperature row, for measuring it against a width on its own.
+    static func temps(_ state: PrintActivityAttributes.ContentState) -> some View {
+        TempsRow(state: state, tint: Color(hexString: state.tint))
+            .environment(\.colorScheme, .dark)
+    }
+
+    /// True when this state has temperatures to show at all — mirrors `TempsRow.hasAny`.
+    static func hasTemps(_ state: PrintActivityAttributes.ContentState) -> Bool {
+        TempsRow(state: state, tint: .green).hasAny
+    }
+}
+#endif
+
+#endif

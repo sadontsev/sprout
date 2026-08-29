@@ -571,6 +571,10 @@ private struct DryTweak: Equatable, Sendable {
 private struct DryerCard: View {
     @ScaledMetric(relativeTo: .body) private var headlineSize: CGFloat = 15
     @ScaledMetric(relativeTo: .body) private var unitSize: CGFloat = 12
+    // Same reason as the two above: `remaining` CONCATENATES `Text`, so its sizes cannot come from
+    // the `.scaledMono`/`.scaledFont` modifiers — those return `some View`.
+    @ScaledMetric(relativeTo: .body) private var remainingSize: CGFloat = 26
+    @ScaledMetric(relativeTo: .body) private var remainingUnitSize: CGFloat = 13
     let model: AppModel
     let d: DryerVM
     /// nil on a single-unit machine.
@@ -680,17 +684,31 @@ private struct DryerCard: View {
         let unit = Text(" · \(unitLabel)")
             .font(.system(size: unitSize, weight: .semibold))
             .foregroundStyle(c.t3)
-        return Text("\(title)\(unit)")
+        // `+`, not interpolation: `+` is defined only on `Text`, so a piece that accidentally became
+        // `some View` (by taking a `.scaledFont`-style modifier) fails to compile instead of being
+        // interpolated through `String(describing:)`. `remaining` below shipped that way.
+        return title + unit
     }
 
+    /// `1h 00m  left` — one `Text`, so the unit sits on the number's baseline and wraps with it.
+    ///
+    /// **The sizes come from `@ScaledMetric`, not from `.scaledMono`/`.scaledFont`.** Those are
+    /// ViewModifiers and return `some View`, and a View interpolated into a `Text` is accepted by
+    /// `LocalizedStringKey` and rendered through `String(describing:)` — so the card displayed a
+    /// page of `ModifiedContent<ModifiedContent<Text, ScaledFont>, …>` where the time should be. It
+    /// compiled, it type-checked, and the suite stayed green, because interpolating a View is legal.
+    /// `headline` above carries the same warning and was written correctly; this one was not.
+    ///
+    /// Concatenated with `+` rather than interpolation for that reason: `+` is defined only on
+    /// `Text`, so the same mistake becomes a compile error instead of a paragraph of type names.
     private var remaining: Text {
         let left = Text(d.remainingText)
-            .scaledMono(26, weight: .bold)
+            .font(.system(size: remainingSize, weight: .bold).monospaced())
             .foregroundStyle(c.t1)
         let unit = Text("  left")
-            .scaledFont(13, weight: .semibold)
+            .font(.system(size: remainingUnitSize, weight: .semibold))
             .foregroundStyle(c.t3)
-        return Text("\(left)\(unit)")
+        return left + unit
     }
 
     // MARK: Idle — collapsed row that expands into the full configuration.
