@@ -243,6 +243,28 @@ REARM_AFTER_S = 900.0
 REARM_LIMIT = 2
 
 
+def superseded_start_tokens(device: str, keeping: str,
+                           owner: dict[str, str], unbound: set[str]) -> list[str]:
+    """Which of this device's OTHER start tokens are now dead, given the one it just registered.
+
+    ActivityKit issues a device ONE push-to-start token per attributes type at a time, and hands
+    over a replacement when it rotates. So a second token attributed to the SAME device is not a
+    second phone — it is the previous value of the same thing, and nothing will ever claim it again.
+
+    They accumulate, and not harmlessly. `_remote_start` skips a start token the relay refuses, and
+    `_prune_needs_claim` keeps a `needs_claim` entry alive for as long as its token is still held —
+    so a token nobody retires pins an entry that can never be cleared. Measured on a live instance:
+    twelve start tokens for one phone, eleven of them unbound.
+
+    Only UNBOUND ones are retired, which is the conservative half of the rule. A superseded token
+    that still has a binding is one the relay would accept, and dropping it on a guess about
+    rotation would spend a card the print only gets one of. Left alone, it prunes itself the moment
+    the relay refuses it.
+    """
+    return [t for t, d in owner.items()
+            if d == device and t != keeping and t in unbound]
+
+
 def rearm_after_unadopted(age: float, spent: int, granted: int,
                           after: float = REARM_AFTER_S, limit: int = REARM_LIMIT) -> bool:
     """Whether a start nothing ever adopted should let this printer arm once more.

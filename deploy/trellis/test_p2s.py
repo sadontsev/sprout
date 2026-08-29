@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 
 from p2s import (REARM_AFTER_S, REARM_LIMIT, adoption_step, aggregate_should_start,
-                 dry_identity, hms_reason, may_wake, rearm_after_unadopted,
+                 dry_identity, hms_reason, may_wake, rearm_after_unadopted, superseded_start_tokens,
                  next_started_for, print_identity, prune, rearm_after_drop, shot_printer_id,
                  should_start, wake_push_due)
 
@@ -374,3 +374,28 @@ class RearmAfterUnadoptedTests(unittest.TestCase):
     def test_the_observed_failure_would_now_recover(self):
         # The exact state from the deployment: 12 hours, both escalations spent, never re-armed.
         self.assertTrue(rearm_after_unadopted(age=43_390, spent=2, granted=0))
+
+
+class SupersededStartTokenTests(unittest.TestCase):
+    """A device's older start tokens are the previous value of one thing, not other phones."""
+
+    def test_older_unbound_tokens_of_the_same_device_are_retired(self):
+        owner = {"old1": "phoneA", "old2": "phoneA", "new": "phoneA"}
+        self.assertEqual(sorted(superseded_start_tokens("phoneA", "new", owner, {"old1", "old2"})),
+                         ["old1", "old2"])
+
+    def test_another_devices_token_is_never_touched(self):
+        # Two phones on one Bambuddy key is a supported setup; retiring here would take a working
+        # phone's start token away.
+        owner = {"mine": "phoneA", "theirs": "phoneB"}
+        self.assertEqual(superseded_start_tokens("phoneA", "mine", owner, {"theirs"}), [])
+
+    def test_a_still_bound_token_is_left_alone(self):
+        # Conservative half of the rule: the relay would accept a push to it, and dropping it on a
+        # guess about rotation spends a card the print only gets one of.
+        owner = {"old": "phoneA", "new": "phoneA"}
+        self.assertEqual(superseded_start_tokens("phoneA", "new", owner, set()), [])
+
+    def test_the_token_being_registered_is_never_retired(self):
+        owner = {"new": "phoneA"}
+        self.assertEqual(superseded_start_tokens("phoneA", "new", owner, {"new"}), [])

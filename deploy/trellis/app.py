@@ -35,7 +35,7 @@ import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
 from p2s import (REARM_LIMIT, adoption_step, aggregate_should_start, dry_identity, hms_reason,
-                 may_wake, rearm_after_unadopted,
+                 may_wake, rearm_after_unadopted, superseded_start_tokens,
                  next_started_for, print_identity, rearm_after_drop, shot_printer_id,
                  should_start, wake_push_due)
 
@@ -1806,6 +1806,20 @@ async def register_start(r: StartReg, _: None = Depends(_require_key)) -> dict:
         _p2s_clients[r.push_token] = norm_client(r.client)
         if r.device_id:
             _p2s_devices[r.push_token] = r.device_id
+            # A device holds ONE push-to-start token at a time, so its older ones are the previous
+            # value of the same thing and nothing will ever claim them. Unretired they pin a
+            # `needs_claim` entry `_prune_needs_claim` cannot clear, because that entry's token is
+            # still "held". See `superseded_start_tokens` — only unbound ones go.
+            for dead in superseded_start_tokens(r.device_id, r.push_token,
+                                                _p2s_devices, set(_needs_claim)):
+                _p2s_tokens.remove(dead) if dead in _p2s_tokens else None
+                _p2s_devices.pop(dead, None)
+                _p2s_icons.pop(dead, None)
+                _p2s_clients.pop(dead, None)
+                _needs_claim.pop(dead, None)
+                _suspended.pop(dead, None)
+                print(f"[p2s] retired superseded start token {dead[:8]}… for {r.device_id[:8]}…",
+                      flush=True)
         if not bound:
             _needs_claim[r.push_token] = r.device_id or registry.LEGACY_DEVICE
         _save()
