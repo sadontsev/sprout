@@ -34,7 +34,8 @@ import outbox as ob
 import registry
 from clients import EXPO, NATIVE, client_of, envelope, key_ids, norm_client, start_attributes
 from cooldown import COOL_DEFAULT_C, READY, clamp_threshold, cool_step
-from p2s import (adoption_step, aggregate_should_start, dry_identity, hms_reason, may_wake,
+from p2s import (REARM_LIMIT, adoption_step, aggregate_should_start, dry_identity, hms_reason,
+                 may_wake, rearm_after_unadopted,
                  next_started_for, print_identity, rearm_after_drop, shot_printer_id,
                  should_start, wake_push_due)
 
@@ -300,6 +301,10 @@ P2S_PENDING_TTL = 600.0
 # `adoption_step`: a start nobody claims is a card frozen at its opening content, and this is what
 # keeps the chase down to one silent push and one banner rather than one of each every poll.
 _p2s_escalated: dict[str, int] = {}
+# _p2s_rearm_count: pending id -> how many times this start has been re-armed after going
+# unadopted. Bounds `rearm_after_unadopted`; see REARM_LIMIT for why an unbounded rule pushes a
+# start every 15 minutes at a force-quit phone for the whole print.
+_p2s_rearm_count: dict[str, int] = {}
 
 # How long silence may last before a card is lying. NOT derived from MIN_UPDATE_S: that is a floor
 # on how OFTEN we may push, gating a change detector, and a paused print or a drying cycle sitting
@@ -403,7 +408,7 @@ _cool_threshold_at = 0.0
 
 
 def _load() -> None:
-    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _p2s_escalated, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox, _p2s_rearm, _woke, _woke_at
+    global _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent, _p2s_icons, _p2s_pending, _p2s_escalated, _p2s_rearm_count, _last_paused, _paused_at, _paused_reminded, _cool, _p2s_started, _p2s_clients, _p2s_devices, _suspended, _needs_claim, _outbox, _p2s_rearm, _woke, _woke_at
     try:
         data = json.loads(REG_FILE.read_text())
         # Permanent, not a one-shot migration: rolling back to the previous image
@@ -426,6 +431,7 @@ def _load() -> None:
         _p2s_clients = data.get("p2s_clients", {})
         _p2s_pending = data.get("p2s_pending", {})
         _p2s_escalated = data.get("p2s_escalated", {})
+        _p2s_rearm_count = data.get("p2s_rearm_count", {})
         _p2s_started = data.get("p2s_started", {})
         _p2s_rearm = data.get("p2s_rearm", {})
         _woke = data.get("woke", {})
@@ -440,6 +446,7 @@ def _load() -> None:
         _regs, _device_tokens, _last_kind, _last_dry, _p2s_tokens, _p2s_dry_sent = {}, [], {}, {}, [], {}
         _p2s_icons, _p2s_pending, _last_paused, _paused_at, _paused_reminded = {}, {}, {}, {}, {}
         _cool, _p2s_started, _p2s_clients, _p2s_rearm, _p2s_escalated = {}, {}, {}, {}, {}
+        _p2s_rearm_count = {}
         _woke, _woke_at = {}, {}
         _p2s_devices, _suspended, _needs_claim = {}, {}, {}
         _outbox = ob.Outbox()
@@ -459,6 +466,7 @@ def _save() -> None:
                                     "last_dry": _last_dry, "p2s": _p2s_tokens, "p2s_dry_sent": _p2s_dry_sent,
                                     "p2s_icons": _p2s_icons, "p2s_clients": _p2s_clients,
                                     "p2s_pending": _p2s_pending, "p2s_escalated": _p2s_escalated,
+                                    "p2s_rearm_count": _p2s_rearm_count,
                                     "p2s_started": _p2s_started, "p2s_devices": _p2s_devices,
                                     "p2s_rearm": _p2s_rearm, "woke": _woke, "woke_at": _woke_at,
                           "suspended": _suspended, "needs_claim": _needs_claim,
@@ -918,7 +926,24 @@ async def _chase_adoption(client: httpx.AsyncClient) -> None:
         if registry.has_card(_regs, key, device):
             _p2s_escalated.pop(pending_id, None)  # adopted; nothing left to chase
             continue
-        step = adoption_step(now - ts, _p2s_escalated.get(pending_id, 0))
+        spent = _p2s_escalated.get(pending_id, 0)
+        # Escalation repairs the card by getting the app to hand its token over. When both steps
+        # have been spent and the card is STILL unadopted, the repair has failed and the only thing
+        # left is a fresh start — but arming is once per live session, so without this the print
+        # runs to completion with no card. Reuses the same replacement grant `rearm_after_drop`
+        # issues, rather than a second mechanism: one grant, one device, consumed by _remote_start.
+        if rearm_after_unadopted(now - ts, spent, _p2s_rearm_count.get(pending_id, 0)):
+            _p2s_rearm_count[pending_id] = _p2s_rearm_count.get(pending_id, 0) + 1
+            _p2s_rearm[pending_id] = now
+            _p2s_started.pop(key, None)
+            _p2s_pending.pop(pending_id, None)
+            _p2s_escalated.pop(pending_id, None)
+            print(f"[adopt] {key} never adopted after {int(now - ts)}s and both escalations — "
+                  f"re-arming once ({_p2s_rearm_count[pending_id]}/{REARM_LIMIT}) so a fresh start "
+                  f"can reach {device}", flush=True)
+            _save()
+            continue
+        step = adoption_step(now - ts, spent)
         if not step:
             continue
         _p2s_escalated[pending_id] = step

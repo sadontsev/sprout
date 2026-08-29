@@ -233,6 +233,43 @@ ADOPT_WAKE_S = 90.0
 ADOPT_BANNER_S = 300.0
 
 
+# How long after the BANNER to give up on the current start and allow one more. Deliberately
+# longer than ADOPT_BANNER_S: the banner's whole purpose is to get the app opened, and re-arming
+# before the user has had a chance to act would waste the grant on the same closed app.
+REARM_AFTER_S = 900.0
+# How many times ONE live session may re-arm this way. Bounded because the failure this repairs can
+# be permanent: iOS never background-launches a force-quit app, so an unadopted start there stays
+# unadopted, and an unbounded rule would push a start every 15 minutes for the whole print.
+REARM_LIMIT = 2
+
+
+def rearm_after_unadopted(age: float, spent: int, granted: int,
+                          after: float = REARM_AFTER_S, limit: int = REARM_LIMIT) -> bool:
+    """Whether a start nothing ever adopted should let this printer arm once more.
+
+    `rearm_after_drop` covers a card that EXISTED and died. This covers the other half, which cost a
+    whole print on a live deployment: a start that was never adopted at all. Arming is once per live
+    session, so when the app failed to hand over that card's token the gate then refused to re-arm
+    for the rest of the print — twelve hours, `escalated: 2`, no card, and nothing further tried:
+
+        unadopted_starts [{'key': '2', 'device': 'F-mJlqwE', 'age_s': 43390, 'escalated': 2}]
+
+    `should_start` was answering "have we started for this session" while the real question is "is
+    there a card". There was not, and there could never be one.
+
+    Both escalations must be spent first (`spent >= 2`). Re-arming before the silent push and the
+    banner have been tried would replace a repair that often works with a start the same closed app
+    would ignore again.
+
+    Then bounded, twice. Unbounded looks harmless — the printer is live and has no card, so surely
+    keep trying — but iOS does not background-launch an app the user force-quit, so that start can
+    never be adopted, and "keep trying" is a start push every 15 minutes for the rest of the print.
+    Two is enough to cover a phone that was briefly unreachable and few enough to be silent about a
+    phone that is gone.
+    """
+    return spent >= 2 and granted < limit and age >= after
+
+
 def adoption_step(age: float, spent: int, wake_after: float = ADOPT_WAKE_S,
                   banner_after: float = ADOPT_BANNER_S) -> int:
     """Which escalation to spend now on a start nothing has claimed; 0 = keep waiting.

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import unittest
 
-from p2s import (adoption_step, aggregate_should_start, dry_identity, hms_reason, may_wake,
+from p2s import (REARM_AFTER_S, REARM_LIMIT, adoption_step, aggregate_should_start,
+                 dry_identity, hms_reason, may_wake, rearm_after_unadopted,
                  next_started_for, print_identity, prune, rearm_after_drop, shot_printer_id,
                  should_start, wake_push_due)
 
@@ -341,3 +342,35 @@ class TestAdoptionStep(unittest.TestCase):
         """The bug this prevents is a banner every five seconds for the rest of a print."""
         self.assertEqual(adoption_step(9999, 2), 0)
         self.assertEqual(adoption_step(120, 1), 0)
+
+
+class RearmAfterUnadoptedTests(unittest.TestCase):
+    """A start nothing ever adopted gets a bounded second chance.
+
+    `rearm_after_drop` covers a card that existed and died. This is the other half, and it cost a
+    whole print live: a start never adopted at all, `escalated: 2`, `age_s: 43390`, no card, and
+    arming refusing to fire again for the rest of the session.
+    """
+
+    def test_waits_for_both_escalations(self):
+        # The silent push and the banner often work. Re-arming before they have been tried
+        # replaces a repair that succeeds with a start the same closed app ignores again.
+        for spent in (0, 1):
+            self.assertFalse(rearm_after_unadopted(age=10_000, spent=spent, granted=0),
+                             f"spent={spent} must not re-arm")
+
+    def test_waits_out_the_banner(self):
+        # Long enough after the banner for the user to have acted on it.
+        self.assertFalse(rearm_after_unadopted(age=REARM_AFTER_S - 1, spent=2, granted=0))
+        self.assertTrue(rearm_after_unadopted(age=REARM_AFTER_S, spent=2, granted=0))
+
+    def test_bounded(self):
+        # iOS never background-launches a force-quit app, so an unadopted start THERE can never be
+        # adopted. Unbounded, this would push a start every 15 minutes for the whole print.
+        self.assertTrue(rearm_after_unadopted(age=10_000, spent=2, granted=REARM_LIMIT - 1))
+        self.assertFalse(rearm_after_unadopted(age=10_000, spent=2, granted=REARM_LIMIT))
+        self.assertFalse(rearm_after_unadopted(age=10_000, spent=2, granted=REARM_LIMIT + 5))
+
+    def test_the_observed_failure_would_now_recover(self):
+        # The exact state from the deployment: 12 hours, both escalations spent, never re-armed.
+        self.assertTrue(rearm_after_unadopted(age=43_390, spent=2, granted=0))
