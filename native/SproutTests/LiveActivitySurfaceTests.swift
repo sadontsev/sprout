@@ -556,5 +556,94 @@ final class AggregateDryingTests: XCTestCase {
         XCTAssertNil(got?.dryUnits)
         XCTAssertEqual(got?.amsTemp, 50)
     }
+
+    // MARK: - Chamber (enclosed machines only)
+
+    private func printStatus(chamber: Double?, chamberTarget: Double? = nil) -> PrinterStatus {
+        var t = Temperatures()
+        t.nozzle = 220
+        t.bed = 60
+        if let chamber { t.chamber = LooseNumber(chamber) }
+        if let chamberTarget { t.chamberTarget = LooseNumber(chamberTarget) }
+        var st = PrinterStatus()
+        st.temperatures = t
+        return st
+    }
+
+    /// An open-frame machine reports no `chamber` key, and the card must not invent one. A
+    /// non-optional field defaulting to 0 would render a confident `C 0°` — this codebase's
+    /// recurring bug, in the one surface the user cannot tap to correct.
+    func testAnOpenFrameMachineCarriesNoChamber() {
+        let got = LiveActivityController.content(vm: DashVM(), status: printStatus(chamber: nil))
+        XCTAssertNil(got.chamber)
+        XCTAssertNil(got.chamberTarget, "a target may never outlive the chamber it heats")
+    }
+
+    /// Presence, not value: a chamber genuinely reading 0° is still a chamber.
+    func testAChamberReadingZeroIsStillAChamber() {
+        let got = LiveActivityController.content(vm: DashVM(), status: printStatus(chamber: 0))
+        XCTAssertEqual(got.chamber, 0)
+    }
+
+    func testAnEnclosedMachineCarriesChamberAndTarget() {
+        let got = LiveActivityController.content(
+            vm: DashVM(), status: printStatus(chamber: 31.4, chamberTarget: 50))
+        XCTAssertEqual(got.chamber, 31)
+        XCTAssertEqual(got.chamberTarget, 50)
+    }
+
+    /// The same predicate as the dashboard's, so the card and the temperature grid can never
+    /// disagree about whether this printer has a chamber at all.
+    func testTheCardAgreesWithTheDashboard() {
+        for chamber in [nil, 0, 31] as [Double?] {
+            let status = printStatus(chamber: chamber)
+            var vm = DashVM()
+            vm.hasChamber = status.temperatures?.chamber != nil
+            let got = LiveActivityController.content(vm: vm, status: status)
+            XCTAssertEqual(vm.hasChamber, got.chamber != nil, "chamber=\(String(describing: chamber))")
+        }
+    }
+
+    /// **A new field is invisible until it is in `meaningfulChange`.** A chamber climbing through a
+    /// soak while nothing else moves would otherwise never reach the card.
+    func testChamberChangesAreWorthAPush() {
+        var a = PrintActivityAttributes.ContentState()
+        a.chamber = 31
+        var b = a
+        b.chamber = 40
+        XCTAssertTrue(LiveActivityController.meaningfulChange(from: a, to: b))
+
+        var c = a
+        c.chamberTarget = 50
+        XCTAssertTrue(LiveActivityController.meaningfulChange(from: a, to: c))
+    }
+
+    /// The whole feature rests on this decode, so it is pinned rather than reasoned about.
+    ///
+    /// `LooseNumber` has a custom `decodeNil()` branch that maps a JSON null to a LooseNumber
+    /// *wrapping* nil — so if `decodeIfPresent` ever handed null to it, `chamber` would come back
+    /// NON-nil and an open-frame printer would render `C 0°`. Bambuddy may omit the key or send it
+    /// as null depending on how the model declares it, and both readings must land on "no chamber".
+    func testAbsentAndNullChamberBothMeanNoChamber() throws {
+        let dec = JSONDecoder()
+        let absent = try dec.decode(Temperatures.self, from: Data(#"{"nozzle":220}"#.utf8))
+        XCTAssertNil(absent.chamber, "key absent")
+
+        let null = try dec.decode(Temperatures.self, from: Data(#"{"nozzle":220,"chamber":null}"#.utf8))
+        XCTAssertNil(null.chamber, "key present, value null")
+
+        let real = try dec.decode(Temperatures.self, from: Data(#"{"chamber":0}"#.utf8))
+        XCTAssertEqual(real.chamber?.double, 0, "a real 0° must survive as a reading")
+    }
+
+    /// A chamber APPEARING is a change even when the reading rounds to the number a missing key
+    /// would have compared as. `(nil ?? 0)` vs a real `0` is the trap this pins.
+    func testAChamberAppearingIsWorthAPush() {
+        var a = PrintActivityAttributes.ContentState()
+        a.chamber = nil
+        var b = a
+        b.chamber = 0
+        XCTAssertTrue(LiveActivityController.meaningfulChange(from: a, to: b))
+    }
 }
 #endif

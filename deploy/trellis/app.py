@@ -181,6 +181,12 @@ def classify(status: dict) -> tuple[dict, str]:
             active_idx = 1 if n2 > n1 else 0
     anoz, anoz_t = (n2, n2t) if active_idx == 1 else (n1, n1t)  # active head, for the heating heuristic
     bed, bed_t = _rnd(t.get("bed")), _rnd(t.get("bed_target"))
+    # Chamber is enclosed-machines-only and ABSENCE is the signal, exactly as `has_n2` above: an
+    # open-frame printer reports no `chamber` key at all. The key is OMITTED rather than sent as 0,
+    # because Swift decodes it with decodeIfPresent and a 0 would render a confident "C 0°" on a
+    # machine that has no chamber.
+    has_chamber = t.get("chamber") is not None
+    cham, cham_t = _rnd(t.get("chamber")), _rnd(t.get("chamber_target"))
 
     finished = False
     # `print_error` was read here and is not a field of Bambuddy's `PrinterStatus` — the route
@@ -210,7 +216,7 @@ def classify(status: dict) -> tuple[dict, str]:
 
     now_ms = int(time.time() * 1000)
     eta = now_ms + int(remaining) * 60000 if (not finished and remaining and remaining > 0) else 0
-    return ({
+    fields = {
         "name": status.get("subtask_name") or "",
         "stateLabel": label, "tint": color,
         "progress": progress, "layer": layer, "totalLayers": total,
@@ -219,7 +225,11 @@ def classify(status: dict) -> tuple[dict, str]:
         "nozzle": n1, "nozzleTarget": n1t, "nozzle2": n2, "nozzle2Target": n2t,
         "hasNozzle2": has_n2, "activeNozzle": active_idx, "bed": bed, "bedTarget": bed_t,
         "modelUri": "", "queueCount": 0, "nextName": "",
-    }, kind)
+    }
+    if has_chamber:
+        fields["chamber"] = cham
+        fields["chamberTarget"] = cham_t
+    return (fields, kind)
 
 
 def meaningful_change(a: dict | None, b: dict) -> bool:
@@ -246,6 +256,11 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
         or abs(a.get("amsTemp", 0) - b.get("amsTemp", 0)) >= 2
         or a.get("amsTarget", 0) != b.get("amsTarget", 0)
         or abs(a.get("humidity", 0) - b.get("humidity", 0)) >= 3
+        # Chamber: presence first — a chamber APPEARING is a change even when the reading rounds to
+        # the same number, and `or 0` alone would compare a missing key equal to a real 0°.
+        or (a.get("chamber") is None) != (b.get("chamber") is None)
+        or abs((a.get("chamber") or 0) - (b.get("chamber") or 0)) >= 2
+        or (a.get("chamberTarget") or 0) != (b.get("chamberTarget") or 0)
     )
 
 

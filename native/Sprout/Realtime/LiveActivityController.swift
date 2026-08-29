@@ -332,6 +332,14 @@ final class LiveActivityController {
         s.activeNozzle = activeNozzle
         s.bed = Int((t?.bed?.double ?? 0).rounded())
         s.bedTarget = Int((t?.bedTarget?.double ?? 0).rounded())
+        // Enclosed machines only, and PRESENCE is the test — the same one `DashVM.hasChamber` uses,
+        // so the card and the dashboard cannot disagree about whether this printer has a chamber.
+        // Target is set inside the same branch: a machine with no chamber can never show a chamber
+        // it is heating to.
+        if let chamber = t?.chamber {
+            s.chamber = Int((chamber.double ?? 0).rounded())
+            s.chamberTarget = Int((t?.chamberTarget?.double ?? 0).rounded())
+        }
         return s
     }
 
@@ -466,6 +474,11 @@ final class LiveActivityController {
             || a.activeNozzle != b.activeNozzle
             || abs(a.bed - b.bed) >= 2
             || a.bedTarget != b.bedTarget
+            // Presence first: a chamber APPEARING is a change even when its reading rounds to the
+            // same number, and `(nil ?? 0)` would compare equal to a real 0° and never push.
+            || (a.chamber == nil) != (b.chamber == nil)
+            || abs((a.chamber ?? 0) - (b.chamber ?? 0)) >= 2
+            || (a.chamberTarget ?? 0) != (b.chamberTarget ?? 0)
             || abs(a.etaEpochMs - b.etaEpochMs) >= 60_000
             || (a.dry ?? false) != (b.dry ?? false)
             || abs((a.amsTemp ?? 0) - (b.amsTemp ?? 0)) >= 1

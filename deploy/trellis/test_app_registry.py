@@ -903,3 +903,76 @@ class DeliverableTokenTests(unittest.TestCase):
     def test_a_suspended_token_is_not(self):
         la._suspended["paused"] = 0.0
         self.assertFalse(la._deliverable("paused"))
+
+
+class ChamberTests(unittest.TestCase):
+    """Chamber is enclosed-machines-only, and ABSENCE is the signal.
+
+    The app decodes `chamber` with decodeIfPresent, so a key sent as 0 for an
+    open-frame printer renders a confident "C 0degC" on a machine that has no
+    chamber. Omitting the key is what keeps that honest, and it is the same
+    presence test `has_n2` already uses for the second nozzle.
+    """
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_open_frame_printer_carries_no_chamber(self):
+        fields, _ = la.classify({
+            "connected": True, "state": "RUNNING",
+            "temperatures": {"nozzle": 220, "bed": 60},
+        })
+        self.assertNotIn("chamber", fields)
+        self.assertNotIn("chamberTarget", fields, "a target may never outlive its chamber")
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_enclosed_printer_carries_chamber(self):
+        fields, _ = la.classify({
+            "connected": True, "state": "RUNNING",
+            "temperatures": {"nozzle": 220, "bed": 60, "chamber": 31.4, "chamber_target": 50},
+        })
+        self.assertEqual(fields["chamber"], 31)
+        self.assertEqual(fields["chamberTarget"], 50)
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_a_null_chamber_means_no_chamber(self):
+        """Bambuddy may omit the key or send it as null; both mean the same thing."""
+        fields, _ = la.classify({
+            "connected": True, "state": "RUNNING",
+            "temperatures": {"nozzle": 220, "bed": 60, "chamber": None},
+        })
+        self.assertNotIn("chamber", fields)
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_chamber_reading_zero_is_still_a_chamber(self):
+        fields, _ = la.classify({
+            "connected": True, "state": "RUNNING",
+            "temperatures": {"nozzle": 220, "bed": 60, "chamber": 0},
+        })
+        self.assertEqual(fields["chamber"], 0, "presence, not value")
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_offline_card_carries_no_chamber(self):
+        fields, kind = la.classify({"connected": False})
+        self.assertEqual(kind, "offline")
+        self.assertNotIn("chamber", fields)
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_chamber_change_is_worth_a_push(self):
+        a = {"chamber": 31, "chamberTarget": 0}
+        self.assertTrue(la.meaningful_change(_pad(a), _pad({"chamber": 40, "chamberTarget": 0})))
+        self.assertTrue(la.meaningful_change(_pad(a), _pad({"chamber": 31, "chamberTarget": 50})))
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_chamber_appearing_is_worth_a_push(self):
+        """`or 0` alone would compare a missing key equal to a real 0 degrees."""
+        self.assertTrue(la.meaningful_change(_pad({}), _pad({"chamber": 0})))
+
+
+def _pad(extra: dict) -> dict:
+    """A minimally-complete lastState, so meaningful_change tests only the chamber keys."""
+    base = {
+        "progress": 0, "layer": 0, "stateLabel": "Printing", "name": "x",
+        "nozzle": 0, "nozzle2": 0, "bed": 0, "nozzleTarget": 0, "nozzle2Target": 0,
+        "activeNozzle": 0, "bedTarget": 0, "etaEpochMs": 0,
+    }
+    base.update(extra)
+    return base

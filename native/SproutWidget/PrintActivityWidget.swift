@@ -508,7 +508,7 @@ private struct TempsRow: View {
     /// than tidy: it is what keeps the expanded island short in the states that have no numbers.
     var hasAny: Bool {
         state.nozzle > 0 || state.nozzleTarget > 0 || state.bed > 0 || state.bedTarget > 0
-            || state.nozzle2 > 0 || state.nozzle2Target > 0
+            || state.nozzle2 > 0 || state.nozzle2Target > 0 || state.chamber != nil
     }
 
     var body: some View {
@@ -520,7 +520,20 @@ private struct TempsRow: View {
                 pair("N", state.nozzle, state.nozzleTarget, active: true)
             }
             pair("B", state.bed, state.bedTarget, active: false)
+            // Enclosed machines only. `nil` is the printer having no chamber, not a chamber reading
+            // 0°, so an open-frame machine renders three pairs and not a fourth one lying about a
+            // chamber it does not have.
+            if let chamber = state.chamber {
+                pair("C", chamber, state.chamberTarget ?? 0, active: false)
+            }
         }
+        // A fourth pair is what makes this necessary. The widest state a dual-nozzle enclosed machine
+        // can reach is both heads chasing targets at once — `L 148° → 220°  R 148° → 220°  B 55° →
+        // 60°  C 31° → 50°` — which fits the expanded island at the default text size and does not at
+        // the larger accessibility ones. Scaling is the honest failure here: truncation would drop a
+        // whole readout with no sign it was ever there, and this row's entire job is the numbers.
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
     }
 
     /// `N 148° → 220°` while a target is being chased, `N 220°` once it is reached. The target was

@@ -50,6 +50,21 @@ struct PrintActivityAttributes: ActivityAttributes {
         var bed: Int = 0
         var bedTarget: Int = 0
 
+        /// Chamber temperature — **enclosed machines only**, and `nil` is the capability signal.
+        ///
+        /// `nil` means "this printer has no chamber", which is NOT the same question as "the chamber
+        /// reads 0°". An open-frame machine (A1, P1P) reports no `chamber` key at all, so a
+        /// non-optional `Int = 0` here would put a confident `C 0°` on its card — the exact shape of
+        /// bug this codebase keeps re-learning. Presence is mirrored on both producers: the app reads
+        /// `Temperatures.chamber != nil` (same predicate as `DashVM.hasChamber`, so the card and the
+        /// dashboard cannot disagree), and Trellis omits the key entirely rather than sending 0.
+        ///
+        /// `chamberTarget` is only ever set alongside `chamber`, so a target can never appear for a
+        /// machine that has no chamber to heat. The H2C does drive this — an ABS/ASA run heats the
+        /// chamber — so the readout is `C 31° → 50°` while chasing and `C 31°` once settled.
+        var chamber: Int?
+        var chamberTarget: Int?
+
         /// `file://` URI of the plate thumbnail in the App Group ("" falls back to the glyph).
         var modelUri: String = ""
         var queueCount: Int = 0
