@@ -455,6 +455,46 @@ the commit. "It looked right in the screenshot" is not verification: **Live
 Activities do not start in the iOS Simulator at all**, so island and lock-screen
 work can only be confirmed on a device.
 
+### RENDER a card layout before shipping it
+
+A Live Activity never starts in the Simulator, so for a long time the only way to
+see this card was TestFlight, and every layout defect in it was found by a user.
+`SproutTests/LiveActivityRenderTests` renders the views directly instead:
+
+```bash
+SHOT=/tmp/la; DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
+  TEST_RUNNER_SPROUT_SHOT_DIR=$SHOT xcodebuild -project native/Sprout.xcodeproj \
+  -scheme Sprout -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -only-testing:SproutTests/LiveActivityRenderTests test   # then LOOK at $SHOT/*.png
+```
+
+`TEST_RUNNER_` is required — plain env vars do not reach the test process.
+
+It measures as well as photographs, and the assertions are the durable half: a
+readout that cannot fit its slot fails the suite. **The trap is measuring against
+the wrong width.** The first version of these tests compared the temperature row
+against the whole lock-screen card and passed while the card rendered
+`L…  R 2…  B…  C 3…` — that card is three columns, and the row gets the middle
+one. Same shape as the section below: a budget computed from a nearby question.
+
+Two things it still cannot answer, so do not claim them: the slot widths are
+measured estimates rather than published values, and nothing here exercises the
+larger Dynamic Type sizes.
+
+**A `View` interpolated into a `Text` compiles, and renders its own type.** The
+drying card shipped a page of `ModifiedContent<ModifiedContent<Text, ScaledFont>,
+…>` where the time remaining belonged: `.scaledFont`/`.scaledMono` are
+ViewModifiers returning `some View`, and `Text("\(someView)")` is legal —
+`LocalizedStringKey` renders it through `String(describing:)`. A green suite says
+nothing about it. **Concatenate `Text` with `+`**, which is defined only on
+`Text`, so the mistake is a compile error. Where pieces must stay `Text`, sizes
+come from `@ScaledMetric`, not the modifiers.
+
+Relatedly, `Text("…\(anInt)")` from a **literal** is a `LocalizedStringKey` and
+groups the number ("1,731"); the same interpolation into a `String` parameter does
+not. Two call sites that differ only in that had the island and the card
+describing one print two ways.
+
 ## The recurring bug in this codebase: offering what the backend will refuse
 
 This shape has now appeared many times, in unrelated code, written by different hands:
