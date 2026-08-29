@@ -68,6 +68,14 @@ final class LiveActivityController {
     /// Minimum gap between registration attempts for one (card, token) pair. `sync` runs every 4 s and
     /// an unreachable Trellis must not turn that into a POST storm.
     private static let registerRetry: TimeInterval = 30
+    /// How long after launch reconcile stays silent about activities it holds no token for.
+    ///
+    /// Long enough that `pushTokenUpdates` and `adoptExistingActivities` have both had their say —
+    /// they deliver within moments — and short enough that an orphaned card is ended in the same
+    /// minute rather than living beside its replacement.
+    private static let adoptionGrace: TimeInterval = 20
+    /// When this controller was built, for `adoptionGrace`.
+    private let startedAt = Date()
 
     var isServerOwned: Bool { pushUrl != nil }
 
@@ -875,13 +883,20 @@ final class LiveActivityController {
         // the pushes stopped because there was nothing left to push to.
         //
         // So the question is not "do I hold tokens" but "do I hold one for every activity
-        // ActivityKit says exists". While any live activity is still untracked we are mid-adoption
-        // and say nothing; the token stream fills the gap within moments and the next tick reports
-        // a complete set. A card that never produces a token would hold reconcile off, which is the
-        // known cost — the relay's own `needs_claim` is what surfaces that case, and silence is far
-        // cheaper than deregistering a card that is working.
+        // ActivityKit says exists" — BOUNDED BY TIME, which the first version of this guard was not
+        // and which cost a duplicate card.
+        //
+        // Waiting forever deadlocks the repair it was meant to protect. A card the app never
+        // adopted has no token and never gets one, so `untracked` stays non-empty, reconcile never
+        // runs — and `/sync` is exactly what ends an orphaned card, by returning it in `end`.
+        // Observed: a stale drying card sat on the lock screen beside its live replacement, zero
+        // syncs in thirty minutes, and nothing could ever clear it.
+        //
+        // So: say nothing while adoption is plausibly still in flight, then speak. By `adoptionGrace`
+        // the streams have long since delivered anything they were going to, and a still-untracked
+        // activity is not a card we are about to learn about — it is one that needs ending.
         let untracked = Activity<PrintActivityAttributes>.activities.filter { tokens[$0.id] == nil }
-        guard untracked.isEmpty else { return }
+        guard untracked.isEmpty || Date().timeIntervalSince(startedAt) >= Self.adoptionGrace else { return }
 
         let held = Set(tokens.values.filter { !$0.isEmpty })
         let (outcome, payload) = await send("/sync", body: SyncReport(tokens: Array(held), deviceId: deviceID))
