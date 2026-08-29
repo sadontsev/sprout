@@ -863,6 +863,26 @@ final class LiveActivityController {
         if let last = lastReconcile, Date().timeIntervalSince(last) < Self.reconcileInterval { return }
         lastReconcile = Date()
 
+        // Never report a token set we have not finished assembling.
+        //
+        // `/sync` is CONVERGENT: Trellis drops any registration whose token is absent from this
+        // report, which is correct when the app has genuinely lost a card and fatal when it simply
+        // has not looked yet. `tokens` is our own cache, filled by `pushTokenUpdates` and
+        // `adoptExistingActivities`; at launch those have not emitted, so an early reconcile says
+        // "I see no cards" about a card that is live on the lock screen — and Trellis believes it.
+        //
+        // Observed: opening the app mid-print took `registrations` from 1 to 0 in one `/sync`, and
+        // the pushes stopped because there was nothing left to push to.
+        //
+        // So the question is not "do I hold tokens" but "do I hold one for every activity
+        // ActivityKit says exists". While any live activity is still untracked we are mid-adoption
+        // and say nothing; the token stream fills the gap within moments and the next tick reports
+        // a complete set. A card that never produces a token would hold reconcile off, which is the
+        // known cost — the relay's own `needs_claim` is what surfaces that case, and silence is far
+        // cheaper than deregistering a card that is working.
+        let untracked = Activity<PrintActivityAttributes>.activities.filter { tokens[$0.id] == nil }
+        guard untracked.isEmpty else { return }
+
         let held = Set(tokens.values.filter { !$0.isEmpty })
         let (outcome, payload) = await send("/sync", body: SyncReport(tokens: Array(held), deviceId: deviceID))
         if let line = PostOutcome.logLine(path: "/sync", token: nil, outcome: outcome) { NSLog("%@", line) }
