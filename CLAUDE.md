@@ -455,6 +455,34 @@ the commit. "It looked right in the screenshot" is not verification: **Live
 Activities do not start in the iOS Simulator at all**, so island and lock-screen
 work can only be confirmed on a device.
 
+### A Live Activity dies at EIGHT HOURS, and its corpse stays on screen
+
+The HIG is explicit — Live Activities "work best for tracking short to medium
+duration activities that don't exceed eight hours", and once ended a card
+"remains for up to four hours" on the Lock Screen. Both halves matter, and the
+second is the one that bites: at eight hours iOS ends the activity and its push
+token starts answering APNs **410**, while the card stays visible, frozen at
+whatever it last showed. Measured on the live H2C: registered 22:49:15, `410` at
+06:49:52 — 8h 00m 37s. A ten-hour print therefore ALWAYS produced two cards.
+
+**A 410 means "this service can no longer drive that card", NOT "the card is
+gone".** Trellis re-arms push-to-start and pushes a replacement, which is right —
+a long print still needs a live card — but it cannot remove the frozen one,
+because the only push that would end it travels through the token that just died.
+**The app clears it**, via `LiveActivityController.supersededCardIds`: ending is a
+local call and works with a dead token.
+
+The predicate there is **superseded**, not "ended". A card that ends with nothing
+to replace it is a finished print, and lingering is the whole point of those four
+hours; ending on `.ended` alone snatches every completed print off the Lock
+Screen the moment it finishes. A test exists solely to prove that case does not
+fire.
+
+Trellis's log for this used to read "its last card is gone". It was not gone, and
+that one sentence sent two separate investigations to the wrong place — the same
+nearby-question shape as the table below, in a log message rather than a
+predicate. **A log line is an assertion; make it one you can defend.**
+
 ### RENDER a card layout before shipping it
 
 A Live Activity never starts in the Simulator, so for a long time the only way to
