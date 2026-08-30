@@ -1211,12 +1211,22 @@ async def _tick(client: httpx.AsyncClient) -> None:
                 if code in (400, 410):
                     print(f"[drop] printer {pid} -> {code}", flush=True)
                     registry.drop_token(_regs, str(pid), creg.get("pushToken"))
-                    # A dead token is a card that no longer exists. If it was the last one, let
-                    # push-to-start arm again — otherwise the printer runs to the end of the print
-                    # with no card and nothing that can replace it. See `rearm_after_drop`.
+                    # A dead token is a card THIS SERVICE CAN NO LONGER DRIVE. That is not the same
+                    # as a card that is gone, and the difference is visible to the user.
+                    #
+                    # iOS ends a Live Activity at the EIGHT-HOUR mark — its token starts answering
+                    # 410 — but leaves the card on the Lock Screen for up to four hours more.
+                    # Re-arming here is right: a ten-hour print still needs a live card. What it
+                    # cannot do is remove the frozen one, because the only push that would end it
+                    # travels through the token that just died. The APP clears it, on
+                    # `supersededCardIds`; this log line used to claim the card was gone and sent
+                    # two separate investigations looking in the wrong place.
                     if rearm_after_drop(len(registry.cards(_regs, str(pid)))):
                         if _p2s_started.pop(str(pid), None) is not None:
-                            print(f"[p2s] re-armed printer {pid}: its last card is gone", flush=True)
+                            print(
+                                f"[p2s] re-armed printer {pid}: its last token is dead "
+                                f"(the card it drove may still be on screen — the app ends that)",
+                                flush=True)
                 else:
                     creg["lastState"], creg["lastPush"] = cs, now
                 dirty = True

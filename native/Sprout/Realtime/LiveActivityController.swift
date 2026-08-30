@@ -343,6 +343,36 @@ final class LiveActivityController {
         return s
     }
 
+    /// One card's identity and liveness, for `supersededCardIds`.
+    struct CardLiveness: Equatable, Sendable {
+        let id: String
+        /// `key(printerId:amsId:)` — the card's identity, not the activity's.
+        let identity: String
+        /// `activityState == .active`: iOS will still let this card be updated.
+        let isLive: Bool
+    }
+
+    /// Cards iOS has finished with WHILE a live card for the same printer exists.
+    ///
+    /// **A Live Activity may only be updated for eight hours** (HIG, Live Activities: "work best for
+    /// tracking short to medium duration activities that don't exceed eight hours"). At that mark
+    /// iOS ends the activity and its push token starts answering APNs `410`, but the card stays on
+    /// the Lock Screen "for up to four hours" more. Trellis reads the 410 correctly — it can no
+    /// longer drive that card — and pushes a replacement, so a print longer than eight hours shows
+    /// TWO cards: one frozen at the layer it reached at the eight-hour mark, one live. Measured:
+    /// registered 22:49:15, `410` at 06:49:52, 8h 00m 37s.
+    ///
+    /// Only the app can clear the frozen one. Ending is a local call and works with a dead token,
+    /// while the only push that could end it would have to travel through the token that just died.
+    ///
+    /// The predicate is **superseded**, not "ended". A card that ends with nothing to replace it is
+    /// a finished print, and its card should linger exactly as it does now — that is the whole point
+    /// of the four hours. Ending on `.ended` alone would snatch away every completed print's card.
+    nonisolated static func supersededCardIds(_ cards: [CardLiveness]) -> [String] {
+        let liveIdentities = Set(cards.filter(\.isLive).map(\.identity))
+        return cards.filter { !$0.isLive && liveIdentities.contains($0.identity) }.map(\.id)
+    }
+
     /// Ids of the units with an ACTIVE drying cycle, in payload order.
     ///
     /// `dryTime` (minutes remaining) > 0 is THE active signal — `dryStatus` stayed 0 mid-cycle on the
@@ -748,6 +778,30 @@ final class LiveActivityController {
         adoptExistingActivities()
     }
 
+    /// End every card `supersededCardIds` names, immediately.
+    ///
+    /// `.immediate` and not `.default`: the default policy is what leaves an ended card on the Lock
+    /// Screen for four hours, which is the thing being cleaned up. Called from three places because
+    /// the moment a card becomes superseded is not a moment anything notifies us of — the old card
+    /// ends at the eight-hour mark and its replacement arrives milliseconds later, so whichever of
+    /// the two happens second is what makes the pair. Launch, every reconcile, and the arrival of
+    /// any new card all re-ask the question; it is a scan of a two-element array.
+    private func endSupersededActivities() {
+        let all = Activity<PrintActivityAttributes>.activities
+        let doomed = Set(
+            Self.supersededCardIds(
+                all.map {
+                    CardLiveness(
+                        id: $0.id,
+                        identity: key(printerId: $0.attributes.printerId, amsId: $0.attributes.amsId),
+                        isLive: $0.activityState == .active)
+                }))
+        guard !doomed.isEmpty else { return }
+        for activity in all where doomed.contains(activity.id) {
+            Task { await activity.end(nil, dismissalPolicy: .immediate) }
+        }
+    }
+
     private func adoptExistingActivities() {
         for activity in Activity<PrintActivityAttributes>.activities { observe(activity) }
         // Anything already on screen at launch has been through `observe`, which reads
@@ -760,11 +814,17 @@ final class LiveActivityController {
         for activity in Activity<PrintActivityAttributes>.activities where tokens[activity.id] == nil {
             untrackedSince[activity.id] = .distantPast
         }
+        // Opening the app is when a user is looking at the duplicate, so clear it here rather than
+        // waiting for the first reconcile interval to come round.
+        endSupersededActivities()
     }
 
     /// Wire one card — ours or the server's — to the streams that keep it honest.
     private func observe(_ activity: Activity<PrintActivityAttributes>) {
         guard observed.insert(activity.id).inserted else { return }
+        // A NEW card arriving is one of the two ways a pair forms — the replacement Trellis pushes
+        // when the old card's token starts answering 410.
+        defer { endSupersededActivities() }
         let id = activity.id
         let k = key(printerId: activity.attributes.printerId, amsId: activity.attributes.amsId)
 
@@ -775,6 +835,12 @@ final class LiveActivityController {
                 // it visible under `.default`, and acting on it would drop the card early.
                 if case .dismissed = state {
                     self.cardVanished(activityId: id, key: k, printerId: activity.attributes.printerId)
+                } else {
+                    // The other way a pair forms: THIS card ends (iOS does that at the eight-hour
+                    // mark) while a replacement is already live. `.ended` alone still means "leave
+                    // it up" — `endSupersededActivities` is what decides, and it needs a live card
+                    // for the same printer before it touches anything.
+                    self.endSupersededActivities()
                 }
             }
         }

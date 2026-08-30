@@ -557,6 +557,58 @@ final class AggregateDryingTests: XCTestCase {
         XCTAssertEqual(got?.amsTemp, 50)
     }
 
+    // MARK: - The eight-hour duplicate
+
+    private func card(_ id: String, _ identity: String, live: Bool) -> LiveActivityController.CardLiveness
+    {
+        LiveActivityController.CardLiveness(id: id, identity: identity, isLive: live)
+    }
+
+    /// The observed failure: a print past eight hours shows the frozen card beside its replacement.
+    ///
+    /// iOS ends a Live Activity at the eight-hour mark and its token starts answering APNs 410, but
+    /// the card stays on the Lock Screen for up to four hours more. Trellis reads the 410 correctly
+    /// and pushes a replacement; nothing but the app can clear the corpse.
+    func testAnEndedCardIsRemovedWhenItsPrinterHasALiveOne() {
+        let got = LiveActivityController.supersededCardIds([
+            card("old", "print:2", live: false),
+            card("new", "print:2", live: true),
+        ])
+        XCTAssertEqual(got, ["old"])
+    }
+
+    /// **The case that must not fire.** A finished print's card ends with nothing to replace it, and
+    /// lingering is the entire point of the four hours. Ending on `.ended` alone would snatch every
+    /// completed print off the Lock Screen the moment it finished.
+    func testAnEndedCardWithNoReplacementIsLeftAlone() {
+        XCTAssertEqual(LiveActivityController.supersededCardIds([card("done", "print:2", live: false)]), [])
+    }
+
+    /// A drying card and a print card are different identities, so one may not evict the other.
+    func testALiveCardOnlySupersedesItsOwnPrinter() {
+        let got = LiveActivityController.supersededCardIds([
+            card("old-dry", "dry:2:0", live: false),
+            card("live-print", "print:2", live: true),
+        ])
+        XCTAssertEqual(got, [], "a live PRINT card says nothing about a stale DRYING card")
+    }
+
+    /// Two printers past eight hours at once — each is cleared by its own replacement, not the
+    /// other's.
+    func testEachPrinterIsJudgedSeparately() {
+        let got = LiveActivityController.supersededCardIds([
+            card("old-2", "print:2", live: false),
+            card("new-2", "print:2", live: true),
+            card("old-3", "print:3", live: false),
+        ])
+        XCTAssertEqual(got, ["old-2"], "printer 3 has no live card, so its ended one stays")
+    }
+
+    /// Nothing to do in the ordinary case, which is every print under eight hours.
+    func testASingleLiveCardIsUntouched() {
+        XCTAssertEqual(LiveActivityController.supersededCardIds([card("a", "print:2", live: true)]), [])
+    }
+
     // MARK: - Chamber (enclosed machines only)
 
     private func printStatus(chamber: Double?, chamberTarget: Double? = nil) -> PrinterStatus {
