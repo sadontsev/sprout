@@ -605,6 +605,23 @@ the index is honoured and the 404s were files genuinely having no second plate. 
 the container: `docker exec bambuddy grep -rn "plate_thumbnail" /app/backend/app/api/routes/`.
 "Cannot probe it" is not "cannot know it".
 
+**A SQUARE FIXTURE CANNOT TELL `scaledToFit` FROM `scaledToFill`.** The crop test shipped with a
+square bordered image, passed, and the lock-screen tile went on cutting the top and bottom off the
+brand glyph — which is tall. Test the shape that discriminates. Two insets in that scanner are also
+load-bearing, each learnt from a FALSE failure: sample the middle half of each side, because a
+rounded tile clips the ends of the extreme row (at 30pt with a 10pt radius, most of it), and sample
+two pixels inside the bounding box, because that outermost row is antialiased by the same clip and
+is not pure red. Scan the drawn image's own border, never the frame's edge — the frame's edge
+answers "does the image reach it", which is a different question and is false by design for a tile
+that pads its content.
+
+**`current_archive_id` IS ASSIGNED AFTER THE PRINT STARTS.** Trellis says so above its own wake:
+"Bambuddy assigns the archive id a little after printing begins, so the value legitimately changes
+mid-print." So it is unique but NOT stable at the moment the picture is fetched — the background
+wake wrote `…-p1-…` and the card, created later, asked for `…-a205-…` and got a glyph for the whole
+print. A key can be unique and still be the wrong key if it does not exist yet. The lookup walks
+archive id, then name+plate, then name, and only ever narrows.
+
 **A DEFAULT ARGUMENT is a predicate too.** The plate case had no predicate at all — just an
 omitted parameter whose default silently asserted "plate 1". Nothing was gated wrongly; a question
 was never asked, and the API answered the one it was given. The failure looked like success,
