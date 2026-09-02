@@ -567,13 +567,24 @@ private struct LockScreenCard: View {
             LiveActivityArt.plateURI(printerId: printerId, jobName: state.name,
                                      plate: state.plate, archiveId: state.archiveId,
                                      carried: state.modelUri)) ?? Self.loadImage(state.iconUri) {
-            // `scaledToFill` + clip, not `scaledToFit`: a plate render is rarely square and fitting it
-            // letterboxed the model into a corner of an empty slot.
+            // FIT inside a fixed tile, not fill-and-clip.
+            //
+            // The original note said fitting "letterboxed the model into a corner of an empty
+            // slot", and filling does avoid that for a plate render — which is square, so filling
+            // and fitting are the same thing there. But this slot's SECOND rung is the brand glyph,
+            // which is tall and narrow, and filling a 56pt square with it cropped it to a giant
+            // sliver of nozzle. Photographed on a lock screen.
+            //
+            // The tile stays a fixed 56 and the image fits inside it, so the tile is uniform
+            // whatever rung filled it — the same shape the SF Symbol rung below already uses — and
+            // nothing is ever cut. `LiveActivityRenderTests` checks it with a TALL image, because a
+            // square one cannot tell the two apart.
             Image(uiImage: image)
                 .resizable()
-                .scaledToFill()
+                .scaledToFit()
+                .padding(4)
                 .frame(width: 56, height: 56)
-                .clipped()
+                .background(Color(red: 0.075, green: 0.082, blue: 0.090))
                 .modifier(PreviewTile())
         } else {
             Image(systemName: state.symbol)
@@ -846,6 +857,17 @@ enum LiveActivityShots {
     static func islandLeading(_ state: PrintActivityAttributes.ContentState, printerId: Int = 2) -> some View {
         IslandLeading(state: state, tint: Color(hexString: state.tint), printerId: printerId)
             .environment(\.colorScheme, .dark)
+    }
+
+    /// The LOCK-SCREEN card's leading tile chain, over an image supplied directly.
+    static func cardTile(_ image: UIImage) -> some View {
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFit()
+            .padding(4)
+            .frame(width: 56, height: 56)
+            .background(Color(red: 0.075, green: 0.082, blue: 0.090))
+            .modifier(PreviewTile())
     }
 
     /// The plate tile's exact modifier chain, over an image supplied directly.

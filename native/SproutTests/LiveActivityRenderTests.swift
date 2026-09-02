@@ -330,6 +330,22 @@ final class LiveActivityRenderTests: XCTestCase {
 
     // MARK: - The plate tile must not crop
 
+    /// A TALL image with a border, shaped like the brand glyph — the lock-screen card's second
+    /// rung, and the only shape that can tell `scaledToFit` from `scaledToFill`.
+    @MainActor
+    private func borderedTall(width: CGFloat = 160, height: CGFloat = 512,
+                              border: CGFloat = 20) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: width, height: height)).image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            UIColor.red.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: border))
+            ctx.fill(CGRect(x: 0, y: height - border, width: width, height: border))
+            ctx.fill(CGRect(x: 0, y: 0, width: border, height: height))
+            ctx.fill(CGRect(x: width - border, y: 0, width: border, height: height))
+        }
+    }
+
     /// A square image with a 3pt border of a known colour on all four sides.
     @MainActor
     private func borderedSquare(side: CGFloat = 512, border: CGFloat = 24) -> UIImage {
@@ -344,7 +360,15 @@ final class LiveActivityRenderTests: XCTestCase {
         }
     }
 
-    /// Whether a rendered tile still shows red along each of its four edges.
+    /// Whether the drawn image's own red BORDER survived on all four sides.
+    ///
+    /// Measured against the red pixels' BOUNDING BOX, not the frame's edges. The first version
+    /// scanned the frame edge, which answers "does the image reach the edge" — true for a tile that
+    /// fills its frame, false for one that deliberately pads an image inside a fixed tile, and
+    /// neither answers "was anything cut off". A cropped tall image still has its left and right
+    /// borders, so the real test is whether each SIDE of the bounding box is red ACROSS its length:
+    /// a surviving border covers most of that row or column, two lone side-borders cover almost
+    /// none of it.
     @MainActor
     private func edgesPresent(_ view: some View, offered: CGFloat) -> (top: Bool, bottom: Bool,
                                                                       left: Bool, right: Bool) {
@@ -364,13 +388,38 @@ final class LiveActivityRenderTests: XCTestCase {
             let i = (y * w + x) * 4
             return buf[i] > 120 && buf[i + 1] < 90 && buf[i + 2] < 90
         }
-        // Scanned a couple of pixels in from each edge, so the tile's own rounded corners are not
-        // mistaken for a crop. A whole row or column having no red means that edge was lost.
-        func rowHasRed(_ y: Int) -> Bool { (0..<w).contains { isRed($0, y) } }
-        func colHasRed(_ x: Int) -> Bool { (0..<h).contains { isRed(x, $0) } }
-        return (top: rowHasRed(2), bottom: rowHasRed(h - 3),
-                left: colHasRed(2), right: colHasRed(w - 3))
+        var minX = w
+        var maxX = -1
+        var minY = h
+        var maxY = -1
+        for y in 0..<h {
+            for x in 0..<w where isRed(x, y) {
+                minX = min(minX, x)
+                maxX = max(maxX, x)
+                minY = min(minY, y)
+                maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return (false, false, false, false) }
+        // Sampled across the MIDDLE HALF of each side, and two pixels INSIDE the bounding box.
+        //
+        // Both insets are load-bearing, and each was learnt from a false failure. The tile is
+        // rounded, so the corners clip the ends of the extreme row — on a 30pt tile with a 10pt
+        // radius that is most of the row, and a full-width test reads an intact border as a missing
+        // one. And the outermost row is ANTIALIASED by that same clip, so it is not pure red at all;
+        // two pixels in, the border is solid. It is ~5px thick at the smallest size tested, so
+        // sampling inside it stays inside it.
+        let span = maxX - minX + 1
+        let tall = maxY - minY + 1
+        let inset = 2
+        let xs = (minX + span / 4)...(maxX - span / 4)
+        let ys = (minY + tall / 4)...(maxY - tall / 4)
+        func rowCovered(_ y: Int) -> Bool { xs.allSatisfy { isRed($0, y) } }
+        func colCovered(_ x: Int) -> Bool { ys.allSatisfy { isRed(x, $0) } }
+        return (top: rowCovered(minY + inset), bottom: rowCovered(maxY - inset),
+                left: colCovered(minX + inset), right: colCovered(maxX - inset))
     }
+
 
     /// The tile must show the WHOLE plate, at every width the region might offer.
     ///
@@ -387,6 +436,19 @@ final class LiveActivityRenderTests: XCTestCase {
                 e.top && e.bottom && e.left && e.right,
                 "offered \(Int(offered))pt: edges lost — top:\(e.top) bottom:\(e.bottom) left:\(e.left) right:\(e.right)")
         }
+    }
+
+    /// The lock-screen card's tile must not crop either — and a TALL image is the only shape that
+    /// can catch it, which is why the square case above did not.
+    ///
+    /// That slot's second rung is the brand glyph, tall and narrow. Filled into a 56pt square it
+    /// became a giant sliver of nozzle; photographed on a lock screen.
+    @MainActor
+    func testTheCardTileNeverCropsATallImage() {
+        let e = edgesPresent(LiveActivityShots.cardTile(borderedTall()), offered: 56)
+        XCTAssertTrue(
+            e.top && e.bottom && e.left && e.right,
+            "edges lost — top:\(e.top) bottom:\(e.bottom) left:\(e.left) right:\(e.right)")
     }
 
     // MARK: - The pictures
@@ -422,6 +484,7 @@ final class LiveActivityRenderTests: XCTestCase {
             }
         }
         shoot(LiveActivityShots.islandLeading(running()), width: 44, named: "island-leading")
+        shoot(LiveActivityShots.cardTile(borderedTall()), width: 64, named: "card-tile-tall")
         for offered in [44, 36, 30] as [CGFloat] {
             let v = LiveActivityShots.plateTile(borderedSquare())
                 .frame(width: offered, height: offered)
