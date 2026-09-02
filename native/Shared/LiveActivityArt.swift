@@ -154,12 +154,30 @@ enum LiveActivityArt {
                          carried: String, fileManager: FileManager = .default) -> String {
         if !carried.isEmpty { return carried }
         guard !jobName.isEmpty else { return "" }
-        // Exactly the key this state HAS — never a weaker one as a fallback. Being handed another
-        // print's picture is the entire defect, and a glyph is honest where a wrong model is not,
-        // so a state that knows its run does not go looking under a name that repeats.
-        return existingURI(
-            name: plateName(printerId: printerId, fileName: jobName, plate: plate, archiveId: archiveId),
-            fileManager: fileManager)
+        // The strongest key first, then DOWN the ladder — because the two halves can legitimately
+        // know different amounts.
+        //
+        // **`current_archive_id` arrives AFTER the print starts.** Trellis says so itself: "Bambuddy
+        // assigns the archive id a little after printing begins, so the value legitimately changes
+        // mid-print". Measured: the background wake that fetches the picture ran at 20:23 with no
+        // id and wrote `…-p1-…`; the card existed at 20:53 carrying `archiveId: 205` and looked for
+        // `…-a205-…`. Nothing had written that, so the card kept a glyph for the whole print.
+        //
+        // Refusing to fall back was this file's rule one build ago, on the reasoning that a state
+        // knowing its run must not look under a name that repeats. The reasoning was right and the
+        // conclusion was wrong: the weaker name here is not another print's, it is THIS print's,
+        // written before the id existed. A permanent glyph is the worse failure, and the narrow
+        // case the rule protected — a re-run of the same plate of the same model — is transient,
+        // because the app re-resolves as soon as the id appears and writes the stronger name.
+        for candidate in [
+            archiveId.map { plateName(printerId: printerId, fileName: jobName, plate: plate, archiveId: $0) },
+            plate.map { plateName(printerId: printerId, fileName: jobName, plate: $0) },
+            plateName(printerId: printerId, fileName: jobName),
+        ].compactMap({ $0 }) {
+            let hit = existingURI(name: candidate, fileManager: fileManager)
+            if !hit.isEmpty { return hit }
+        }
+        return ""
     }
 
     /// Remove plate images that no live card refers to.

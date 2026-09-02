@@ -711,11 +711,19 @@ final class AggregateDryingTests: XCTestCase {
             LiveActivityArt.plateURI(
                 printerId: 2, jobName: job, plate: 4, carried: "", fileManager: fm).isEmpty,
             "plate 4 must NOT be handed plate 1's image — a glyph is honest, a wrong model is not")
-        XCTAssertTrue(
+        // The archive id arrives AFTER the print starts, so the picture is routinely written before
+        // the card knows its run. Falling back to the name+plate the wake actually used is what
+        // keeps a picture on the card; refusing to made every print show a glyph.
+        XCTAssertFalse(
             LiveActivityArt.plateURI(
                 printerId: 2, jobName: job, plate: 1, archiveId: 204, carried: "", fileManager: fm)
                 .isEmpty,
-            "a state that knows its RUN must not fall back to a name that repeats")
+            "a card that learned its run id must still find the image written before the id existed")
+        XCTAssertTrue(
+            LiveActivityArt.plateURI(
+                printerId: 2, jobName: job, plate: 4, archiveId: 204, carried: "", fileManager: fm)
+                .isEmpty,
+            "but a different PLATE still finds nothing — the ladder narrows, it does not widen")
     }
 
     // MARK: - The eight-hour duplicate
