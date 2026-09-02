@@ -549,7 +549,8 @@ final class AppModel {
                         // WHICH PLATE. Omitted, the render endpoint defaults to plate 1, so a job
                         // sent from Handy as plate 2 or 3 wore plate 1's picture.
                         plateIndex: PrintArt.plateIndex(
-                            gcodeFile: s.gcodeFile, currentPlateId: s.currentPlateId?.int)
+                            gcodeFile: s.gcodeFile, currentPlateId: s.currentPlateId?.int),
+                        archiveId: s.currentArchiveId
                     )
                     await self.liveActivity?.sync(
                         printerId: id,

@@ -55,7 +55,19 @@ enum LiveActivityArt {
     /// name alone, plate 4's card loaded the image plate 1 had written, and showed the wrong model
     /// in the right file. `nil` keeps the old name so a state that cannot say which plate degrades
     /// to previous behaviour rather than to a miss.
-    static func plateName(printerId: Int, fileName: String, plate: Int? = nil) -> String {
+    /// **The strongest key available wins**, and there are three because they became available in
+    /// that order:
+    ///
+    /// 1. `archiveId` — Bambuddy's own per-RUN id (`current_archive_id`). Actually unique: two
+    ///    prints of the same plate of the same model get different ids (measured: 203 and 204). No
+    ///    name hash is needed beside it, because nothing else can collide with it.
+    /// 2. `plate` — for a Trellis that sends the plate but not the id. Distinguishes plates of one
+    ///    model, which is the collision that was reported.
+    /// 3. name alone — the original, kept so a card from an older app or Trellis degrades to
+    ///    previous behaviour rather than to a miss.
+    static func plateName(printerId: Int, fileName: String, plate: Int? = nil,
+                          archiveId: Int? = nil) -> String {
+        if let archiveId { return "plate-\(printerId)-a\(archiveId)-v\(plateFormat).png" }
         let suffix = plate.map { "-p\($0)" } ?? ""
         return "plate-\(printerId)-\(stableHash(fileName))\(suffix)-v\(plateFormat).png"
     }
@@ -138,22 +150,16 @@ enum LiveActivityArt {
     /// Fixing it here rather than in Trellis is deliberate: `ContentState`'s field names are a wire
     /// format shared with a service that deploys separately, and this needs no new field, no new
     /// endpoint and no version skew. It also holds for a user whose Trellis is older than their app.
-    static func plateURI(printerId: Int, jobName: String, plate: Int? = nil, carried: String,
-                         fileManager: FileManager = .default) -> String {
+    static func plateURI(printerId: Int, jobName: String, plate: Int? = nil, archiveId: Int? = nil,
+                         carried: String, fileManager: FileManager = .default) -> String {
         if !carried.isEmpty { return carried }
         guard !jobName.isEmpty else { return "" }
-        // The plate-aware name first. Falling back to the plate-free one keeps a card working when
-        // the state carries no plate — an app or a Trellis older than this field — but a state that
-        // DOES know its plate must never be handed another plate's picture, which is the whole
-        // point, so the fallback is only for the nil case.
-        if let plate {
-            let exact = existingURI(
-                name: plateName(printerId: printerId, fileName: jobName, plate: plate),
-                fileManager: fileManager)
-            return exact
-        }
-        return existingURI(name: plateName(printerId: printerId, fileName: jobName),
-                           fileManager: fileManager)
+        // Exactly the key this state HAS — never a weaker one as a fallback. Being handed another
+        // print's picture is the entire defect, and a glyph is honest where a wrong model is not,
+        // so a state that knows its run does not go looking under a name that repeats.
+        return existingURI(
+            name: plateName(printerId: printerId, fileName: jobName, plate: plate, archiveId: archiveId),
+            fileManager: fileManager)
     }
 
     /// Remove plate images that no live card refers to.

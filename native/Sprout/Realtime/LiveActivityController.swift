@@ -318,6 +318,7 @@ final class LiveActivityController {
         // status and this is the same answer `AppModel` gives the resolver.
         s.plate = PrintArt.plateIndex(
             gcodeFile: status.gcodeFile, currentPlateId: status.currentPlateId?.int)
+        s.archiveId = status.currentArchiveId
         s.queueCount = queueCount
         s.nextName = nextName
         s.name = status.subtaskName ?? ""
@@ -517,6 +518,7 @@ final class LiveActivityController {
             // A new plate is a new PICTURE, and the widget derives that picture's path from this
             // field — so a state whose only change is the plate still has to reach the card.
             || a.plate != b.plate
+            || a.archiveId != b.archiveId
             || abs(a.etaEpochMs - b.etaEpochMs) >= 60_000
             || (a.dry ?? false) != (b.dry ?? false)
             || abs((a.amsTemp ?? 0) - (b.amsTemp ?? 0)) >= 1

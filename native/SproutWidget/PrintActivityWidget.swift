@@ -271,7 +271,8 @@ private struct IslandLeading: View {
         if state.dry != true,
            let image = LockScreenCard.loadImage(
             LiveActivityArt.plateURI(printerId: printerId, jobName: state.name,
-                                     plate: state.plate, carried: state.modelUri)) {
+                                     plate: state.plate, archiveId: state.archiveId,
+                                     carried: state.modelUri)) {
             // FIT into what the region offers, not a hard 44.
             //
             // `.frame(width: 44, height: 44)` is a DEMAND: when the expanded island's leading region
@@ -564,7 +565,8 @@ private struct LockScreenCard: View {
                 .overlay { SpoolGlyph(size: 28, tint: tint) }
         } else if let image = Self.loadImage(
             LiveActivityArt.plateURI(printerId: printerId, jobName: state.name,
-                                     plate: state.plate, carried: state.modelUri)) ?? Self.loadImage(state.iconUri) {
+                                     plate: state.plate, archiveId: state.archiveId,
+                                     carried: state.modelUri)) ?? Self.loadImage(state.iconUri) {
             // `scaledToFill` + clip, not `scaledToFit`: a plate render is rarely square and fitting it
             // letterboxed the model into a corner of an empty slot.
             Image(uiImage: image)

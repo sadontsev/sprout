@@ -52,6 +52,8 @@ final class LiveActivityArtResolver {
         /// Which plate of that job the written PNG shows. Part of the identity because the SAME job
         /// re-run on a different plate is a different picture, and the file name cannot say which.
         var plate: Int?
+        /// Bambuddy's per-RUN id — the only identifier here that cannot repeat.
+        var archiveId: Int?
         var modelUri: String
     }
 
@@ -95,6 +97,7 @@ final class LiveActivityArtResolver {
         client: BambuddyClient?,
         token: String?,
         plateIndex: Int? = nil,
+        archiveId: Int? = nil,
         sweep: Bool = true
     ) async -> String {
         guard !jobName.isEmpty else { return "" }
@@ -102,7 +105,7 @@ final class LiveActivityArtResolver {
         // part of the question: re-running one file's plate 3 after its plate 1 keeps the job name
         // and changes the picture entirely.
         if let hit = cached[printerId], hit.jobName == jobName, hit.plate == plateIndex,
-           !hit.modelUri.isEmpty {
+           hit.archiveId == archiveId, !hit.modelUri.isEmpty {
             return hit.modelUri
         }
         guard let client else { return "" }
@@ -164,7 +167,7 @@ final class LiveActivityArtResolver {
         // Named with the PLATE: `subtask_name` is the model's name and repeats across every plate
         // of a multi-plate model, so a plate-free name let one plate's image serve another's card.
         let name = LiveActivityArt.plateName(
-            printerId: printerId, fileName: jobName, plate: plateIndex)
+            printerId: printerId, fileName: jobName, plate: plateIndex, archiveId: archiveId)
         // A file left on disk by a PREVIOUS launch is only the current picture if the plate has not
         // changed since it was written — and the name cannot say which plate it holds. It must stay
         // plate-free: the widget DERIVES this same name from `printerId` + `name` whenever Trellis
@@ -177,7 +180,7 @@ final class LiveActivityArtResolver {
         if plateIndex == nil {
             let existing = LiveActivityArt.existingURI(name: name)
             if !existing.isEmpty {
-                cached[printerId] = Resolved(jobName: jobName, plate: nil, modelUri: existing)
+                cached[printerId] = Resolved(jobName: jobName, plate: nil, archiveId: archiveId, modelUri: existing)
                 return existing
             }
         }
@@ -186,7 +189,7 @@ final class LiveActivityArtResolver {
         guard let image = await ThumbCache.shared.image(for: url, headers: headers),
               let data = onGround(image).pngData() else { return "" }
         let uri = LiveActivityArt.write(data, name: name)
-        cached[printerId] = Resolved(jobName: jobName, plate: plateIndex, modelUri: uri)
+        cached[printerId] = Resolved(jobName: jobName, plate: plateIndex, archiveId: archiveId, modelUri: uri)
         // Everything this launch still refers to, plus the glyph, survives; the rest is last week's
         // prints taking up space nobody can see.
         // The keep-set is THIS INSTANCE's `cached`, so a one-shot resolver holding a single entry

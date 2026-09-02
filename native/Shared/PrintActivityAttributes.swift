@@ -78,6 +78,14 @@ struct PrintActivityAttributes: ActivityAttributes {
         /// `nil` on an older Trellis, which degrades to the plate-free name and the behaviour that
         /// preceded this field, rather than to a blank card.
         var plate: Int?
+        /// Bambuddy's own id for this print RUN (`current_archive_id`), when known.
+        ///
+        /// The strongest key the plate image can be named by, and the reason is in the history: one
+        /// model's plates all report the same `subtask_name`, and a slicer PRESET name
+        /// ("Best: 0.2mm layer, 2 walls, 15% infill") repeats across unrelated models. Neither a
+        /// name nor a name-plus-plate is unique; a run id is — two prints of the same plate of the
+        /// same model got 203 and 204.
+        var archiveId: Int?
         var queueCount: Int = 0
         var nextName: String = ""
 

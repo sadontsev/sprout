@@ -203,7 +203,10 @@ struct PrinterStatus: Codable, Hashable, Sendable {
     var supportsDrying: Bool?
     var supportsDryingWhilePrinting: Bool?
     var supportsChamberHeater: Bool?
-    /// Archive of the current/most recent print — reprint target.
+    /// Archive of the current/most recent print — reprint target, and the ONLY identifier this
+    /// payload carries that is unique per RUN. `subtask_name` names the model and repeats across
+    /// its plates; a slicer preset name repeats across unrelated models. Measured: two prints of
+    /// the same plate of the same model got 203 and 204.
     var currentArchiveId: Int?
     /// The nozzle(s) mounted on the toolhead now — index 0 = nozzle/left, 1 = nozzle_2/right.
     var nozzles: [NozzleInfo]?

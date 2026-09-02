@@ -592,6 +592,28 @@ final class AggregateDryingTests: XCTestCase {
         XCTAssertNotEqual(one, four)
     }
 
+    /// **The run id is the only key here that cannot repeat.** A slicer PRESET name — measured in
+    /// the print history, "Best: 0.2mm layer, 2 walls, 15% infill" — repeats across unrelated
+    /// models, so even name-plus-plate can collide. Two prints of the same plate of the same model
+    /// got archive ids 203 and 204.
+    func testTheRunIdOutranksTheNameAndPlate() {
+        let job = "Best: 0.2mm layer, 2 walls, 15% infill"
+        let a = LiveActivityArt.plateName(printerId: 2, fileName: job, plate: 1, archiveId: 203)
+        let b = LiveActivityArt.plateName(printerId: 2, fileName: job, plate: 1, archiveId: 204)
+        XCTAssertNotEqual(a, b, "same name, same plate, different RUN — different picture")
+    }
+
+    /// Each key is used only when the stronger one is absent, so a state never looks under a weaker
+    /// name and finds another print's picture.
+    func testTheKeyLadderFallsBackInOrder() {
+        let job = "x"
+        let withId = LiveActivityArt.plateName(printerId: 2, fileName: job, plate: 1, archiveId: 9)
+        let withPlate = LiveActivityArt.plateName(printerId: 2, fileName: job, plate: 1)
+        let bare = LiveActivityArt.plateName(printerId: 2, fileName: job)
+        XCTAssertEqual(Set([withId, withPlate, bare]).count, 3, "three distinct keys")
+        XCTAssertTrue(withId.contains("a9"), "the run id names it alone: \(withId)")
+    }
+
     /// An unknown plate keeps the ORIGINAL name, so a card from an app or a Trellis that predates
     /// this field degrades to the old behaviour rather than to a miss.
     func testAnUnknownPlateKeepsTheOldName() {
@@ -638,6 +660,11 @@ final class AggregateDryingTests: XCTestCase {
             LiveActivityArt.plateURI(
                 printerId: 2, jobName: job, plate: 4, carried: "", fileManager: fm).isEmpty,
             "plate 4 must NOT be handed plate 1's image — a glyph is honest, a wrong model is not")
+        XCTAssertTrue(
+            LiveActivityArt.plateURI(
+                printerId: 2, jobName: job, plate: 1, archiveId: 204, carried: "", fileManager: fm)
+                .isEmpty,
+            "a state that knows its RUN must not fall back to a name that repeats")
     }
 
     // MARK: - The eight-hour duplicate

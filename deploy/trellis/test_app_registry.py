@@ -982,6 +982,28 @@ class ChamberTests(unittest.TestCase):
         self.assertIsNone(la._plate_index("/data/Metadata/plate_.gcode", None))
 
     @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_sends_the_run_id(self):
+        fields, _ = la.classify({
+            "connected": True, "state": "RUNNING", "current_archive_id": 204,
+            "gcode_file": "/data/Metadata/plate_4.gcode",
+            "temperatures": {"nozzle": 220, "bed": 60},
+        })
+        self.assertEqual(fields["archiveId"], 204)
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_omits_the_run_id_when_absent(self):
+        fields, _ = la.classify({
+            "connected": True, "state": "RUNNING",
+            "temperatures": {"nozzle": 220, "bed": 60},
+        })
+        self.assertNotIn("archiveId", fields)
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_a_new_run_is_worth_a_push(self):
+        """Re-printing the SAME plate is a different run and a different picture."""
+        self.assertTrue(la.meaningful_change(_pad({"archiveId": 203}), _pad({"archiveId": 204})))
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
     def test_a_new_plate_is_worth_a_push(self):
         """A new plate is a new PICTURE, and the widget derives it from this field."""
         self.assertTrue(la.meaningful_change(_pad({"plate": 1}), _pad({"plate": 4})))

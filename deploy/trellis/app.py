@@ -194,6 +194,13 @@ def classify(status: dict) -> tuple[dict, str]:
     # content state with `modelUri: ""`, and `subtask_name` is the MODEL's name — the same for every
     # plate of one model — so without this the card for plate 4 found and drew plate 1's picture.
     plate = _plate_index(status.get("gcode_file"), status.get("current_plate_id"))
+    # Bambuddy's per-RUN id, and the strongest key the plate image can be named by. `subtask_name`
+    # names the MODEL and repeats across its plates; a slicer preset name repeats across unrelated
+    # models. Two prints of the same plate of the same model got 203 and 204, so only this is unique.
+    try:
+        archive_id = int(status.get("current_archive_id"))
+    except (TypeError, ValueError):
+        archive_id = None
 
     finished = False
     # `print_error` was read here and is not a field of Bambuddy's `PrinterStatus` — the route
@@ -240,6 +247,8 @@ def classify(status: dict) -> tuple[dict, str]:
     # missing plate as "cannot say", which falls back to the plate-free name rather than asserting 1.
     if plate is not None:
         fields["plate"] = plate
+    if archive_id is not None:
+        fields["archiveId"] = archive_id
     return (fields, kind)
 
 
@@ -300,6 +309,7 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
         or (a.get("chamberTarget") or 0) != (b.get("chamberTarget") or 0)
         # A new plate is a new PICTURE, and the widget derives that picture's path from this field.
         or a.get("plate") != b.get("plate")
+        or a.get("archiveId") != b.get("archiveId")
     )
 
 
