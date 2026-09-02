@@ -578,6 +578,32 @@ final class AggregateDryingTests: XCTestCase {
         XCTAssertNotEqual(unknown, first)
     }
 
+    // MARK: - The library rung and the plate
+
+    private func lib(_ id: Int, _ name: String) -> LibraryFile {
+        var f = LibraryFile(id: id, filename: name)
+        f.thumbnailPath = "Metadata/plate_1.png"
+        return f
+    }
+
+    /// When the plate is known, the SLICED file is what gets asked — not the unsliced source
+    /// `artFile` would borrow.
+    ///
+    /// Borrowing exists to replace a flat silhouette with a real render, which is an improvement
+    /// only while the plate is not in question. A source model has no plates, so for a multi-plate
+    /// model it answers "the model" when the question is "this plate"; a prettier picture of the
+    /// wrong plate is not an improvement.
+    func testTheSlicedFileIsWhatAnswersForAKnownPlate() {
+        let library = [lib(10, "bracket.3mf"), lib(11, "bracket.gcode.3mf")]
+        let sliced = PrintArt.match(jobName: "bracket", in: library)
+        let borrowed = PrintArt.artFile(jobName: "bracket", in: library)
+        XCTAssertEqual(sliced?.id, 11, "the sliced file is the exact-stem match")
+        XCTAssertEqual(borrowed?.id, 10, "artFile borrows the unsliced source's render")
+        XCTAssertNotEqual(
+            sliced?.id, borrowed?.id,
+            "the two differ, which is why the plate case must not use artFile")
+    }
+
     // MARK: - A cover taken too early
 
     private func resolved(provisional: Bool) -> LiveActivityArtResolver.Resolved {

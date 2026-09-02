@@ -142,14 +142,22 @@ final class LiveActivityArtResolver {
         // printer's plate render is gated by the `X-API-Key` HEADER and 401s on the bare URL.
         var url: URL?
         var headers: [String: String] = [:]
-        // KNOWN LIMIT, recorded rather than guessed at: this rung ignores `plateIndex`. It uses the
-        // file's stored thumbnail, and `artFile` may deliberately BORROW an unsliced source model's
-        // render — a file that has no plates to index at all. Whether
-        // `library/files/{id}/plate-thumbnail/{n}` distinguishes plates could not be established:
-        // every sliced file in the live library is single-plate, so index 2 answers 404 for all of
-        // them and proves nothing. Changing this rung on that basis would be the same unverified
-        // reasoning that produced the bug. A multi-plate library print is the case to check.
-        if let token, !library.isEmpty,
+        // KNOWING THE PLATE OUTRANKS BORROWING A PRETTIER RENDER.
+        //
+        // `artFile` may deliberately borrow an unsliced SOURCE model's thumbnail, because a sliced
+        // file's own can be a flat silhouette. That improves the picture and cannot express a
+        // plate: the source has none. For a multi-plate model it therefore answers "the model"
+        // when the question is "this plate", and a nicer picture of the wrong plate is not an
+        // improvement — the same trade this file makes everywhere else.
+        //
+        // So when the plate is known, ask the SLICED file for that plate directly.
+        // `library/files/{id}/plate-thumbnail/{n}` reads `Metadata/plate_{n}.png` out of the 3MF —
+        // read from Bambuddy's own source rather than probed, because every sliced file in the
+        // live library is single-plate and index 2 answers 404 for all of them, which proves
+        // nothing either way. That 404 is also why the fallback below still matters.
+        if let token, let plateIndex, let sliced = PrintArt.match(jobName: jobName, in: library) {
+            url = client.plateThumbUrl(sliced.id, plateIndex: plateIndex, token: token)
+        } else if let token, !library.isEmpty,
            let file = PrintArt.artFile(jobName: jobName, in: library) {
             url = client.fileThumbUrl(file.id, token: token, thumbnailPath: file.thumbnailPath)
         } else if let entry = PrintArt.matchSd(
