@@ -85,6 +85,19 @@ final class LiveActivityRenderTests: XCTestCase {
         return s
     }
 
+    /// An AMS drying cycle — the compact slot shows the spool instead of the nozzle.
+    private func drying() -> PrintActivityAttributes.ContentState {
+        var s = PrintActivityAttributes.ContentState()
+        s.dry = true
+        s.stateLabel = "Drying"
+        s.tint = LAColors.drying
+        s.amsTemp = 55
+        s.amsTarget = 60
+        s.humidity = 18
+        s.etaEpochMs = Date().addingTimeInterval(3600).timeIntervalSince1970 * 1000
+        return s
+    }
+
     // MARK: - Measuring
 
     /// The width this view WANTS, given no constraint. Larger than the slot means the slot cannot
@@ -116,7 +129,57 @@ final class LiveActivityRenderTests: XCTestCase {
         return size
     }
 
+    /// Pixels a view paints OUTSIDE a square frame of `frame` points.
+    ///
+    /// The view is placed in that frame, surrounded by `pad` points of black, and rendered; any
+    /// non-black pixel in the surround was drawn past the frame. SwiftUI does not clip a view to
+    /// its frame, so a stroke centred on a shape's edge paints half its width outside — which the
+    /// island then clips against its own boundary. A frame-size measurement cannot see that; only
+    /// the pixels can.
+    @MainActor
+    private func pixelsOutsideFrame(_ view: some View, frame: CGFloat, pad: CGFloat = 3,
+                                    scale: CGFloat = 4) -> Int {
+        let content = view.frame(width: frame, height: frame).padding(pad).background(Color.black)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = scale
+        guard let cg = renderer.cgImage else { return -1 }
+        let w = cg.width
+        let h = cg.height
+        var buf = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(
+            data: &buf, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return -1 }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let inset = Int(pad * scale)
+        var count = 0
+        for y in 0..<h {
+            for x in 0..<w {
+                if x >= inset && x < w - inset && y >= inset && y < h - inset { continue }
+                let i = (y * w + x) * 4
+                if Int(buf[i]) + Int(buf[i + 1]) + Int(buf[i + 2]) > 45 { count += 1 }
+            }
+        }
+        return count
+    }
+
     // MARK: - The guard
+
+    /// The compact ring must paint NOTHING outside its 17pt frame.
+    ///
+    /// Observed on a phone: the ring's leading arc sliced flat against the island's edge. The
+    /// frame was 17pt, and the measurement said so — but `Circle().stroke(lineWidth: 2)` centres
+    /// the stroke on the path, so the ring painted 19pt and the island clipped the outer point.
+    /// This test reads pixels, not frames, because that is the only place the difference shows.
+    @MainActor
+    func testTheCompactRingStaysInsideItsFrame() {
+        for (label, state) in [("running", running()), ("open", openFrame()), ("dry", drying())] {
+            let outside = pixelsOutsideFrame(LiveActivityShots.compactMark(state), frame: 17)
+            XCTAssertEqual(outside, 0, "\(label): \(outside) px painted outside the 17pt frame")
+        }
+    }
+
 
     /// The free space beside the counters on one line, at a given slot width.
     @MainActor
@@ -180,6 +243,91 @@ final class LiveActivityRenderTests: XCTestCase {
             idealWidth(LiveActivityShots.temps(running())))
     }
 
+    // MARK: - Countdown slots
+
+    /// One countdown slot on the island, with the font and cap its region actually uses.
+    ///
+    /// A struct, not a tuple: an array literal of tuples carrying `Font` expressions sent the type
+    /// checker exponential and the build never finished — twice. Explicit types keep it linear.
+    private struct CountdownSlotSpec {
+        let label: String
+        let font: Font
+        let maxWidth: CGFloat
+        let compact: Bool
+        let style: LiveActivityCountdown.Style
+    }
+
+    private static let mono12: Font = .system(size: 12, weight: .medium).monospacedDigit()
+    private static let mono13: Font = .system(size: 13, weight: .semibold).monospacedDigit()
+
+    private var countdownSlots: [CountdownSlotSpec] {
+        [
+            CountdownSlotSpec(label: "expanded-trailing", font: Self.mono12, maxWidth: 64, compact: false, style: .remaining),
+            CountdownSlotSpec(label: "compact-dry", font: Self.mono13, maxWidth: 58, compact: true, style: .finishClock),
+            CountdownSlotSpec(label: "compact-print", font: Self.mono13, maxWidth: 58, compact: true, style: .finishClock),
+        ]
+    }
+
+    /// The strings a slot must hold. Measured as STATIC text in the slot's monospaced-digit font,
+    /// which is the same width the live `Text(timerInterval:)` draws, and — unlike the live timer —
+    /// can be measured in a hosting controller without the clock involved. A print over ten hours
+    /// is routine on this machine, so the eight-character form is the one that matters.
+    private func sample(_ style: LiveActivityCountdown.Style) -> [(label: String, text: String)] {
+        switch style {
+        case .remaining: return [("59m", "59:59"), ("2h08m", "2:08:32"), ("12h08m", "12:08:32")]
+        case .finishClock: return [("24h", "21:09"), ("12h", "12:09 PM")]
+        }
+    }
+
+    /// `CountdownSlot`'s `minimumScaleFactor`. Below this the text truncates instead of shrinking.
+    private static let countdownMinScale: CGFloat = 0.75
+
+    /// No countdown may TRUNCATE in its slot — `12:08:…` is the failure, and it is what the
+    /// drying compact slot did past ten hours.
+    ///
+    /// `CountdownSlot` caps itself with `.frame(maxWidth:)`, so measuring the slot reports the cap
+    /// and hides the problem; this measures what the text WANTS. Shrinking to the minimum scale is
+    /// the slot's documented behaviour ("a time that does not fit should shrink, not stack"), so
+    /// the hard line is the width at that scale. Cases that fit only by shrinking are reported,
+    /// not failed — a 12-hour-locale `12:09 PM` at 75 % is legible; a clipped one is not.
+    @MainActor
+    func testNoCountdownTruncatesInItsSlot() {
+        for slot in countdownSlots {
+            for d in sample(slot.style) {
+                let want = idealWidth(Text(verbatim: d.text).font(slot.font))
+                XCTAssertLessThanOrEqual(
+                    want * Self.countdownMinScale, slot.maxWidth,
+                    "\(slot.label), \(d.label): text wants \(Int(want))pt; even at \(Self.countdownMinScale)x it will not fit \(Int(slot.maxWidth))pt and will TRUNCATE")
+                if want > slot.maxWidth {
+                    print("  [render] \(slot.label), \(d.label): \(Int(want))pt shrinks to fit \(Int(slot.maxWidth))pt")
+                }
+            }
+        }
+    }
+
+    // MARK: - Drying layouts
+
+    private func dryRows() -> [PrintActivityAttributes.DryUnitState] {
+        [
+            PrintActivityAttributes.DryUnitState(amsId: 0, label: "AMS 1", filament: "PLA", temp: 55, target: 60, humidity: 18, minutesLeft: 344),
+            PrintActivityAttributes.DryUnitState(amsId: 128, label: "AMS HT", filament: "PA-CF", temp: 78, target: 80, humidity: 9, minutesLeft: 44),
+        ]
+    }
+
+    /// The single-unit readout must fit the island's bottom region and the card's middle column.
+    @MainActor
+    func testTheDryReadoutFits() {
+        let w = idealWidth(LiveActivityShots.dryReadout(drying()))
+        XCTAssertLessThanOrEqual(w, Self.islandWidth - 2 * 10, "island bottom")
+    }
+
+    /// Aggregate rows must fit the narrowest lock-screen card without any column truncating.
+    @MainActor
+    func testTheDryRowsFitTheNarrowestCard() {
+        let w = idealWidth(LiveActivityShots.dryUnitRows(dryRows()))
+        XCTAssertLessThanOrEqual(w, Self.lockScreenWidth - 2 * 10, "rows want \(Int(w))pt")
+    }
+
     // MARK: - The pictures
 
     @MainActor
@@ -193,6 +341,42 @@ final class LiveActivityRenderTests: XCTestCase {
                 named: "card-\(label)")
             XCTAssertGreaterThan(island.height, 0, "\(label): island rendered nothing")
             XCTAssertGreaterThan(card.height, 0, "\(label): card rendered nothing")
+        }
+        // Every countdown slot at its cap, with the cap outlined, so truncation is visible. The
+        // live slot is used here (ImageRenderer copes with timer text; the hosting controller in
+        // `idealWidth` does not), with a twelve-hour range so the widest string is on screen.
+        let long = Date()...Date().addingTimeInterval(12 * 3600 + 8 * 60 + 32)
+        for slot in countdownSlots {
+            let v = LiveActivityShots.countdown(
+                .ticking(long), font: slot.font, maxWidth: slot.maxWidth,
+                compact: slot.compact, style: slot.style)
+                .overlay(Rectangle().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.25))
+                .padding(4)
+            let r = ImageRenderer(content: v.background(Color.black))
+            r.scale = 6
+            if let dir = ProcessInfo.processInfo.environment["SPROUT_SHOT_DIR"],
+                let png = r.uiImage?.pngData()
+            {
+                try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("countdown-\(slot.label).png"))
+            }
+        }
+        shoot(LiveActivityShots.islandLeading(running()), width: 44, named: "island-leading")
+        shoot(LiveActivityShots.dryReadout(drying()), width: Self.islandWidth - 20, named: "dry-readout")
+        shoot(LiveActivityShots.dryUnitRows(dryRows()), width: Self.lockScreenWidth - 20, named: "dry-rows")
+        // The compact mark at 12x, with its 17pt frame outlined, so a stroke past the frame is
+        // visible to a human as well as to `pixelsOutsideFrame`.
+        for (label, state) in [("running", running()), ("dry", drying())] {
+            let framed = LiveActivityShots.compactMark(state)
+                .frame(width: 17, height: 17)
+                .overlay(Rectangle().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.25))
+                .padding(4)
+            let r = ImageRenderer(content: framed.background(Color.black))
+            r.scale = 12
+            if let dir = ProcessInfo.processInfo.environment["SPROUT_SHOT_DIR"],
+                let png = r.uiImage?.pngData()
+            {
+                try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("compact-\(label).png"))
+            }
         }
     }
 }

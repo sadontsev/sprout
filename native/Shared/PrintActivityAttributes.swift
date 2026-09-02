@@ -187,5 +187,8 @@ enum LiveActivityCountdown: Equatable, Sendable {
     /// Overdue text for the ~44pt compact Dynamic Island slot, where `overdueLabel` would truncate.
     /// Reads as the countdown it replaces, run out.
     static let overdueLabelCompact = "0:00"
+    /// Overdue text for a compact slot showing a FINISH CLOCK. `0:00` beside a clock is midnight,
+    /// not "run out", so the clock slots say this instead.
+    static let overdueLabelClock = "now"
 }
 #endif

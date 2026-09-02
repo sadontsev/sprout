@@ -117,11 +117,19 @@ struct PrintActivityWidget: Widget {
                 // follows it read the same clock.
                 let countdown = context.state.countdown()
                 if context.state.dry == true, countdown != .hidden {
+                    // The FINISH TIME, same as the print slot — not the ticking duration it used
+                    // to be. A dry cycle runs four to twelve hours, and `12:08:32` wants 59pt of a
+                    // 44pt slot: past ten hours it truncated to `12:08:…` even at the minimum
+                    // scale, which `LiveActivityRenderTests` measures. A clock is five characters
+                    // whatever the duration, stays correct without a push, and answers what a
+                    // glance at this slot asks. `DryUnitRows` keeps the duration because it has
+                    // the room; this slot does not.
                     CountdownSlot(
                         countdown: countdown,
                         font: .system(size: 13, weight: .semibold).monospacedDigit(),
-                        maxWidth: 44,
-                        compact: true
+                        maxWidth: 58,
+                        compact: true,
+                        style: .finishClock
                     )
                     .foregroundStyle(tint)
                 } else if countdown != .hidden {
@@ -295,13 +303,22 @@ private struct IslandProgressMark: View {
             // slot does not scroll or shrink its content — it clips it, against the sensor cutout.
             // The ring has to fit inside the old footprint, so the glyph gives up the 2pt the stroke
             // needs rather than the slot growing.
+            //
+            // `.inset(by: 1)` is what actually makes it fit. A stroke is CENTRED on the path, so a
+            // 2pt stroke on a circle that fills a 17pt frame paints from 16pt to 18pt across —
+            // half of it outside the frame — and the island clipped that outer point off, leaving
+            // the leading arc sliced flat on a real phone. The frame measured 17 and was; the
+            // paint was 19. Insetting by half the line width puts the whole stroke inside, which
+            // `LiveActivityRenderTests` now checks by reading pixels rather than frames.
             IslandMark(state: state, tint: tint, size: 10)
                 .frame(width: 17, height: 17)
                 .background {
                     ZStack {
                         Circle()
+                            .inset(by: 1)
                             .stroke(tint.opacity(0.28), lineWidth: 2)
                         Circle()
+                            .inset(by: 1)
                             // A hair of arc at 0 %, so the ring reads as "started" rather than as a
                             // missing element on the first frames of a print.
                             .trim(from: 0, to: max(fraction, 0.02))
@@ -357,7 +374,12 @@ private struct CountdownSlot: View {
                 text(Text(range.upperBound, style: .time))
             }
         case .overdue:
-            text(Text(compact ? LiveActivityCountdown.overdueLabelCompact : LiveActivityCountdown.overdueLabel))
+            // `0:00` reads as a countdown run out — beside a CLOCK it reads as midnight, so the
+            // finish-time slots get a word instead.
+            text(Text(
+                !compact ? LiveActivityCountdown.overdueLabel
+                    : style == .finishClock ? LiveActivityCountdown.overdueLabelClock
+                    : LiveActivityCountdown.overdueLabelCompact))
         case .hidden:
             EmptyView()
         }
@@ -785,6 +807,40 @@ enum LiveActivityShots {
     /// Just the temperature row, for measuring it against a width on its own.
     static func temps(_ state: PrintActivityAttributes.ContentState) -> some View {
         TempsRow(state: state, tint: Color(hexString: state.tint))
+            .environment(\.colorScheme, .dark)
+    }
+
+    /// The compact-leading / minimal mark: the tinted glyph in its progress ring.
+    static func compactMark(_ state: PrintActivityAttributes.ContentState) -> some View {
+        IslandProgressMark(state: state, tint: Color(hexString: state.tint))
+            .environment(\.colorScheme, .dark)
+    }
+
+    /// A countdown slot, exactly as one of the island regions configures it.
+    static func countdown(_ countdown: LiveActivityCountdown, font: Font, maxWidth: CGFloat,
+                          compact: Bool = false, style: LiveActivityCountdown.Style = .remaining,
+                          tint: String = LAColors.running) -> some View {
+        CountdownSlot(countdown: countdown, font: font, maxWidth: maxWidth, compact: compact, style: style)
+            .foregroundStyle(Color(hexString: tint))
+            .environment(\.colorScheme, .dark)
+    }
+
+    /// The expanded island's leading tile (plate preview, or the glyph it falls back to).
+    static func islandLeading(_ state: PrintActivityAttributes.ContentState, printerId: Int = 2) -> some View {
+        IslandLeading(state: state, tint: Color(hexString: state.tint), printerId: printerId)
+            .environment(\.colorScheme, .dark)
+    }
+
+    /// A single-unit drying card's readout.
+    static func dryReadout(_ state: PrintActivityAttributes.ContentState) -> some View {
+        DryReadout(state: state, tint: Color(hexString: state.tint))
+            .environment(\.colorScheme, .dark)
+    }
+
+    /// The aggregate drying card's rows.
+    static func dryUnitRows(_ rows: [PrintActivityAttributes.DryUnitState],
+                            tint: String = LAColors.drying) -> some View {
+        DryUnitRows(rows: rows, tint: Color(hexString: tint))
             .environment(\.colorScheme, .dark)
     }
 
