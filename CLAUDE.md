@@ -522,6 +522,20 @@ Two things it still cannot answer, so do not claim them: the slot widths are
 measured estimates rather than published values, and nothing here exercises the
 larger Dynamic Type sizes.
 
+**A `.frame(width:height:)` is a DEMAND, and the expanded island's regions decide
+their own width.** The leading tile asked for a fixed 44pt; where the region
+offered less it overflowed and the region clipped it, cutting the model's edges —
+and at its extreme showing a sliver of the fallback glyph. Nothing upstream was
+at fault, which is what made it hard: the source is square (the printer's cover
+is 512x512) and `scaledToFill` into a square frame cannot crop. `scaledToFit`
+plus `maxWidth/maxHeight` accepts what it is given instead. Twice this was
+"reasoned about" and twice the reasoning was wrong, because the region's width is
+Apple's and unpublished. The test that settled it renders a white square with a
+RED BORDER into the tile at each plausible offered width and reads the pixels
+back: a missing red edge is a crop. **Run the negative control** — the old chain
+passes at 44 and loses all four edges at 40, 36 and 30. A crop test that never
+saw a crop is proving nothing.
+
 **A `View` interpolated into a `Text` compiles, and renders its own type.** The
 drying card shipped a page of `ModifiedContent<ModifiedContent<Text, ScaledFont>,
 …>` where the time remaining belonged: `.scaledFont`/`.scaledMono` are
