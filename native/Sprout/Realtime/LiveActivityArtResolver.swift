@@ -49,6 +49,9 @@ final class LiveActivityArtResolver {
 
     struct Resolved: Equatable {
         var jobName: String
+        /// Which plate of that job the written PNG shows. Part of the identity because the SAME job
+        /// re-run on a different plate is a different picture, and the file name cannot say which.
+        var plate: Int?
         var modelUri: String
     }
 
@@ -91,11 +94,15 @@ final class LiveActivityArtResolver {
         sdFiles: [PrinterFile] = [],
         client: BambuddyClient?,
         token: String?,
+        plateIndex: Int? = nil,
         sweep: Bool = true
     ) async -> String {
         guard !jobName.isEmpty else { return "" }
-        // Same job as last time and already written — the common case on a 4-second loop.
-        if let hit = cached[printerId], hit.jobName == jobName, !hit.modelUri.isEmpty {
+        // Same job AND the same plate as last time — the common case on a 4-second loop. Plate is
+        // part of the question: re-running one file's plate 3 after its plate 1 keeps the job name
+        // and changes the picture entirely.
+        if let hit = cached[printerId], hit.jobName == jobName, hit.plate == plateIndex,
+           !hit.modelUri.isEmpty {
             return hit.modelUri
         }
         guard let client else { return "" }
@@ -120,7 +127,10 @@ final class LiveActivityArtResolver {
         } else if let entry = PrintArt.matchSd(
             jobName: jobName,
             in: await sdListing(printerId, job: jobName, given: sdFiles, client: client)) {
-            url = client.printerPlateThumbUrl(printerId, path: entry.path)
+            // The PLATE THAT IS RUNNING. This argument defaults to 1, and omitting it is what put
+            // plate 1's render on a card printing plate 2 — the endpoint answered exactly what it
+            // was asked, which was the wrong question.
+            url = client.printerPlateThumbUrl(printerId, path: entry.path, plateIndex: plateIndex ?? 1)
             headers = client.authHeaders()
         }
         // Third rung: ask the PRINTER, which needs no name at all.
@@ -141,19 +151,28 @@ final class LiveActivityArtResolver {
         }
         guard let url else { return "" }
         let name = LiveActivityArt.plateName(printerId: printerId, fileName: jobName)
-        // Written already this launch for this job? Then the file is on disk and nothing needs the
-        // network.
-        let existing = LiveActivityArt.existingURI(name: name)
-        if !existing.isEmpty {
-            cached[printerId] = Resolved(jobName: jobName, modelUri: existing)
-            return existing
+        // A file left on disk by a PREVIOUS launch is only the current picture if the plate has not
+        // changed since it was written — and the name cannot say which plate it holds. It must stay
+        // plate-free: the widget DERIVES this same name from `printerId` + `name` whenever Trellis
+        // blanks `modelUri`, and it has no plate to derive with.
+        //
+        // So the disk is trusted only when there is no plate to tell apart. Where there is, the
+        // image is re-fetched once per job per launch and overwrites the file — `ThumbCache`'s
+        // URLCache usually serves that without a round trip. The alternative is what shipped: the
+        // same job re-run on another plate showed last time's plate until the file aged out.
+        if plateIndex == nil {
+            let existing = LiveActivityArt.existingURI(name: name)
+            if !existing.isEmpty {
+                cached[printerId] = Resolved(jobName: jobName, plate: nil, modelUri: existing)
+                return existing
+            }
         }
         // Through `ThumbCache`, so a plate the Files grid already fetched is not fetched again — the
         // library thumbnail endpoint is token-gated and the token rotates hourly.
         guard let image = await ThumbCache.shared.image(for: url, headers: headers),
               let data = onGround(image).pngData() else { return "" }
         let uri = LiveActivityArt.write(data, name: name)
-        cached[printerId] = Resolved(jobName: jobName, modelUri: uri)
+        cached[printerId] = Resolved(jobName: jobName, plate: plateIndex, modelUri: uri)
         // Everything this launch still refers to, plus the glyph, survives; the rest is last week's
         // prints taking up space nobody can see.
         // The keep-set is THIS INSTANCE's `cached`, so a one-shot resolver holding a single entry

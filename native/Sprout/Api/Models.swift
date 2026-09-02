@@ -163,6 +163,14 @@ struct PrinterStatus: Codable, Hashable, Sendable {
     var layerNum: LooseNumber?
     var totalLayers: LooseNumber?
     var subtaskName: String?
+    /// The gcode the printer is EXECUTING, e.g. `/data/Metadata/plate_3.gcode`.
+    ///
+    /// The only field that says which plate of a multi-plate 3MF is running. Without it the card's
+    /// plate render was requested at the endpoint's default index — always plate 1 — so a job sent
+    /// from Handy as plate 2 or 3 showed plate 1's picture.
+    var gcodeFile: String?
+    /// The printer's own plate number. Secondary to `gcodeFile`, which is the file being run.
+    var currentPlateId: LooseNumber?
     var chamberLight: Bool?
     var temperatures: Temperatures?
     var ams: [AmsUnitRaw]?

@@ -88,7 +88,12 @@ struct PrintActivityWidget: Widget {
                             .truncationMode(.middle)
                             .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // NO `.frame(maxWidth: .infinity)`. A greedy child expands to fill whatever it
+                    // is offered, which defeats the `priority: 1` the sides carry precisely so the
+                    // centre yields to them: the leading tile was starved to a sliver of the glyph
+                    // and the trailing countdown to "2.". `truncationMode(.middle)` already lets a
+                    // long file name give up width gracefully; it does not need to claim all of it.
+                    .frame(alignment: .leading)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     if let rows = context.state.dryUnits, !rows.isEmpty {

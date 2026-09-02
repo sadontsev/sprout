@@ -557,6 +557,27 @@ final class AggregateDryingTests: XCTestCase {
         XCTAssertEqual(got?.amsTemp, 50)
     }
 
+    // MARK: - The plate the picture shows
+
+    /// The SAME job re-run on a different plate is a different picture.
+    ///
+    /// The resolver keyed its in-memory cache on the job NAME alone, and the file it writes cannot
+    /// carry a plate — the widget derives that name from `printerId` + `name` whenever Trellis
+    /// blanks `modelUri`, and has no plate to derive with. So a second run of one file on another
+    /// plate returned the first run's image. Reported live: plate 2 or 3 printing, plate 1 shown.
+    func testAResolvedPlateIsIdentifiedByItsPlateNotOnlyItsJob() {
+        let one = LiveActivityArtResolver.Resolved(jobName: "Beginner Set", plate: 1, modelUri: "a")
+        let three = LiveActivityArtResolver.Resolved(jobName: "Beginner Set", plate: 3, modelUri: "b")
+        XCTAssertNotEqual(one, three, "same job, different plate — not the same picture")
+    }
+
+    /// An unknown plate is its own identity, distinct from plate 1 — the whole point of `nil`.
+    func testAnUnknownPlateIsNotPlateOne() {
+        let unknown = LiveActivityArtResolver.Resolved(jobName: "x", plate: nil, modelUri: "a")
+        let first = LiveActivityArtResolver.Resolved(jobName: "x", plate: 1, modelUri: "a")
+        XCTAssertNotEqual(unknown, first)
+    }
+
     // MARK: - The eight-hour duplicate
 
     private func card(_ id: String, _ identity: String, live: Bool) -> LiveActivityController.CardLiveness

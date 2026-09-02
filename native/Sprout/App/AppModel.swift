@@ -545,7 +545,11 @@ final class AppModel {
                         // brand glyph rather than being handed some other machine's plate.
                         sdFiles: id == self.printerId ? (self.library.printerList?.files ?? []) : [],
                         client: self.client,
-                        token: self.cameraToken
+                        token: self.cameraToken,
+                        // WHICH PLATE. Omitted, the render endpoint defaults to plate 1, so a job
+                        // sent from Handy as plate 2 or 3 wore plate 1's picture.
+                        plateIndex: PrintArt.plateIndex(
+                            gcodeFile: s.gcodeFile, currentPlateId: s.currentPlateId?.int)
                     )
                     await self.liveActivity?.sync(
                         printerId: id,

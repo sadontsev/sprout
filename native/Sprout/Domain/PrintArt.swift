@@ -15,6 +15,35 @@ import Foundation
 /// the fallback ladder degrades to a brand glyph, and a glyph is honest.
 enum PrintArt {
 
+    /// Which PLATE of a multi-plate file is printing, or nil when nothing says.
+    ///
+    /// A `.gcode.3mf` holds one gcode per plate, and the printer runs exactly one of them. The plate
+    /// render endpoint is indexed, and its index DEFAULTS TO 1 — so a job sent from Handy as plate 2
+    /// or 3 put plate 1's picture on the card, which is the "wrong model on the lock screen" failure
+    /// this file exists to prevent, arriving through the index instead of through the name.
+    ///
+    /// `gcodeFile` is preferred because it is the file the machine is EXECUTING — the strongest
+    /// evidence of which plate is running. `currentPlateId` is a reported field and only a fallback:
+    /// this printer already reports `active_extruder` wrongly, so a second opinion is worth having
+    /// and worth ranking below the artefact itself.
+    ///
+    /// nil, not 1, when neither says. "Plate 1" and "no idea which plate" are different answers, and
+    /// conflating them is exactly how the default got here.
+    static func plateIndex(gcodeFile: String?, currentPlateId: Int? = nil) -> Int? {
+        if let n = plateNumber(inPath: gcodeFile) { return n }
+        if let id = currentPlateId, id > 0 { return id }
+        return nil
+    }
+
+    /// `/data/Metadata/plate_3.gcode` → 3. Searches BACKWARDS: a user's own folder may contain
+    /// `plate_2` in its name, and the segment that decides is the last one.
+    static func plateNumber(inPath path: String?) -> Int? {
+        guard let path, let marker = path.range(of: "plate_", options: .backwards) else { return nil }
+        let digits = path[marker.upperBound...].prefix { $0.isNumber }
+        guard let n = Int(digits), n > 0 else { return nil }
+        return n
+    }
+
     /// Extensions the printer strips, longest first so `.gcode.3mf` is not read as `.3mf` with a
     /// leftover `.gcode`.
     private static let extensions = [".gcode.3mf", ".gcode", ".3mf", ".stl", ".obj", ".ply"]
