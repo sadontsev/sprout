@@ -547,10 +547,18 @@ This shape has now appeared many times, in unrelated code, written by different 
 | Wizard filament | Identity recomputed from hex instead of read from inventory | A brown spool labelled "Orange" |
 | Maintenance | `enabled ?? false` in the list vs `enabled != false` in the triage count | "1 thing needs you" over a pane showing nothing |
 | Menu bar panel | `vm.kind == .live` answered "is a print running?", not "will the printer accept a pause?" | Pause/Stop live and silent in LAN mode |
+| LA plate preview | `plateIndex` was never passed, so the render endpoint's **default of 1** answered "which plate?" | Plate 1's picture on a card printing plate 3 |
 
 The common cause is not carelessness — it is a **predicate that answers a NEARBY question**.
 `isSliced` and `hasGcode` sound like synonyms and are not. "The user has permission" and "the printer
 will accept it" sound like synonyms and are not.
+
+**A DEFAULT ARGUMENT is a predicate too.** The plate case had no predicate at all — just an
+omitted parameter whose default silently asserted "plate 1". Nothing was gated wrongly; a question
+was never asked, and the API answered the one it was given. The failure looked like success,
+because a real render of the wrong plate is indistinguishable from a right one unless you know
+what you printed. When a parameter selects WHICH THING, passing nothing is an assertion; make the
+unknown case `nil` and handle it, rather than letting a default stand in for knowledge.
 
 **The rule: an affordance must be gated on the exact capability it needs, not on a proxy for it.**
 When those are two different questions, write two predicates and name them for the questions they
