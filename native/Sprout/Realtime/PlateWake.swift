@@ -54,6 +54,14 @@ enum PlateWake {
             guard !job.isEmpty else { continue }
             // `sweep: false` — see `LiveActivityArtResolver.plate`. This resolver knows about one
             // card and would take the others' plates with it.
+            // WHICH PLATE. The card's `ContentState` cannot say — it carries no plate, and adding
+            // one would be a wire-format change shared with a service that deploys separately — so
+            // the wake asks the printer. One request, and without it this path guessed plate 1 and
+            // could write the wrong picture for a job the foreground had never resolved.
+            //
+            // Best-effort like everything else here: a failed status means an unknown plate, not a
+            // failed wake.
+            let status = try? await client.getStatus(activity.attributes.printerId)
             let uri = await resolver.plate(
                 printerId: activity.attributes.printerId,
                 jobName: job,
@@ -61,6 +69,8 @@ enum PlateWake {
                 sdFiles: [],
                 client: client,
                 token: token,
+                plateIndex: PrintArt.plateIndex(
+                    gcodeFile: status?.gcodeFile, currentPlateId: status?.currentPlateId?.int),
                 sweep: false
             )
             if !uri.isEmpty { wrote = true }

@@ -121,6 +121,13 @@ final class LiveActivityArtResolver {
         // printer's plate render is gated by the `X-API-Key` HEADER and 401s on the bare URL.
         var url: URL?
         var headers: [String: String] = [:]
+        // KNOWN LIMIT, recorded rather than guessed at: this rung ignores `plateIndex`. It uses the
+        // file's stored thumbnail, and `artFile` may deliberately BORROW an unsliced source model's
+        // render — a file that has no plates to index at all. Whether
+        // `library/files/{id}/plate-thumbnail/{n}` distinguishes plates could not be established:
+        // every sliced file in the live library is single-plate, so index 2 answers 404 for all of
+        // them and proves nothing. Changing this rung on that basis would be the same unverified
+        // reasoning that produced the bug. A multi-plate library print is the case to check.
         if let token, !library.isEmpty,
            let file = PrintArt.artFile(jobName: jobName, in: library) {
             url = client.fileThumbUrl(file.id, token: token, thumbnailPath: file.thumbnailPath)
@@ -130,6 +137,10 @@ final class LiveActivityArtResolver {
             // The PLATE THAT IS RUNNING. This argument defaults to 1, and omitting it is what put
             // plate 1's render on a card printing plate 2 — the endpoint answered exactly what it
             // was asked, which was the wrong question.
+            // `?? 1` only where the plate is genuinely unknowable — an older Bambuddy reporting
+            // neither `gcode_file` nor `current_plate_id`. A single-plate file's only plate is 1, so
+            // the guess is right for that whole population and wrong only for a multi-plate file we
+            // cannot identify, which is the case this rung cannot serve either way.
             url = client.printerPlateThumbUrl(printerId, path: entry.path, plateIndex: plateIndex ?? 1)
             headers = client.authHeaders()
         }

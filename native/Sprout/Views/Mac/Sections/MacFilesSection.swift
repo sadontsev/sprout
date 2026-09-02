@@ -1103,7 +1103,11 @@ struct MacFilesSection: View {
     private func sdThumb(_ pf: PrinterFile) -> some View {
         switch SdFileCaps.preview(pf) {
         case .plate:
-            CachedThumb(url: model.client?.printerPlateThumbUrl(model.printerId, path: pf.path),
+            // Plate 1 EXPLICITLY: a file BROWSED on the card, whose honest preview is its first
+            // plate. Stated rather than defaulted — the same silent default put plate 1 on a Live
+            // Activity printing plate 3, so the parameter is required and every caller now says
+            // which plate it means and why.
+            CachedThumb(url: model.client?.printerPlateThumbUrl(model.printerId, path: pf.path, plateIndex: 1),
                         contentMode: .fit,
                         headers: model.client?.authHeaders() ?? [:],
                         fallbackSymbol: SdFileCaps.symbol(pf))

@@ -543,7 +543,10 @@ struct MacFilesInspector: View {
         Group {
             switch SdFileCaps.preview(pf) {
             case .plate:
-                CachedThumb(url: model.client?.printerPlateThumbUrl(model.printerId, path: pf.path),
+                // Plate 1 EXPLICITLY — a browsed file's first plate, which is the honest preview
+                // for a file nobody is printing. See `printerPlateThumbUrl`: the default that used
+                // to fill this in silently is what put plate 1 on a card printing plate 3.
+                CachedThumb(url: model.client?.printerPlateThumbUrl(model.printerId, path: pf.path, plateIndex: 1),
                             aspect: 1, contentMode: .fit,
                             headers: model.client?.authHeaders() ?? [:],
                             fallbackSymbol: SdFileCaps.symbol(pf))

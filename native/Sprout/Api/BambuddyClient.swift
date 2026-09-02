@@ -542,7 +542,13 @@ final class BambuddyClient: Sendable {
         URL(string: "\(baseUrl)/api/v1/printers/\(printerId)/files/download?path=\(esc(path))")
     }
 
-    func printerPlateThumbUrl(_ printerId: Int, path: String, plateIndex: Int = 1) -> URL? {
+    /// The plate render for a file on the printer's own storage.
+    ///
+    /// **`plateIndex` has NO DEFAULT, deliberately.** It used to default to 1, and the Live Activity
+    /// resolver simply never passed one — so every card showed plate 1 of a multi-plate file
+    /// whatever was printing, and the endpoint was answering correctly all along. A default here is
+    /// an assertion about which plate, made by the least-informed party. Callers must say.
+    func printerPlateThumbUrl(_ printerId: Int, path: String, plateIndex: Int) -> URL? {
         URL(string: "\(baseUrl)/api/v1/printers/\(printerId)/files/plate-thumbnail/\(plateIndex)?path=\(esc(path))")
     }
 

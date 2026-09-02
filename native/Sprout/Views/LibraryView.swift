@@ -1024,7 +1024,12 @@ private struct PrinterFileSheet: View {
                     .frame(width: 210, height: 210)
                     .overlay {
                         PrinterFileImage(
-                            url: client.printerPlateThumbUrl(printerId, path: file.path),
+                            // Plate 1 EXPLICITLY, and correct here: this is a file being browsed,
+                            // not a job being run, so "the file's first plate" is the honest
+                            // preview. The default that used to supply this silently was wrong for
+                            // the Live Activity, which does know which plate is printing — which is
+                            // why the parameter is now required and this assertion is written down.
+                            url: client.printerPlateThumbUrl(printerId, path: file.path, plateIndex: 1),
                             headers: client.authHeaders(),
                             contentMode: .fit
                         )
