@@ -588,6 +588,15 @@ glyph is honest where a wrong picture is not.
 **A key made of a name that repeats is not a key** — and when a payload carries a real id, ask what
 in it is actually unique BEFORE picking one. That question, asked once, was worth three builds.
 
+**AND THE PICTURE ITSELF CAN BE WRONG WHEN FETCHED, which no key fixes.** The printer's cover is
+its own picture of what it is running, and at job acceptance it can still be the PREVIOUS job's. A
+card created during "Auto bed leveling" at layer 0 therefore cached the last print's model, and
+`coverAsked` — which exists so a 404 is not retried every four seconds — froze it there. A cover
+taken before the first layer is now PROVISIONAL and re-resolved once `layer_num > 0`, exactly once.
+Gated on a laid layer rather than a stage name: the stage strings are many and matching them is a
+guess about firmware, while a layer is the thing itself. Same symptom as the two above, third
+distinct cause; fixing each as though it were THE cause is what made this take four builds.
+
 **A DEFAULT ARGUMENT is a predicate too.** The plate case had no predicate at all — just an
 omitted parameter whose default silently asserted "plate 1". Nothing was gated wrongly; a question
 was never asked, and the API answered the one it was given. The failure looked like success,
