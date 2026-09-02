@@ -272,11 +272,21 @@ private struct IslandLeading: View {
            let image = LockScreenCard.loadImage(
             LiveActivityArt.plateURI(printerId: printerId, jobName: state.name,
                                      carried: state.modelUri)) {
+            // FIT into what the region offers, not a hard 44.
+            //
+            // `.frame(width: 44, height: 44)` is a DEMAND: when the expanded island's leading region
+            // is narrower than that — and it is, its width is Apple's to decide and not published —
+            // the tile overflows and the region clips it, cutting the model's left and right edges.
+            // The same fault at its extreme is what showed a sliver of the fallback glyph.
+            //
+            // `scaledToFit` + `maxWidth/maxHeight` shrinks to whatever it is given instead, so the
+            // whole model is always visible. Fit rather than fill costs nothing on a plate render,
+            // which is square (measured: the printer's own cover is 512x512), and a non-square one
+            // letterboxes onto the tile's own ground rather than losing its edges.
             Image(uiImage: image)
                 .resizable()
-                .scaledToFill()
-                .frame(width: 44, height: 44)
-                .clipped()
+                .scaledToFit()
+                .frame(maxWidth: 44, maxHeight: 44)
                 .modifier(PreviewTile(radius: 10))
         } else {
             IslandMark(state: state, tint: tint, size: 16)
@@ -834,6 +844,18 @@ enum LiveActivityShots {
     static func islandLeading(_ state: PrintActivityAttributes.ContentState, printerId: Int = 2) -> some View {
         IslandLeading(state: state, tint: Color(hexString: state.tint), printerId: printerId)
             .environment(\.colorScheme, .dark)
+    }
+
+    /// The plate tile's exact modifier chain, over an image supplied directly.
+    ///
+    /// `IslandLeading` loads its image from the App Group, which a test has no way to populate — so
+    /// the chain is exposed on its own. This is the thing that was cropping.
+    static func plateTile(_ image: UIImage) -> some View {
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFit()
+            .frame(maxWidth: 44, maxHeight: 44)
+            .modifier(PreviewTile(radius: 10))
     }
 
     /// A single-unit drying card's readout.

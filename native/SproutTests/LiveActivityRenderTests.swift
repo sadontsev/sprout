@@ -328,6 +328,67 @@ final class LiveActivityRenderTests: XCTestCase {
         XCTAssertLessThanOrEqual(w, Self.lockScreenWidth - 2 * 10, "rows want \(Int(w))pt")
     }
 
+    // MARK: - The plate tile must not crop
+
+    /// A square image with a 3pt border of a known colour on all four sides.
+    @MainActor
+    private func borderedSquare(side: CGFloat = 512, border: CGFloat = 24) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: side, height: side))
+            UIColor.red.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: side, height: border))
+            ctx.fill(CGRect(x: 0, y: side - border, width: side, height: border))
+            ctx.fill(CGRect(x: 0, y: 0, width: border, height: side))
+            ctx.fill(CGRect(x: side - border, y: 0, width: border, height: side))
+        }
+    }
+
+    /// Whether a rendered tile still shows red along each of its four edges.
+    @MainActor
+    private func edgesPresent(_ view: some View, offered: CGFloat) -> (top: Bool, bottom: Bool,
+                                                                      left: Bool, right: Bool) {
+        let r = ImageRenderer(content: view.frame(width: offered, height: offered))
+        r.scale = 4
+        guard let cg = r.cgImage else { return (false, false, false, false) }
+        let w = cg.width
+        let h = cg.height
+        var buf = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(
+            data: &buf, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return (false, false, false, false) }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        func isRed(_ x: Int, _ y: Int) -> Bool {
+            let i = (y * w + x) * 4
+            return buf[i] > 120 && buf[i + 1] < 90 && buf[i + 2] < 90
+        }
+        // Scanned a couple of pixels in from each edge, so the tile's own rounded corners are not
+        // mistaken for a crop. A whole row or column having no red means that edge was lost.
+        func rowHasRed(_ y: Int) -> Bool { (0..<w).contains { isRed($0, y) } }
+        func colHasRed(_ x: Int) -> Bool { (0..<h).contains { isRed(x, $0) } }
+        return (top: rowHasRed(2), bottom: rowHasRed(h - 3),
+                left: colHasRed(2), right: colHasRed(w - 3))
+    }
+
+    /// The tile must show the WHOLE plate, at every width the region might offer.
+    ///
+    /// The expanded island's leading region width is Apple's to decide and is not published. The
+    /// tile demanded a fixed 44pt, so where the region offered less it overflowed and was clipped —
+    /// the model's edges cut off, and at the extreme only a sliver of the fallback glyph. Reported
+    /// twice from a phone before it was measured here.
+    @MainActor
+    func testThePlateTileNeverCropsTheModel() {
+        let image = borderedSquare()
+        for offered in [44, 40, 36, 30] as [CGFloat] {
+            let e = edgesPresent(LiveActivityShots.plateTile(image), offered: offered)
+            XCTAssertTrue(
+                e.top && e.bottom && e.left && e.right,
+                "offered \(Int(offered))pt: edges lost — top:\(e.top) bottom:\(e.bottom) left:\(e.left) right:\(e.right)")
+        }
+    }
+
     // MARK: - The pictures
 
     @MainActor
@@ -361,6 +422,18 @@ final class LiveActivityRenderTests: XCTestCase {
             }
         }
         shoot(LiveActivityShots.islandLeading(running()), width: 44, named: "island-leading")
+        for offered in [44, 36, 30] as [CGFloat] {
+            let v = LiveActivityShots.plateTile(borderedSquare())
+                .frame(width: offered, height: offered)
+                .padding(3)
+            let r = ImageRenderer(content: v.background(Color.black))
+            r.scale = 8
+            if let dir = ProcessInfo.processInfo.environment["SPROUT_SHOT_DIR"],
+                let png = r.uiImage?.pngData()
+            {
+                try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("tile-\(Int(offered)).png"))
+            }
+        }
         shoot(LiveActivityShots.dryReadout(drying()), width: Self.islandWidth - 20, named: "dry-readout")
         shoot(LiveActivityShots.dryUnitRows(dryRows()), width: Self.lockScreenWidth - 20, named: "dry-rows")
         // The compact mark at 12x, with its 17pt frame outlined, so a stroke past the frame is
