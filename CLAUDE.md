@@ -562,10 +562,18 @@ This shape has now appeared many times, in unrelated code, written by different 
 | Maintenance | `enabled ?? false` in the list vs `enabled != false` in the triage count | "1 thing needs you" over a pane showing nothing |
 | Menu bar panel | `vm.kind == .live` answered "is a print running?", not "will the printer accept a pause?" | Pause/Stop live and silent in LAN mode |
 | LA plate preview | `plateIndex` was never passed, so the render endpoint's **default of 1** answered "which plate?" | Plate 1's picture on a card printing plate 3 |
+| LA plate file name | `subtask_name` answered "which print?" when it names the **model** | Plate 4's card drew the image plate 1 had written |
 
 The common cause is not carelessness — it is a **predicate that answers a NEARBY question**.
 `isSliced` and `hasGcode` sound like synonyms and are not. "The user has permission" and "the printer
 will accept it" sound like synonyms and are not.
+
+**`subtask_name` IS THE MODEL'S NAME, NOT THE PRINT'S.** Every plate of a multi-plate model
+reports the same one — measured: `PLA profile + Optional PETG Translucent plate` for plate 1 and
+plate 4 alike. Anything keyed on it alone treats two different prints as one. The App Group plate
+image was, so plate 4's card found and drew plate 1's picture; the fix was to put the plate in the
+name AND in `ContentState`, because the widget derives that name itself whenever a Trellis push
+blanks `modelUri`. **A key made of a name that repeats is not a key.**
 
 **A DEFAULT ARGUMENT is a predicate too.** The plate case had no predicate at all — just an
 omitted parameter whose default silently asserted "plate 1". Nothing was gated wrongly; a question
