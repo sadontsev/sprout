@@ -498,8 +498,21 @@ SHOT=/tmp/la; DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer \
 
 `TEST_RUNNER_` is required — plain env vars do not reach the test process.
 
+Two things that each cost an hour, looking exactly like a hung test:
+
+- **`timeout` does not exist on macOS.** A `timeout 240 xcodebuild …` prints
+  nothing and exits — it never ran. Bound a run with the Bash tool's own timeout.
+- **`name=iPhone 17 Pro` is ambiguous the moment a second one is booted** (Maestro
+  boots its own). xcodebuild may pick the busy one and the bundle queues behind
+  that runner forever. Use `id=<udid>` from `xcrun simctl list devices booted`.
+
 It measures as well as photographs, and the assertions are the durable half: a
-readout that cannot fit its slot fails the suite. **The trap is measuring against
+readout that cannot fit its slot fails the suite. **It also reads pixels**, because
+a frame can be the right size while the paint is not: `Circle().stroke` centres
+the stroke on the path, so a 2pt ring in a 17pt frame paints 19pt and the island
+clips the outer point — the sliced compact ring. `pixelsOutsideFrame` renders the
+view in its frame with black around it and counts lit pixels in the surround;
+`.inset(by:)` half the line width is the fix. **The trap is measuring against
 the wrong width.** The first version of these tests compared the temperature row
 against the whole lock-screen card and passed while the card rendered
 `L…  R 2…  B…  C 3…` — that card is three columns, and the row gets the middle
