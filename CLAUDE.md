@@ -568,12 +568,25 @@ The common cause is not carelessness — it is a **predicate that answers a NEAR
 `isSliced` and `hasGcode` sound like synonyms and are not. "The user has permission" and "the printer
 will accept it" sound like synonyms and are not.
 
-**`subtask_name` IS THE MODEL'S NAME, NOT THE PRINT'S.** Every plate of a multi-plate model
-reports the same one — measured: `PLA profile + Optional PETG Translucent plate` for plate 1 and
-plate 4 alike. Anything keyed on it alone treats two different prints as one. The App Group plate
-image was, so plate 4's card found and drew plate 1's picture; the fix was to put the plate in the
-name AND in `ContentState`, because the widget derives that name itself whenever a Trellis push
-blanks `modelUri`. **A key made of a name that repeats is not a key.**
+**`subtask_name` IS THE MODEL'S NAME, NOT THE PRINT'S — and name+plate is still not unique.**
+`/api/v1/archives/` settles what is. Read after two builds had each fixed a real fault and stopped
+at the first key that looked sufficient:
+
+    204 | 19:30 | plate_4.gcode | PLA profile + Optional PETG Translucen
+    203 | 19:27 | plate_4.gcode | PLA profile + Optional PETG Translucen
+    202 | 19:20 | plate_2.gcode | PLA profile + Optional PETG Translucen
+    197 | 07:21 | plate_3.gcode | Best: 0.2mm layer, 2 walls, 15% infill
+
+Every plate of one model reports the same name; a slicer PRESET name is reported as the print's
+name and repeats across unrelated models; and 203/204 are two runs of the SAME plate of the same
+model, which no name-and-plate combination can separate. **`current_archive_id` is unique per run**
+and was in the status payload the whole time — it is what the App Group plate image is named by,
+with name+plate and name alone kept below it, each used only when the stronger one is absent.
+`plateURI` never falls back to a weaker key: being handed another run's model is the defect, and a
+glyph is honest where a wrong picture is not.
+
+**A key made of a name that repeats is not a key** — and when a payload carries a real id, ask what
+in it is actually unique BEFORE picking one. That question, asked once, was worth three builds.
 
 **A DEFAULT ARGUMENT is a predicate too.** The plate case had no predicate at all — just an
 omitted parameter whose default silently asserted "plate 1". Nothing was gated wrongly; a question
