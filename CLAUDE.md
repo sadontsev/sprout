@@ -597,6 +597,14 @@ Gated on a laid layer rather than a stage name: the stage strings are many and m
 guess about firmware, while a layer is the thing itself. Same symptom as the two above, third
 distinct cause; fixing each as though it were THE cause is what made this take four builds.
 
+**READ BAMBUDDY'S HANDLER RATHER THAN PROBING IT.** The library rung was left plate-blind for
+several builds because `library/files/{id}/plate-thumbnail/{n}` answered 404 for index 2 on every
+sliced file in the live library — which proves nothing, since they are all single-plate. The
+handler settles it in three lines: it reads `Metadata/plate_{plate_index}.png` out of the 3MF, so
+the index is honoured and the 404s were files genuinely having no second plate. The source is in
+the container: `docker exec bambuddy grep -rn "plate_thumbnail" /app/backend/app/api/routes/`.
+"Cannot probe it" is not "cannot know it".
+
 **A DEFAULT ARGUMENT is a predicate too.** The plate case had no predicate at all — just an
 omitted parameter whose default silently asserted "plate 1". Nothing was gated wrongly; a question
 was never asked, and the API answered the one it was given. The failure looked like success,
