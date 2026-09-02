@@ -550,7 +550,10 @@ final class AppModel {
                         // sent from Handy as plate 2 or 3 wore plate 1's picture.
                         plateIndex: PrintArt.plateIndex(
                             gcodeFile: s.gcodeFile, currentPlateId: s.currentPlateId?.int),
-                        archiveId: s.currentArchiveId
+                        archiveId: s.currentArchiveId,
+                        // The printer's cover can still be the PREVIOUS job's while this one is
+                        // calibrating. Before the first layer, whatever it returns is provisional.
+                        printingStarted: (s.layerNum?.int ?? 0) > 0
                     )
                     await self.liveActivity?.sync(
                         printerId: id,

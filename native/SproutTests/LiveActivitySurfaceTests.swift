@@ -578,6 +578,31 @@ final class AggregateDryingTests: XCTestCase {
         XCTAssertNotEqual(unknown, first)
     }
 
+    // MARK: - A cover taken too early
+
+    private func resolved(provisional: Bool) -> LiveActivityArtResolver.Resolved {
+        LiveActivityArtResolver.Resolved(
+            jobName: "Beginner Set", plate: 1, archiveId: 205, provisional: provisional,
+            modelUri: "file:///old.png")
+    }
+
+    /// **The printer's cover can still be the PREVIOUS job's at layer 0.** Observed: a card created
+    /// during "Auto bed leveling" showed the last print's model, while the same endpoint returned
+    /// the right one minutes later. `coverAsked` then made that one early answer permanent — it
+    /// exists to stop a 404 being retried every four seconds, not to freeze a wrong picture.
+    func testAProvisionalCoverIsNotFinal() {
+        XCTAssertTrue(resolved(provisional: true).provisional)
+        XCTAssertFalse(
+            resolved(provisional: false).provisional,
+            "a cover taken after the first layer is the print's own")
+    }
+
+    /// Identity includes it, so a refreshed entry replaces the provisional one rather than being
+    /// mistaken for it.
+    func testAProvisionalEntryIsNotEqualToItsRefresh() {
+        XCTAssertNotEqual(resolved(provisional: true), resolved(provisional: false))
+    }
+
     // MARK: - One model, several plates, one file name
 
     /// **`subtask_name` is the MODEL's name and repeats across plates.** Measured on the live

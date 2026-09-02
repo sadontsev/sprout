@@ -54,6 +54,13 @@ final class LiveActivityArtResolver {
         var plate: Int?
         /// Bambuddy's per-RUN id — the only identifier here that cannot repeat.
         var archiveId: Int?
+        /// True when this came from the printer's COVER while the print had not yet laid a layer.
+        ///
+        /// The cover is the printer's picture of what it is running, and at job acceptance it can
+        /// still be the PREVIOUS job's — observed: a card created during "Auto bed leveling" at
+        /// layer 0 showed the last print's model, while the endpoint had the right one minutes
+        /// later. Provisional means "refresh this once the print is really under way".
+        var provisional: Bool = false
         var modelUri: String
     }
 
@@ -98,15 +105,26 @@ final class LiveActivityArtResolver {
         token: String?,
         plateIndex: Int? = nil,
         archiveId: Int? = nil,
+        /// Has the print laid its first layer? The printer's cover is not trustworthy before that.
+        printingStarted: Bool = true,
         sweep: Bool = true
     ) async -> String {
         guard !jobName.isEmpty else { return "" }
         // Same job AND the same plate as last time — the common case on a 4-second loop. Plate is
         // part of the question: re-running one file's plate 3 after its plate 1 keeps the job name
         // and changes the picture entirely.
-        if let hit = cached[printerId], hit.jobName == jobName, hit.plate == plateIndex,
-           hit.archiveId == archiveId, !hit.modelUri.isEmpty {
+        // A PROVISIONAL entry is re-resolved once the print is genuinely under way: it was taken
+        // from a cover that may still have belonged to the previous job.
+        let hit = cached[printerId]
+        let staleProvisional = hit?.provisional == true && printingStarted
+        if let hit, hit.jobName == jobName, hit.plate == plateIndex, hit.archiveId == archiveId,
+           !hit.modelUri.isEmpty, !staleProvisional {
             return hit.modelUri
+        }
+        // Asking again means letting the cover be asked again — `coverAsked` exists to stop a 404
+        // being retried every four seconds, not to make one early answer permanent.
+        if staleProvisional, hit?.jobName == jobName {
+            coverAsked[printerId]?.remove(jobName)
         }
         guard let client else { return "" }
 
@@ -158,10 +176,12 @@ final class LiveActivityArtResolver {
         //
         // Asked once per job because the endpoint 404s when there is no cover and `ThumbCache` does
         // not cache failures.
+        var fromCover = false
         if url == nil, let token, coverAsked[printerId]?.contains(jobName) != true {
             coverAsked[printerId, default: []].insert(jobName)
             url = client.printerCoverUrl(printerId, token: token)
             headers = [:]
+            fromCover = true
         }
         guard let url else { return "" }
         // Named with the PLATE: `subtask_name` is the model's name and repeats across every plate
@@ -180,7 +200,8 @@ final class LiveActivityArtResolver {
         if plateIndex == nil {
             let existing = LiveActivityArt.existingURI(name: name)
             if !existing.isEmpty {
-                cached[printerId] = Resolved(jobName: jobName, plate: nil, archiveId: archiveId, modelUri: existing)
+                cached[printerId] = Resolved(
+                    jobName: jobName, plate: nil, archiveId: archiveId, modelUri: existing)
                 return existing
             }
         }
@@ -189,7 +210,11 @@ final class LiveActivityArtResolver {
         guard let image = await ThumbCache.shared.image(for: url, headers: headers),
               let data = onGround(image).pngData() else { return "" }
         let uri = LiveActivityArt.write(data, name: name)
-        cached[printerId] = Resolved(jobName: jobName, plate: plateIndex, archiveId: archiveId, modelUri: uri)
+        cached[printerId] = Resolved(
+            jobName: jobName, plate: plateIndex, archiveId: archiveId,
+            // Only a COVER taken before the first layer is provisional. A library or SD render is
+            // addressed by file and plate, so it cannot be the previous job's.
+            provisional: fromCover && !printingStarted, modelUri: uri)
         // Everything this launch still refers to, plus the glyph, survives; the rest is last week's
         // prints taking up space nobody can see.
         // The keep-set is THIS INSTANCE's `cached`, so a one-shot resolver holding a single entry

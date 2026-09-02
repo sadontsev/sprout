@@ -72,6 +72,7 @@ enum PlateWake {
                 plateIndex: PrintArt.plateIndex(
                     gcodeFile: status?.gcodeFile, currentPlateId: status?.currentPlateId?.int),
                 archiveId: status?.currentArchiveId,
+                printingStarted: (status?.layerNum?.int ?? 0) > 0,
                 sweep: false
             )
             if !uri.isEmpty { wrote = true }
