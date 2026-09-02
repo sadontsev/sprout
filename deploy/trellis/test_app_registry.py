@@ -956,6 +956,37 @@ class ChamberTests(unittest.TestCase):
         self.assertNotIn("chamber", fields)
 
     @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_sends_the_plate_the_machine_is_executing(self):
+        fields, _ = la.classify({
+            "connected": True, "state": "RUNNING",
+            "gcode_file": "/data/Metadata/plate_4.gcode", "current_plate_id": 1,
+            "temperatures": {"nozzle": 220, "bed": 60},
+        })
+        self.assertEqual(fields["plate"], 4, "the executing file outranks the reported id")
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_omits_the_plate_when_nothing_says(self):
+        fields, _ = la.classify({
+            "connected": True, "state": "RUNNING",
+            "temperatures": {"nozzle": 220, "bed": 60},
+        })
+        self.assertNotIn("plate", fields, "never defaulted to 1")
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_plate_index_matches_the_apps_rule(self):
+        self.assertEqual(la._plate_index("/data/Metadata/plate_12.gcode", None), 12)
+        self.assertEqual(la._plate_index("/data/plate_2_spares/Metadata/plate_4.gcode", None), 4)
+        self.assertEqual(la._plate_index(None, 3), 3)
+        self.assertIsNone(la._plate_index(None, 0))
+        self.assertIsNone(la._plate_index(None, None))
+        self.assertIsNone(la._plate_index("/data/Metadata/plate_.gcode", None))
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
+    def test_a_new_plate_is_worth_a_push(self):
+        """A new plate is a new PICTURE, and the widget derives it from this field."""
+        self.assertTrue(la.meaningful_change(_pad({"plate": 1}), _pad({"plate": 4})))
+
+    @unittest.skipUnless(HAVE_DEPS, "service deps absent")
     def test_chamber_change_is_worth_a_push(self):
         a = {"chamber": 31, "chamberTarget": 0}
         self.assertTrue(la.meaningful_change(_pad(a), _pad({"chamber": 40, "chamberTarget": 0})))

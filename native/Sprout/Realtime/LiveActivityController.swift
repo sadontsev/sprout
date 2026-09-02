@@ -313,6 +313,11 @@ final class LiveActivityController {
         s.printerName = printerName
         s.iconUri = iconUri
         s.modelUri = modelUri
+        // Which plate, so the WIDGET can derive the image's file name when a Trellis push blanks
+        // `modelUri`. Read from the status here rather than passed in: `content` already has the
+        // status and this is the same answer `AppModel` gives the resolver.
+        s.plate = PrintArt.plateIndex(
+            gcodeFile: status.gcodeFile, currentPlateId: status.currentPlateId?.int)
         s.queueCount = queueCount
         s.nextName = nextName
         s.name = status.subtaskName ?? ""
@@ -509,6 +514,9 @@ final class LiveActivityController {
             || (a.chamber == nil) != (b.chamber == nil)
             || abs((a.chamber ?? 0) - (b.chamber ?? 0)) >= 2
             || (a.chamberTarget ?? 0) != (b.chamberTarget ?? 0)
+            // A new plate is a new PICTURE, and the widget derives that picture's path from this
+            // field — so a state whose only change is the plate still has to reach the card.
+            || a.plate != b.plate
             || abs(a.etaEpochMs - b.etaEpochMs) >= 60_000
             || (a.dry ?? false) != (b.dry ?? false)
             || abs((a.amsTemp ?? 0) - (b.amsTemp ?? 0)) >= 1

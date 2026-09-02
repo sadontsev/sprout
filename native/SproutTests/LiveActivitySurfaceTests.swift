@@ -578,6 +578,68 @@ final class AggregateDryingTests: XCTestCase {
         XCTAssertNotEqual(unknown, first)
     }
 
+    // MARK: - One model, several plates, one file name
+
+    /// **`subtask_name` is the MODEL's name and repeats across plates.** Measured on the live
+    /// machine: "PLA profile + Optional PETG Translucent plate" is reported for plate 1 and for
+    /// plate 4 alike. Keyed on that name alone, plate 4's card loaded the image plate 1 had
+    /// written — the right file, the wrong model, and a real picture either way, which is why it
+    /// read as working.
+    func testTwoPlatesOfOneModelDoNotShareAFileName() {
+        let job = "PLA profile + Optional PETG Translucent plate"
+        let one = LiveActivityArt.plateName(printerId: 2, fileName: job, plate: 1)
+        let four = LiveActivityArt.plateName(printerId: 2, fileName: job, plate: 4)
+        XCTAssertNotEqual(one, four)
+    }
+
+    /// An unknown plate keeps the ORIGINAL name, so a card from an app or a Trellis that predates
+    /// this field degrades to the old behaviour rather than to a miss.
+    func testAnUnknownPlateKeepsTheOldName() {
+        XCTAssertEqual(
+            LiveActivityArt.plateName(printerId: 2, fileName: "x", plate: nil),
+            LiveActivityArt.plateName(printerId: 2, fileName: "x"))
+    }
+
+    /// A `FileManager` whose App Group container is a temp directory, so the derivation can be
+    /// exercised against real files. `directory(fileManager:)` takes one for exactly this reason.
+    private final class ContainerStub: FileManager, @unchecked Sendable {
+        let root: URL
+        init(root: URL) {
+            self.root = root
+            super.init()
+        }
+        override func containerURL(forSecurityApplicationGroupIdentifier id: String) -> URL? { root }
+    }
+
+    /// The widget derives the path itself whenever a push blanks `modelUri`, so it must ask for the
+    /// plate it is actually printing — not merely for the job.
+    ///
+    /// This is the reported failure, end to end: plate 1 printed earlier leaves its image behind,
+    /// plate 4 starts, and the card drew plate 1's model.
+    func testTheDerivedUriIsPlateSpecific() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = ContainerStub(root: root)
+        let job = "PLA profile + Optional PETG Translucent plate"
+
+        // Only plate 1's image exists — the state after printing plate 1 earlier.
+        let dir = try XCTUnwrap(LiveActivityArt.directory(fileManager: fm))
+        try Data([0x89]).write(
+            to: dir.appendingPathComponent(
+                LiveActivityArt.plateName(printerId: 2, fileName: job, plate: 1)))
+
+        XCTAssertFalse(
+            LiveActivityArt.plateURI(
+                printerId: 2, jobName: job, plate: 1, carried: "", fileManager: fm).isEmpty,
+            "plate 1 should find its own image")
+        XCTAssertTrue(
+            LiveActivityArt.plateURI(
+                printerId: 2, jobName: job, plate: 4, carried: "", fileManager: fm).isEmpty,
+            "plate 4 must NOT be handed plate 1's image — a glyph is honest, a wrong model is not")
+    }
+
     // MARK: - The eight-hour duplicate
 
     private func card(_ id: String, _ identity: String, live: Bool) -> LiveActivityController.CardLiveness

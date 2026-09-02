@@ -43,12 +43,21 @@ enum LiveActivityArt {
     /// 2 — a transparent cover is composited onto a contrasting ground (`PlateGround`).
     static let plateFormat = 2
 
-    /// **Per printer, and per FILE.** Two printers running produce two cards; naming the plate by
-    /// printer alone means the second card's write overwrites the first card's image and both then
-    /// show the same model. Including a hash of the file name also makes a new job's write land on a
-    /// new path, so a card cannot show the previous print's plate while the new thumbnail downloads.
-    static func plateName(printerId: Int, fileName: String) -> String {
-        "plate-\(printerId)-\(stableHash(fileName))-v\(plateFormat).png"
+    /// **Per printer, per FILE, and per PLATE.** Two printers running produce two cards; naming the
+    /// plate by printer alone means the second card's write overwrites the first card's image and
+    /// both then show the same model. Including a hash of the file name also makes a new job's write
+    /// land on a new path, so a card cannot show the previous print's plate while the new thumbnail
+    /// downloads.
+    ///
+    /// **The plate is part of it because the file name is NOT unique per print.** `subtask_name` is
+    /// the MODEL's name and every plate of a multi-plate model reports the same one — measured:
+    /// "PLA profile + Optional PETG Translucent plate" for both plate 1 and plate 4. Keyed on the
+    /// name alone, plate 4's card loaded the image plate 1 had written, and showed the wrong model
+    /// in the right file. `nil` keeps the old name so a state that cannot say which plate degrades
+    /// to previous behaviour rather than to a miss.
+    static func plateName(printerId: Int, fileName: String, plate: Int? = nil) -> String {
+        let suffix = plate.map { "-p\($0)" } ?? ""
+        return "plate-\(printerId)-\(stableHash(fileName))\(suffix)-v\(plateFormat).png"
     }
 
     /// A stable, filesystem-safe digest of the file name.
@@ -129,10 +138,20 @@ enum LiveActivityArt {
     /// Fixing it here rather than in Trellis is deliberate: `ContentState`'s field names are a wire
     /// format shared with a service that deploys separately, and this needs no new field, no new
     /// endpoint and no version skew. It also holds for a user whose Trellis is older than their app.
-    static func plateURI(printerId: Int, jobName: String, carried: String,
+    static func plateURI(printerId: Int, jobName: String, plate: Int? = nil, carried: String,
                          fileManager: FileManager = .default) -> String {
         if !carried.isEmpty { return carried }
         guard !jobName.isEmpty else { return "" }
+        // The plate-aware name first. Falling back to the plate-free one keeps a card working when
+        // the state carries no plate — an app or a Trellis older than this field — but a state that
+        // DOES know its plate must never be handed another plate's picture, which is the whole
+        // point, so the fallback is only for the nil case.
+        if let plate {
+            let exact = existingURI(
+                name: plateName(printerId: printerId, fileName: jobName, plate: plate),
+                fileManager: fileManager)
+            return exact
+        }
         return existingURI(name: plateName(printerId: printerId, fileName: jobName),
                            fileManager: fileManager)
     }

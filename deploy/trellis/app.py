@@ -187,6 +187,13 @@ def classify(status: dict) -> tuple[dict, str]:
     # machine that has no chamber.
     has_chamber = t.get("chamber") is not None
     cham, cham_t = _rnd(t.get("chamber")), _rnd(t.get("chamber_target"))
+    # WHICH PLATE of a multi-plate model. Mirrors the app's `PrintArt.plateIndex`: the gcode the
+    # machine is EXECUTING outranks the reported id, and neither answers 1 by default.
+    #
+    # Sent purely so the widget can derive the plate image's file name. A push replaces the whole
+    # content state with `modelUri: ""`, and `subtask_name` is the MODEL's name — the same for every
+    # plate of one model — so without this the card for plate 4 found and drew plate 1's picture.
+    plate = _plate_index(status.get("gcode_file"), status.get("current_plate_id"))
 
     finished = False
     # `print_error` was read here and is not a field of Bambuddy's `PrinterStatus` — the route
@@ -229,7 +236,37 @@ def classify(status: dict) -> tuple[dict, str]:
     if has_chamber:
         fields["chamber"] = cham
         fields["chamberTarget"] = cham_t
+    # Omitted when unknown, never defaulted: the app decodes it with decodeIfPresent and treats a
+    # missing plate as "cannot say", which falls back to the plate-free name rather than asserting 1.
+    if plate is not None:
+        fields["plate"] = plate
     return (fields, kind)
+
+
+def _plate_index(gcode_file, current_plate_id) -> int | None:
+    """Which plate of a multi-plate file is printing, or None.
+
+    Mirrors the app's `PrintArt.plateIndex`, including its ranking: `/data/Metadata/plate_4.gcode`
+    is the file the machine is EXECUTING and outranks `current_plate_id`, which is a reported field.
+    Searched from the RIGHT, because a user's own folder may itself contain `plate_2`.
+
+    None, never 1, when neither says — "plate 1" and "no idea which plate" are different answers.
+    """
+    if isinstance(gcode_file, str):
+        marker = gcode_file.rfind("plate_")
+        if marker >= 0:
+            digits = ""
+            for ch in gcode_file[marker + len("plate_"):]:
+                if not ch.isdigit():
+                    break
+                digits += ch
+            if digits and int(digits) > 0:
+                return int(digits)
+    try:
+        n = int(current_plate_id)
+        return n if n > 0 else None
+    except (TypeError, ValueError):
+        return None
 
 
 def meaningful_change(a: dict | None, b: dict) -> bool:
@@ -261,6 +298,8 @@ def meaningful_change(a: dict | None, b: dict) -> bool:
         or (a.get("chamber") is None) != (b.get("chamber") is None)
         or abs((a.get("chamber") or 0) - (b.get("chamber") or 0)) >= 2
         or (a.get("chamberTarget") or 0) != (b.get("chamberTarget") or 0)
+        # A new plate is a new PICTURE, and the widget derives that picture's path from this field.
+        or a.get("plate") != b.get("plate")
     )
 
 

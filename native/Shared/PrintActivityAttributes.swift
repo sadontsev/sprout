@@ -67,6 +67,17 @@ struct PrintActivityAttributes: ActivityAttributes {
 
         /// `file://` URI of the plate thumbnail in the App Group ("" falls back to the glyph).
         var modelUri: String = ""
+        /// Which plate of a multi-plate model is printing, when known.
+        ///
+        /// Carried ONLY so the widget can derive the plate image's file name for itself. A Trellis
+        /// push replaces the whole content state and sends `modelUri: ""`, so the widget rebuilds
+        /// the path from `printerId` + `name` — and `subtask_name` is the MODEL's name, identical
+        /// for every plate of a multi-plate model. Without the plate here, plate 4's card found and
+        /// showed the picture plate 1 had written.
+        ///
+        /// `nil` on an older Trellis, which degrades to the plate-free name and the behaviour that
+        /// preceded this field, rather than to a blank card.
+        var plate: Int?
         var queueCount: Int = 0
         var nextName: String = ""
 

@@ -161,7 +161,10 @@ final class LiveActivityArtResolver {
             headers = [:]
         }
         guard let url else { return "" }
-        let name = LiveActivityArt.plateName(printerId: printerId, fileName: jobName)
+        // Named with the PLATE: `subtask_name` is the model's name and repeats across every plate
+        // of a multi-plate model, so a plate-free name let one plate's image serve another's card.
+        let name = LiveActivityArt.plateName(
+            printerId: printerId, fileName: jobName, plate: plateIndex)
         // A file left on disk by a PREVIOUS launch is only the current picture if the plate has not
         // changed since it was written — and the name cannot say which plate it holds. It must stay
         // plate-free: the widget DERIVES this same name from `printerId` + `name` whenever Trellis
