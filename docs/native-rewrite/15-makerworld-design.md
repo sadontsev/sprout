@@ -1251,3 +1251,12 @@ of an ending rather than a retry.
 Paging merges rather than appends: the endpoint's ordering is not stable between calls — the same
 query returned a different leading hit seconds apart — so offset paging genuinely repeats models, and
 duplicate ids in a `ForEach` are undefined behaviour rather than a cosmetic problem.
+
+# Addendum 2026-09-07 — the site's search endpoint
+
+S-2 is superseded. `search-service/select/design2` (the website's own call) honours six `orderBy`
+values and the filters listed in `CLAUDE.md`, anonymously. The app now uses it; client-side sorting
+and the "MakerWorld's order" label are gone. `design-service/design/{id}` also answers anonymously
+with per-profile compatibility (H2C = `O1C2`), per-plate filaments with slot ids and hex colours,
+and the author's layer/walls/infill; see
+`docs/superpowers/specs/2026-09-07-makerworld-print-funnel-design.md` §0.2.

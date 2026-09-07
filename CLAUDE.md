@@ -242,12 +242,16 @@ Hard-won facts, all measured (`docs/native-rewrite/15-makerworld-design.md` has 
   has to stand on its own words.
 - An import is **never** sliced: `file_type` `3mf`, `/gcode` → 404 — while `print_time_seconds` *is*
   populated, which makes that field an unsafe proxy for "has toolpaths".
-- **No ordering parameter is honoured on search.** `sort`, `order`, `orderby`, `orderBy`, `sortBy`,
-  `sortType`, `sortField` and `rank` were each replayed: the returned counts come back unordered for
-  every value, and a nonsense value shuffles the list exactly as much as a real one. So the sort
-  control reorders **the loaded hits, client-side**, and the UI says so. The server's own order is
-  labelled **"MakerWorld's order"**, never "Relevance". `isPrintable` is **absent** from hits and may
-  not drive a control.
+- **Search is `search-service/select/design2`, not `search/design`.** The site calls the former;
+  it ranks by quality and honours `orderBy` (`score`, `hotScore`, `boosts`, `newUploads`,
+  `downloadCount`, `likeCount`), `categories=<id>`, `devModelNames=<code>` (H2C is `O1C2`),
+  `nozzleDiameters`, `multiColor`, `model_tag=featured|exclusive`, `customizable`, `licenses`,
+  `print_duration=min,max` (minutes) and `total_weight=min,max` (grams), all anonymously and all
+  verified against values on 2026-09-07. `search/design` ranks by text match only and honours no
+  ordering parameter, which is why the earlier note said sorting was impossible. `select/design/nav`
+  ignores every sort and filter, so category browse goes through `select/design2?categories=`.
+  About 30 requests in 10 s earns a 429 with a non-JSON body. `isPrintable`/`is_printable` is never
+  decoded and may not drive a control.
 
 ## `laPushUrl` vs `resolvePushUrl`
 
