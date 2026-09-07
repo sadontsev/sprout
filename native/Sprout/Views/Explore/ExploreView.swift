@@ -41,13 +41,12 @@ struct ExploreView: View {
                     ToolbarItem(placement: .topBarLeading) {
                         if !explore.hits.isEmpty {
                             Menu {
-                                Picker("Order", selection: $explore.sort) {
+                                Picker("Order", selection: Binding(get: { explore.sort },
+                                                                   set: { explore.setSort($0) })) {
                                     ForEach(MakerWorldSearch.Sort.allCases) { Text($0.label).tag($0) }
                                 }
                             } label: {
-                                Image(systemName: explore.sort.isServerOrder
-                                      ? "arrow.up.arrow.down"
-                                      : "arrow.up.arrow.down.circle.fill")
+                                Image(systemName: "arrow.up.arrow.down")
                             }
                             .accessibilityLabel("Order results. Currently \(explore.sort.label).")
                         }
@@ -78,6 +77,7 @@ struct ExploreView: View {
             if explore.recent.isEmpty {
                 explore.recent = await client.recentMakerWorldImports()
             }
+            explore.loadColdStart()
         }
     }
 }
@@ -92,6 +92,8 @@ private struct ExploreRoot: View {
 
     @Environment(\.palette) private var c
     @Environment(ExploreModel.self) private var explore
+
+    @State private var showFilters = false
 
     /// The owner's own collections, from their Trellis.
     ///
@@ -109,12 +111,20 @@ private struct ExploreRoot: View {
             // vanished the moment you looked at any results (F6).
             searchField
             if case .resolve(let id) = explore.intent { openModelSuggestion(id) }
-            if !explore.navs.isEmpty || collectionsClient.isAvailable { chips }
+            if fieldFocused, !explore.suggestions.isEmpty { suggestionRows }
+            // Unconditional: the Filters chip is always available, so gating the row on the
+            // category list would make it vanish whenever `homepage/nav` fails.
+            chips
             Divider().overlay(c.line2)
 
             content
         }
         .background(c.bg)
+        .sheet(isPresented: $showFilters) {
+            ExploreFilterSheet(draft: explore.filters,
+                               printerCode: MWPrinterCode.code(forModel: model.printer?.model),
+                               printerModel: model.printer?.model) { explore.setFilters($0) }
+        }
         // C6 — the field used to fire only on submit, so every query cost a tap. Keyed on the text,
         // so typing another character cancels this and restarts the wait; `ExploreModel` then
         // cancels the in-flight request itself, and `activeQuery` stops a straggler landing.
@@ -123,12 +133,38 @@ private struct ExploreRoot: View {
         // suggestion row above instead. Searching for "makerworld.com/models/1400373" would return
         // nothing and look broken, and retitling the button was the old way of saying so.
         .task(id: explore.query) {
-            guard case .search(let term) = explore.intent else { return }
-            guard term.count >= 2 else { return }
+            guard case .search(let term) = explore.intent else { explore.suggestions = []; return }
+            guard term.count >= 2 else { explore.suggestions = []; return }
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
+            // `search` clears `suggestions` and `suggest` writes them back only while the field
+            // still matches, so suggesting has to come second or it is wiped by its own search.
             explore.search(term)
+            explore.suggest(term)
         }
+    }
+
+    /// MakerWorld's own completions. Tapping one submits it, exactly as typing it would.
+    private var suggestionRows: some View {
+        VStack(spacing: 0) {
+            ForEach(explore.suggestions, id: \.self) { s in
+                Tap {
+                    explore.query = s
+                    fieldFocused = false
+                    explore.search(s)
+                } content: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "magnifyingglass").scaledFont(12).foregroundStyle(c.t3)
+                        Text(verbatim: s).scaledFont(14).foregroundStyle(c.t1)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(height: 38)
+                    .contentShape(.rect)
+                }
+            }
+        }
+        .padding(.bottom, 6)
     }
 
     /// The link path, offered rather than guessed at. One row, and it says exactly what it will do.
@@ -201,6 +237,10 @@ private struct ExploreRoot: View {
     private var chips: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
+                let n = explore.filters.activeCount
+                chip(n == 0 ? "Filters" : "Filters · \(n)", symbol: "line.3.horizontal.decrease", on: n > 0) {
+                    showFilters = true
+                }
                 if collectionsClient.isAvailable {
                     let on = explore.showingCollections || explore.activeCollection != nil
                     // Tapping the selected chip turns it OFF and restores what was underneath.
@@ -262,11 +302,7 @@ private struct ExploreRoot: View {
             // A skeleton of the real shape, so filling in reads as completion rather than a jump cut.
             ExploreSkeletonGrid()
         } else if !explore.hits.isEmpty {
-            VStack(spacing: 0) {
-                if !explore.sort.isServerOrder { scopeNote }
-                grid
-            }
-            .onChange(of: explore.sort) { _, _ in explore.deepenPool(collectionsClient) }
+            grid
         } else if explore.isCold {
             ExploreShelves(client: client, collectionsClient: collectionsClient)
         } else if !explore.loading {
@@ -274,28 +310,11 @@ private struct ExploreRoot: View {
         }
     }
 
-    /// What the local sort actually ordered. Says it out loud whenever the loaded set is a sample
-    /// of something larger — "Most downloaded" over 20 of 10 000 is not what the words imply.
-    private var scopeNote: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "info.circle")
-                .scaledFont(10, weight: .semibold)
-            Text(verbatim: explore.hasMore
-                 ? "\(explore.sort.label) — within the \(explore.hits.count) loaded of \(explore.hitTotal ?? explore.hits.count). MakerWorld's search can't sort."
-                 : "\(explore.sort.label) — all \(explore.hits.count) results.")
-                .scaledFont(11, weight: .medium)
-        }
-        .foregroundStyle(c.t3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-    }
-
     private var grid: some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                       spacing: 14) {
-                ForEach(Array(explore.orderedHits.enumerated()), id: \.element.id) { index, hit in
+                ForEach(Array(explore.hits.enumerated()), id: \.element.id) { index, hit in
                     NavigationLink(value: hit) {
                         ExploreTile(hit: hit, client: client)
                     }
@@ -313,6 +332,18 @@ private struct ExploreRoot: View {
 
             if explore.loadingMore {
                 ProgressView().tint(c.t3).padding(.bottom, 20)
+            }
+
+            if let note = explore.loadMoreError {
+                HStack(spacing: 8) {
+                    Text(verbatim: note)
+                        .scaledFont(12)
+                        .foregroundStyle(c.t2)
+                    Button("Retry") { explore.loadMore(collectionsClient) }
+                        .scaledFont(12, weight: .semibold)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 20)
             }
         }
         // C5: while a replacement is in flight the outgoing results stay, dimmed, rather than the
@@ -412,6 +443,16 @@ struct ExploreTile: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 5).padding(.vertical, 2)
                             .background(Capsule().fill(.black.opacity(0.65)))
+                            .padding(6)
+                    }
+                }
+                .overlay(alignment: .topLeading) {
+                    if hit.isStaffPicked == true {
+                        Text("Featured")
+                            .scaledMono(9, weight: .bold)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Capsule().fill(c.accent.opacity(0.85)))
                             .padding(6)
                     }
                 }

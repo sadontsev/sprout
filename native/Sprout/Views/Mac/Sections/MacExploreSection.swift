@@ -49,10 +49,10 @@ enum MacExploreType {
 ///    slower than the request actually is.
 /// 2. **Input is never dropped.** Every entry point is cancel-and-replace, so clicking a category
 ///    during a search works. The old `guard !searching` made that click do nothing at all.
-/// 3. **The sort reorders the LOADED hits, client-side, and says so.** MakerWorld's search honours
-///    no ordering parameter — eight names were probed and all of them shuffled the list exactly as
-///    much as a nonsense value. So the server's own order is labelled "MakerWorld's order", never
-///    "Relevance", and a local sort states its scope in words.
+/// 3. **The sort is the SERVER'S.** `select/design2` honours `orderBy`, so picking an order
+///    re-fetches the whole result set in it rather than reordering the page already loaded. The
+///    earlier finding that no ordering parameter is honoured was true of `search/design`, which is
+///    a different endpoint.
 ///
 /// Clicking a tile changes the SELECTION and nothing else (§4): the grid does not scroll, reload or
 /// navigate, because on Mac the model detail *is* the inspector.
@@ -177,29 +177,21 @@ struct MacExploreSection: View {
         .overlay(RoundedRectangle(cornerRadius: m.controlRadius, style: .continuous).stroke(c.line))
     }
 
-    /// Order. **The label is the honesty**, and it has to survive edits.
-    ///
-    /// `.relevance` is called "MakerWorld's order" because that is what it is: a search for `spool`
-    /// comes back 2, 4, 3, 17, 5, 46 downloads in that order out of 10 000, and identical calls
-    /// seconds apart differ. Naming it "Relevance" would claim a ranking nobody performed.
+    /// Order. **The server's**, on `select/design2`: picking one re-fetches the whole result set in
+    /// that order rather than reordering the page already loaded.
     private var sortMenu: some View {
-        @Bindable var explore = explore
-        return Menu {
-            Picker("Order", selection: $explore.sort) {
+        Menu {
+            Picker("Order", selection: Binding(get: { explore.sort }, set: { explore.setSort($0) })) {
                 ForEach(MakerWorldSearch.Sort.allCases) { Text($0.label).tag($0) }
             }
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: explore.sort.isServerOrder
-                      ? "arrow.up.arrow.down"
-                      : "arrow.up.arrow.down.circle.fill")
-                    .scaledFont(10, weight: .semibold)
-                Text(explore.sort.label)
-                    .font(.system(size: caption, weight: .medium))
+                Image(systemName: "arrow.up.arrow.down").scaledFont(10, weight: .semibold)
+                Text(explore.sort.label).font(.system(size: caption, weight: .medium))
             }
-            .foregroundStyle(explore.sort.isServerOrder ? c.t3 : c.accent)
+            .foregroundStyle(c.t3)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
@@ -207,8 +199,7 @@ struct MacExploreSection: View {
         // The label is drawn, but a `Menu` announces its label view as its name only patchily and
         // the current order is the half that matters. Said explicitly, as the iOS build does.
         .accessibilityLabel("Order results. Currently \(explore.sort.label)")
-        .help("MakerWorld's search API honours no ordering parameter, so anything but its own order "
-              + "reorders the results already loaded.")
+        .help("MakerWorld sorts the whole result set on the server.")
     }
 
     /// The link path, offered rather than guessed at. One row, and it says exactly what it will do.
@@ -314,14 +305,7 @@ struct MacExploreSection: View {
             // A skeleton of the real shape, so filling in reads as completion rather than a jump cut.
             skeletonGrid
         } else if !explore.hits.isEmpty {
-            VStack(spacing: 0) {
-                if !explore.sort.isServerOrder { scopeNote }
-                resultGrid
-            }
-            // Sorting an arbitrary 20 of 10 000 by downloads gives "the most downloaded of a random
-            // 20". Deepening the pool first makes the answer mean something; the note above still
-            // states the scope, because even 100 of 10 000 is a sample.
-            .onChange(of: explore.sort) { _, _ in explore.deepenPool(collectionsClient) }
+            resultGrid
         } else if explore.isCold {
             shelves
         } else if !explore.loading {
@@ -435,25 +419,6 @@ struct MacExploreSection: View {
         .padding(.top, 9)
     }
 
-    /// What the local sort actually ordered. Said out loud whenever the loaded set is a sample of
-    /// something larger — "Most downloaded" over 20 of 10 000 is not what the words imply.
-    private var scopeNote: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "info.circle").scaledFont(9, weight: .semibold)
-            Text(verbatim: explore.hasMore
-                 ? "\(explore.sort.label) — within the \(explore.hits.count) loaded of "
-                   + "\(explore.hitTotal ?? explore.hits.count). MakerWorld's search can't sort."
-                 : "\(explore.sort.label) — all \(explore.hits.count) results.")
-                .font(.system(size: caption, weight: .medium))
-                // The loaded count ticks upward as pages land.
-                .monospacedDigit()
-        }
-        .foregroundStyle(c.t3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, m.gutter)
-        .padding(.top, 9)
-    }
-
     /// Four-up at the prototype's 1440 width, and it reflows rather than clipping: the inspector can
     /// be hidden and the sidebar can fold, so a fixed four-column grid would leave either huge tiles
     /// or a horizontal scrollbar. `.adaptive` is the Mac answer to a window whose width is the user's.
@@ -464,7 +429,7 @@ struct MacExploreSection: View {
     private var resultGrid: some View {
         ScrollView {
             LazyVGrid(columns: gridColumns, spacing: m.cardGap) {
-                ForEach(Array(explore.orderedHits.enumerated()), id: \.element.id) { index, hit in
+                ForEach(Array(explore.hits.enumerated()), id: \.element.id) { index, hit in
                     MacExploreCard(
                         cover: thumbUrl(hit.cover),
                         title: hit.title ?? "Untitled",

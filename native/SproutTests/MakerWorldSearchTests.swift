@@ -2,23 +2,23 @@ import XCTest
 @testable import Sprout
 
 /// Covers `Domain/MakerWorldSearch.swift` and the search wire types.
-///
-/// The fixture is a trimmed capture of a real
-/// `GET api.bambulab.com/v1/search-service/search/design?keyword=benchy` response (2026-08-10).
-/// What it preserves matters more than what it drops: `isPrintable` is **absent**, exactly as the
-/// live API sends it, so any test that assumed that field would fail here rather than in the field.
 final class MakerWorldSearchTests: XCTestCase {
 
+    /// Trimmed capture of `GET api.bambulab.com/v1/search-service/select/design2?keyword=phone+stand
+    /// &orderBy=score&limit=2` (2026-09-07). `is_printable` is on the wire in snake case; the plain
+    /// decoder cannot see it, and nothing may render it.
     private static let page = #"""
-    {"total":7076,"hits":[
-      {"id":2842356,"title":"Ultra Lite Benchy","slug":"ultra-lite-benchy",
-       "cover":"https://makerworld.bblmw.com/c/2842356.jpg","license":"BY-NC","nsfw":false,
-       "isExclusive":false,"likeCount":1,"printCount":0,"downloadCount":2,"collectionCount":1,
-       "designCreator":{"uid":900000001,"name":"ADprinter","avatar":"https://makerworld.bblmw.com/a.jpg"}},
+    {"total":4688,"searchSessionId":"eHfKH2iNCeYzfQISP9YSdTyYQxDG1sd92biwLi3RpwGB","hits":[
+      {"id":1976503,"title":"THE BEST PHONE STAND","slug":"the-best-phone-stand",
+       "cover":"https://makerworld.bblmw.com/makerworld/model/US4fb90c25038ae8/design/x.jpg",
+       "likeCount":5161,"collectionCount":9000,"printCount":33609,"downloadCount":38246,
+       "designCreator":{"uid":3001310494,"name":"Shelder","handle":"shelder","avatar":"https://a/b.jpg"},
+       "createTime":"2025-11-09T00:00:00Z","nsfw":false,"isStaffPicked":true,"is_printable":true,
+       "isExclusive":true,"license":"Standard Digital File License"},
       {"id":3047341,"title":"Benchy Keychain","cover":"https://makerworld.bblmw.com/c/3047341.jpg",
        "license":"BY","nsfw":true,"likeCount":9,"printCount":4,"downloadCount":1500,
        "designCreator":{"name":"someone"}}
-    ]}
+    ],"suggest":[],"insertion":[]}
     """#
 
     private func decodePage() throws -> MWSearchPage {
@@ -31,14 +31,17 @@ final class MakerWorldSearchTests: XCTestCase {
     /// with Bambuddy's `.convertFromSnakeCase` decoder would leave every count nil.
     func testHitsDecodeWithAPlainDecoder() throws {
         let p = try decodePage()
-        XCTAssertEqual(p.total, 7076)
+        XCTAssertEqual(p.total, 4688)
+        XCTAssertEqual(p.searchSessionId, "eHfKH2iNCeYzfQISP9YSdTyYQxDG1sd92biwLi3RpwGB")
         XCTAssertEqual(p.hits?.count, 2)
         let first = try XCTUnwrap(p.hits?.first)
-        XCTAssertEqual(first.id, 2842356)
-        XCTAssertEqual(first.title, "Ultra Lite Benchy")
-        XCTAssertEqual(first.downloadCount, 2)
-        XCTAssertEqual(first.designCreator?.name, "ADprinter")
-        XCTAssertEqual(first.license, "BY-NC")
+        XCTAssertEqual(first.id, 1976503)
+        XCTAssertEqual(first.title, "THE BEST PHONE STAND")
+        XCTAssertEqual(first.downloadCount, 38246)
+        XCTAssertEqual(first.designCreator?.name, "Shelder")
+        XCTAssertEqual(first.createTime, "2025-11-09T00:00:00Z")
+        XCTAssertEqual(first.isStaffPicked, true)
+        XCTAssertNil(p.hits?[1].isStaffPicked, "unstated is not false")
     }
 
     /// The endpoint that does NOT work announces itself this way, and it must decode rather than
@@ -107,7 +110,7 @@ final class MakerWorldSearchTests: XCTestCase {
 
     func testStatsAreBuiltOnlyFromCountsTheHitCarries() throws {
         let hits = try XCTUnwrap(decodePage().hits)
-        XCTAssertEqual(MakerWorldSearch.stats(hits[0]), "2 downloads")
+        XCTAssertEqual(MakerWorldSearch.stats(hits[0]), "38k downloads  ·  33k prints")
         XCTAssertEqual(MakerWorldSearch.stats(hits[1]), "1.5k downloads  ·  4 prints")
     }
 
@@ -144,7 +147,8 @@ final class MakerWorldSearchTests: XCTestCase {
 
     func testTheLicenceChipMatchesTheDetailScreensRules() throws {
         let hits = try XCTUnwrap(decodePage().hits)
-        XCTAssertEqual(MakerWorldSearch.licence(hits[0])?.label, "CC BY-NC")
+        XCTAssertEqual(MakerWorldSearch.licence(hits[0])?.label,
+                       MWLicence(code: "Standard Digital File License").label)
         XCTAssertEqual(MakerWorldSearch.licence(hits[1])?.label, "CC BY")
         XCTAssertNil(MakerWorldSearch.licence(MWSearchHit(id: 1)))
     }
@@ -191,11 +195,14 @@ final class MakerWorldSearchTests: XCTestCase {
 
     // MARK: - Browse
 
-    func testPersonalisedCategoriesAreDroppedBecauseThisAppIsAnonymous() {
+    func testPersonalisedAndUnsupportedCategoriesAreDropped() {
         let navs = [MWNav(key: "Following", name: "Following"),
                     MWNav(key: "Foryou", name: "For You"),
                     MWNav(key: "Trending", name: "Trending"),
-                    MWNav(key: "category_400", name: "Household")]
+                    MWNav(key: "category_400", name: "Household"),
+                    MWNav(key: "LaserCut", name: "Laser & Cut")]
+        // LaserCut needs a `designType` the probes never settled; a chip that lists 3D models
+        // under a laser heading would be a lie.
         XCTAssertEqual(MakerWorldSearch.browsable(navs).map(\.key), ["Trending", "category_400"])
     }
 
@@ -229,68 +236,142 @@ final class MakerWorldSearchTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(MakerWorldSearchError(status: 429).errorDescription).contains("rate-limit"))
         XCTAssertTrue(try XCTUnwrap(MakerWorldSearchError(status: 418).errorDescription).contains("CAPTCHA"))
     }
-    // MARK: Sorting
+    // MARK: - Request vocabulary
 
-    /// The premise of the whole feature: MakerWorld's search API does not sort, so this must.
-    ///
-    /// Recorded here because it was *measured*, not assumed — `orderBy`, `order`, `orderby`, `sortBy`
-    /// and `sortType` were each sent against live search and the returned `downloadCount` sequence
-    /// came back unordered every time, while a nonsense value shuffled the list exactly as much as a
-    /// real one. If a future reader is tempted to "just pass the sort upstream", that is why not.
-    private func hit(_ id: Int, dl: Int? = nil, likes: Int? = nil) -> MWSearchHit {
-        var h = MWSearchHit(id: id)
-        h.downloadCount = dl
-        h.likeCount = likes
-        return h
+    /// Measured 2026-09-07 against `select/design2`: each value changes the row set. The raw value
+    /// IS the wire value, so a renamed case cannot drift from what the server accepts.
+    func testSortWireValuesAreTheOnesTheServerHonours() {
+        XCTAssertEqual(MakerWorldSearch.Sort.relevance.rawValue, "score")
+        XCTAssertEqual(MakerWorldSearch.Sort.trending.rawValue, "hotScore")
+        XCTAssertEqual(MakerWorldSearch.Sort.newest.rawValue, "newUploads")
+        XCTAssertEqual(MakerWorldSearch.Sort.downloads.rawValue, "downloadCount")
+        XCTAssertEqual(MakerWorldSearch.Sort.likes.rawValue, "likeCount")
+        XCTAssertEqual(MakerWorldSearch.Sort.boosts.rawValue, "boosts")
+        XCTAssertEqual(MakerWorldSearch.Sort.relevance.label, "Relevance")
+        XCTAssertEqual(MakerWorldSearch.Sort.allCases.first, .relevance)
     }
 
-    func testRelevanceIsMakerWorldsOwnOrderUntouched() {
-        let hits = [hit(3, dl: 1), hit(1, dl: 99), hit(2, dl: 50)]
-        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .relevance).map(\.id), [3, 1, 2])
-        XCTAssertTrue(MakerWorldSearch.Sort.relevance.isServerOrder)
-        // Not "Relevance": a search for "spool" returns 2, 4, 3, 17, 5, 46 downloads in that order
-        // out of 10 000, so nothing was ranked. The label names the machine, not a quality.
-        XCTAssertEqual(MakerWorldSearch.Sort.relevance.label, "MakerWorld's order")
-        XCTAssertFalse(MakerWorldSearch.Sort.relevance.wantsDeeperPool,
-                       "the server's own order needs no local pool")
-        for local in MakerWorldSearch.Sort.allCases where local != .relevance {
-            XCTAssertTrue(local.wantsDeeperPool,
-                          "\(local) orders locally, so it must gather a real sample first")
-        }
-        for other in MakerWorldSearch.Sort.allCases where other != .relevance {
-            XCTAssertFalse(other.isServerOrder, "\(other) is a local reordering and must say so")
-        }
+    func testAnEmptyRequestAsksForModelsByRelevance() {
+        let items = MWSearchRequest().queryItems
+        XCTAssertEqual(items.map(\.0), ["designType", "orderBy", "limit", "offset"])
+        XCTAssertEqual(items.map(\.1), ["0", "score", "50", "0"])
     }
 
-    func testSortsDescendingByTheNamedField() {
-        let hits = [hit(3, dl: 1, likes: 900), hit(1, dl: 99, likes: 2), hit(2, dl: 50, likes: 30)]
-        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .downloads).map(\.id), [1, 2, 3])
-        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .likes).map(\.id), [3, 2, 1])
-        // Newest approximates by id, because a hit carries no date at all.
-        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .newest).map(\.id), [3, 2, 1])
+    func testKeywordCategoryAndSessionTakeTheirPlaces() {
+        var r = MWSearchRequest()
+        r.keyword = "phone stand"
+        r.categoryId = 700
+        r.sort = .downloads
+        r.offset = 50
+        r.sessionId = "abc"
+        let items = r.queryItems
+        XCTAssertEqual(items.map(\.0),
+                       ["designType", "keyword", "categories", "orderBy", "limit", "offset", "searchSessionId"])
+        XCTAssertEqual(items[1].1, "phone stand", "encoding is the client's job, not the request's")
+        XCTAssertEqual(items[2].1, "700")
+        XCTAssertEqual(items[3].1, "downloadCount")
+        XCTAssertEqual(items[6].1, "abc")
     }
 
-    /// Absent is not zero — the distinction `stats` already makes, kept here.
-    ///
-    /// A hit with no `downloadCount` must not outrank one that genuinely reports 0: the first says
-    /// nothing, the second says none, and promoting silence over a real answer is the recurring bug.
-    func testMissingCountsSortLastNotAsZero() {
-        let hits = [hit(1), hit(2, dl: 0), hit(3, dl: 5)]
-        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .downloads).map(\.id), [3, 2, 1])
+    /// One test per filter, each pinned to the parameter name and value shape the site sends.
+    func testEachFilterEmitsItsOwnParameter() {
+        var f = MWSearchFilters()
+        XCTAssertTrue(f.isEmpty)
+        XCTAssertEqual(f.queryItems.count, 0)
+
+        f.printerCode = "O1C2"
+        XCTAssertEqual(f.queryItems.last?.0, "devModelNames")
+        XCTAssertEqual(f.queryItems.last?.1, "O1C2")
+
+        f = MWSearchFilters(); f.nozzle = "0.4"
+        XCTAssertEqual(f.queryItems.first?.0, "nozzleDiameters")
+        XCTAssertEqual(f.queryItems.first?.1, "0.4")
+
+        f = MWSearchFilters(); f.colours = .multi
+        XCTAssertEqual(f.queryItems.first?.0, "multiColor")
+        XCTAssertEqual(f.queryItems.first?.1, "true")
+        f.colours = .single
+        XCTAssertEqual(f.queryItems.first?.1, "false")
+
+        f = MWSearchFilters(); f.maxMinutes = 180
+        XCTAssertEqual(f.queryItems.first?.0, "print_duration")
+        XCTAssertEqual(f.queryItems.first?.1, "1,180")
+
+        f = MWSearchFilters(); f.maxGrams = 200
+        XCTAssertEqual(f.queryItems.first?.0, "total_weight")
+        XCTAssertEqual(f.queryItems.first?.1, "1,200")
+
+        f = MWSearchFilters(); f.licences = ["BY-SA", "CC0"]
+        XCTAssertEqual(f.queryItems.first?.0, "licenses")
+        XCTAssertEqual(f.queryItems.first?.1, "BY-SA,CC0", "sorted, so the URL is stable")
+
+        f = MWSearchFilters(); f.tag = .featured
+        XCTAssertEqual(f.queryItems.first?.0, "model_tag")
+        XCTAssertEqual(f.queryItems.first?.1, "featured")
+        f.tag = .exclusive
+        XCTAssertEqual(f.queryItems.first?.1, "exclusive")
+
+        f = MWSearchFilters(); f.customisable = true
+        XCTAssertEqual(f.queryItems.first?.0, "customizable")
+        XCTAssertEqual(f.queryItems.first?.1, "true")
     }
 
-    /// Equal values keep their incoming order, so toggling a sort and back is a round trip rather
-    /// than a reshuffle under the reader's finger.
-    func testTiesAreStableAndSortingIsReversible() {
-        let hits = [hit(7, dl: 4), hit(8, dl: 4), hit(9, dl: 4)]
-        XCTAssertEqual(MakerWorldSearch.sorted(hits, by: .downloads).map(\.id), [7, 8, 9])
-        let there = MakerWorldSearch.sorted(hits, by: .likes)
-        XCTAssertEqual(MakerWorldSearch.sorted(there, by: .relevance).map(\.id), there.map(\.id))
+    func testActiveCountIsTheBadgeNumber() {
+        var f = MWSearchFilters()
+        f.printerCode = "O1C2"
+        f.nozzle = "0.4"
+        f.licences = ["CC0"]
+        XCTAssertEqual(f.activeCount, 3)
+        XCTAssertFalse(f.isEmpty)
     }
 
-    func testSortingAnEmptyOrSingleListIsSafe() {
-        XCTAssertTrue(MakerWorldSearch.sorted([], by: .downloads).isEmpty)
-        XCTAssertEqual(MakerWorldSearch.sorted([hit(1)], by: .likes).map(\.id), [1])
+    func testFiltersRideTheRequest() {
+        var r = MWSearchRequest()
+        r.filters.customisable = true
+        XCTAssertTrue(r.queryItems.contains { $0.0 == "customizable" && $0.1 == "true" })
+    }
+
+    /// The H2C's MakerWorld code is `O1C2`, measured on `design-service/design/{id}` compatibility
+    /// lists. An unknown model gets nil, so the filter can dim itself rather than send a guess.
+    func testPrinterCodesForTheModelsMakerWorldKnows() {
+        XCTAssertEqual(MWPrinterCode.code(forModel: "H2C"), "O1C2")
+        XCTAssertEqual(MWPrinterCode.code(forModel: "h2c"), "O1C2")
+        XCTAssertEqual(MWPrinterCode.code(forModel: "A1"), "N2S")
+        XCTAssertEqual(MWPrinterCode.code(forModel: "A1 mini"), "N1")
+        XCTAssertEqual(MWPrinterCode.code(forModel: "X1 Carbon"), "BL-P001")
+        XCTAssertEqual(MWPrinterCode.code(forModel: "X1C"), "BL-P001")
+        XCTAssertNil(MWPrinterCode.code(forModel: "K2 Plus"))
+        XCTAssertNil(MWPrinterCode.code(forModel: nil))
+    }
+
+    func testCategoryIdComesFromTheNavKey() {
+        XCTAssertEqual(MakerWorldSearch.categoryId(navKey: "category_400"), 400)
+        XCTAssertNil(MakerWorldSearch.categoryId(navKey: "Trending"))
+        XCTAssertNil(MakerWorldSearch.categoryId(navKey: nil))
+        XCTAssertNil(MakerWorldSearch.categoryId(navKey: "category_"))
+    }
+
+    // MARK: - URL building
+
+    func testTheClientBuildsOneDesign2URL() {
+        var r = MWSearchRequest()
+        r.keyword = "phone stand"
+        r.filters.licences = ["CC0", "BY-SA"]
+        let url = MakerWorldSearchClient.url(for: r)
+        XCTAssertEqual(url.absoluteString,
+                       "https://api.bambulab.com/v1/search-service/select/design2?designType=0"
+                       + "&keyword=phone%20stand&orderBy=score&licenses=BY%2DSA%2CCC0&limit=50&offset=0")
+    }
+
+    func testSuggestionsDecodeFromThePopularList() throws {
+        let body = #"{"popular":[{"option":"phone stand","highlighted":"<em>phone</em> stand"},{"option":"headphone stand"}],"design":[],"user":[]}"#
+        XCTAssertEqual(try MakerWorldSearchClient.suggestions(from: Data(body.utf8)),
+                       ["phone stand", "headphone stand"])
+    }
+
+    func testHotWordsDecodeFromTheHotList() throws {
+        let body = #"{"hotList":{"name":"","topWords":[],"listWords":["halloween","clicker"]},"customList":[]}"#
+        XCTAssertEqual(try MakerWorldSearchClient.hotWords(from: Data(body.utf8)), ["halloween", "clicker"])
     }
 
     // MARK: Descriptions

@@ -15,6 +15,8 @@ struct MWSearchHit: Decodable, Identifiable, Hashable, Sendable {
     var license: String?
     var nsfw: Bool?
     var isExclusive: Bool?
+    var isStaffPicked: Bool?
+    var createTime: String?
     var likeCount: Int?
     var printCount: Int?
     var downloadCount: Int?
@@ -28,14 +30,17 @@ struct MWSearchHit: Decodable, Identifiable, Hashable, Sendable {
     }
 }
 
-/// `{total, hits}`. `hits` is **null**, not `[]`, on a miss — which is exactly how the endpoint that
-/// does not work announces itself (`design-service/design/search` answers `200 {"total":0,"hits":null}`).
+/// `{total, hits, searchSessionId}`. `hits` is **null**, not `[]`, on a miss — which is exactly how
+/// the endpoint that does not work announces itself (`design-service/design/search` answers
+/// `200 {"total":0,"hits":null}`). `searchSessionId` is echoed on later pages, as the site does.
 struct MWSearchPage: Decodable, Hashable, Sendable {
     var total: Int?
     var hits: [MWSearchHit]?
+    var searchSessionId: String?
 }
 
-/// One browse category from `homepage/nav`. `key` is what `select/design/nav?navKey=` wants.
+/// One browse category from `homepage/nav`. `key` names a category (`category_400`);
+/// `MakerWorldSearch.categoryId(navKey:)` turns it into what `categories=` wants.
 struct MWNav: Decodable, Identifiable, Hashable, Sendable {
     var key: String
     var name: String?
@@ -68,18 +73,10 @@ struct MWNav: Decodable, Identifiable, Hashable, Sendable {
 /// orchestration — cancel-and-replace, the write barrier, paging — can be tested without a network,
 /// which is where its actual bugs live. The app has exactly one conformance.
 protocol MakerWorldSearching: Sendable {
-    func search(_ keyword: String, offset: Int, limit: Int) async throws -> MWSearchPage
-    func browse(navKey: String, offset: Int, limit: Int) async throws -> MWSearchPage
+    func page(_ request: MWSearchRequest) async throws -> MWSearchPage
     func navs() async throws -> [MWNav]
-}
-
-extension MakerWorldSearching {
-    func search(_ keyword: String, offset: Int = 0) async throws -> MWSearchPage {
-        try await search(keyword, offset: offset, limit: 20)
-    }
-    func browse(navKey: String, offset: Int = 0) async throws -> MWSearchPage {
-        try await browse(navKey: navKey, offset: offset, limit: 20)
-    }
+    func suggest(_ keyword: String) async throws -> [String]
+    func hotWords() async throws -> [String]
 }
 
 struct MakerWorldSearchClient: MakerWorldSearching, Sendable {
@@ -99,38 +96,64 @@ struct MakerWorldSearchClient: MakerWorldSearching, Sendable {
         session = URLSession(configuration: cfg)
     }
 
-    /// Free-text search.
+    /// One page of models.
     ///
-    /// **`search-service/search/design`, not `design-service/design/search`.** The two sound like the
-    /// same endpoint and are not: the second answers `200` with `total: 0, hits: null` from anywhere,
-    /// which is what made "MakerWorld search doesn't work from a server" received wisdom.
-    func search(_ keyword: String, offset: Int = 0, limit: Int = 20) async throws -> MWSearchPage {
-        try await get("/search/design?keyword=\(esc(keyword))&offset=\(offset)&limit=\(limit)")
-    }
-
-    /// Browse one of `navs()`'s categories.
-    func browse(navKey: String, offset: Int = 0, limit: Int = 20) async throws -> MWSearchPage {
-        try await get("/select/design/nav?navKey=\(esc(navKey))&offset=\(offset)&limit=\(limit)")
+    /// **`search-service/select/design2`, not `search/design`.** The site itself calls this one;
+    /// it ranks by quality (`orderBy=score` puts a 38k-download phone stand first where
+    /// `search/design` put a 5-like one) and honours the sort and filter parameters
+    /// `MWSearchRequest` carries. Measured 2026-09-07, anonymously.
+    func page(_ request: MWSearchRequest) async throws -> MWSearchPage {
+        try await get(Self.url(for: request))
     }
 
     /// The browse taxonomy, straight from MakerWorld rather than hardcoded — the category list is
     /// theirs to change, and a stale hardcoded copy would show categories that no longer exist.
     func navs() async throws -> [MWNav] {
         struct Envelope: Decodable { let navs: [MWNav]? }
-        return try await get("/homepage/nav", as: Envelope.self).navs ?? []
+        return try await get(Self.url("/homepage/nav", []), as: Envelope.self).navs ?? []
+    }
+
+    /// Typeahead: the `popular` completions for a partial keyword.
+    func suggest(_ keyword: String) async throws -> [String] {
+        let url = Self.url("/suggest2", [("keyword", keyword), ("include", "popular")])
+        return try Self.suggestions(from: try await getData(url))
+    }
+
+    /// MakerWorld's current hot searches, for the cold screen.
+    func hotWords() async throws -> [String] {
+        try Self.hotWords(from: try await getData(Self.url("/searchlist", [])))
+    }
+
+    static func url(for request: MWSearchRequest) -> URL {
+        url("/select/design2", request.queryItems)
+    }
+
+    static func suggestions(from data: Data) throws -> [String] {
+        struct Envelope: Decodable { struct Item: Decodable { let option: String? }; let popular: [Item]? }
+        return try decoder.decode(Envelope.self, from: data).popular?.compactMap(\.option) ?? []
+    }
+
+    static func hotWords(from data: Data) throws -> [String] {
+        struct Envelope: Decodable { struct HotList: Decodable { let listWords: [String]? }; let hotList: HotList? }
+        return try decoder.decode(Envelope.self, from: data).hotList?.listWords ?? []
+    }
+
+    /// Values are encoded with `.alphanumerics` as the only allowed set: spaces become `%20`,
+    /// `&`/`+`/`#`/`,` are safe, CJK is UTF-8 %-encoded. `.urlQueryAllowed` leaves `&` and `+` raw.
+    private static func url(_ path: String, _ items: [(String, String)]) -> URL {
+        let query = items.map { "\($0.0)=\(esc($0.1))" }.joined(separator: "&")
+        // The pieces are all alphanumeric or already escaped; URL(string:) cannot fail here.
+        return URL(string: base + path + (query.isEmpty ? "" : "?" + query))!
+    }
+
+    private static func esc(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
     }
 
     // MARK: Transport
 
-    private func get<T: Decodable>(_ path: String, as type: T.Type = T.self) async throws -> T {
-        guard let url = URL(string: Self.base + path) else {
-            throw SproutError("Couldn’t build the MakerWorld search URL.")
-        }
-        let (data, response) = try await session.data(from: url)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200..<300).contains(status) else {
-            throw MakerWorldSearchError(status: status)
-        }
+    private func get<T: Decodable>(_ url: URL, as type: T.Type = T.self) async throws -> T {
+        let data = try await getData(url)
         do {
             return try Self.decoder.decode(T.self, from: data)
         } catch {
@@ -138,14 +161,17 @@ struct MakerWorldSearchClient: MakerWorldSearching, Sendable {
         }
     }
 
+    private func getData(_ url: URL) async throws -> Data {
+        let (data, response) = try await session.data(from: url)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else { throw MakerWorldSearchError(status: status) }
+        return data
+    }
+
     /// **No `.convertFromSnakeCase`.** This API is camelCase on the wire (`downloadCount`,
     /// `designCreator`), unlike Bambuddy's snake_case envelope — sharing Bambuddy's decoder would
     /// silently decode every one of these fields as nil.
     private static let decoder = JSONDecoder()
-
-    private func esc(_ s: String) -> String {
-        s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
-    }
 }
 
 /// A search failure, kept separate from `BambuddyError` so nothing outside this feature can catch it

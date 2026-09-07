@@ -57,9 +57,7 @@ struct MacExploreInspector: View {
     private var resolved: MakerWorldResolved? { loaded?.resolved }
     private var rows: [MWProfileRow] { loaded?.rows ?? [] }
     private var design: MWDesign? { resolved?.design }
-    /// What the grid already knew, when the selection came from the grid. Looked up in `hits` rather
-    /// than `orderedHits` because a lookup does not care about order and sorting 100 hits per body
-    /// evaluation would be work done for nothing.
+    /// What the grid already knew, when the selection came from the grid.
     private var hit: MWSearchHit? { explore.hits.first { $0.id == selectedId } }
 
     private func title(_ id: Int) -> String {

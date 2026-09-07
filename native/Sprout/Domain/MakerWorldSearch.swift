@@ -101,85 +101,46 @@ enum MakerWorldSearch {
 
     /// Deliberately absent: any "not printable" marker.
     ///
-    /// `isPrintable` was measured **absent** from live hits, so `false` and "not stated" are the same
-    /// value. Rendering a negative claim from a missing field is the recurring bug in its purest
-    /// form — the answer to "did MakerWorld say this is unprintable" is "MakerWorld said nothing".
+    /// `select/design2` does send `is_printable` — in **snake case**, inside an otherwise camelCase
+    /// body, so the plain decoder `MWSearchHit` uses cannot see it and it is nil on every hit. It
+    /// stays undecoded rather than being wired up: `false` and "not stated" would then be the same
+    /// value, and rendering a negative claim from a field that is nil for two different reasons is
+    /// the recurring bug in its purest form.
 
     // MARK: Sorting
 
-    /// How to order the results already on screen.
+    /// The server's own orders on `search-service/select/design2`.
     ///
-    /// **Client-side, and it has to be.** MakerWorld's own search API does not sort: `orderBy`,
-    /// `order`, `sortBy`, `sortType` and friends were each probed against
-    /// `search-service/search/design` and the returned `likeCount`/`downloadCount` sequences came
-    /// back unordered for every value — and a nonsense value shuffled the list exactly as much as a
-    /// real one, which is the endpoint's unstable ordering rather than sorting. The route that DOES
-    /// honour `orderBy` is the website's own Next.js data endpoint, which sits behind a Cloudflare
-    /// challenge and needs a browser's `cf_clearance` cookie, so the app cannot reach it.
-    ///
-    /// So this reorders **what has been loaded**, and the UI says so. A chip labelled "Most
-    /// downloaded" that silently meant "most downloaded of the 20 on screen" would be the recurring
-    /// bug; saying it out loud makes it a useful tool instead.
+    /// Measured 2026-09-07: each value changes the returned row set, verified against the
+    /// `downloadCount`/`createTime` sequences, not just the ids. The earlier finding that "no
+    /// ordering parameter is honoured" was true of `search/design`, a different endpoint. The raw
+    /// value is the wire value so a rename here cannot silently stop sorting.
     enum Sort: String, CaseIterable, Identifiable, Sendable {
-        case relevance, downloads, likes, newest
+        case relevance = "score"
+        case trending = "hotScore"
+        case newest = "newUploads"
+        case downloads = "downloadCount"
+        case likes = "likeCount"
+        case boosts = "boosts"
 
         var id: String { rawValue }
 
-        /// **Not "Relevance".** That label claims the endpoint ranked these, and it did not: a search
-        /// for "spool" returns 2, 4, 3, 17, 5, 46 downloads in that order out of 10 000 results, and
-        /// identical calls seconds apart come back in different orders. Naming it after the machine
-        /// that produced it is the only honest option — the website's ranked results come from a
-        /// different, Cloudflare-gated route this app cannot reach.
         var label: String {
             switch self {
-            case .relevance: return "MakerWorld's order"
+            case .relevance: return "Relevance"
+            case .trending:  return "Trending"
+            case .newest:    return "Newest"
             case .downloads: return "Most downloaded"
             case .likes:     return "Most liked"
-            case .newest:    return "Newest"
+            case .boosts:    return "Most boosted"
             }
         }
-
-        /// Whether this is the server's own order rather than a local reordering.
-        var isServerOrder: Bool { self == .relevance }
-
-        /// Sorting an arbitrary 20 of 10 000 by downloads gives "the most downloaded of a random
-        /// 20", which is not what anyone means by it. These sorts deepen the pool first.
-        var wantsDeeperPool: Bool { self != .relevance }
     }
 
-    /// Reorder loaded hits. `.relevance` is identity — MakerWorld's own order, untouched.
-    ///
-    /// Ties keep their existing relative order (the sort is stable via the index tiebreak), so
-    /// switching sorts and back does not reshuffle equal rows under the reader.
-    static func sorted(_ hits: [MWSearchHit], by sort: Sort) -> [MWSearchHit] {
-        guard sort != .relevance else { return hits }
-        let keyed = hits.enumerated()
-        switch sort {
-        case .relevance:
-            return hits
-        case .downloads:
-            return keyed.sorted { rank($0.element.downloadCount, $0.offset, $1.element.downloadCount, $1.offset) }
-                .map(\.element)
-        case .likes:
-            return keyed.sorted { rank($0.element.likeCount, $0.offset, $1.element.likeCount, $1.offset) }
-                .map(\.element)
-        case .newest:
-            // No date on a hit, so this is by id: MakerWorld's model ids increase over time (40146 is
-            // a 2023 Benchy, 3047341 a recent one). An approximation, and named "Newest" rather than
-            // "Newest first" because it is ordering, not a timestamp anyone can check.
-            return keyed.sorted { rank($0.element.id, $0.offset, $1.element.id, $1.offset) }.map(\.element)
-        }
-    }
-
-    /// Descending by value, ascending by original position on a tie. A missing count sorts last —
-    /// absent is not zero, and it must not outrank a genuine 0.
-    private static func rank(_ a: Int?, _ ai: Int, _ b: Int?, _ bi: Int) -> Bool {
-        switch (a, b) {
-        case let (x?, y?): return x == y ? ai < bi : x > y
-        case (nil, _?): return false
-        case (_?, nil): return true
-        default: return ai < bi
-        }
+    /// `category_400` → 400. The nav key is MakerWorld's; the number is what `categories=` wants.
+    static func categoryId(navKey: String?) -> Int? {
+        guard let navKey, navKey.hasPrefix("category_") else { return nil }
+        return Int(navKey.dropFirst("category_".count))
     }
 
     // MARK: Descriptions
@@ -520,8 +481,96 @@ enum MakerWorldSearch {
     ///
     /// `Following` and `For You` are dropped: both are personalised to a signed-in account, and this
     /// app is anonymous by design — they would render as categories that quietly return someone
-    /// else's idea of relevance, or nothing at all.
+    /// else's idea of relevance, or nothing at all. `LaserCut` is dropped because it needs a
+    /// `designType` the probes never settled, and a chip that lists 3D models under a laser heading
+    /// would be a lie.
     static func browsable(_ navs: [MWNav]) -> [MWNav] {
-        navs.filter { $0.key != "Following" && $0.key != "Foryou" && !$0.key.isEmpty }
+        navs.filter { $0.key != "Following" && $0.key != "Foryou" && $0.key != "LaserCut" && !$0.key.isEmpty }
+    }
+}
+
+/// The filters `select/design2` honours. Parameter names and value shapes are the ones the
+/// website's own sort links carry after "Confirm" (measured 2026-09-07); every one was replayed
+/// against the API and changed `total`.
+struct MWSearchFilters: Equatable, Sendable {
+    /// `devModelNames=<code>`. nil = any printer. See `MWPrinterCode`.
+    var printerCode: String?
+    /// `nozzleDiameters=0.4`. Single-select: the site sends one value and a list was never probed.
+    var nozzle: String?
+    var colours: Colours = .any
+    /// Upper bound in minutes; the lower bound is always 1.
+    var maxMinutes: Int?
+    /// Upper bound in grams; the lower bound is always 1.
+    var maxGrams: Int?
+    /// MakerWorld licence codes: `CC0`, `BY`, `BY-SA`, `BY-ND`, `BY-NC`, `BY-NC-SA`, `BY-NC-ND`.
+    var licences: Set<String> = []
+    var tag: Tag = .any
+    var customisable = false
+
+    enum Colours: String, CaseIterable, Sendable { case any, single, multi }
+    enum Tag: String, CaseIterable, Sendable { case any, featured, exclusive }
+
+    var queryItems: [(String, String)] {
+        var out: [(String, String)] = []
+        if let printerCode { out.append(("devModelNames", printerCode)) }
+        if let nozzle { out.append(("nozzleDiameters", nozzle)) }
+        switch colours {
+        case .any: break
+        case .single: out.append(("multiColor", "false"))
+        case .multi: out.append(("multiColor", "true"))
+        }
+        if let maxMinutes { out.append(("print_duration", "1,\(maxMinutes)")) }
+        if let maxGrams { out.append(("total_weight", "1,\(maxGrams)")) }
+        if !licences.isEmpty { out.append(("licenses", licences.sorted().joined(separator: ","))) }
+        if tag != .any { out.append(("model_tag", tag.rawValue)) }
+        if customisable { out.append(("customizable", "true")) }
+        return out
+    }
+
+    var activeCount: Int { queryItems.count }
+    var isEmpty: Bool { activeCount == 0 }
+}
+
+/// One page of MakerWorld models, described rather than fetched. `queryItems` is ordered so a URL
+/// built from it is stable, which is what the tests pin.
+struct MWSearchRequest: Equatable, Sendable {
+    var keyword: String?
+    var categoryId: Int?
+    var sort: MakerWorldSearch.Sort = .relevance
+    var filters = MWSearchFilters()
+    var offset = 0
+    /// 100 was accepted live; 50 keeps a page under a second on cellular.
+    var limit = 50
+    /// Echoed from the first page's `searchSessionId` on later pages, as the site does.
+    var sessionId: String?
+
+    var queryItems: [(String, String)] {
+        var out: [(String, String)] = [("designType", "0")]
+        if let keyword, !keyword.isEmpty { out.append(("keyword", keyword)) }
+        if let categoryId { out.append(("categories", String(categoryId))) }
+        out.append(("orderBy", sort.rawValue))
+        out += filters.queryItems
+        out.append(("limit", String(limit)))
+        out.append(("offset", String(offset)))
+        if let sessionId { out.append(("searchSessionId", sessionId)) }
+        return out
+    }
+}
+
+/// Bambuddy model strings → MakerWorld `devModelName` codes, read off
+/// `design-service/design/{id}` compatibility lists on 2026-09-07.
+enum MWPrinterCode {
+    private static let table: [String: String] = [
+        "H2C": "O1C2", "H2D": "O1D", "H2D PRO": "O1E", "H2S": "O1S",
+        "A1": "N2S", "A1 MINI": "N1", "A1M": "N1",
+        "P1S": "C12", "P1P": "C11", "P2S": "N7",
+        "X1C": "BL-P001", "X1 CARBON": "BL-P001", "X1": "BL-P002", "X1E": "C13",
+        "A2L": "N9", "X2D": "N6",
+    ]
+
+    static func code(forModel model: String?) -> String? {
+        guard let model else { return nil }
+        let key = model.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return table[key]
     }
 }

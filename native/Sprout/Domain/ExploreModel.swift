@@ -29,7 +29,18 @@ final class ExploreModel {
     /// The query the visible hits belong to. Paging has to repeat it, and the field may have moved
     /// on — this is also the write barrier that stops a slow response overwriting a newer one.
     var activeQuery: String?
-    var sort: MakerWorldSearch.Sort = .relevance
+    private(set) var sort: MakerWorldSearch.Sort = .relevance
+    private(set) var filters = MWSearchFilters()
+    /// The first page's `searchSessionId`, echoed on later pages so paging stays on one ranking.
+    private var sessionId: String?
+    /// A page that failed mid-scroll. Shown under the grid; a 429 must not look like the end.
+    var loadMoreError: String?
+    /// Typeahead for what is in the field.
+    var suggestions: [String] = []
+    /// Cold-screen content, fetched once per session.
+    var trending: [MWSearchHit] = []
+    var hotWords: [String] = []
+    private var coldStartLoaded = false
     var recent: [MakerWorldRecentImport] = []
     /// What is pushed on top of the results. In the model rather than the view so that dismissing
     /// Explore and coming back returns to where you were, which is the whole point of F2.
@@ -83,7 +94,6 @@ final class ExploreModel {
         var nav: String?
         var hits: [MWSearchHit]
         var total: Int?
-        var sort: MakerWorldSearch.Sort
     }
 
     /// True when there is a mode to leave — drives whether a selected chip is a toggle.
@@ -91,15 +101,15 @@ final class ExploreModel {
 
     /// Remember the result set being replaced, but only if it is one worth coming back to.
     private func rememberCurrent() {
-        guard activeQuery != nil || activeNav != nil, !showingCollections, activeCollection == nil
-        else { return }
-        previous = Snapshot(query: activeQuery, nav: activeNav, hits: hits, total: hitTotal, sort: sort)
+        guard !isCold, !showingCollections, activeCollection == nil else { return }
+        previous = Snapshot(query: activeQuery, nav: activeNav, hits: hits, total: hitTotal)
     }
 
     /// Turn the current mode off and go back to what was underneath.
     ///
-    /// Restores from the snapshot rather than refetching: the results were correct when they were
-    /// replaced, and a round trip to un-tap a chip would make leaving slower than entering.
+    /// Collections restore from a snapshot: the results were correct when they were replaced, and
+    /// a round trip to un-tap a chip would make leaving slower than entering. A category is not a
+    /// snapshot mode any more — it narrows the keyword — so leaving it refetches the keyword alone.
     func exitMode() {
         // You cannot leave a mode you are not in. Without this guard, calling it while a plain
         // search is showing takes the no-snapshot branch and wipes the live results — which a test
@@ -107,25 +117,35 @@ final class ExploreModel {
         guard canExitMode else { return }
         fetch?.cancel()
         loading = false
-        showingCollections = false
-        activeCollection = nil
         searchError = nil
 
-        if let previous {
-            activeQuery = previous.query
-            activeNav = previous.nav
-            hits = previous.hits
-            hitTotal = previous.total
-            sort = previous.sort
-            self.previous = nil
-        } else {
-            // Nothing underneath — go back to the cold screen rather than an empty grid that looks
-            // like a search returning nothing.
-            activeQuery = nil
-            activeNav = nil
+        if showingCollections || activeCollection != nil {
+            showingCollections = false
+            activeCollection = nil
+            if let previous {
+                activeQuery = previous.query
+                activeNav = previous.nav
+                hits = previous.hits
+                hitTotal = previous.total
+                self.previous = nil
+            } else {
+                // Nothing underneath — go back to the cold screen rather than an empty grid that
+                // looks like a search returning nothing.
+                activeQuery = nil
+                activeNav = nil
+                hits = []
+                hitTotal = nil
+            }
+            return
+        }
+
+        if activeNav == "Trending" { sort = .relevance }
+        activeNav = nil
+        if isCold {
             hits = []
             hitTotal = nil
-            sort = .relevance
+        } else {
+            fetchCurrent()
         }
     }
 
@@ -137,14 +157,29 @@ final class ExploreModel {
     /// What the field's contents mean. The button label and the live-search suggestion both read it.
     var intent: MakerWorldSearch.Intent { MakerWorldSearch.intent(for: query) }
 
-    /// The hits in the order they should be displayed.
-    var orderedHits: [MWSearchHit] { MakerWorldSearch.sorted(hits, by: sort) }
-
     var hasMore: Bool { MakerWorldSearch.hasMore(loaded: hits.count, total: hitTotal) }
 
     /// True when nothing has been asked for yet — the state that should show shelves, not an empty
-    /// field.
-    var isCold: Bool { activeQuery == nil && activeNav == nil && activeCollection == nil && !showingCollections }
+    /// grid. Filters count as asking: filters alone browse everything, filtered. So does a chosen
+    /// order: an order with no keyword browses everything in that order.
+    var isCold: Bool {
+        activeQuery == nil && activeNav == nil && filters.isEmpty && sort == .relevance
+            && activeCollection == nil && !showingCollections
+    }
+
+    /// The one request the screen is showing, at a given offset. Every fetch builds it from here,
+    /// and equality against it is the write barrier: a response only lands if the screen still
+    /// asks the same question.
+    func currentRequest(offset: Int = 0) -> MWSearchRequest {
+        var r = MWSearchRequest()
+        r.keyword = activeQuery
+        r.categoryId = MakerWorldSearch.categoryId(navKey: activeNav)
+        r.sort = activeNav == "Trending" ? .trending : sort
+        r.filters = filters
+        r.offset = offset
+        r.sessionId = offset == 0 ? nil : sessionId
+        return r
+    }
 
     // MARK: Fetching
 
@@ -159,7 +194,6 @@ final class ExploreModel {
                             _ work: @escaping @MainActor (ExploreModel) async throws -> Void) {
         fetch?.cancel()
         searchError = nil
-        sort = .relevance          // a sort carried into a new result set reorders it unasked
         if !keepContent {
             hits = []
             hitTotal = nil
@@ -186,28 +220,86 @@ final class ExploreModel {
         guard !trimmed.isEmpty else { return }
         showingCollections = false
         activeCollection = nil
-        activeNav = nil
         activeQuery = trimmed
+        suggestions = []
+        // A keyword means "rank this": Relevance, unless the Trending chip is on, where the
+        // keyword narrows the trending order instead.
+        if activeNav != "Trending" { sort = .relevance }
         previous = nil          // searching IS the way out; there is nothing left to go back to
-        startFetch { m in
-            let page = try await m.searchClient.search(trimmed)
-            guard m.activeQuery == trimmed else { return }   // a newer query won
-            m.hits = page.hits ?? []
-            m.hitTotal = page.total
+        fetchCurrent()
+    }
+
+    /// A category narrows whatever keyword is in force; "Trending" is the trending order alone.
+    func browse(_ nav: MWNav) {
+        showingCollections = false
+        activeCollection = nil
+        activeNav = nav.key
+        if nav.key == "Trending" { sort = .trending }
+        fetchCurrent()
+    }
+
+    func setSort(_ new: MakerWorldSearch.Sort) {
+        guard new != sort || activeNav == "Trending" else { return }
+        if activeNav == "Trending", new != .trending { activeNav = nil }
+        sort = new
+        if !isCold {
+            fetchCurrent()
+        } else {
+            hits = []
+            hitTotal = nil
         }
     }
 
-    func browse(_ nav: MWNav) {
-        rememberCurrent()
-        showingCollections = false
-        activeCollection = nil
-        activeQuery = nil
-        activeNav = nav.key
+    /// Applied whole, from the sheet's Done: one request per edit session, not one per toggle.
+    func setFilters(_ new: MWSearchFilters) {
+        guard new != filters else { return }
+        filters = new
+        if isCold {
+            hits = []
+            hitTotal = nil
+        } else {
+            fetchCurrent()
+        }
+    }
+
+    /// Fetch page one of `currentRequest()`. Shared by search, browse, sort, filters and refresh
+    /// so the reset, the cancel and the write barrier cannot drift apart between them.
+    private func fetchCurrent() {
+        let request = currentRequest()
         startFetch { m in
-            let page = try await m.searchClient.browse(navKey: nav.key)
-            guard m.activeNav == nav.key else { return }
+            let page = try await m.searchClient.page(request)
+            guard m.currentRequest() == request else { return }   // the screen moved on
             m.hits = page.hits ?? []
             m.hitTotal = page.total
+            m.sessionId = page.searchSessionId
+            m.loadMoreError = nil
+        }
+    }
+
+    /// Typeahead for the field. Written only while the field still says what was asked about.
+    func suggest(_ text: String) {
+        let term = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard term.count >= 2 else { suggestions = []; return }
+        Task { @MainActor in
+            let found = (try? await searchClient.suggest(term)) ?? []
+            guard query.trimmingCharacters(in: .whitespacesAndNewlines) == term else { return }
+            suggestions = Array(found.prefix(6))
+        }
+    }
+
+    /// The cold screen's own content: one trending page and the hot-word row. Once per session;
+    /// a shelf that refetched on every visit would make the cold screen slower than search.
+    func loadColdStart() {
+        guard !coldStartLoaded else { return }
+        coldStartLoaded = true
+        var request = MWSearchRequest()
+        request.sort = .trending
+        request.limit = 20
+        Task { @MainActor in
+            if let page = try? await searchClient.page(request) { trending = page.hits ?? [] }
+        }
+        Task { @MainActor in
+            hotWords = Array(((try? await searchClient.hotWords()) ?? []).prefix(8))
         }
     }
 
@@ -274,14 +366,7 @@ final class ExploreModel {
     /// `rememberCurrent()` — so refreshing through them would push a duplicate entry onto the back
     /// stack on every `⌘R`, and "Back" would walk through a history of the same screen. Refreshing
     /// is "fetch the same thing again"; the mode has already been decided.
-    ///
-    /// The user's sort is restored afterwards. `startFetch` resets it to `.relevance` because a sort
-    /// carried into a NEW result set reorders it unasked — but this is the same result set, and
-    /// silently re-ordering the grid is not what someone pressing refresh asked for.
     func refresh(_ client: CollectionsClient) {
-        let keepSort = sort
-        defer { sort = keepSort }       // startFetch resets it synchronously, before its Task runs
-
         if showingCollections {
             startFetch(keepContent: false) { m in
                 m.collections = try await client.collections()
@@ -293,20 +378,8 @@ final class ExploreModel {
                 m.hits = page.hits ?? []
                 m.hitTotal = page.total
             }
-        } else if let navKey = activeNav {
-            startFetch { m in
-                let page = try await m.searchClient.browse(navKey: navKey)
-                guard m.activeNav == navKey else { return }
-                m.hits = page.hits ?? []
-                m.hitTotal = page.total
-            }
-        } else if let text = activeQuery {
-            startFetch { m in
-                let page = try await m.searchClient.search(text)
-                guard m.activeQuery == text else { return }
-                m.hits = page.hits ?? []
-                m.hitTotal = page.total
-            }
+        } else if !isCold {
+            fetchCurrent()
         }
         // Cold start: nothing has been asked for, so there is nothing to ask for again. Not an
         // error, and not a no-op worth reporting — the grid is already showing the cold shelves.
@@ -317,7 +390,8 @@ final class ExploreModel {
     func loadMore(_ client: CollectionsClient) {
         guard hasMore, !loadingMore, !loading else { return }
         let offset = hits.count
-        let nav = activeNav, q = activeQuery, folder = activeCollection
+        let folder = activeCollection
+        let request = currentRequest(offset: offset)
         loadingMore = true
         Task { @MainActor in
             defer { loadingMore = false }
@@ -325,49 +399,21 @@ final class ExploreModel {
                 let page: MWSearchPage
                 if let folder {
                     page = try await client.designs(in: folder.id, offset: offset)
-                } else if let nav {
-                    page = try await searchClient.browse(navKey: nav, offset: offset)
-                } else if let q {
-                    page = try await searchClient.search(q, offset: offset)
+                    guard activeCollection?.id == folder.id else { return }
                 } else {
-                    return
+                    page = try await searchClient.page(request)
+                    // The same result set must still be on screen, or this page belongs to nothing.
+                    guard currentRequest(offset: offset) == request else { return }
                 }
-                // The same result set must still be on screen, or this page belongs to nothing.
-                guard activeNav == nav, activeQuery == q, activeCollection?.id == folder?.id else { return }
                 // merge, not append: the endpoint's ordering is unstable between calls, so paging by
                 // offset genuinely repeats models — and duplicate ForEach ids are undefined
                 // behaviour, not a cosmetic wart.
                 hits = MakerWorldSearch.merge(hits, page.hits ?? [])
                 hitTotal = page.total ?? hitTotal
+                loadMoreError = nil
+            } catch is CancellationError {
             } catch {
-                // A failed page is not worth an error banner over content that is already good.
-            }
-        }
-    }
-
-    /// How many hits to gather before a local sort is worth trusting.
-    ///
-    /// Client-side sorting can only order what has been loaded. With 20 of 10 000 that is "the most
-    /// downloaded of an arbitrary 20" — true, useless, and easily mistaken for "the most downloaded
-    /// on MakerWorld". Pulling a few more pages first makes the answer mean something; the UI still
-    /// states the scope, because even 100 of 10 000 is a sample.
-    static let poolForLocalSort = 100
-
-    /// Pull pages until the pool is deep enough to sort, or there are no more.
-    ///
-    /// Bounded twice — by the target and by `hasMore` — because an unbounded loop against an
-    /// undocumented endpoint is the fastest way to earn a rate limit.
-    func deepenPool(_ client: CollectionsClient) {
-        guard sort.wantsDeeperPool, hasMore, hits.count < Self.poolForLocalSort else { return }
-        Task { @MainActor in
-            var guardRail = 0
-            while sort.wantsDeeperPool, hasMore, hits.count < Self.poolForLocalSort, guardRail < 8 {
-                guardRail += 1
-                let before = hits.count
-                loadMore(client)
-                // Wait for the page this started, rather than spinning.
-                while loadingMore { await Task.yield() }
-                if hits.count == before { break }   // no progress: stop rather than loop
+                loadMoreError = error.localizedDescription
             }
         }
     }

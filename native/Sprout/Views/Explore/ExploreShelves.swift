@@ -59,7 +59,44 @@ struct ExploreShelves: View {
                     }
                 }
 
-                if explore.collections.isEmpty && explore.recent.isEmpty {
+                if !explore.hotWords.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("POPULAR SEARCHES")
+                            .scaledMono(11, weight: .bold)
+                            .foregroundStyle(c.t3)
+                            .padding(.horizontal, 16)
+                        ScrollView(.horizontal) {
+                            HStack(spacing: 8) {
+                                ForEach(explore.hotWords, id: \.self) { word in
+                                    Tap { explore.query = word; explore.search(word) } content: {
+                                        Text(verbatim: word)
+                                            .scaledFont(13, weight: .semibold)
+                                            .foregroundStyle(c.t2)
+                                            .padding(.horizontal, 13).padding(.vertical, 8)
+                                            .background(Capsule().fill(c.s2))
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                        }
+                        .scrollIndicators(.hidden)
+                    }
+                }
+
+                if !explore.trending.isEmpty {
+                    shelf("TRENDING") {
+                        ForEach(explore.trending) { hit in
+                            NavigationLink(value: hit) {
+                                card(cover: hit.cover, title: hit.title ?? "Untitled",
+                                     sub: hit.designCreator?.name.map { "@\($0)" })
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                if explore.collections.isEmpty && explore.recent.isEmpty
+                    && explore.trending.isEmpty && explore.hotWords.isEmpty {
                     ExploreMessage(symbol: "square.grid.2x2",
                                    title: "Find something to print",
                                    message: "Search MakerWorld, pick a category above, or paste a link "
