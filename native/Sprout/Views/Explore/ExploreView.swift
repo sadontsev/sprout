@@ -137,6 +137,10 @@ private struct ExploreRoot: View {
             guard term.count >= 2 else { explore.suggestions = []; return }
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
+            // Tapping a suggestion or a hot word already calls `search(term)` directly, for an
+            // instant result rather than a 300ms wait. Without this guard the debounce still fires
+            // afterward and repeats the identical request — one tap, one search.
+            guard term != explore.activeQuery else { return }
             // `search` clears `suggestions` and `suggest` writes them back only while the field
             // still matches, so suggesting has to come second or it is wiped by its own search.
             explore.search(term)
@@ -238,7 +242,8 @@ private struct ExploreRoot: View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
                 let n = explore.filters.activeCount
-                chip(n == 0 ? "Filters" : "Filters · \(n)", symbol: "line.3.horizontal.decrease", on: n > 0) {
+                chip(n == 0 ? "Filters" : "Filters · \(n)", symbol: "line.3.horizontal.decrease",
+                     on: n > 0, toggleable: false) {
                     showFilters = true
                 }
                 if collectionsClient.isAvailable {
@@ -263,7 +268,13 @@ private struct ExploreRoot: View {
         .padding(.bottom, 10)
     }
 
-    private func chip(_ title: String, symbol: String? = nil, on: Bool,
+    /// `toggleable` says whether tapping this chip again would turn it off. Every chip here is one
+    /// EXCEPT Filters: tapping it always reopens the sheet, so drawing the xmark and the "turns
+    /// this off" hint on it would claim a capability it does not have — the same shape as the
+    /// LAN-mode buttons and the menu-bar predicate this codebase keeps re-learning about. `on`
+    /// still drives the selected look and the `.isSelected` trait for Filters, because a filter
+    /// really is active; only the "this is a toggle" affordance is withheld.
+    private func chip(_ title: String, symbol: String? = nil, on: Bool, toggleable: Bool = true,
                       action: @escaping () -> Void) -> some View {
         Tap(action: action) {
             HStack(spacing: 6) {
@@ -273,7 +284,7 @@ private struct ExploreRoot: View {
                 Text(title).scaledFont(13, weight: .semibold)
                 // Says the chip is a toggle rather than a destination, so "how do I get out of
                 // this" has a visible answer instead of being a thing you have to guess.
-                if on {
+                if on, toggleable {
                     Image(systemName: "xmark")
                         .scaledFont(9, weight: .bold)
                         .opacity(0.75)
@@ -287,7 +298,8 @@ private struct ExploreRoot: View {
             .contentShape(.rect)
         }
         .accessibilityAddTraits(on ? [.isSelected, .isButton] : .isButton)
-        .accessibilityHint(on ? "Turns this off and returns to your results" : "")
+        .accessibilityHint(toggleable ? (on ? "Turns this off and returns to your results" : "")
+                                      : "Opens the filters")
     }
 
     // MARK: Body
@@ -339,8 +351,14 @@ private struct ExploreRoot: View {
                     Text(verbatim: note)
                         .scaledFont(12)
                         .foregroundStyle(c.t2)
-                    Button("Retry") { explore.loadMore(collectionsClient) }
-                        .scaledFont(12, weight: .semibold)
+                    Button("Retry") {
+                        // `loadMore` now refuses to run again while `loadMoreError` is set — see
+                        // the comment on it — so the button clears it first rather than the retry
+                        // silently doing nothing.
+                        explore.loadMoreError = nil
+                        explore.loadMore(collectionsClient)
+                    }
+                    .scaledFont(12, weight: .semibold)
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 20)

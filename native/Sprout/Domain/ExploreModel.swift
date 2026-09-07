@@ -387,8 +387,12 @@ final class ExploreModel {
 
     /// Fetch the next page. Driven by a tile appearing near the end of the grid rather than by a
     /// button, so it must be safe to call repeatedly and while another page is in flight.
+    ///
+    /// `loadMoreError == nil` is also an entry guard: the trailing tile that triggers this stays
+    /// near the bottom of the grid after a failed page, so without the guard a 429 gets re-hit on
+    /// every scroll frame rather than only when the user taps Retry (which clears the error first).
     func loadMore(_ client: CollectionsClient) {
-        guard hasMore, !loadingMore, !loading else { return }
+        guard hasMore, !loadingMore, !loading, loadMoreError == nil else { return }
         let offset = hits.count
         let folder = activeCollection
         let request = currentRequest(offset: offset)
@@ -413,6 +417,13 @@ final class ExploreModel {
                 loadMoreError = nil
             } catch is CancellationError {
             } catch {
+                // The same write barrier as the success path: a stale page's failure must not land
+                // under a result set the user has since replaced. Without this, a slow "benchy"
+                // page two that 429s after the user searched "spool" wrote its error under spool's
+                // results.
+                guard folder != nil ? activeCollection?.id == folder?.id
+                    : currentRequest(offset: offset) == request
+                else { return }
                 loadMoreError = error.localizedDescription
             }
         }

@@ -60,9 +60,8 @@ enum MacFilesLayout: String, CaseIterable, Identifiable, Sendable {
 /// at all, so the case must hide itself on that segment rather than silently sorting by `id`.
 ///
 /// A predicate that answers a nearby question is the recurring bug in this codebase, so the default
-/// is named for what it actually is: the order the server sent. Same discipline, and deliberately
-/// the same wording, as Explore labelling its unsorted results "MakerWorld's order" rather than
-/// "Relevance".
+/// is named for what it actually is: the order the server sent, not a claim about relevance or
+/// recency it cannot back up.
 enum MacFileSort: String, CaseIterable, Identifiable, Sendable {
     case server, name, size, type
 

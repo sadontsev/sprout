@@ -322,6 +322,68 @@ final class ExploreModelTests: XCTestCase {
         XCTAssertEqual(m.hits.count, 2, "the good content stays")
     }
 
+    /// The catch needs the same write barrier as the success path: a stale page's failure must not
+    /// land under a result set the user has since replaced. A slow "benchy" page two that 429s
+    /// after the user has already searched "spool" must not put a rate-limit message under spool's
+    /// results.
+    func testAStaleLoadMoreFailureDoesNotOverwriteTheNewerSearch() async throws {
+        let fake = FakeSearch()
+        let m = ExploreModel(searchClient: fake)
+        m.search("benchy")
+        await settle()
+        await fake.finish(FakeSearch.key("benchy"), hits: [1, 2], total: 10)
+        await waitUntil({ m.hits.count == 2 }, "the first page never landed")
+
+        m.loadMore(CollectionsClient(baseUrl: nil, apiKey: ""))
+        await waitUntil({ m.loadingMore }, "the next page never started")
+        m.search("spool")
+        await settle()
+        await fake.finish(FakeSearch.key("spool"), hits: [77], total: 1)
+        await waitUntil({ m.hits.map(\.id) == [77] }, "the new search never landed")
+
+        await fake.fail(FakeSearch.key("benchy", offset: 2), MakerWorldSearchError(status: 429))
+        await settle()
+        XCTAssertNil(m.loadMoreError, "a stale page's failure must not land under a different search")
+    }
+
+    /// The trailing tile that drives `loadMore` stays near the bottom of the grid after a failed
+    /// page, so without an entry guard a 429 gets re-hit on every scroll frame rather than only
+    /// when the user taps Retry. Retry clears `loadMoreError` before calling `loadMore` again.
+    func testLoadMoreDoesNotReFireAfterAFailedPageUntilTheErrorIsCleared() async throws {
+        let fake = FakeSearch()
+        let m = ExploreModel(searchClient: fake)
+        m.search("benchy")
+        await settle()
+        await fake.finish(FakeSearch.key("benchy"), hits: [1, 2], total: 10)
+        await waitUntil({ m.hits.count == 2 }, "the first page never landed")
+
+        m.loadMore(CollectionsClient(baseUrl: nil, apiKey: ""))
+        await waitUntil({ m.loadingMore }, "the next page never started")
+        await settle()
+        await fake.fail(FakeSearch.key("benchy", offset: 2), MakerWorldSearchError(status: 429))
+        await waitUntil({ m.loadMoreError != nil }, "the failure never surfaced")
+
+        let afterFailure = await fake.callCount()
+        m.loadMore(CollectionsClient(baseUrl: nil, apiKey: ""))
+        await settle()
+        let afterReappear = await fake.callCount()
+        XCTAssertEqual(afterReappear, afterFailure,
+                       "a reappearing trailing tile must not re-hit a 429 the user has not retried")
+
+        m.loadMoreError = nil
+        m.loadMore(CollectionsClient(baseUrl: nil, apiKey: ""))
+        // `loadingMore` flips synchronously inside `loadMore`, so waiting on it proves nothing
+        // about whether the actor call underneath has actually run yet — poll the fake instead.
+        var afterRetry = await fake.callCount()
+        for _ in 0..<2000 where afterRetry < afterFailure + 1 {
+            await Task.yield()
+            afterRetry = await fake.callCount()
+        }
+        XCTAssertEqual(afterRetry, afterFailure + 1,
+                       "clearing the error and calling loadMore again must issue the retry")
+        await fake.finish(FakeSearch.key("benchy", offset: 2), hits: [3], total: 10)
+    }
+
     // MARK: Cold start
 
     func testColdStartLoadsTrendingAndHotWordsOnce() async throws {
