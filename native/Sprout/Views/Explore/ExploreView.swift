@@ -39,7 +39,10 @@ struct ExploreView: View {
                     // Restored: the sort control was lost when Explore moved off the old sheet, so
                     // the grid sorted but nothing could ask it to.
                     ToolbarItem(placement: .topBarLeading) {
-                        if !explore.hits.isEmpty {
+                        // Hidden, not merely inert, inside a collection: Trellis serves a folder in
+                        // MakerWorld's own order and takes no `orderBy`, so an order control there
+                        // would be offering a capability the other end does not have.
+                        if !explore.hits.isEmpty, explore.acceptsMakerWorldRequest {
                             Menu {
                                 Picker("Order", selection: Binding(get: { explore.sort },
                                                                    set: { explore.setSort($0) })) {
@@ -112,8 +115,8 @@ private struct ExploreRoot: View {
             searchField
             if case .resolve(let id) = explore.intent { openModelSuggestion(id) }
             if fieldFocused, !explore.suggestions.isEmpty { suggestionRows }
-            // Unconditional: the Filters chip is always available, so gating the row on the
-            // category list would make it vanish whenever `homepage/nav` fails.
+            // The row itself is unconditional: gating it on the category list would make it
+            // vanish whenever `homepage/nav` fails, and collections are reached from it.
             chips
             Divider().overlay(c.line2)
 
@@ -121,8 +124,11 @@ private struct ExploreRoot: View {
         }
         .background(c.bg)
         .sheet(isPresented: $showFilters) {
-            ExploreFilterSheet(draft: explore.filters,
-                               printerCode: MWPrinterCode.code(forModel: model.printer?.model),
+            // The stored `printerCode` is a snapshot from whenever the toggle was last switched on.
+            // Reconciled here rather than trusted: see `MWSearchFilters.reconciled(printerCode:)`.
+            let code = MWPrinterCode.code(forModel: model.printer?.model)
+            ExploreFilterSheet(draft: explore.filters.reconciled(printerCode: code),
+                               printerCode: code,
                                printerModel: model.printer?.model) { explore.setFilters($0) }
         }
         // C6 — the field used to fire only on submit, so every query cost a tap. Keyed on the text,
@@ -241,10 +247,13 @@ private struct ExploreRoot: View {
     private var chips: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
-                let n = explore.filters.activeCount
-                chip(n == 0 ? "Filters" : "Filters · \(n)", symbol: "line.3.horizontal.decrease",
-                     on: n > 0, toggleable: false) {
-                    showFilters = true
+                // Same reason as the sort menu: a folder's contents are the folder's, unfiltered.
+                if explore.acceptsMakerWorldRequest {
+                    let n = explore.filters.activeCount
+                    chip(n == 0 ? "Filters" : "Filters · \(n)", symbol: "line.3.horizontal.decrease",
+                         on: n > 0, toggleable: false) {
+                        showFilters = true
+                    }
                 }
                 if collectionsClient.isAvailable {
                     let on = explore.showingCollections || explore.activeCollection != nil
@@ -304,8 +313,37 @@ private struct ExploreRoot: View {
 
     // MARK: Body
 
-    @ViewBuilder
     private var content: some View {
+        VStack(spacing: 0) {
+            // A failure over results that are still good — see `staleNote`.
+            if let error = explore.searchError, !explore.hits.isEmpty { staleNote(error) }
+            resultsArea
+        }
+    }
+
+    /// A fetch that failed over results that are still on screen.
+    ///
+    /// The full-screen error state cannot cover this case and never will: `startFetch` deliberately
+    /// keeps the outgoing hits, so `hits.isEmpty` is false and that branch does not fire — leaving
+    /// the grid showing results for a sort or a filter that is no longer what the controls say,
+    /// with nothing anywhere admitting the new one failed. "There is nothing to show" and "what is
+    /// shown is stale" are two states; the first gets the screen, the second gets a line above the
+    /// grid it is lying about. The Mac build has drawn this since the port; iOS showed nothing.
+    private func staleNote(_ error: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle").scaledFont(11, weight: .semibold)
+            Text(verbatim: "Couldn’t load that — these are the previous results. \(error)")
+                .scaledFont(12)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(c.t2)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+    }
+
+    @ViewBuilder
+    private var resultsArea: some View {
         if let error = explore.searchError, explore.hits.isEmpty {
             ExploreMessage(symbol: "exclamationmark.triangle", title: "Couldn’t load that", message: error)
         } else if explore.showingCollections {

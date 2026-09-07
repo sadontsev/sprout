@@ -200,14 +200,37 @@ final class MakerWorldSearchTests: XCTestCase {
                     MWNav(key: "Foryou", name: "For You"),
                     MWNav(key: "Trending", name: "Trending"),
                     MWNav(key: "category_400", name: "Household"),
+                    MWNav(key: "Crowdfunding", name: "Crowdfunding"),
                     MWNav(key: "LaserCut", name: "Laser & Cut")]
         // LaserCut needs a `designType` the probes never settled; a chip that lists 3D models
-        // under a laser heading would be a lie.
+        // under a laser heading would be a lie. `Crowdfunding` is the case the old BLOCKLIST could
+        // not see: a key nobody had heard of when it was written became a chip whose only effect
+        // was to drop the keyword and browse everything, because `categoryId(navKey:)` is nil for
+        // it. The filter is an allowlist now — a nav is kept only if we know what request it makes.
         XCTAssertEqual(MakerWorldSearch.browsable(navs).map(\.key), ["Trending", "category_400"])
     }
 
     func testAKeylessCategoryIsDroppedRatherThanRenderedAsADeadChip() {
         XCTAssertEqual(MakerWorldSearch.browsable([MWNav(key: "", name: "Mystery")]).count, 0)
+    }
+
+    // MARK: - A printer filter that has gone stale
+
+    /// `printerCode` is written once and never re-read, so it outlives the printer it names.
+    func testAPrinterFilterIsDroppedWhenItNamesADifferentPrinter() {
+        var f = MWSearchFilters()
+        f.printerCode = "O1C2"
+        f.customisable = true
+
+        XCTAssertEqual(f.reconciled(printerCode: "O1C2").printerCode, "O1C2",
+                       "the same printer is still the user's printer")
+        XCTAssertNil(f.reconciled(printerCode: "N2S").printerCode,
+                     "a filter for the machine you no longer have is off, not silently applied")
+        XCTAssertNil(f.reconciled(printerCode: nil).printerCode,
+                     "no printer connected means no code to filter by")
+        XCTAssertTrue(f.reconciled(printerCode: nil).customisable,
+                      "only the printer is reconciled — the rest of the sheet is the user's")
+        XCTAssertTrue(MWSearchFilters().reconciled(printerCode: nil).isEmpty)
     }
 
     // MARK: - Failure copy

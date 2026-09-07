@@ -285,6 +285,66 @@ final class ExploreModelTests: XCTestCase {
         XCTAssertTrue(last?.filters.customisable ?? false)
     }
 
+    /// A folder is not a MakerWorld result set, and the controls that say so are in the VIEW —
+    /// so the model has to refuse as well. Sorting inside a folder used to build the request
+    /// "everything on MakerWorld, by likes" (no keyword, no category, because `currentRequest()`
+    /// has neither in a collection), fetch it, and drop the answer into the grid with the folder
+    /// still selected.
+    func testSortAndFiltersInsideAFolderDoNotReplaceItWithABrowse() async throws {
+        let fake = FakeSearch()
+        let m = ExploreModel(searchClient: fake)
+        let collections = CollectionsClient(baseUrl: nil, apiKey: "")
+
+        m.search("spool")
+        await settle()
+        await fake.finish(FakeSearch.key("spool"), hits: [1, 2], total: 2)
+        await waitUntil({ m.hits.count == 2 }, "the search never landed")
+
+        m.openCollections(collections)
+        await settle()
+        let folder = MakerWorldCollection(id: 7, title: "Prints", count: 3)
+        m.openCollection(folder, client: collections)
+        await settle()
+        XCTAssertFalse(m.acceptsMakerWorldRequest, "a folder cannot answer a sort or a filter")
+        let before = await fake.callCount()
+
+        m.setSort(.likes)
+        var f = MWSearchFilters()
+        f.customisable = true
+        m.setFilters(f)
+        await settle()
+
+        let after = await fake.callCount()
+        XCTAssertEqual(after, before, "neither control may issue a MakerWorld request from a folder")
+        XCTAssertEqual(m.activeCollection?.id, 7, "the folder is still what is on screen")
+        XCTAssertEqual(m.sort, .relevance, "a refused sort must not be recorded either")
+        XCTAssertTrue(m.filters.isEmpty)
+    }
+
+    /// Going cold is a state, not just an empty array: the error belonging to the request that is
+    /// no longer being made has to go with it. Clearing the last filter used to leave a 429 sitting
+    /// over the shelves — the one screen that has asked for nothing reporting that it had failed.
+    func testGoingColdClearsTheErrorsAsWellAsTheResults() async throws {
+        let fake = FakeSearch()
+        let m = ExploreModel(searchClient: fake)
+
+        var f = MWSearchFilters()
+        f.customisable = true
+        m.setFilters(f)                       // filters alone are a request
+        await settle()
+        await fake.fail(FakeSearch.key(nil), MakerWorldSearchError(status: 429))
+        await waitUntil({ m.searchError != nil }, "the failure never landed")
+        m.loadMoreError = "a page that failed earlier"
+
+        m.setFilters(MWSearchFilters())       // …and clearing them is going cold
+        await settle()
+        XCTAssertTrue(m.isCold)
+        XCTAssertNil(m.searchError, "the shelves have not failed at anything")
+        XCTAssertNil(m.loadMoreError)
+        XCTAssertFalse(m.loading)
+        XCTAssertTrue(m.hits.isEmpty)
+    }
+
     // MARK: Session id
 
     func testTheSessionIdFromPageOneRidesLaterPages() async throws {

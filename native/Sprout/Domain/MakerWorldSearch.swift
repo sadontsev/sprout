@@ -479,13 +479,19 @@ enum MakerWorldSearch {
 
     /// The categories worth showing, in MakerWorld's own order.
     ///
-    /// `Following` and `For You` are dropped: both are personalised to a signed-in account, and this
-    /// app is anonymous by design — they would render as categories that quietly return someone
-    /// else's idea of relevance, or nothing at all. `LaserCut` is dropped because it needs a
-    /// `designType` the probes never settled, and a chip that lists 3D models under a laser heading
-    /// would be a lie.
+    /// **An allowlist, not a blocklist.** A chip is kept only if this app knows what request it
+    /// makes: `Trending` is the trending order, and `category_<n>` becomes `categories=<n>`. Every
+    /// other key — `Following` and `Foryou` (personalised to a signed-in account this app never
+    /// has), `LaserCut` (needs a `designType` the probes never settled), and whatever MakerWorld
+    /// adds next — is dropped.
+    ///
+    /// The blocklist that shipped first named the three keys known on the day it was written, so
+    /// `Crowdfunding` (or any key added since) rendered as a chip whose only effect was to drop the
+    /// keyword and browse everything: `categoryId(navKey:)` returns nil for it and
+    /// `currentRequest()` then asks for no category at all. Same shape as the table in `CLAUDE.md`
+    /// — an affordance offered for a capability that does not exist.
     static func browsable(_ navs: [MWNav]) -> [MWNav] {
-        navs.filter { $0.key != "Following" && $0.key != "Foryou" && $0.key != "LaserCut" && !$0.key.isEmpty }
+        navs.filter { $0.key == "Trending" || categoryId(navKey: $0.key) != nil }
     }
 }
 
@@ -529,6 +535,22 @@ struct MWSearchFilters: Equatable, Sendable {
 
     var activeCount: Int { queryItems.count }
     var isEmpty: Bool { activeCount == 0 }
+
+    /// Drop a printer filter that names a printer this app is no longer talking to.
+    ///
+    /// `printerCode` is a SNAPSHOT: it is written when the sheet's toggle is switched on and never
+    /// looked at again, so after the user points Sprout at a different printer — or at none — the
+    /// filter goes on quietly asking MakerWorld for profiles published for the old machine while
+    /// the sheet's own subtitle names the new one. "Made for my printer" then means somebody
+    /// else's. Reconciling against the code the app can actually derive right now makes the filter
+    /// off rather than wrong; nil `current` (no printer, or one MakerWorld has no code for) drops
+    /// it for the same reason.
+    func reconciled(printerCode current: String?) -> MWSearchFilters {
+        guard printerCode != current else { return self }
+        var out = self
+        out.printerCode = nil
+        return out
+    }
 }
 
 /// One page of MakerWorld models, described rather than fetched. `queryItems` is ordered so a URL

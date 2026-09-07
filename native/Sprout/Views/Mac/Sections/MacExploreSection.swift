@@ -195,11 +195,16 @@ struct MacExploreSection: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .disabled(explore.hits.isEmpty)
+        // A folder's contents come from Trellis, which takes no `orderBy` — so the control is
+        // dimmed and says why, rather than silently replacing the folder with a MakerWorld browse
+        // (which is exactly what it did).
+        .disabled(explore.hits.isEmpty || !explore.acceptsMakerWorldRequest)
         // The label is drawn, but a `Menu` announces its label view as its name only patchily and
         // the current order is the half that matters. Said explicitly, as the iOS build does.
         .accessibilityLabel("Order results. Currently \(explore.sort.label)")
-        .help("MakerWorld sorts the whole result set on the server.")
+        .help(explore.acceptsMakerWorldRequest
+              ? "MakerWorld sorts the whole result set on the server."
+              : "Collections come from your Trellis in MakerWorld’s own order.")
     }
 
     /// The link path, offered rather than guessed at. One row, and it says exactly what it will do.

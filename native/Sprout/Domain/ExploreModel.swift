@@ -99,6 +99,16 @@ final class ExploreModel {
     /// True when there is a mode to leave — drives whether a selected chip is a toggle.
     var canExitMode: Bool { showingCollections || activeCollection != nil || activeNav != nil }
 
+    /// Whether the screen is showing something `currentRequest()` can describe.
+    ///
+    /// **Not `!isCold`, which is the nearby question this codebase keeps answering by mistake.** A
+    /// collection comes from the owner's Trellis, which takes neither a sort nor a filter, and
+    /// `currentRequest()` carries no keyword and no category while one is open. So sorting inside a
+    /// folder built the request "every model on MakerWorld, by likes", fetched it, and dropped the
+    /// answer into the grid — with the folder still selected and its crumb still on screen. The
+    /// folder had not been left; it had been silently replaced.
+    var acceptsMakerWorldRequest: Bool { activeCollection == nil && !showingCollections }
+
     /// Remember the result set being replaced, but only if it is one worth coming back to.
     private func rememberCurrent() {
         guard !isCold, !showingCollections, activeCollection == nil else { return }
@@ -133,8 +143,7 @@ final class ExploreModel {
                 // looks like a search returning nothing.
                 activeQuery = nil
                 activeNav = nil
-                hits = []
-                hitTotal = nil
+                goCold()
             }
             return
         }
@@ -142,11 +151,28 @@ final class ExploreModel {
         if activeNav == "Trending" { sort = .relevance }
         activeNav = nil
         if isCold {
-            hits = []
-            hitTotal = nil
+            goCold()
         } else {
             fetchCurrent()
         }
+    }
+
+    /// Back to the cold screen: no results, no in-flight request, and no errors from a request
+    /// nobody is making any more.
+    ///
+    /// The errors are the half that was missing. Clearing a filter while a 429 was on screen left
+    /// `searchError` set over the shelves, so the cold screen — the one state that has asked for
+    /// nothing — reported that something had failed. `loadMoreError` did the same under a grid that
+    /// no longer existed, and the stale `sessionId` would have pinned the *next* first page to a
+    /// ranking session belonging to a query nobody can see any more.
+    private func goCold() {
+        fetch?.cancel()
+        loading = false
+        searchError = nil
+        loadMoreError = nil
+        hits = []
+        hitTotal = nil
+        sessionId = nil
     }
 
     /// Resolve responses for this session, keyed by model id, so back-then-forward is instant.
@@ -239,27 +265,22 @@ final class ExploreModel {
     }
 
     func setSort(_ new: MakerWorldSearch.Sort) {
-        guard new != sort || activeNav == "Trending" else { return }
+        // A collection has no order to ask for. The controls are hidden there, but the model is the
+        // boundary that has to hold — a hidden control is a view's promise, and this one was reached.
+        //
+        // `new != sort` alone: `sort` is already `.trending` whenever the Trending chip is on, so
+        // `.trending → .trending` really is a no-op, and every other value still passes.
+        guard acceptsMakerWorldRequest, new != sort else { return }
         if activeNav == "Trending", new != .trending { activeNav = nil }
         sort = new
-        if !isCold {
-            fetchCurrent()
-        } else {
-            hits = []
-            hitTotal = nil
-        }
+        if isCold { goCold() } else { fetchCurrent() }
     }
 
     /// Applied whole, from the sheet's Done: one request per edit session, not one per toggle.
     func setFilters(_ new: MWSearchFilters) {
-        guard new != filters else { return }
+        guard acceptsMakerWorldRequest, new != filters else { return }
         filters = new
-        if isCold {
-            hits = []
-            hitTotal = nil
-        } else {
-            fetchCurrent()
-        }
+        if isCold { goCold() } else { fetchCurrent() }
     }
 
     /// Fetch page one of `currentRequest()`. Shared by search, browse, sort, filters and refresh
@@ -296,7 +317,14 @@ final class ExploreModel {
         request.sort = .trending
         request.limit = 20
         Task { @MainActor in
-            if let page = try? await searchClient.page(request) { trending = page.hits ?? [] }
+            // Marked loaded only once the page is in hand. Setting it true up front is the
+            // re-entrancy guard — two `.task`s race for this — but leaving it true after a failure
+            // meant one flaky launch blanked the shelves until the app was quit.
+            if let page = try? await searchClient.page(request) {
+                trending = page.hits ?? []
+            } else {
+                coldStartLoaded = false
+            }
         }
         Task { @MainActor in
             hotWords = Array(((try? await searchClient.hotWords()) ?? []).prefix(8))

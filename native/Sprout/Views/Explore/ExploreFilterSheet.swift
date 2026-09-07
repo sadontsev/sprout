@@ -22,6 +22,17 @@ struct ExploreFilterSheet: View {
         ("CC BY-NC", "BY-NC"), ("CC BY-NC-SA", "BY-NC-SA"), ("CC BY-NC-ND", "BY-NC-ND"),
     ]
 
+    /// Why the toggle is off, in the user's words. **Three cases, not two.** The old copy read
+    /// "MakerWorld has no code for this printer" whenever the code was nil — which is also what nil
+    /// means when there is no printer connected at all, so a fresh install was told MakerWorld had
+    /// failed to recognise a machine it had never been shown.
+    private var printerSubtitle: String {
+        guard let printerModel else { return "No printer connected yet" }
+        return printerCode == nil
+            ? "MakerWorld has no code for \(printerModel)"
+            : "Profiles published for the \(printerModel)"
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -32,9 +43,7 @@ struct ExploreFilterSheet: View {
                                          set: { draft.printerCode = $0 ? printerCode : nil })) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Made for my printer")
-                            Text(verbatim: printerCode == nil
-                                 ? "MakerWorld has no code for \(printerModel ?? "this printer")"
-                                 : "Profiles published for the \(printerModel ?? "printer")")
+                            Text(verbatim: printerSubtitle)
                                 .scaledFont(12).foregroundStyle(c.t3)
                         }
                     }

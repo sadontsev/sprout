@@ -1257,6 +1257,5 @@ duplicate ids in a `ForEach` are undefined behaviour rather than a cosmetic prob
 S-2 is superseded. `search-service/select/design2` (the website's own call) honours six `orderBy`
 values and the filters listed in `CLAUDE.md`, anonymously. The app now uses it; client-side sorting
 and the "MakerWorld's order" label are gone. `design-service/design/{id}` also answers anonymously
-with per-profile compatibility (H2C = `O1C2`), per-plate filaments with slot ids and hex colours,
-and the author's layer/walls/infill; see
-`docs/superpowers/specs/2026-09-07-makerworld-print-funnel-design.md` §0.2.
+with per-profile printer compatibility (the H2C is `O1C2`), per-plate filaments carrying the 3MF
+slot id and hex colour, and the author's layer height, wall count and infill.

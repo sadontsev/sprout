@@ -9,8 +9,11 @@ import SwiftUI
 /// Shelves answer "what can I do here" with content rather than instructions: the owner's own
 /// collections first because they are theirs, then what they have already pulled in.
 ///
-/// Deliberately built only from what is already in hand — `ExploreModel.recent` and `.collections`.
-/// A shelf that fires its own request would make the cold screen slower than the thing it replaced.
+/// **No shelf fires a request of its own.** Everything here is already in hand by the time the view
+/// appears: `collections` and `recent` are fetched by Explore's own `.task`, and `trending` and
+/// `hotWords` by `ExploreModel.loadColdStart()`, which runs once per session from the same place. A
+/// shelf that fetched on `onAppear` would make the cold screen slower than the empty field it
+/// replaced, and would re-fetch on every return from a search.
 struct ExploreShelves: View {
     let client: BambuddyClient
     let collectionsClient: CollectionsClient
