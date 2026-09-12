@@ -83,11 +83,15 @@ final class SerialGateTests: XCTestCase {
     func testAValueIsReturnedToItsOwnCaller() async throws {
         let gate = SerialGate()
 
-        async let a = gate.run { () -> Int in
+        // Typed as THROWING on purpose. This test predates the non-throwing overload, and once that
+        // existed a closure with no `throw` in it resolved to the new overload silently — leaving the
+        // throwing one without this test and the `try` below with nothing to try. The non-throwing
+        // path has its own value-per-caller test in ClaimSequencerTests.
+        async let a = gate.run { () async throws -> Int in
             try? await Task.sleep(nanoseconds: 2_000_000)
             return 1
         }
-        async let b = gate.run { () -> Int in 2 }
+        async let b = gate.run { () async throws -> Int in 2 }
 
         let results = try await [a, b]
         XCTAssertEqual(results, [1, 2], "results must not be crossed between callers")
@@ -103,6 +107,62 @@ final class SerialGateTests: XCTestCase {
         } catch {
             XCTAssertTrue(error is Boom)
         }
+    }
+
+    /// The non-throwing overload is the same chain, not a second, weaker one — `ClaimSequencer` runs
+    /// on it, and an overlap there reintroduces the App Attest counter race.
+    func testTheNonThrowingOverloadAlsoRunsOneAtATime() async {
+        let gate = SerialGate()
+        let tracker = OverlapTracker()
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    await gate.run { () async -> Void in
+                        await tracker.enter()
+                        try? await Task.sleep(nanoseconds: 2_000_000)
+                        await tracker.leave()
+                    }
+                }
+            }
+        }
+
+        let peak = await tracker.peak
+        let done = await tracker.completed
+        XCTAssertEqual(peak, 1, "the non-throwing path must serialise exactly as the throwing one does")
+        XCTAssertEqual(done, 8)
+    }
+
+    /// Both overloads share ONE chain: a throwing caller queued behind a non-throwing one must wait
+    /// for it, or two kinds of work could still overlap on the same resource.
+    func testBothOverloadsQueueBehindEachOther() async {
+        struct Boom: Error {}
+        let gate = SerialGate()
+        let tracker = OverlapTracker()
+
+        await withTaskGroup(of: Void.self) { group in
+            for i in 0..<8 {
+                group.addTask {
+                    if i % 2 == 0 {
+                        await gate.run { () async -> Void in
+                            await tracker.enter()
+                            try? await Task.sleep(nanoseconds: 2_000_000)
+                            await tracker.leave()
+                        }
+                    } else {
+                        _ = try? await gate.run { () async throws -> Void in
+                            await tracker.enter()
+                            try? await Task.sleep(nanoseconds: 2_000_000)
+                            await tracker.leave()
+                            throw Boom()
+                        }
+                    }
+                }
+            }
+        }
+
+        let peak = await tracker.peak
+        XCTAssertEqual(peak, 1, "mixing the overloads must not open a gap in the chain")
     }
 
     func testAFailureDoesNotBreakTheChain() async {

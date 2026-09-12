@@ -181,6 +181,10 @@ final class LiveActivityController {
     /// App Attest, shared across claims so one key is attested and then asserted with.
     private let attestor = AttestClient()
 
+    /// Every claim is built AND delivered through this, one at a time. See `ClaimSequencer` for the
+    /// counter race that serialising only the signature left open.
+    private let claims = ClaimSequencer()
+
     /// When we last reported our cards to Trellis.
     private var lastReconcile: Date?
 
@@ -239,6 +243,30 @@ final class LiveActivityController {
             claimHealth = .unclaimed("This device couldn't prove itself to Trellis. Push will keep working if it is already bound; a fresh install may need Trellis restarted.")
             return nil
         }
+    }
+
+    /// Builds a claim and POSTs the registration carrying it, as one unit behind every other claim.
+    ///
+    /// **The only way a registration may send a claim.** Building and posting separately is what let
+    /// App Attest counters reach the relay out of order: the card, start and device registrations
+    /// fire together at the start of a print, the enclave signs them in order, and the POSTs then
+    /// race. Measured: the print card's claim refused as `counter is not acceptable`, the card never
+    /// bound, and every update for that print refused as `not_bound`.
+    ///
+    /// `body` is handed the claim — nil when the server signs locally or the claim could not be
+    /// built — and returns the request to send. It takes plain values, captured by the caller on the
+    /// main actor, because it runs inside the sequencer and cannot read this controller's state.
+    private func claimAndPost<Body: Encodable & Sendable>(
+        _ path: String,
+        token: String,
+        kind: ClaimBuilder.BindingKind,
+        vouchNonce: String?,
+        body: @escaping @Sendable (ClaimBuilder.Claim?) -> Body
+    ) async -> PostOutcome {
+        await claims.submit(
+            build: { [self] in await self.buildClaim(token: token, kind: kind, vouchNonce: vouchNonce) },
+            send: { [self] claim in await self.postWithReason(path, token: token, body: body(claim)) }
+        )
     }
 
     /// Fetches a single-use challenge from the relay, through Trellis.
@@ -765,10 +793,13 @@ final class LiveActivityController {
                     // The glyph, when we have one. Trellis treats an empty value as "keep what you
                     // have", so a registration that races the first `sync` is not destructive — the
                     // next one carries it.
-                    let claim = await self.buildClaim(token: token, kind: .start, vouchNonce: nil)
-                    let result = await self.postWithReason("/register-start", token: token, body: StartRegistration(
-                        pushToken: token, iconUri: self.glyphUri, deviceId: self.deviceID, claim: claim
-                    ))
+                    let icon = self.glyphUri
+                    let device = self.deviceID
+                    let result = await self.claimAndPost(
+                        "/register-start", token: token, kind: .start, vouchNonce: nil
+                    ) { claim in
+                        StartRegistration(pushToken: token, iconUri: icon, deviceId: device, claim: claim)
+                    }
                     if result.ok && result.bound {
                         self.pending.remove(token: token)
                         await self.attestor.confirmAttested()
@@ -1139,20 +1170,27 @@ final class LiveActivityController {
 
             switch intent.kind {
             case ClaimBuilder.BindingKind.start.rawValue:
-                let claim = await buildClaim(token: intent.token, kind: .start, vouchNonce: intent.vouchNonce)
-                let result = await postWithReason("/register-start", token: intent.token, body: StartRegistration(
-                    pushToken: intent.token, iconUri: glyphUri, deviceId: deviceID, claim: claim
-                ))
+                let token = intent.token
+                let icon = glyphUri
+                let device = deviceID
+                let result = await claimAndPost(
+                    "/register-start", token: token, kind: .start, vouchNonce: intent.vouchNonce
+                ) { claim in
+                    StartRegistration(pushToken: token, iconUri: icon, deviceId: device, claim: claim)
+                }
                 if result.ok && result.bound {
                     pending.remove(token: intent.token)
                     await attestor.confirmAttested()
                 } else { await handle(refusal: result.reason) }
 
             case ClaimBuilder.BindingKind.device.rawValue:
-                let claim = await buildClaim(token: intent.token, kind: .device, vouchNonce: intent.vouchNonce)
-                let result = await postWithReason("/register-device", token: intent.token, body: DeviceRegistration(
-                    deviceToken: intent.token, deviceId: deviceID, claim: claim
-                ))
+                let token = intent.token
+                let device = deviceID
+                let result = await claimAndPost(
+                    "/register-device", token: token, kind: .device, vouchNonce: intent.vouchNonce
+                ) { claim in
+                    DeviceRegistration(deviceToken: token, deviceId: device, claim: claim)
+                }
                 if result.ok && result.bound {
                     pending.remove(token: intent.token)
                     await attestor.confirmAttested()
@@ -1213,15 +1251,17 @@ final class LiveActivityController {
         if let last = lastRegisterAttempt[pair], Date().timeIntervalSince(last) < Self.registerRetry { return }
         lastRegisterAttempt[pair] = Date()
 
-        let claim = await buildClaim(token: token, kind: .activity, vouchNonce: nil)
-        let body = Self.cardRegistration(
-            attributes: activity.attributes, state: activity.content.state,
-            token: token, deviceId: deviceID, claim: claim
-        )
+        let attributes = activity.attributes
+        let state = activity.content.state
+        let device = deviceID
         // Deliberately NOT queued in `pending`: card tokens are retried by `flushRegistrations`,
         // which walks the live activities, and `flushPending` explicitly skips the `.activity` kind.
         // Adding one here only planted an entry nothing would ever consume or clear.
-        let result = await postWithReason("/register", token: token, body: body)
+        let result = await claimAndPost("/register", token: token, kind: .activity, vouchNonce: nil) { claim in
+            LiveActivityController.cardRegistration(
+                attributes: attributes, state: state, token: token, deviceId: device, claim: claim
+            )
+        }
         // Finalised ONLY when the relay can actually push to this token. Trellis answers 200 for a
         // registration it stored but could not bind — which is the normal outcome when App Attest
         // hiccups — and treating that as done leaves the card frozen at its opening content with

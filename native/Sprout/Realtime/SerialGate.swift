@@ -30,4 +30,22 @@ actor SerialGate {
         tail = Task { _ = try? await task.value }
         return try await task.value
     }
+
+    /// The same chain, for work that cannot fail.
+    ///
+    /// A separate overload rather than a call through the throwing one, because routing non-throwing
+    /// work through `run` above makes every caller write a `catch` for an error that cannot occur —
+    /// and the only honest bodies for that branch are a crash or an invented result. `ClaimSequencer`
+    /// returns a `PostOutcome`, and fabricating one for an impossible failure is the kind of
+    /// nearby-answer this codebase keeps having to take back out. The ordering guarantee is the
+    /// same: each caller awaits the one queued ahead of it, and the tail is extended unconditionally.
+    func run<T: Sendable>(_ work: @Sendable @escaping () async -> T) async -> T {
+        let previous = tail
+        let task = Task<T, Never> {
+            await previous?.value
+            return await work()
+        }
+        tail = Task { _ = await task.value }
+        return await task.value
+    }
 }
