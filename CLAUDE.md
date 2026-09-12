@@ -322,6 +322,22 @@ Invariants that are load-bearing, each learnt expensively:
   identically. Use `validate_device_token` to tell propagation from misconfiguration.
 - **The captured attestation fixture is gitignored.** Apple's leaf certificate carries
   `<TEAMID>.<bundle id>` in plaintext and this repo is public.
+- **An assertion's counter must REACH the relay in order — signing it in order is not enough.**
+  Canopy rejects `counter <= stored`, which is Apple's rule verbatim ("greater than the value from
+  the previous assertion") and must stay. The app serialised `generateAssertion` but POSTed each
+  claim after the gate released, so the card, push-to-start and device registrations that fire
+  together at the start of a print raced over the network and a lower counter could land after a
+  higher one. The relay logs `appattest: counter is not acceptable`; the client only ever sees an
+  opaque `attestation_invalid`, deliberately. It had landed on one of the three requests on most
+  days for a month before it hit a print card and froze that card for the whole print. Every claim
+  now goes through `ClaimSequencer`, which runs challenge → proof → POST as one unit; its tests
+  model the relay's rule and include a control that reproduces the race.
+- **A refused claim is not an unbound token.** The relay leaves an existing binding untouched when
+  it refuses a new claim, and Trellis's `_needs_claim` STOPS pushes — so a refusal must not be
+  recorded there. The evidence that a token is unbound is the relay answering `not_bound` to a push,
+  which `_relay_send` already records. What a refusal must never do is lose the CARD: `/register`
+  stores before it forwards the claim, because a card Trellis does not know comes back from the
+  next `/sync` in `end`, and the app ends it.
 
 ## Shipping
 
