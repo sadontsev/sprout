@@ -1029,3 +1029,185 @@ def _pad(extra: dict) -> dict:
     }
     base.update(extra)
     return base
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class ARefusedClaimKeepsTheCard(unittest.TestCase):
+    """A claim the relay refuses must not cost the device its card.
+
+    Measured on 2026-09-12: the relay refused a print card's claim as `counter is not acceptable`,
+    because the app's three registrations raced their App Attest assertions over the network.
+    `/register` raised 403 BEFORE storing the card, so Trellis did not know it. For a card the APP
+    had started there is no pending remote start to match, so the next /sync would have returned
+    the token in `end` and the app would have ended a live card whose only fault was one refused
+    claim.
+    """
+
+    TOKEN = "tok-refused"
+
+    class _Relay:
+        """Canopy, answering every claim the same way."""
+
+        credentials = object()
+
+        def __init__(self, result):
+            self.result = result
+            self.vouched: list[str] = []
+
+        async def claim(self, _claim):
+            return self.result
+
+        async def vouch(self, token, _environment):
+            self.vouched.append(token)
+
+    _ABSENT = object()
+
+    def setUp(self):
+        la.app.dependency_overrides[la._require_key] = lambda: None
+        self.client = TestClient(la.app)
+        # `_canopy` is assigned at service startup, which a TestClient built without the lifespan
+        # never runs — so it may not exist yet. Restore exactly what was there, including nothing,
+        # rather than leaving a module attribute behind for the next test class to trip over.
+        self._real_canopy = getattr(la, "_canopy", self._ABSENT)
+        la._regs = {}
+        la._needs_claim = {}
+        la._p2s_tokens = []
+        la._p2s_icons = {}
+        la._p2s_clients = {}
+        la._p2s_devices = {}
+        la._p2s_pending = {}
+        la._device_tokens = []
+        la._suspended = {}
+        la._save = lambda: None
+
+    def tearDown(self):
+        if self._real_canopy is self._ABSENT:
+            if hasattr(la, "_canopy"):
+                del la._canopy
+        else:
+            la._canopy = self._real_canopy
+        la.app.dependency_overrides.clear()
+
+    def _relay(self, **result):
+        la._canopy = self._Relay(la.canopy.ClaimResult(**result))
+        return la._canopy
+
+    def _register(self):
+        return self.client.post("/register", json={
+            "printer_id": 1, "push_token": self.TOKEN, "printer_name": "P", "kind": "print",
+            "device_id": "phoneA", "client": "native", "claim": {"any": "claim"},
+        })
+
+    def test_a_refused_claim_still_stores_the_card(self):
+        self._relay(ok=False, reason="attestation_invalid")
+
+        r = self._register()
+
+        self.assertEqual(r.status_code, 403, "the phone must still hear the refusal")
+        self.assertEqual(r.json()["detail"], "attestation_invalid",
+                         "the reason travels verbatim — the phone acts on reattest_required itself")
+        self.assertTrue(registry.has_card(la._regs, "1", "phoneA"),
+                        "a refused claim must not erase the card it was claiming for")
+
+    def test_the_card_is_not_ended_by_the_next_sync(self):
+        # The regression. Before the fix the card was unknown here and came back in `end`; the
+        # control for that is `test_an_unclaimable_token_comes_back_for_the_app_to_end`, which is
+        # exactly this /sync for a token that was never registered.
+        self._relay(ok=False, reason="attestation_invalid")
+        self._register()
+
+        body = self.client.post("/sync", json={
+            "tokens": [self.TOKEN], "device_id": "phoneA", "client": "native",
+        }).json()
+
+        self.assertNotIn(self.TOKEN, body["end"],
+                         "the app would end a live card whose only fault was one refused claim")
+
+    def test_a_refusal_is_not_recorded_as_unbound(self):
+        # `_needs_claim` STOPS pushes. The relay leaves an existing binding untouched when it refuses
+        # a new claim, so a refusal says nothing about whether this token can be pushed to. The
+        # first push's `not_bound` answer records that — as evidence, not as a guess.
+        self._relay(ok=False, reason="attestation_invalid")
+
+        self._register()
+
+        self.assertNotIn(self.TOKEN, la._needs_claim)
+        self.assertTrue(la._deliverable(self.TOKEN),
+                        "a token that may still be bound must keep receiving its pushes")
+
+    def test_a_relay_that_could_not_be_reached_still_stores_the_card(self):
+        self._relay(ok=False, reason="timeout", outcome=la.canopy.Outcome.TRANSPORT)
+
+        r = self._register()
+
+        self.assertEqual(r.status_code, 502, "a lost claim must fail to the phone so it retries")
+        self.assertTrue(registry.has_card(la._regs, "1", "phoneA"))
+
+    def test_a_vouch_refusal_stores_the_card_and_still_asks_for_the_vouch(self):
+        relay = self._relay(ok=False, reason="vouch_required")
+
+        r = self._register()
+
+        self.assertEqual(r.status_code, 403)
+        self.assertTrue(registry.has_card(la._regs, "1", "phoneA"))
+        self.assertEqual(relay.vouched, [self.TOKEN], "the vouch is what lets the next claim bind")
+
+    def test_an_accepted_claim_binds_and_leaves_nothing_to_claim(self):
+        la._needs_claim[self.TOKEN] = "phoneA"  # e.g. recorded by an earlier `not_bound` push
+
+        self._relay(ok=True)
+        r = self._register()
+
+        self.assertEqual(r.status_code, 200)
+        self.assertIs(r.json()["bound"], True)
+        self.assertNotIn(self.TOKEN, la._needs_claim)
+
+
+@unittest.skipUnless(HAVE_DEPS, "service dependencies not installed")
+class SyncAdoptionSaysOnlyWhatItKnows(unittest.TestCase):
+    """Adoption makes Trellis push to a token. It does not make the relay accept those pushes.
+
+    The log used to announce "card is now updatable" on every adoption. On 2026-09-12 it did so for
+    a token whose claim had been refused five seconds earlier, and all fifty updates for that print
+    were refused as `not_bound`. A log line is an assertion: this one could not be defended, and it
+    pointed the investigation away from the relay.
+    """
+
+    def setUp(self):
+        la.app.dependency_overrides[la._require_key] = lambda: None
+        self.client = TestClient(la.app)
+        la._regs = {}
+        la._needs_claim = {}
+        la._p2s_pending = {la._pending_id("2", "phoneA"): 9e12}  # an outstanding remote start
+        la._printers_cache = {2: "H2C"}
+        la._save = lambda: None
+
+    def tearDown(self):
+        la.app.dependency_overrides.clear()
+
+    def _adopt(self) -> str:
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.client.post("/sync", json={
+                "tokens": ["tok-new"], "device_id": "phoneA", "client": "native",
+            })
+        return out.getvalue()
+
+    def test_a_token_known_to_be_unbound_is_not_announced_as_updatable(self):
+        la._needs_claim["tok-new"] = "phoneA"
+
+        log = self._adopt()
+
+        self.assertIn("2", la._regs, "adoption itself must still happen")
+        self.assertNotIn("updatable", log)
+        self.assertIn("cannot update until this device claims it", log)
+
+    def test_no_adoption_promises_the_card_updates(self):
+        log = self._adopt()
+
+        self.assertIn("adopted 2 -> token tok-new", log)
+        self.assertNotIn("card is now updatable", log,
+                         "adoption creates no binding, so it cannot promise that pushes land")

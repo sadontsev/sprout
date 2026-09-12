@@ -2004,7 +2004,19 @@ async def sync(r: Sync, _: None = Depends(_require_key)) -> dict:
         })
         _forget_pending(_pending_id(key, device))
         known.add(tok)
-        print(f"[sync] bound {key} -> token {tok[:8]}… (card is now updatable)", flush=True)
+        # Say what adoption ESTABLISHES and nothing more: Trellis will push to this token from now
+        # on. Whether those pushes land is the relay's decision, made by a binding this handler
+        # neither creates nor checks. The line used to read "card is now updatable", and on
+        # 2026-09-12 it said so for a token whose claim the relay had refused five seconds earlier;
+        # every update for that print was then refused as `not_bound`. A log line is an assertion.
+        if tok in _needs_claim:
+            print(f"[sync] adopted {key} -> token {tok[:8]}…, but the relay holds no binding for it; "
+                  f"it cannot update until this device claims it (returned in needs_claim)",
+                  flush=True)
+        else:
+            print(f"[sync] adopted {key} -> token {tok[:8]}… — pushes go to it now; whether they "
+                  f"land is the relay's call, and a `not_bound` answer sends it back for a claim",
+                  flush=True)
 
     if orphans:
         # Logged because this is the app being told to END a card, which on the phone looks exactly
@@ -2038,7 +2050,18 @@ async def register(r: Register, _: None = Depends(_require_key)) -> dict:
         f"dry:{r.printer_id}:{r.ams_id}" if r.ams_id is not None else f"dry:{r.printer_id}"
     )
     device = r.device_id or registry.LEGACY_DEVICE
-    bound = await _forward_claim(r.claim, r.push_token, device)
+    # STORED BEFORE the claim is forwarded, never after. A claim the relay refuses raises 403 out of
+    # `_forward_claim`, and when the upsert followed it the card was simply never recorded. The next
+    # /sync then found a token it did not know; for a card the APP started there is no pending
+    # remote start to match it to, so /sync returned it in `end` and the app ended a live card
+    # whose only fault was one refused claim.
+    #
+    # Stored first, the card stays known. Whether pushes to it can land is the relay's decision: if
+    # it really holds no binding, the first push answers `not_bound`, which records the token in
+    # `_needs_claim` and asks this device to claim again. A refusal is deliberately NOT recorded
+    # there itself — the relay leaves an existing binding untouched when it refuses a new claim, so
+    # a refusal is not evidence the token is unbound, and `_needs_claim` stops pushes.
+    #
     # upsert, not assign: another phone may already hold a card under this key, and clobbering it
     # freezes that phone's card for the rest of the print.
     registry.upsert(_regs, key, {
@@ -2048,14 +2071,16 @@ async def register(r: Register, _: None = Depends(_require_key)) -> dict:
         "lastPush": 0, "lastState": None,
     })
     _suspended.pop(r.push_token, None)  # a fresh registration clears any push suspension
+    if r.kind != "dry":
+        _forget_pending(_pending_id(str(r.printer_id), device))  # reachable again
+    _save()
+    bound = await _forward_claim(r.claim, r.push_token, device)
     if bound:
         _needs_claim.pop(r.push_token, None)
     else:
         # Remember it. Clearing this on an unclaimed registration threw away the one record that
         # this token still needs claiming, so nothing downstream could tell the device to retry.
         _needs_claim[r.push_token] = device
-    if r.kind != "dry":
-        _forget_pending(_pending_id(str(r.printer_id), device))  # reachable again
     _save()
     print(f"[register] {r.kind} printer {r.printer_id} ({r.printer_name}) [{norm_client(r.client)}] "
           f"token {r.push_token[:8]}… bound={bound}", flush=True)
