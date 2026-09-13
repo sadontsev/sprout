@@ -29,7 +29,8 @@ jobs:
           test "$(cat CLAUDE.md)" = '@AGENTS.md'
           test -s AGENT-REFERENCE.md
           test "$(wc -c < AGENTS.md)" -le 32768
-          test "$(cat archive/mobile/CLAUDE.md)" = '@AGENTS.md'
+          # The archived wrapper intentionally retains its retirement warning.
+          grep -Fxq '@AGENTS.md' archive/mobile/CLAUDE.md
           test -s archive/mobile/AGENTS.md
           test "$(cat AGENTS.md archive/mobile/AGENTS.md | wc -c)" -le 32768
       - id: changes
