@@ -119,7 +119,7 @@ view layer differs from iOS.
 | `docs/design/` | how the push architecture works, and why |
 | `docs/native-rewrite/` | reference: the backend's API surface, MakerWorld's measured behaviour, the Mac architecture |
 | `archive/` | the retired Expo app and the port specification. Not maintained — see [`archive/README.md`](archive/README.md). |
-| `CLAUDE.md` | notes for AI-assisted development, and the most complete build reference |
+| `AGENTS.md` / `CLAUDE.md` | shared agent guidance; detailed build and failure recipes in [AGENT-REFERENCE.md](AGENT-REFERENCE.md) |
 
 ## Building
 
