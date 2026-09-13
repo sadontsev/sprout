@@ -1,0 +1,2 @@
+# The shared guide is currently about 45 KiB; the default 32 KiB truncates it.
+project_doc_max_bytes = 65536
