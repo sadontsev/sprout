@@ -1,0 +1,127 @@
+name: PR checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guidance:
+    name: Guidance and changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      canopy: ${{ steps.changes.outputs.canopy }}
+      texturize: ${{ steps.changes.outputs.texturize }}
+      native: ${{ steps.changes.outputs.native }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check shared instructions
+        run: |
+          test "$(cat CLAUDE.md)" = '@AGENTS.md'
+          test -s AGENT-REFERENCE.md
+          test "$(wc -c < AGENTS.md)" -le 32768
+          # The archived wrapper intentionally retains its retirement warning.
+          grep -Fxq '@AGENTS.md' archive/mobile/CLAUDE.md
+          test -s archive/mobile/AGENTS.md
+          test "$(cat AGENTS.md archive/mobile/AGENTS.md | wc -c)" -le 32768
+      - id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            printf 'canopy=true\ntexturize=true\nnative=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/changed-paths"
+          for area in canopy texturize native; do
+            case "$area" in
+              canopy) pattern='^canopy/' ;;
+              texturize) pattern='^deploy/stl-texturize/' ;;
+              native) pattern='^native/|^\.swift-format$' ;;
+            esac
+            if grep -Eq "$pattern|^\.github/workflows/ci\.yml$" "$RUNNER_TEMP/changed-paths"; then
+              echo "$area=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$area=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+  canopy:
+    name: Canopy build, vet and tests
+    needs: guidance
+    if: needs.guidance.outputs.canopy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: canopy/go.mod
+          cache-dependency-path: canopy/go.sum
+      - run: go build ./... && go vet ./... && go test ./...
+        working-directory: canopy
+
+  texturize:
+    name: STL texturize tests
+    needs: guidance
+    if: needs.guidance.outputs.texturize == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+        working-directory: deploy/stl-texturize
+
+  native:
+    name: Native macOS tests
+    needs: guidance
+    if: needs.guidance.outputs.native == 'true'
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - run: xcodegen generate
+        working-directory: native
+      - name: Test macOS without signing
+        run: >-
+          xcodebuild -project native/Sprout.xcodeproj -scheme Sprout
+          -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
+
+  required:
+    name: PR checks complete
+    needs: [guidance, canopy, texturize, native]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require applicable jobs to succeed
+        env:
+          GUIDANCE: ${{ needs.guidance.result }}
+          CANOPY: ${{ needs.canopy.result }}
+          TEXTURIZE: ${{ needs.texturize.result }}
+          NATIVE: ${{ needs.native.result }}
+          WANT_CANOPY: ${{ needs.guidance.outputs.canopy }}
+          WANT_TEXTURIZE: ${{ needs.guidance.outputs.texturize }}
+          WANT_NATIVE: ${{ needs.guidance.outputs.native }}
+        run: |
+          test "$GUIDANCE" = success
+          if [ "$WANT_CANOPY" = true ]; then test "$CANOPY" = success; fi
+          if [ "$WANT_TEXTURIZE" = true ]; then test "$TEXTURIZE" = success; fi
+          if [ "$WANT_NATIVE" = true ]; then test "$NATIVE" = success; fi
